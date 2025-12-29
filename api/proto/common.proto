@@ -1,0 +1,19 @@
+syntax = "proto3";
+package gibson.common;
+option go_package = "github.com/zero-day-ai/gibson/api/gen/proto";
+
+message HealthStatus {
+    string state = 1;      // healthy, degraded, unhealthy
+    string message = 2;
+    int64 checked_at = 3;  // Unix timestamp in milliseconds
+}
+
+message JSONSchema {
+    string json = 1;  // Serialized JSON Schema as string
+}
+
+message Error {
+    string code = 1;
+    string message = 2;
+    bool retryable = 3;
+}

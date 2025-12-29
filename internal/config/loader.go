@@ -1,0 +1,187 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+// ConfigLoader handles loading configuration from files.
+type ConfigLoader interface {
+	Load(path string) (*Config, error)
+	LoadWithDefaults(path string) (*Config, error)
+}
+
+// viperConfigLoader implements ConfigLoader using Viper.
+type viperConfigLoader struct {
+	validator ConfigValidator
+}
+
+// NewConfigLoader creates a new ConfigLoader instance.
+func NewConfigLoader(validator ConfigValidator) ConfigLoader {
+	return &viperConfigLoader{
+		validator: validator,
+	}
+}
+
+// Load loads configuration from the specified file path.
+// Returns an error if the file doesn't exist or cannot be parsed.
+func (l *viperConfigLoader) Load(path string) (*Config, error) {
+	v := viper.New()
+	v.SetConfigFile(path)
+	v.SetConfigType("yaml")
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// Unmarshal into Config struct first
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Read raw config into map for environment variable interpolation
+	rawConfig := v.AllSettings()
+	interpolatedConfig := interpolateEnvVars(rawConfig)
+
+	// Apply environment variable interpolation to the unmarshaled config
+	if interpolatedMap, ok := interpolatedConfig.(map[string]interface{}); ok {
+		if err := applyInterpolation(&cfg, interpolatedMap); err != nil {
+			return nil, fmt.Errorf("failed to apply environment variable interpolation: %w", err)
+		}
+	}
+
+	// Validate the loaded configuration
+	if err := l.validator.Validate(&cfg); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// LoadWithDefaults loads configuration from the specified file path.
+// If the file doesn't exist, returns default configuration.
+func (l *viperConfigLoader) LoadWithDefaults(path string) (*Config, error) {
+	// Check if file exists
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		cfg := DefaultConfig()
+		// Validate default configuration
+		if err := l.validator.Validate(cfg); err != nil {
+			return nil, fmt.Errorf("default configuration validation failed: %w", err)
+		}
+		return cfg, nil
+	}
+
+	// File exists, load it normally
+	cfg, err := l.Load(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// interpolateEnvVars recursively interpolates environment variables in the config map.
+// Supports ${VAR_NAME} syntax.
+func interpolateEnvVars(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		result := make(map[string]interface{})
+		for key, value := range v {
+			result[key] = interpolateEnvVars(value)
+		}
+		return result
+	case []interface{}:
+		result := make([]interface{}, len(v))
+		for i, value := range v {
+			result[i] = interpolateEnvVars(value)
+		}
+		return result
+	case string:
+		return interpolateString(v)
+	default:
+		return v
+	}
+}
+
+// interpolateString replaces ${VAR_NAME} with environment variable values.
+func interpolateString(s string) string {
+	// Regular expression to match ${VAR_NAME}
+	re := regexp.MustCompile(`\$\{([^}]+)\}`)
+
+	return re.ReplaceAllStringFunc(s, func(match string) string {
+		// Extract variable name (remove ${ and })
+		varName := strings.TrimSuffix(strings.TrimPrefix(match, "${"), "}")
+
+		// Get environment variable value
+		if envValue := os.Getenv(varName); envValue != "" {
+			return envValue
+		}
+
+		// If not found, return original match
+		return match
+	})
+}
+
+// applyInterpolation applies the interpolated values back to the Config struct.
+func applyInterpolation(cfg *Config, interpolated map[string]interface{}) error {
+	// Apply Core config interpolation
+	if core, ok := interpolated["core"].(map[string]interface{}); ok {
+		if homeDir, ok := core["home_dir"].(string); ok {
+			cfg.Core.HomeDir = interpolateString(homeDir)
+		}
+		if dataDir, ok := core["data_dir"].(string); ok {
+			cfg.Core.DataDir = interpolateString(dataDir)
+		}
+		if cacheDir, ok := core["cache_dir"].(string); ok {
+			cfg.Core.CacheDir = interpolateString(cacheDir)
+		}
+	}
+
+	// Apply Database config interpolation
+	if db, ok := interpolated["database"].(map[string]interface{}); ok {
+		if path, ok := db["path"].(string); ok {
+			cfg.Database.Path = interpolateString(path)
+		}
+	}
+
+	// Apply Security config interpolation
+	if security, ok := interpolated["security"].(map[string]interface{}); ok {
+		if algo, ok := security["encryption_algorithm"].(string); ok {
+			cfg.Security.EncryptionAlgorithm = interpolateString(algo)
+		}
+		if kd, ok := security["key_derivation"].(string); ok {
+			cfg.Security.KeyDerivation = interpolateString(kd)
+		}
+	}
+
+	// Apply LLM config interpolation
+	if llm, ok := interpolated["llm"].(map[string]interface{}); ok {
+		if provider, ok := llm["default_provider"].(string); ok {
+			cfg.LLM.DefaultProvider = interpolateString(provider)
+		}
+	}
+
+	// Apply Logging config interpolation
+	if logging, ok := interpolated["logging"].(map[string]interface{}); ok {
+		if level, ok := logging["level"].(string); ok {
+			cfg.Logging.Level = interpolateString(level)
+		}
+		if format, ok := logging["format"].(string); ok {
+			cfg.Logging.Format = interpolateString(format)
+		}
+	}
+
+	// Apply Tracing config interpolation
+	if tracing, ok := interpolated["tracing"].(map[string]interface{}); ok {
+		if endpoint, ok := tracing["endpoint"].(string); ok {
+			cfg.Tracing.Endpoint = interpolateString(endpoint)
+		}
+	}
+
+	return nil
+}

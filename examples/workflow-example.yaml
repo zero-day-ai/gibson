@@ -1,0 +1,157 @@
+name: Security Assessment Workflow
+description: Complete security assessment with reconnaissance, scanning, and reporting
+
+nodes:
+  # Phase 1: Reconnaissance
+  - id: recon
+    type: agent
+    name: Reconnaissance
+    description: Gather initial information about the target
+    agent: recon-agent
+    timeout: 5m
+    retry:
+      max_retries: 2
+      backoff: exponential
+      initial_delay: 10s
+      max_delay: 1m
+      multiplier: 2.0
+    task:
+      target: example.com
+      depth: deep
+      techniques:
+        - dns_enumeration
+        - subdomain_discovery
+        - whois_lookup
+
+  # Phase 2: Port Scanning (Parallel Execution)
+  - id: port_scan
+    type: parallel
+    name: Port Scanning
+    description: Scan multiple port ranges in parallel for efficiency
+    depends_on:
+      - recon
+    sub_nodes:
+      - id: scan_common
+        type: agent
+        name: Common Ports Scan
+        agent: port-scanner
+        timeout: 3m
+        task:
+          ports: 1-1024
+          scan_type: syn
+
+      - id: scan_services
+        type: agent
+        name: Service Ports Scan
+        agent: port-scanner
+        timeout: 5m
+        task:
+          ports: 1025-65535
+          scan_type: connect
+
+  # Phase 3: Join Scan Results
+  - id: join_scans
+    type: join
+    name: Wait for Scans to Complete
+    description: Synchronization point for parallel scans
+    depends_on:
+      - port_scan
+
+  # Phase 4: Vulnerability Analysis
+  - id: analyze_results
+    type: agent
+    name: Analyze Scan Results
+    description: Deep analysis of discovered services and open ports
+    agent: analyzer
+    depends_on:
+      - join_scans
+    timeout: 10m
+    retry:
+      max_retries: 1
+      backoff: constant
+      initial_delay: 30s
+    task:
+      analysis_type: comprehensive
+      checks:
+        - version_detection
+        - vulnerability_mapping
+        - cve_correlation
+
+  # Phase 5: Decision Point - Check for Vulnerabilities
+  - id: check_vulnerabilities
+    type: condition
+    name: Check for Vulnerabilities
+    description: Determine workflow path based on findings
+    depends_on:
+      - analyze_results
+    condition:
+      expression: findings.count > 0
+      true_branch:
+        - exploit_check
+      false_branch:
+        - generate_clean_report
+
+  # Phase 6a: Exploitation Path (Vulnerability Found)
+  - id: exploit_check
+    type: agent
+    name: Check Exploitability
+    description: Verify if vulnerabilities are exploitable
+    agent: exploit-checker
+    timeout: 15m
+    retry:
+      max_retries: 0  # No retries for exploit checks
+      backoff: constant
+      initial_delay: 1s
+    task:
+      safe_mode: true
+      verify_only: true
+      max_severity: critical
+
+  - id: generate_vuln_report
+    type: tool
+    name: Generate Vulnerability Report
+    description: Create detailed report with findings and recommendations
+    tool: report-generator
+    depends_on:
+      - exploit_check
+    input:
+      format: pdf
+      include_sections:
+        - executive_summary
+        - technical_details
+        - remediation_steps
+        - risk_analysis
+      include_screenshots: true
+      include_recommendations: true
+
+  # Phase 6b: Clean Path (No Vulnerabilities)
+  - id: generate_clean_report
+    type: tool
+    name: Generate Clean Report
+    description: Create report indicating no vulnerabilities found
+    tool: report-generator
+    input:
+      format: pdf
+      status: clean
+      include_sections:
+        - executive_summary
+        - scope_coverage
+
+  # Phase 7: Notification
+  - id: notify_stakeholders
+    type: plugin
+    name: Send Notification
+    description: Notify security team and stakeholders
+    plugin: notification-service
+    method: send_email
+    depends_on:
+      - generate_vuln_report
+      - generate_clean_report
+    timeout: 30s
+    params:
+      recipients:
+        - security@example.com
+        - ops@example.com
+      subject: "Security Assessment Complete"
+      priority: high
+      attach_report: true

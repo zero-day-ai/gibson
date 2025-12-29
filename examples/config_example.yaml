@@ -1,0 +1,37 @@
+# Gibson Framework Configuration Example
+
+core:
+  home_dir: ${HOME}/.gibson
+  data_dir: ${HOME}/.gibson/data
+  cache_dir: ${HOME}/.gibson/cache
+  parallel_limit: 20
+  timeout: 10m
+  debug: false
+
+database:
+  path: ${HOME}/.gibson/gibson.db
+  max_connections: 25
+  timeout: 1m
+  wal_mode: true
+  auto_vacuum: true
+
+security:
+  encryption_algorithm: aes-256-gcm
+  key_derivation: scrypt
+  ssl_validation: true
+  audit_logging: true
+
+llm:
+  default_provider: anthropic
+
+logging:
+  level: info
+  format: json
+
+tracing:
+  enabled: false
+  endpoint: ""
+
+metrics:
+  enabled: false
+  port: 9090

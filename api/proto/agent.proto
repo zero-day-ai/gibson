@@ -1,0 +1,60 @@
+syntax = "proto3";
+package gibson.agent;
+option go_package = "github.com/zero-day-ai/gibson/api/gen/proto";
+
+import "common.proto";
+
+service AgentService {
+    rpc GetDescriptor(AgentGetDescriptorRequest) returns (AgentDescriptor);
+    rpc GetSlotSchema(AgentGetSlotSchemaRequest) returns (AgentGetSlotSchemaResponse);
+    rpc Execute(AgentExecuteRequest) returns (AgentExecuteResponse);
+    rpc Health(AgentHealthRequest) returns (gibson.common.HealthStatus);
+}
+
+message AgentGetDescriptorRequest {}
+
+message AgentDescriptor {
+    string name = 1;
+    string version = 2;
+    string description = 3;
+    repeated string capabilities = 4;
+    repeated string target_types = 5;
+    repeated string technique_types = 6;
+}
+
+message AgentSlotDefinition {
+    string name = 1;
+    string description = 2;
+    bool required = 3;
+    AgentSlotConfig default_config = 4;
+    AgentSlotConstraints constraints = 5;
+}
+
+message AgentSlotConfig {
+    string provider = 1;
+    string model = 2;
+    double temperature = 3;
+    int32 max_tokens = 4;
+}
+
+message AgentSlotConstraints {
+    int32 min_context_window = 1;
+    repeated string required_features = 2;
+}
+
+message AgentGetSlotSchemaRequest {}
+message AgentGetSlotSchemaResponse {
+    repeated AgentSlotDefinition slots = 1;
+}
+
+message AgentExecuteRequest {
+    string task_json = 1;
+    int64 timeout_ms = 2;
+}
+
+message AgentExecuteResponse {
+    string result_json = 1;
+    gibson.common.Error error = 2;
+}
+
+message AgentHealthRequest {}

@@ -1,0 +1,117 @@
+package harness
+
+import (
+	"testing"
+
+	"github.com/zero-day-ai/gibson/internal/llm"
+)
+
+// TestHarnessConfig_Validate tests configuration validation
+func TestHarnessConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    HarnessConfig
+		expectErr bool
+	}{
+		{
+			name: "valid config with SlotManager",
+			config: HarnessConfig{
+				SlotManager: llm.NewSlotManager(llm.NewLLMRegistry()),
+			},
+			expectErr: false,
+		},
+		{
+			name:      "invalid config without SlotManager",
+			config:    HarnessConfig{},
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.expectErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.expectErr && err != nil {
+				t.Errorf("expected no error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestHarnessConfig_ApplyDefaults tests that defaults are applied correctly
+func TestHarnessConfig_ApplyDefaults(t *testing.T) {
+	config := HarnessConfig{
+		SlotManager: llm.NewSlotManager(llm.NewLLMRegistry()),
+		// All other fields are nil
+	}
+
+	// Before applying defaults
+	if config.LLMRegistry != nil {
+		t.Error("expected LLMRegistry to be nil before defaults")
+	}
+
+	config.ApplyDefaults()
+
+	// After applying defaults
+	if config.LLMRegistry == nil {
+		t.Error("expected LLMRegistry to be defaulted")
+	}
+	if config.ToolRegistry == nil {
+		t.Error("expected ToolRegistry to be defaulted")
+	}
+	if config.PluginRegistry == nil {
+		t.Error("expected PluginRegistry to be defaulted")
+	}
+	if config.AgentRegistry == nil {
+		t.Error("expected AgentRegistry to be defaulted")
+	}
+	if config.Logger == nil {
+		t.Error("expected Logger to be defaulted")
+	}
+	if config.FindingStore == nil {
+		t.Error("expected FindingStore to be defaulted")
+	}
+	if config.Metrics == nil {
+		t.Error("expected Metrics to be defaulted")
+	}
+	if config.Tracer == nil {
+		t.Error("expected Tracer to be defaulted")
+	}
+
+	// SlotManager should remain unchanged
+	if config.SlotManager == nil {
+		t.Error("expected SlotManager to remain set")
+	}
+
+	// MemoryManager should remain nil (not defaulted)
+	if config.MemoryManager != nil {
+		t.Error("expected MemoryManager to remain nil (not defaulted)")
+	}
+}
+
+// TestHarnessConfig_ApplyDefaults_Idempotent tests that ApplyDefaults is idempotent
+func TestHarnessConfig_ApplyDefaults_Idempotent(t *testing.T) {
+	config := HarnessConfig{
+		SlotManager: llm.NewSlotManager(llm.NewLLMRegistry()),
+	}
+
+	// Apply defaults first time
+	config.ApplyDefaults()
+	firstLogger := config.Logger
+	firstRegistry := config.LLMRegistry
+
+	// Apply defaults second time
+	config.ApplyDefaults()
+	secondLogger := config.Logger
+	secondRegistry := config.LLMRegistry
+
+	// Should be the same instances (idempotent)
+	if firstLogger != secondLogger {
+		t.Error("expected Logger to remain the same after second ApplyDefaults")
+	}
+	if firstRegistry != secondRegistry {
+		t.Error("expected LLMRegistry to remain the same after second ApplyDefaults")
+	}
+}

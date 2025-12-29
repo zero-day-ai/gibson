@@ -1,0 +1,203 @@
+package memory
+
+import (
+	"fmt"
+
+	"github.com/zero-day-ai/gibson/internal/types"
+)
+
+// MemoryConfig is the top-level memory configuration.
+// It contains configuration for all three memory tiers: working, mission, and long-term.
+type MemoryConfig struct {
+	Working  WorkingMemoryConfig  `mapstructure:"working" yaml:"working" json:"working"`
+	Mission  MissionMemoryConfig  `mapstructure:"mission" yaml:"mission" json:"mission"`
+	LongTerm LongTermMemoryConfig `mapstructure:"long_term" yaml:"long_term" json:"long_term"`
+}
+
+// Validate performs validation on the MemoryConfig.
+// It validates each sub-configuration and ensures all required fields are present.
+func (c *MemoryConfig) Validate() error {
+	if err := c.Working.Validate(); err != nil {
+		return types.WrapError(types.CONFIG_VALIDATION_FAILED, "working memory config validation failed", err)
+	}
+
+	if err := c.Mission.Validate(); err != nil {
+		return types.WrapError(types.CONFIG_VALIDATION_FAILED, "mission memory config validation failed", err)
+	}
+
+	if err := c.LongTerm.Validate(); err != nil {
+		return types.WrapError(types.CONFIG_VALIDATION_FAILED, "long-term memory config validation failed", err)
+	}
+
+	return nil
+}
+
+// ApplyDefaults applies default values to unset fields.
+func (c *MemoryConfig) ApplyDefaults() {
+	c.Working.ApplyDefaults()
+	c.Mission.ApplyDefaults()
+	c.LongTerm.ApplyDefaults()
+}
+
+// WorkingMemoryConfig configures working memory behavior.
+// Working memory is ephemeral key-value storage with token budget management.
+type WorkingMemoryConfig struct {
+	MaxTokens      int    `mapstructure:"max_tokens" yaml:"max_tokens" json:"max_tokens"`
+	EvictionPolicy string `mapstructure:"eviction_policy" yaml:"eviction_policy" json:"eviction_policy"`
+}
+
+// Validate performs validation on the WorkingMemoryConfig.
+func (c *WorkingMemoryConfig) Validate() error {
+	if c.MaxTokens <= 0 {
+		return types.NewError(types.CONFIG_VALIDATION_FAILED,
+			fmt.Sprintf("working memory max_tokens must be greater than 0, got %d", c.MaxTokens))
+	}
+
+	// Validate eviction policy
+	validPolicies := map[string]bool{
+		"lru": true, // Least Recently Used (default)
+	}
+
+	if !validPolicies[c.EvictionPolicy] {
+		return types.NewError(types.CONFIG_VALIDATION_FAILED,
+			fmt.Sprintf("invalid eviction_policy '%s', must be one of: lru", c.EvictionPolicy))
+	}
+
+	return nil
+}
+
+// ApplyDefaults applies default values to unset fields.
+func (c *WorkingMemoryConfig) ApplyDefaults() {
+	if c.MaxTokens == 0 {
+		c.MaxTokens = 100000 // Default: 100K tokens
+	}
+	if c.EvictionPolicy == "" {
+		c.EvictionPolicy = "lru" // Default: LRU eviction
+	}
+}
+
+// MissionMemoryConfig configures mission memory behavior.
+// Mission memory is persistent SQLite storage with FTS5 search and LRU caching.
+type MissionMemoryConfig struct {
+	CacheSize int  `mapstructure:"cache_size" yaml:"cache_size" json:"cache_size"`
+	EnableFTS bool `mapstructure:"enable_fts" yaml:"enable_fts" json:"enable_fts"`
+}
+
+// Validate performs validation on the MissionMemoryConfig.
+func (c *MissionMemoryConfig) Validate() error {
+	if c.CacheSize < 0 {
+		return types.NewError(types.CONFIG_VALIDATION_FAILED,
+			fmt.Sprintf("mission memory cache_size cannot be negative, got %d", c.CacheSize))
+	}
+
+	return nil
+}
+
+// ApplyDefaults applies default values to unset fields.
+func (c *MissionMemoryConfig) ApplyDefaults() {
+	if c.CacheSize == 0 {
+		c.CacheSize = 1000 // Default: 1000 entries
+	}
+	// EnableFTS defaults to true (zero value for bool is false, so we need special handling)
+	// This will be set explicitly in code when config is loaded
+}
+
+// LongTermMemoryConfig configures long-term memory (vector store).
+// Long-term memory provides semantic search over historical data using embeddings.
+type LongTermMemoryConfig struct {
+	Backend       string         `mapstructure:"backend" yaml:"backend" json:"backend"`
+	ConnectionURL string         `mapstructure:"connection_url" yaml:"connection_url" json:"connection_url"`
+	Embedder      EmbedderConfig `mapstructure:"embedder" yaml:"embedder" json:"embedder"`
+}
+
+// Validate performs validation on the LongTermMemoryConfig.
+func (c *LongTermMemoryConfig) Validate() error {
+	// Validate backend type
+	validBackends := map[string]bool{
+		"embedded": true, // In-process vector store
+		"qdrant":   true, // Qdrant vector database
+		"milvus":   true, // Milvus vector database (future support)
+	}
+
+	if c.Backend != "" && !validBackends[c.Backend] {
+		return types.NewError(types.CONFIG_VALIDATION_FAILED,
+			fmt.Sprintf("invalid backend '%s', must be one of: embedded, qdrant, milvus", c.Backend))
+	}
+
+	// If using external backend, ConnectionURL is required
+	if c.Backend != "" && c.Backend != "embedded" {
+		if c.ConnectionURL == "" {
+			return types.NewError(types.CONFIG_VALIDATION_FAILED,
+				fmt.Sprintf("connection_url is required for backend '%s'", c.Backend))
+		}
+	}
+
+	// Validate embedder configuration
+	if err := c.Embedder.Validate(); err != nil {
+		return types.WrapError(types.CONFIG_VALIDATION_FAILED, "embedder config validation failed", err)
+	}
+
+	return nil
+}
+
+// ApplyDefaults applies default values to unset fields.
+func (c *LongTermMemoryConfig) ApplyDefaults() {
+	if c.Backend == "" {
+		c.Backend = "embedded" // Default: embedded vector store
+	}
+	c.Embedder.ApplyDefaults()
+}
+
+// EmbedderConfig configures the embedding provider.
+// Embeddings are used for semantic similarity search in long-term memory.
+type EmbedderConfig struct {
+	Provider string `mapstructure:"provider" yaml:"provider" json:"provider"`
+	Model    string `mapstructure:"model" yaml:"model" json:"model"`
+	APIKey   string `mapstructure:"api_key" yaml:"api_key" json:"api_key"`
+}
+
+// Validate performs validation on the EmbedderConfig.
+func (c *EmbedderConfig) Validate() error {
+	// Validate provider type
+	validProviders := map[string]bool{
+		"openai": true, // OpenAI embeddings (text-embedding-3-small, text-embedding-3-large)
+		"llm":    true, // Generic LLM provider embeddings
+		"mock":   true, // Mock embedder for testing
+	}
+
+	if c.Provider != "" && !validProviders[c.Provider] {
+		return types.NewError(types.CONFIG_VALIDATION_FAILED,
+			fmt.Sprintf("invalid embedder provider '%s', must be one of: openai, llm, mock", c.Provider))
+	}
+
+	// Model is required for non-mock providers
+	if c.Provider != "" && c.Provider != "mock" {
+		if c.Model == "" {
+			return types.NewError(types.CONFIG_VALIDATION_FAILED,
+				fmt.Sprintf("embedder model is required for provider '%s'", c.Provider))
+		}
+	}
+
+	// APIKey is required for OpenAI provider (can also be set via env var)
+	// We don't validate APIKey here as it may be set via environment variable
+
+	return nil
+}
+
+// ApplyDefaults applies default values to unset fields.
+func (c *EmbedderConfig) ApplyDefaults() {
+	if c.Provider == "" {
+		c.Provider = "openai" // Default: OpenAI embeddings
+	}
+	if c.Model == "" && c.Provider == "openai" {
+		c.Model = "text-embedding-3-small" // Default: smaller, cheaper model
+	}
+}
+
+// NewDefaultMemoryConfig creates a MemoryConfig with default values.
+// This is useful for testing or when no configuration file is provided.
+func NewDefaultMemoryConfig() *MemoryConfig {
+	config := &MemoryConfig{}
+	config.ApplyDefaults()
+	return config
+}

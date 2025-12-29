@@ -1,0 +1,478 @@
+package harness
+
+import (
+	"context"
+	"log/slog"
+
+	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/memory"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// AgentHarness is the primary interface provided to agents during execution.
+// It orchestrates access to all framework capabilities including LLM operations,
+// tool execution, plugin queries, sub-agent delegation, finding management,
+// memory storage, and observability primitives.
+//
+// The harness abstracts infrastructure complexity, allowing agents to focus on
+// implementing their core logic while the framework handles:
+//   - LLM provider management and slot-based model selection
+//   - Tool registration, validation, and execution
+//   - Plugin lifecycle and communication
+//   - Sub-agent discovery and delegation
+//   - Finding storage and querying
+//   - Memory tier coordination (working, mission, long-term)
+//   - Distributed tracing and structured logging
+//   - Metrics collection and token usage tracking
+//
+// All methods are safe for concurrent use. The harness ensures thread-safety
+// for shared resources and coordinates access across multiple agents.
+//
+// Example usage:
+//
+//	func (a *MyAgent) Execute(ctx context.Context, task agent.Task, harness harness.AgentHarness) (agent.Result, error) {
+//	    // Use the harness to perform LLM completion
+//	    resp, err := harness.Complete(ctx, "primary", messages)
+//
+//	    // Submit a security finding
+//	    finding := agent.NewFinding("XSS Vulnerability", "Found in login form", agent.SeverityHigh)
+//	    harness.SubmitFinding(ctx, finding)
+//
+//	    // Store data in working memory
+//	    harness.Memory().Working().Set(ctx, "scan_results", scanData)
+//
+//	    return result, nil
+//	}
+type AgentHarness interface {
+	// ────────────────────────────────────────────────────────────────────────────
+	// LLM Access
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// Complete performs a synchronous LLM completion using the specified slot.
+	// The slot determines which provider and model to use based on configuration.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation, timeout, and distributed tracing
+	//   - slot: Name of the LLM slot (e.g., "primary", "reasoning", "fast")
+	//   - messages: Conversation history with system, user, and assistant messages
+	//   - opts: Optional configuration (temperature, max tokens, etc.)
+	//
+	// Returns:
+	//   - *llm.CompletionResponse: The LLM's response with generated message and token usage
+	//   - error: Non-nil if completion fails (invalid slot, API error, budget exceeded)
+	//
+	// The harness automatically:
+	//   - Validates messages before sending to the provider
+	//   - Tracks token usage and enforces budget limits
+	//   - Records metrics (latency, token count, cost)
+	//   - Creates distributed trace spans
+	//   - Handles provider-specific error translation
+	//
+	// Example:
+	//   messages := []llm.Message{
+	//       llm.NewSystemMessage("You are a security analyst"),
+	//       llm.NewUserMessage("Analyze this code for vulnerabilities"),
+	//   }
+	//   resp, err := harness.Complete(ctx, "primary", messages, WithTemperature(0.2))
+	Complete(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (*llm.CompletionResponse, error)
+
+	// CompleteWithTools performs a completion with tool-calling capabilities.
+	// The LLM can request tool executions by returning tool calls in the response.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - slot: Name of the LLM slot to use
+	//   - messages: Conversation history
+	//   - tools: Available tools the LLM can choose to call
+	//   - opts: Optional configuration
+	//
+	// Returns:
+	//   - *llm.CompletionResponse: Response that may contain tool calls or final text
+	//   - error: Non-nil if completion fails
+	//
+	// The agent is responsible for:
+	//   1. Checking response.Message.ToolCalls to see if the LLM requested tool execution
+	//   2. Executing the requested tools using CallTool()
+	//   3. Appending tool results to messages and calling Complete() again
+	//
+	// Example:
+	//   resp, err := harness.CompleteWithTools(ctx, "primary", messages, tools)
+	//   for _, toolCall := range resp.Message.ToolCalls {
+	//       result, _ := harness.CallTool(ctx, toolCall.Name, args)
+	//       messages = append(messages, llm.NewToolResultMessage(toolCall.ID, result))
+	//   }
+	CompleteWithTools(ctx context.Context, slot string, messages []llm.Message, tools []llm.ToolDef, opts ...CompletionOption) (*llm.CompletionResponse, error)
+
+	// Stream performs a streaming LLM completion, returning chunks as they arrive.
+	// This enables real-time processing and display of LLM output.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - slot: Name of the LLM slot to use
+	//   - messages: Conversation history
+	//   - opts: Optional configuration
+	//
+	// Returns:
+	//   - <-chan llm.StreamChunk: Read-only channel of response chunks
+	//   - error: Non-nil if stream setup fails (does not include streaming errors)
+	//
+	// The returned channel:
+	//   - Sends incremental chunks (StreamChunk) as the LLM generates output
+	//   - Sends a chunk with FinishReason when generation completes
+	//   - Sends a chunk with Error field set if streaming fails
+	//   - Is closed when the stream ends (success or failure)
+	//
+	// The caller must consume the channel until it closes. Context cancellation
+	// will close the channel and stop streaming.
+	//
+	// Example:
+	//   chunks, err := harness.Stream(ctx, "primary", messages)
+	//   for chunk := range chunks {
+	//       if chunk.Error != nil {
+	//           return chunk.Error
+	//       }
+	//       fmt.Print(chunk.Delta.Content)
+	//   }
+	Stream(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (<-chan llm.StreamChunk, error)
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Tool Execution
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// CallTool executes a registered tool by name with the given input parameters.
+	// Tools are typically called in response to LLM tool requests, but agents
+	// can also call tools directly.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeout control
+	//   - name: Name of the tool to execute (must be registered)
+	//   - input: Tool input parameters as a map (validated against tool's input schema)
+	//
+	// Returns:
+	//   - map[string]any: Tool execution result (conforms to tool's output schema)
+	//   - error: Non-nil if tool not found, validation fails, or execution fails
+	//
+	// The harness:
+	//   - Validates input against the tool's JSON schema
+	//   - Executes the tool with proper context propagation
+	//   - Records execution metrics (duration, success/failure)
+	//   - Creates distributed trace spans
+	//   - Handles timeouts and cancellation
+	//
+	// Example:
+	//   input := map[string]any{"target": "192.168.1.1", "ports": "1-1024"}
+	//   result, err := harness.CallTool(ctx, "nmap_scan", input)
+	CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error)
+
+	// ListTools returns descriptors for all registered tools.
+	// This enables dynamic tool discovery and capability introspection.
+	//
+	// Returns:
+	//   - []ToolDescriptor: Metadata for each available tool (name, description, schema)
+	//
+	// Use this to:
+	//   - Build tool lists for LLM tool-calling
+	//   - Discover available capabilities
+	//   - Filter tools by tags or capabilities
+	//
+	// Example:
+	//   tools := harness.ListTools()
+	//   for _, t := range tools {
+	//       if t.HasTag("network") {
+	//           fmt.Printf("Network tool: %s - %s\n", t.Name, t.Description)
+	//       }
+	//   }
+	ListTools() []ToolDescriptor
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Plugin Access
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// QueryPlugin calls a method on a registered plugin with the given parameters.
+	// Plugins provide extended functionality beyond tools, often with stateful
+	// or complex interactions.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - name: Name of the plugin (must be registered and initialized)
+	//   - method: Name of the method to call on the plugin
+	//   - params: Method parameters as a map (plugin-specific format)
+	//
+	// Returns:
+	//   - any: Method return value (type depends on plugin method)
+	//   - error: Non-nil if plugin not found, method doesn't exist, or execution fails
+	//
+	// The harness:
+	//   - Ensures the plugin is initialized before calling methods
+	//   - Validates method existence and parameters
+	//   - Records metrics for plugin operations
+	//   - Creates distributed trace spans
+	//   - Handles plugin lifecycle (initialization, health checks)
+	//
+	// Example:
+	//   params := map[string]any{"query": "SELECT * FROM findings WHERE severity='critical'"}
+	//   result, err := harness.QueryPlugin(ctx, "database", "query", params)
+	QueryPlugin(ctx context.Context, name string, method string, params map[string]any) (any, error)
+
+	// ListPlugins returns descriptors for all registered plugins.
+	// This enables dynamic plugin discovery and capability introspection.
+	//
+	// Returns:
+	//   - []PluginDescriptor: Metadata for each available plugin (name, version, methods, status)
+	//
+	// Example:
+	//   plugins := harness.ListPlugins()
+	//   for _, p := range plugins {
+	//       fmt.Printf("Plugin: %s v%s (%d methods)\n", p.Name, p.Version, len(p.Methods))
+	//   }
+	ListPlugins() []PluginDescriptor
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Sub-Agent Delegation
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// DelegateToAgent delegates a task to another registered agent for execution.
+	// This enables hierarchical agent workflows and specialization.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing (inherited by sub-agent)
+	//   - name: Name of the agent to delegate to (must be registered)
+	//   - task: The task to execute (contains input, constraints, etc.)
+	//
+	// Returns:
+	//   - agent.Result: The sub-agent's execution result (output, findings, metrics)
+	//   - error: Non-nil if agent not found or delegation fails
+	//
+	// The harness:
+	//   - Validates the target agent exists and is available
+	//   - Propagates context (mission ID, tracing, logging) to the sub-agent
+	//   - Provides the sub-agent with its own harness instance
+	//   - Aggregates metrics and findings from the sub-agent
+	//   - Handles sub-agent failures and timeouts
+	//
+	// The sub-agent receives:
+	//   - The same mission context
+	//   - Access to the same memory store (mission and long-term memory)
+	//   - Its own working memory instance (isolated from parent)
+	//   - Its own token usage tracking (aggregated to mission level)
+	//
+	// Example:
+	//   task := agent.NewTask("subdomain_enum", "Enumerate subdomains for target", input)
+	//   result, err := harness.DelegateToAgent(ctx, "recon_agent", task)
+	//   parentResult.Findings = append(parentResult.Findings, result.Findings...)
+	DelegateToAgent(ctx context.Context, name string, task agent.Task) (agent.Result, error)
+
+	// ListAgents returns descriptors for all registered agents.
+	// This enables dynamic agent discovery and delegation planning.
+	//
+	// Returns:
+	//   - []AgentDescriptor: Metadata for each available agent (name, capabilities, slots)
+	//
+	// Example:
+	//   agents := harness.ListAgents()
+	//   for _, a := range agents {
+	//       if a.HasCapability("network_scanning") {
+	//           result, _ := harness.DelegateToAgent(ctx, a.Name, scanTask)
+	//       }
+	//   }
+	ListAgents() []AgentDescriptor
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Findings Management
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// SubmitFinding stores a security finding for the current mission.
+	// Findings are indexed by mission ID and available for querying and reporting.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - finding: The security finding to store (must have valid severity, confidence, etc.)
+	//
+	// Returns:
+	//   - error: Non-nil if storage fails
+	//
+	// The harness:
+	//   - Associates the finding with the current mission ID
+	//   - Validates finding fields (severity, confidence range)
+	//   - Records metrics (findings by severity, category, etc.)
+	//   - Emits events for finding submission (for real-time monitoring)
+	//
+	// Example:
+	//   finding := agent.NewFinding("SQL Injection", "Parameter 'id' is vulnerable", agent.SeverityHigh).
+	//       WithConfidence(0.95).
+	//       WithCategory("injection").
+	//       WithCWE("CWE-89")
+	//   err := harness.SubmitFinding(ctx, finding)
+	SubmitFinding(ctx context.Context, finding agent.Finding) error
+
+	// GetFindings retrieves findings for the current mission, optionally filtered.
+	// This enables agents to query previous findings and avoid duplicate work.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - filter: Filter criteria (severity, confidence, category, etc.)
+	//
+	// Returns:
+	//   - []agent.Finding: Findings matching the filter (empty if none match)
+	//   - error: Non-nil if retrieval fails
+	//
+	// Example:
+	//   // Get all critical findings
+	//   filter := NewFindingFilter().WithSeverity(agent.SeverityCritical)
+	//   findings, err := harness.GetFindings(ctx, *filter)
+	GetFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error)
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Memory Access
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// Memory provides access to the unified memory store with three tiers:
+	//   - Working: Ephemeral key-value storage scoped to agent execution
+	//   - Mission: Persistent storage scoped to the current mission
+	//   - LongTerm: Semantic search over historical data across all missions
+	//
+	// Returns:
+	//   - memory.MemoryStore: Interface for accessing all memory tiers
+	//
+	// Working memory:
+	//   - Isolated per agent execution (not shared with sub-agents)
+	//   - Cleared when agent completes
+	//   - Fast in-memory operations
+	//
+	// Mission memory:
+	//   - Shared across all agents in a mission
+	//   - Persisted for mission duration
+	//   - Enables inter-agent communication
+	//
+	// Long-term memory:
+	//   - Vector embeddings for semantic search
+	//   - Persisted across missions
+	//   - Enables learning from historical executions
+	//
+	// Example:
+	//   // Store in working memory
+	//   harness.Memory().Working().Set(ctx, "scan_results", data)
+	//
+	//   // Query mission memory
+	//   targets, _ := harness.Memory().Mission().Get(ctx, "discovered_targets")
+	//
+	//   // Search long-term memory
+	//   similar, _ := harness.Memory().LongTerm().Search(ctx, "SQL injection findings", 10)
+	Memory() memory.MemoryStore
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Context Access
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// Mission returns the current mission context.
+	// This provides mission-level metadata, phase information, and constraints.
+	//
+	// Returns:
+	//   - MissionContext: Current mission metadata
+	//
+	// Example:
+	//   mission := harness.Mission()
+	//   logger.Info("Executing mission", "name", mission.Name, "phase", mission.Phase)
+	Mission() MissionContext
+
+	// Target returns information about the current target.
+	// This provides target URL, authentication, and provider-specific metadata.
+	//
+	// Returns:
+	//   - TargetInfo: Current target metadata
+	//
+	// Example:
+	//   target := harness.Target()
+	//   req, _ := http.NewRequest("GET", target.URL, nil)
+	//   for k, v := range target.Headers {
+	//       req.Header.Set(k, v)
+	//   }
+	Target() TargetInfo
+
+	// ────────────────────────────────────────────────────────────────────────────
+	// Observability
+	// ────────────────────────────────────────────────────────────────────────────
+
+	// Tracer returns the OpenTelemetry tracer for distributed tracing.
+	// Use this to create custom spans for agent-specific operations.
+	//
+	// Returns:
+	//   - trace.Tracer: OpenTelemetry tracer instance
+	//
+	// The harness automatically creates spans for:
+	//   - LLM completions
+	//   - Tool executions
+	//   - Plugin queries
+	//   - Sub-agent delegations
+	//
+	// Create custom spans for agent-specific logic:
+	//
+	// Example:
+	//   ctx, span := harness.Tracer().Start(ctx, "analyze_response")
+	//   defer span.End()
+	//   // ... analysis logic ...
+	Tracer() trace.Tracer
+
+	// Logger returns the structured logger for this agent execution.
+	// The logger is pre-configured with mission and agent context.
+	//
+	// Returns:
+	//   - *slog.Logger: Structured logger instance
+	//
+	// The logger automatically includes:
+	//   - Mission ID
+	//   - Agent name
+	//   - Task ID
+	//   - Trace ID (for correlation with traces)
+	//
+	// Example:
+	//   harness.Logger().Info("Starting reconnaissance",
+	//       "target", target.URL,
+	//       "method", "subdomain_enumeration")
+	Logger() *slog.Logger
+
+	// Metrics returns the metrics recorder for operational metrics.
+	// Use this to record custom metrics for agent-specific operations.
+	//
+	// Returns:
+	//   - MetricsRecorder: Interface for recording counters, gauges, and histograms
+	//
+	// The harness automatically records metrics for:
+	//   - LLM completions (latency, token count, cost)
+	//   - Tool executions (count, duration, success/failure)
+	//   - Plugin queries (count, duration)
+	//   - Findings submitted (count by severity)
+	//
+	// Example:
+	//   harness.Metrics().RecordCounter("custom.vulnerabilities.found", 1, map[string]string{
+	//       "type": "xss",
+	//       "severity": "high",
+	//   })
+	Metrics() MetricsRecorder
+
+	// TokenUsage returns the token usage tracker for the current execution.
+	// This provides access to token consumption and cost data at multiple scopes.
+	//
+	// Returns:
+	//   - *llm.TokenTracker: Token usage tracker with hierarchical tracking
+	//
+	// The tracker maintains usage at three levels:
+	//   - Slot level: Usage per LLM slot (e.g., "primary", "reasoning")
+	//   - Agent level: Aggregate usage for this agent
+	//   - Mission level: Aggregate usage for the entire mission
+	//
+	// Use this to:
+	//   - Check remaining budget before expensive operations
+	//   - Query costs for reporting
+	//   - Make cost-aware decisions (e.g., use cheaper models when low on budget)
+	//
+	// Example:
+	//   tracker := harness.TokenUsage()
+	//   scope := llm.UsageScope{MissionID: mission.ID, AgentName: "recon"}
+	//   cost, _ := tracker.GetCost(scope)
+	//   if cost > 0.50 {
+	//       // Use cheaper model or reduce max tokens
+	//   }
+	TokenUsage() *llm.TokenTracker
+}

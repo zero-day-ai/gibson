@@ -1,0 +1,338 @@
+package component
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// ComponentKind represents the type of component.
+type ComponentKind string
+
+const (
+	ComponentKindAgent  ComponentKind = "agent"
+	ComponentKindTool   ComponentKind = "tool"
+	ComponentKindPlugin ComponentKind = "plugin"
+)
+
+// String returns the string representation of the ComponentKind.
+func (k ComponentKind) String() string {
+	return string(k)
+}
+
+// IsValid checks if the ComponentKind is a valid enum value.
+func (k ComponentKind) IsValid() bool {
+	switch k {
+	case ComponentKindAgent, ComponentKindTool, ComponentKindPlugin:
+		return true
+	default:
+		return false
+	}
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (k ComponentKind) MarshalJSON() ([]byte, error) {
+	if !k.IsValid() {
+		return nil, fmt.Errorf("invalid component kind: %s", k)
+	}
+	return json.Marshal(string(k))
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (k *ComponentKind) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+
+	parsed, err := ParseComponentKind(s)
+	if err != nil {
+		return err
+	}
+
+	*k = parsed
+	return nil
+}
+
+// AllComponentKinds returns a slice containing all valid ComponentKind values.
+func AllComponentKinds() []ComponentKind {
+	return []ComponentKind{
+		ComponentKindAgent,
+		ComponentKindTool,
+		ComponentKindPlugin,
+	}
+}
+
+// ParseComponentKind parses a string into a ComponentKind, returning an error if invalid.
+func ParseComponentKind(s string) (ComponentKind, error) {
+	k := ComponentKind(s)
+	if !k.IsValid() {
+		return "", fmt.Errorf("invalid component kind: %s", s)
+	}
+	return k, nil
+}
+
+// ComponentSource represents where a component originates from.
+type ComponentSource string
+
+const (
+	ComponentSourceInternal ComponentSource = "internal"
+	ComponentSourceExternal ComponentSource = "external"
+	ComponentSourceRemote   ComponentSource = "remote"
+	ComponentSourceConfig   ComponentSource = "config"
+)
+
+// String returns the string representation of the ComponentSource.
+func (s ComponentSource) String() string {
+	return string(s)
+}
+
+// IsValid checks if the ComponentSource is a valid enum value.
+func (s ComponentSource) IsValid() bool {
+	switch s {
+	case ComponentSourceInternal, ComponentSourceExternal, ComponentSourceRemote, ComponentSourceConfig:
+		return true
+	default:
+		return false
+	}
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (s ComponentSource) MarshalJSON() ([]byte, error) {
+	if !s.IsValid() {
+		return nil, fmt.Errorf("invalid component source: %s", s)
+	}
+	return json.Marshal(string(s))
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (s *ComponentSource) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+
+	parsed, err := ParseComponentSource(str)
+	if err != nil {
+		return err
+	}
+
+	*s = parsed
+	return nil
+}
+
+// AllComponentSources returns a slice containing all valid ComponentSource values.
+func AllComponentSources() []ComponentSource {
+	return []ComponentSource{
+		ComponentSourceInternal,
+		ComponentSourceExternal,
+		ComponentSourceRemote,
+		ComponentSourceConfig,
+	}
+}
+
+// ParseComponentSource parses a string into a ComponentSource, returning an error if invalid.
+func ParseComponentSource(s string) (ComponentSource, error) {
+	src := ComponentSource(s)
+	if !src.IsValid() {
+		return "", fmt.Errorf("invalid component source: %s", s)
+	}
+	return src, nil
+}
+
+// ComponentStatus represents the runtime status of a component.
+type ComponentStatus string
+
+const (
+	ComponentStatusAvailable ComponentStatus = "available"
+	ComponentStatusRunning   ComponentStatus = "running"
+	ComponentStatusStopped   ComponentStatus = "stopped"
+	ComponentStatusError     ComponentStatus = "error"
+)
+
+// String returns the string representation of the ComponentStatus.
+func (s ComponentStatus) String() string {
+	return string(s)
+}
+
+// IsValid checks if the ComponentStatus is a valid enum value.
+func (s ComponentStatus) IsValid() bool {
+	switch s {
+	case ComponentStatusAvailable, ComponentStatusRunning, ComponentStatusStopped, ComponentStatusError:
+		return true
+	default:
+		return false
+	}
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (s ComponentStatus) MarshalJSON() ([]byte, error) {
+	if !s.IsValid() {
+		return nil, fmt.Errorf("invalid component status: %s", s)
+	}
+	return json.Marshal(string(s))
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (s *ComponentStatus) UnmarshalJSON(data []byte) error {
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return err
+	}
+
+	parsed, err := ParseComponentStatus(str)
+	if err != nil {
+		return err
+	}
+
+	*s = parsed
+	return nil
+}
+
+// AllComponentStatuses returns a slice containing all valid ComponentStatus values.
+func AllComponentStatuses() []ComponentStatus {
+	return []ComponentStatus{
+		ComponentStatusAvailable,
+		ComponentStatusRunning,
+		ComponentStatusStopped,
+		ComponentStatusError,
+	}
+}
+
+// ParseComponentStatus parses a string into a ComponentStatus, returning an error if invalid.
+func ParseComponentStatus(s string) (ComponentStatus, error) {
+	status := ComponentStatus(s)
+	if !status.IsValid() {
+		return "", fmt.Errorf("invalid component status: %s", s)
+	}
+	return status, nil
+}
+
+// Component represents an external component (agent, tool, or plugin) in the Gibson framework.
+// Components can be internal (built-in), external (local binaries), remote (network services),
+// or config-based (defined in configuration files).
+type Component struct {
+	Kind      ComponentKind   `json:"kind" yaml:"kind"`           // Type of component (agent, tool, plugin)
+	Name      string          `json:"name" yaml:"name"`           // Component name
+	Version   string          `json:"version" yaml:"version"`     // Semantic version
+	Path      string          `json:"path" yaml:"path"`           // File path or URL
+	Source    ComponentSource `json:"source" yaml:"source"`       // Where the component originates
+	Status    ComponentStatus `json:"status" yaml:"status"`       // Current runtime status
+	Manifest  *Manifest       `json:"manifest,omitempty" yaml:"manifest,omitempty"` // Component manifest
+	Port      int             `json:"port,omitempty" yaml:"port,omitempty"`         // Network port for remote components
+	PID       int             `json:"pid,omitempty" yaml:"pid,omitempty"`           // Process ID for running components
+	CreatedAt time.Time       `json:"created_at" yaml:"created_at"`                 // When the component was registered
+	UpdatedAt time.Time       `json:"updated_at" yaml:"updated_at"`                 // Last status update time
+	StartedAt *time.Time      `json:"started_at,omitempty" yaml:"started_at,omitempty"` // When the component started running
+	StoppedAt *time.Time      `json:"stopped_at,omitempty" yaml:"stopped_at,omitempty"` // When the component stopped
+}
+
+// Validate validates the Component fields.
+// Returns an error if required fields are missing or values are invalid.
+func (c *Component) Validate() error {
+	if !c.Kind.IsValid() {
+		return fmt.Errorf("invalid component kind: %s", c.Kind)
+	}
+
+	if c.Name == "" {
+		return fmt.Errorf("component name is required")
+	}
+
+	if c.Version == "" {
+		return fmt.Errorf("component version is required")
+	}
+
+	if c.Path == "" {
+		return fmt.Errorf("component path is required")
+	}
+
+	if !c.Source.IsValid() {
+		return fmt.Errorf("invalid component source: %s", c.Source)
+	}
+
+	if !c.Status.IsValid() {
+		return fmt.Errorf("invalid component status: %s", c.Status)
+	}
+
+	// Validate port for remote components
+	if c.Source == ComponentSourceRemote {
+		if c.Port < 1 || c.Port > 65535 {
+			return fmt.Errorf("port must be between 1 and 65535 for remote components, got %d", c.Port)
+		}
+	}
+
+	// Validate PID for running components
+	if c.Status == ComponentStatusRunning {
+		if c.PID < 1 {
+			return fmt.Errorf("PID must be positive for running components, got %d", c.PID)
+		}
+		if c.StartedAt == nil {
+			return fmt.Errorf("started_at is required for running components")
+		}
+	}
+
+	// Validate manifest if present
+	if c.Manifest != nil {
+		if err := c.Manifest.Validate(); err != nil {
+			return fmt.Errorf("manifest validation failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// IsRunning returns true if the component is currently running.
+func (c *Component) IsRunning() bool {
+	return c.Status == ComponentStatusRunning
+}
+
+// IsStopped returns true if the component is stopped.
+func (c *Component) IsStopped() bool {
+	return c.Status == ComponentStatusStopped
+}
+
+// IsAvailable returns true if the component is available for use.
+func (c *Component) IsAvailable() bool {
+	return c.Status == ComponentStatusAvailable
+}
+
+// HasError returns true if the component is in an error state.
+func (c *Component) HasError() bool {
+	return c.Status == ComponentStatusError
+}
+
+// IsRemote returns true if the component is a remote service.
+func (c *Component) IsRemote() bool {
+	return c.Source == ComponentSourceRemote
+}
+
+// IsExternal returns true if the component is an external binary.
+func (c *Component) IsExternal() bool {
+	return c.Source == ComponentSourceExternal
+}
+
+// IsInternal returns true if the component is built-in.
+func (c *Component) IsInternal() bool {
+	return c.Source == ComponentSourceInternal
+}
+
+// UpdateStatus updates the component status and sets the updated_at timestamp.
+// If transitioning to running, sets started_at. If transitioning to stopped, sets stopped_at.
+func (c *Component) UpdateStatus(status ComponentStatus) {
+	oldStatus := c.Status
+	c.Status = status
+	c.UpdatedAt = time.Now()
+
+	// Set started_at when transitioning to running
+	if status == ComponentStatusRunning && oldStatus != ComponentStatusRunning {
+		now := time.Now()
+		c.StartedAt = &now
+		c.StoppedAt = nil
+	}
+
+	// Set stopped_at when transitioning to stopped
+	if status == ComponentStatusStopped && oldStatus == ComponentStatusRunning {
+		now := time.Now()
+		c.StoppedAt = &now
+	}
+}
