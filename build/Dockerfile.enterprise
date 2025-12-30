@@ -14,18 +14,21 @@ ARG GIBSON_VERSION=main
 ARG TOOLS_VERSION=main
 ARG AGENTS_VERSION=main
 ARG PLUGINS_VERSION=main
+ARG GITHUB_TOKEN
 
-# Clone all repos
+# Clone public repos
 RUN git clone --branch ${SDK_VERSION} --depth 1 \
     https://github.com/zero-day-ai/sdk.git /src/sdk
 RUN git clone --branch ${GIBSON_VERSION} --depth 1 \
     https://github.com/zero-day-ai/gibson.git /src/gibson
 RUN git clone --branch ${TOOLS_VERSION} --depth 1 \
     https://github.com/zero-day-ai/gibson-tools-official.git /src/tools
+
+# Clone private repos with token
 RUN git clone --branch ${AGENTS_VERSION} --depth 1 \
-    https://github.com/zero-day-ai/gibson-agents-official.git /src/agents
+    https://${GITHUB_TOKEN}@github.com/zero-day-ai/gibson-agents-official.git /src/agents
 RUN git clone --branch ${PLUGINS_VERSION} --depth 1 \
-    https://github.com/zero-day-ai/gibson-plugins-official.git /src/plugins
+    https://${GITHUB_TOKEN}@github.com/zero-day-ai/gibson-plugins-official.git /src/plugins
 
 # Build gibson
 WORKDIR /src/gibson
