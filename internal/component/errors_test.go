@@ -276,10 +276,10 @@ func TestNewExecutionFailedError(t *testing.T) {
 
 // TestNewInvalidKindError tests the NewInvalidKindError function
 func TestNewInvalidKindError(t *testing.T) {
-	err := NewInvalidKindError("invalid")
+	err := NewInvalidKindError("")
 	assert.NotNil(t, err)
 	assert.Equal(t, ErrCodeInvalidKind, err.Code)
-	assert.Contains(t, err.Message, "invalid")
+	assert.Contains(t, err.Message, "empty")
 	assert.False(t, err.Retryable)
 }
 

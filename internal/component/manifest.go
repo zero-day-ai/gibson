@@ -87,8 +87,9 @@ func ParseRuntimeType(s string) (RuntimeType, error) {
 
 // Manifest represents the metadata and configuration for a component.
 // It defines how the component should be built, run, and integrated.
+// The component kind (agent, tool, plugin) is determined by the CLI subcommand used,
+// not by the manifest. Repositories should contain only one type of component.
 type Manifest struct {
-	Kind         ComponentKind         `json:"kind" yaml:"kind"`                                     // Component type (agent, tool, plugin)
 	Name         string                `json:"name" yaml:"name"`                                     // Component name
 	Version      string                `json:"version" yaml:"version"`                               // Semantic version (e.g., 1.0.0)
 	Description  string                `json:"description,omitempty" yaml:"description,omitempty"`   // Brief description
@@ -180,11 +181,6 @@ func LoadManifest(path string) (*Manifest, error) {
 // Validate validates the Manifest fields.
 // Returns an error if required fields are missing or values are invalid.
 func (m *Manifest) Validate() error {
-	// Validate kind
-	if !m.Kind.IsValid() {
-		return fmt.Errorf("invalid component kind: %s", m.Kind)
-	}
-
 	// Validate name
 	if m.Name == "" {
 		return fmt.Errorf("component name is required")

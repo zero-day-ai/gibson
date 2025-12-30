@@ -278,7 +278,7 @@ func NewExecutionFailedError(component string, cause error, retryable bool) *Com
 func NewInvalidKindError(kind string) *ComponentError {
 	return &ComponentError{
 		Code:    ErrCodeInvalidKind,
-		Message: fmt.Sprintf("invalid component kind: %s", kind),
+		Message: "component kind cannot be empty",
 		Context: map[string]any{
 			"kind": kind,
 		},

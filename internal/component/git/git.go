@@ -3,7 +3,6 @@ package git
 import (
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -45,12 +44,6 @@ type RepoInfo struct {
 
 	// Repo is the full repository name (e.g., gibson-agent-scanner)
 	Repo string
-
-	// Kind is the component type extracted from repo name (agent, tool, plugin)
-	Kind string
-
-	// Name is the component name extracted from repo name (scanner, nmap, vuln-db)
-	Name string
 }
 
 // DefaultGitOperations implements GitOperations using os/exec
@@ -130,9 +123,9 @@ func (g *DefaultGitOperations) ParseRepoURL(url string) (*RepoInfo, error) {
 	}
 
 	// Patterns to match:
-	// https://github.com/org/gibson-agent-scanner.git
-	// git@github.com:org/gibson-tool-nmap.git
-	// https://github.com/org/gibson-plugin-vuln-db
+	// https://github.com/org/repo-name.git
+	// git@github.com:org/repo-name.git
+	// https://github.com/org/repo-name
 
 	var host, owner, repo string
 
@@ -154,67 +147,16 @@ func (g *DefaultGitOperations) ParseRepoURL(url string) (*RepoInfo, error) {
 		}
 	}
 
-	// Extract component kind and name from repo name
-	// Expected format: gibson-{kind}-{name} (e.g., gibson-agent-scanner)
-	kind, name, err := parseRepoName(repo)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse repository name: %w", err)
-	}
-
 	return &RepoInfo{
 		Host:  host,
 		Owner: owner,
 		Repo:  repo,
-		Kind:  kind,
-		Name:  name,
 	}, nil
-}
-
-// parseRepoName extracts component kind and name from repository name
-func parseRepoName(repoName string) (kind, name string, err error) {
-	// Expected format: gibson-{kind}-{name}
-	// Examples:
-	//   gibson-agent-scanner -> kind: agent, name: scanner
-	//   gibson-tool-nmap -> kind: tool, name: nmap
-	//   gibson-plugin-vuln-db -> kind: plugin, name: vuln-db
-
-	if !strings.HasPrefix(repoName, "gibson-") {
-		return "", "", fmt.Errorf("repository name must start with 'gibson-': %s", repoName)
-	}
-
-	// Remove "gibson-" prefix
-	remainder := strings.TrimPrefix(repoName, "gibson-")
-
-	// Split on first hyphen to get kind and name
-	parts := strings.SplitN(remainder, "-", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("repository name must be in format 'gibson-{kind}-{name}': %s", repoName)
-	}
-
-	kind = parts[0]
-	name = parts[1]
-
-	// Validate kind is one of the expected types
-	validKinds := map[string]bool{
-		"agent":  true,
-		"tool":   true,
-		"plugin": true,
-	}
-
-	if !validKinds[kind] {
-		return "", "", fmt.Errorf("invalid component kind '%s', must be one of: agent, tool, plugin", kind)
-	}
-
-	if name == "" {
-		return "", "", fmt.Errorf("component name cannot be empty")
-	}
-
-	return kind, name, nil
 }
 
 // String returns a string representation of RepoInfo
 func (r *RepoInfo) String() string {
-	return fmt.Sprintf("%s/%s/%s (kind=%s, name=%s)", r.Host, r.Owner, r.Repo, r.Kind, r.Name)
+	return fmt.Sprintf("%s/%s/%s", r.Host, r.Owner, r.Repo)
 }
 
 // ToURL converts RepoInfo to an HTTPS URL
@@ -225,10 +167,4 @@ func (r *RepoInfo) ToURL() string {
 // ToSSHURL converts RepoInfo to an SSH URL
 func (r *RepoInfo) ToSSHURL() string {
 	return fmt.Sprintf("git@%s:%s/%s.git", r.Host, r.Owner, r.Repo)
-}
-
-// ComponentPath returns the expected filesystem path for this component
-// Typically: {kind}s/{name} (e.g., agents/scanner, tools/nmap)
-func (r *RepoInfo) ComponentPath() string {
-	return filepath.Join(r.Kind+"s", r.Name)
 }

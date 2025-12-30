@@ -126,7 +126,6 @@ func createTestPlugin(name, version string, status component.ComponentStatus) *c
 		CreatedAt: now,
 		UpdatedAt: now,
 		Manifest: &component.Manifest{
-			Kind:        component.ComponentKindPlugin,
 			Name:        name,
 			Version:     version,
 			Description: "Test plugin",

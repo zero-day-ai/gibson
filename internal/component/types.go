@@ -20,14 +20,10 @@ func (k ComponentKind) String() string {
 	return string(k)
 }
 
-// IsValid checks if the ComponentKind is a valid enum value.
+// IsValid checks if the ComponentKind is a non-empty value.
+// Any non-empty kind is considered valid.
 func (k ComponentKind) IsValid() bool {
-	switch k {
-	case ComponentKindAgent, ComponentKindTool, ComponentKindPlugin:
-		return true
-	default:
-		return false
-	}
+	return k != ""
 }
 
 // MarshalJSON implements the json.Marshaler interface.
@@ -63,13 +59,12 @@ func AllComponentKinds() []ComponentKind {
 	}
 }
 
-// ParseComponentKind parses a string into a ComponentKind, returning an error if invalid.
+// ParseComponentKind parses a string into a ComponentKind, returning an error if empty.
 func ParseComponentKind(s string) (ComponentKind, error) {
-	k := ComponentKind(s)
-	if !k.IsValid() {
-		return "", fmt.Errorf("invalid component kind: %s", s)
+	if s == "" {
+		return "", fmt.Errorf("component kind cannot be empty")
 	}
-	return k, nil
+	return ComponentKind(s), nil
 }
 
 // ComponentSource represents where a component originates from.

@@ -22,7 +22,6 @@ func createTestComponent(kind ComponentKind, name string) *Component {
 		Source:  ComponentSourceExternal,
 		Status:  ComponentStatusAvailable,
 		Manifest: &Manifest{
-			Kind:    kind,
 			Name:    name,
 			Version: "1.0.0",
 			Runtime: RuntimeConfig{
@@ -99,9 +98,9 @@ func TestRegister_InvalidComponent(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid kind",
+			name: "empty kind",
 			component: &Component{
-				Kind:    ComponentKind("invalid"),
+				Kind:    ComponentKind(""),
 				Name:    "test",
 				Version: "1.0.0",
 				Path:    "/path",
@@ -209,9 +208,10 @@ func TestUnregister_NotFound(t *testing.T) {
 func TestUnregister_InvalidKind(t *testing.T) {
 	registry := NewDefaultComponentRegistry()
 
-	err := registry.Unregister(ComponentKind("invalid"), "test")
+	// Use empty kind - any non-empty kind is now valid per Task 5
+	err := registry.Unregister(ComponentKind(""), "test")
 
-	assert.Error(t, err, "should return error for invalid kind")
+	assert.Error(t, err, "should return error for empty kind")
 	var compErr *ComponentError
 	assert.ErrorAs(t, err, &compErr)
 	assert.Equal(t, ErrCodeInvalidKind, compErr.Code)
@@ -804,4 +804,55 @@ func BenchmarkConcurrentReadWrite(b *testing.B) {
 			i++
 		}
 	})
+}
+
+// TestRegister_CustomKind tests registering a component with a custom kind
+func TestRegister_CustomKind(t *testing.T) {
+	registry := NewDefaultComponentRegistry()
+
+	// Create a component with a custom kind
+	customKind := ComponentKind("mycustomkind")
+	component := &Component{
+		Kind:    customKind,
+		Name:    "custom-component",
+		Version: "1.0.0",
+		Path:    "/path/to/custom",
+		Source:  ComponentSourceExternal,
+		Status:  ComponentStatusAvailable,
+		Manifest: &Manifest{
+			Name:    "custom-component",
+			Version: "1.0.0",
+			Runtime: RuntimeConfig{
+				Type:       RuntimeTypeBinary,
+				Entrypoint: "/usr/bin/custom",
+			},
+		},
+	}
+
+	// Register the component with custom kind
+	err := registry.Register(component)
+	assert.NoError(t, err, "registration with custom kind should succeed")
+	assert.Equal(t, 1, registry.Count(), "registry should contain 1 component")
+
+	// Verify component can be retrieved with the custom kind
+	retrieved := registry.Get(customKind, "custom-component")
+	assert.NotNil(t, retrieved, "component should be retrievable with custom kind")
+	assert.Equal(t, "custom-component", retrieved.Name)
+	assert.Equal(t, customKind, retrieved.Kind)
+
+	// Verify it appears in List with custom kind
+	components := registry.List(customKind)
+	assert.Len(t, components, 1, "should have 1 component with custom kind")
+	assert.Equal(t, "custom-component", components[0].Name)
+
+	// Verify it appears in ListAll
+	all := registry.ListAll()
+	assert.Len(t, all, 1, "should have 1 kind in registry")
+	assert.Contains(t, all, customKind, "custom kind should be in registry")
+	assert.Len(t, all[customKind], 1, "should have 1 component with custom kind")
+
+	// Verify unregistration works with custom kind
+	err = registry.Unregister(customKind, "custom-component")
+	assert.NoError(t, err, "unregistration with custom kind should succeed")
+	assert.Equal(t, 0, registry.Count(), "registry should be empty after unregister")
 }

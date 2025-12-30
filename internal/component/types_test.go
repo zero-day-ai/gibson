@@ -40,9 +40,11 @@ func TestComponentKind_IsValid(t *testing.T) {
 		{"ValidAgent", ComponentKindAgent, true},
 		{"ValidTool", ComponentKindTool, true},
 		{"ValidPlugin", ComponentKindPlugin, true},
+		{"ValidCustomKind", ComponentKind("custom"), true},
+		{"ValidUnknown", ComponentKind("unknown"), true},
+		{"ValidTypo", ComponentKind("agentt"), true},
+		{"ValidAnything", ComponentKind("anything"), true},
 		{"InvalidEmpty", ComponentKind(""), false},
-		{"InvalidUnknown", ComponentKind("unknown"), false},
-		{"InvalidTypo", ComponentKind("agentt"), false},
 	}
 
 	for _, tt := range tests {
@@ -62,7 +64,9 @@ func TestComponentKind_MarshalJSON(t *testing.T) {
 		{"ValidAgent", ComponentKindAgent, false},
 		{"ValidTool", ComponentKindTool, false},
 		{"ValidPlugin", ComponentKindPlugin, false},
-		{"InvalidKind", ComponentKind("invalid"), true},
+		{"ValidCustomKind", ComponentKind("custom"), false},
+		{"ValidAnything", ComponentKind("anything"), false},
+		{"InvalidEmpty", ComponentKind(""), true},
 	}
 
 	for _, tt := range tests {
@@ -90,7 +94,9 @@ func TestComponentKind_UnmarshalJSON(t *testing.T) {
 		{"ValidAgent", `"agent"`, ComponentKindAgent, false},
 		{"ValidTool", `"tool"`, ComponentKindTool, false},
 		{"ValidPlugin", `"plugin"`, ComponentKindPlugin, false},
-		{"InvalidKind", `"invalid"`, "", true},
+		{"ValidCustomKind", `"custom"`, ComponentKind("custom"), false},
+		{"ValidAnything", `"anything"`, ComponentKind("anything"), false},
+		{"InvalidEmpty", `""`, "", true},
 		{"InvalidJSON", `invalid`, "", true},
 	}
 
@@ -119,8 +125,10 @@ func TestParseComponentKind(t *testing.T) {
 		{"ValidAgent", "agent", ComponentKindAgent, false},
 		{"ValidTool", "tool", ComponentKindTool, false},
 		{"ValidPlugin", "plugin", ComponentKindPlugin, false},
+		{"ValidCustomKind", "custom", ComponentKind("custom"), false},
+		{"ValidUnknown", "unknown", ComponentKind("unknown"), false},
+		{"ValidAnything", "anything", ComponentKind("anything"), false},
 		{"InvalidEmpty", "", "", true},
-		{"InvalidUnknown", "unknown", "", true},
 	}
 
 	for _, tt := range tests {
@@ -300,9 +308,23 @@ func TestComponent_Validate(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name: "InvalidKind",
+			name: "ValidCustomKind",
 			component: Component{
-				Kind:    ComponentKind("invalid"),
+				Kind:      ComponentKind("custom"),
+				Name:      "test",
+				Version:   "1.0.0",
+				Path:      "/path",
+				Source:    ComponentSourceExternal,
+				Status:    ComponentStatusAvailable,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+			expectErr: false,
+		},
+		{
+			name: "InvalidEmptyKind",
+			component: Component{
+				Kind:    ComponentKind(""),
 				Name:    "test",
 				Version: "1.0.0",
 				Path:    "/path",
@@ -609,7 +631,6 @@ func TestLoadManifest(t *testing.T) {
 		manifest, err := LoadManifest(manifestPath)
 		require.NoError(t, err)
 		assert.NotNil(t, manifest)
-		assert.Equal(t, ComponentKindAgent, manifest.Kind)
 		assert.Equal(t, "test-agent", manifest.Name)
 		assert.Equal(t, "1.0.0", manifest.Version)
 	})
@@ -630,7 +651,6 @@ runtime:
 		manifest, err := LoadManifest(manifestPath)
 		require.NoError(t, err)
 		assert.NotNil(t, manifest)
-		assert.Equal(t, ComponentKindTool, manifest.Kind)
 		assert.Equal(t, "test-tool", manifest.Name)
 		assert.Equal(t, "2.0.0", manifest.Version)
 	})
@@ -729,7 +749,6 @@ func TestManifest_Validate(t *testing.T) {
 		{
 			name: "ValidManifest",
 			manifest: Manifest{
-				Kind:    ComponentKindAgent,
 				Name:    "test-agent",
 				Version: "1.0.0",
 				Runtime: RuntimeConfig{
@@ -740,13 +759,12 @@ func TestManifest_Validate(t *testing.T) {
 			expectErr: false,
 		},
 		{
-			name: "InvalidKind",
+			name: "InvalidRuntimeType",
 			manifest: Manifest{
-				Kind:    ComponentKind("invalid"),
 				Name:    "test",
 				Version: "1.0.0",
 				Runtime: RuntimeConfig{
-					Type:       RuntimeTypeGo,
+					Type:       RuntimeType("invalid"),
 					Entrypoint: "./test",
 				},
 			},
@@ -755,7 +773,6 @@ func TestManifest_Validate(t *testing.T) {
 		{
 			name: "EmptyName",
 			manifest: Manifest{
-				Kind:    ComponentKindAgent,
 				Name:    "",
 				Version: "1.0.0",
 				Runtime: RuntimeConfig{
@@ -768,7 +785,6 @@ func TestManifest_Validate(t *testing.T) {
 		{
 			name: "InvalidName",
 			manifest: Manifest{
-				Kind:    ComponentKindAgent,
 				Name:    "test@invalid!",
 				Version: "1.0.0",
 				Runtime: RuntimeConfig{
@@ -781,7 +797,6 @@ func TestManifest_Validate(t *testing.T) {
 		{
 			name: "EmptyVersion",
 			manifest: Manifest{
-				Kind:    ComponentKindAgent,
 				Name:    "test",
 				Version: "",
 				Runtime: RuntimeConfig{
@@ -794,7 +809,6 @@ func TestManifest_Validate(t *testing.T) {
 		{
 			name: "InvalidVersion",
 			manifest: Manifest{
-				Kind:    ComponentKindAgent,
 				Name:    "test",
 				Version: "invalid",
 				Runtime: RuntimeConfig{

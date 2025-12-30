@@ -138,7 +138,6 @@ func createTestAgent(name, version string, status component.ComponentStatus) *co
 		CreatedAt: now,
 		UpdatedAt: now,
 		Manifest: &component.Manifest{
-			Kind:        component.ComponentKindAgent,
 			Name:        name,
 			Version:     version,
 			Description: "Test agent",
@@ -695,19 +694,20 @@ build:
 	manifest, err := component.LoadManifest(manifestPath)
 	assert.NoError(t, err)
 	assert.NotNil(t, manifest)
-	assert.Equal(t, component.ComponentKindAgent, manifest.Kind)
+	// Note: Manifest no longer has Kind field - kind is determined by command context
 	assert.Equal(t, "test-agent", manifest.Name)
 	assert.NotNil(t, manifest.Build)
 	assert.Equal(t, "make build", manifest.Build.Command)
 }
 
-func TestAgentBuild_InvalidKind(t *testing.T) {
+func TestAgentBuild_BackwardsCompatibilityWithKindField(t *testing.T) {
 	tmpDir := t.TempDir()
 	agentPath := filepath.Join(tmpDir, "test-tool")
 	err := os.MkdirAll(agentPath, 0755)
 	assert.NoError(t, err)
 
-	// Create a manifest with wrong kind
+	// Create a manifest with kind field (for backwards compatibility)
+	// The kind field is ignored by the parser but should not cause errors
 	manifestContent := `kind: tool
 name: test-tool
 version: 1.0.0
@@ -719,11 +719,12 @@ runtime:
 	err = os.WriteFile(manifestPath, []byte(manifestContent), 0644)
 	assert.NoError(t, err)
 
+	// Verify that manifests with kind field still parse successfully
 	manifest, err := component.LoadManifest(manifestPath)
 	assert.NoError(t, err)
 	assert.NotNil(t, manifest)
-	assert.Equal(t, component.ComponentKindTool, manifest.Kind)
-	assert.NotEqual(t, component.ComponentKindAgent, manifest.Kind)
+	assert.Equal(t, "test-tool", manifest.Name)
+	// Note: Kind field is ignored for backwards compatibility
 }
 
 func TestAgentBuild_MissingManifest(t *testing.T) {

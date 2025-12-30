@@ -68,13 +68,13 @@ func TestComponentAttributes(t *testing.T) {
 
 	t.Run("component with manifest", func(t *testing.T) {
 		manifest := &Manifest{
-			Kind:        ComponentKindPlugin,
 			Name:        "test-plugin",
 			Version:     "1.0.0",
 			Description: "Test plugin description",
 			Author:      "Test Author",
 			License:     "MIT",
 			Runtime: RuntimeConfig{
+				Type:       RuntimeTypeGo,
 				Entrypoint: "./plugin",
 				HealthURL:  "/health",
 			},
@@ -113,13 +113,13 @@ func TestManifestAttributes(t *testing.T) {
 
 	t.Run("complete manifest attributes", func(t *testing.T) {
 		manifest := &Manifest{
-			Kind:        ComponentKindAgent,
 			Name:        "test-agent",
 			Version:     "1.0.0",
 			Description: "Test agent",
 			Author:      "Test Author",
 			License:     "Apache-2.0",
 			Runtime: RuntimeConfig{
+				Type:       RuntimeTypeGo,
 				Entrypoint: "./agent",
 				HealthURL:  "/healthz",
 			},

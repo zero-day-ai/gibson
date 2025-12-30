@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,8 +26,6 @@ func TestParseRepoURL(t *testing.T) {
 				Host:  "github.com",
 				Owner: "org",
 				Repo:  "gibson-agent-scanner",
-				Kind:  "agent",
-				Name:  "scanner",
 			},
 		},
 		{
@@ -38,8 +35,6 @@ func TestParseRepoURL(t *testing.T) {
 				Host:  "github.com",
 				Owner: "org",
 				Repo:  "gibson-tool-nmap",
-				Kind:  "tool",
-				Name:  "nmap",
 			},
 		},
 		{
@@ -49,8 +44,6 @@ func TestParseRepoURL(t *testing.T) {
 				Host:  "github.com",
 				Owner: "org",
 				Repo:  "gibson-plugin-vuln-db",
-				Kind:  "plugin",
-				Name:  "vuln-db",
 			},
 		},
 		{
@@ -60,8 +53,6 @@ func TestParseRepoURL(t *testing.T) {
 				Host:  "github.com",
 				Owner: "org",
 				Repo:  "gibson-agent-scanner",
-				Kind:  "agent",
-				Name:  "scanner",
 			},
 		},
 		{
@@ -71,8 +62,6 @@ func TestParseRepoURL(t *testing.T) {
 				Host:  "github.com",
 				Owner: "zero-day",
 				Repo:  "gibson-tool-web-scanner",
-				Kind:  "tool",
-				Name:  "web-scanner",
 			},
 		},
 		{
@@ -82,8 +71,6 @@ func TestParseRepoURL(t *testing.T) {
 				Host:  "github.com",
 				Owner: "org",
 				Repo:  "gibson-agent-test",
-				Kind:  "agent",
-				Name:  "test",
 			},
 		},
 		{
@@ -93,8 +80,15 @@ func TestParseRepoURL(t *testing.T) {
 				Host:  "gitlab.com",
 				Owner: "myorg",
 				Repo:  "gibson-plugin-custom",
-				Kind:  "plugin",
-				Name:  "custom",
+			},
+		},
+		{
+			name: "Any repository name allowed",
+			url:  "git@github.com:user/any-repo-name.git",
+			expectedInfo: &RepoInfo{
+				Host:  "github.com",
+				Owner: "user",
+				Repo:  "any-repo-name",
 			},
 		},
 		{
@@ -106,26 +100,6 @@ func TestParseRepoURL(t *testing.T) {
 			name:          "Invalid URL format",
 			url:           "not-a-valid-url",
 			expectedError: "unable to parse repository URL",
-		},
-		{
-			name:          "Missing gibson prefix",
-			url:           "https://github.com/org/agent-scanner.git",
-			expectedError: "repository name must start with 'gibson-'",
-		},
-		{
-			name:          "Invalid format - only gibson",
-			url:           "https://github.com/org/gibson.git",
-			expectedError: "repository name must start with 'gibson-'",
-		},
-		{
-			name:          "Invalid format - only kind",
-			url:           "https://github.com/org/gibson-agent.git",
-			expectedError: "repository name must be in format 'gibson-{kind}-{name}'",
-		},
-		{
-			name:          "Invalid component kind",
-			url:           "https://github.com/org/gibson-invalid-name.git",
-			expectedError: "invalid component kind 'invalid'",
 		},
 	}
 
@@ -144,8 +118,6 @@ func TestParseRepoURL(t *testing.T) {
 				assert.Equal(t, tt.expectedInfo.Host, info.Host)
 				assert.Equal(t, tt.expectedInfo.Owner, info.Owner)
 				assert.Equal(t, tt.expectedInfo.Repo, info.Repo)
-				assert.Equal(t, tt.expectedInfo.Kind, info.Kind)
-				assert.Equal(t, tt.expectedInfo.Name, info.Name)
 			}
 		})
 	}
@@ -157,11 +129,9 @@ func TestRepoInfo_String(t *testing.T) {
 		Host:  "github.com",
 		Owner: "org",
 		Repo:  "gibson-agent-scanner",
-		Kind:  "agent",
-		Name:  "scanner",
 	}
 
-	expected := "github.com/org/gibson-agent-scanner (kind=agent, name=scanner)"
+	expected := "github.com/org/gibson-agent-scanner"
 	assert.Equal(t, expected, info.String())
 }
 
@@ -171,8 +141,6 @@ func TestRepoInfo_ToURL(t *testing.T) {
 		Host:  "github.com",
 		Owner: "org",
 		Repo:  "gibson-agent-scanner",
-		Kind:  "agent",
-		Name:  "scanner",
 	}
 
 	expected := "https://github.com/org/gibson-agent-scanner.git"
@@ -185,52 +153,10 @@ func TestRepoInfo_ToSSHURL(t *testing.T) {
 		Host:  "github.com",
 		Owner: "org",
 		Repo:  "gibson-tool-nmap",
-		Kind:  "tool",
-		Name:  "nmap",
 	}
 
 	expected := "git@github.com:org/gibson-tool-nmap.git"
 	assert.Equal(t, expected, info.ToSSHURL())
-}
-
-// TestRepoInfo_ComponentPath tests the ComponentPath method of RepoInfo
-func TestRepoInfo_ComponentPath(t *testing.T) {
-	tests := []struct {
-		name     string
-		info     *RepoInfo
-		expected string
-	}{
-		{
-			name: "Agent component",
-			info: &RepoInfo{
-				Kind: "agent",
-				Name: "scanner",
-			},
-			expected: filepath.Join("agents", "scanner"),
-		},
-		{
-			name: "Tool component",
-			info: &RepoInfo{
-				Kind: "tool",
-				Name: "nmap",
-			},
-			expected: filepath.Join("tools", "nmap"),
-		},
-		{
-			name: "Plugin component",
-			info: &RepoInfo{
-				Kind: "plugin",
-				Name: "vuln-db",
-			},
-			expected: filepath.Join("plugins", "vuln-db"),
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, tt.info.ComponentPath())
-		})
-	}
 }
 
 // TestClone tests the Clone method (integration test - requires git)
@@ -616,16 +542,12 @@ func TestMockGitOperations_ParseRepoURL(t *testing.T) {
 					Host:  "custom.com",
 					Owner: "customorg",
 					Repo:  "customrepo",
-					Kind:  "agent",
-					Name:  "custom",
 				})
 			},
 			expectedInfo: &RepoInfo{
 				Host:  "custom.com",
 				Owner: "customorg",
 				Repo:  "customrepo",
-				Kind:  "agent",
-				Name:  "custom",
 			},
 			expectError: false,
 		},
@@ -647,8 +569,6 @@ func TestMockGitOperations_ParseRepoURL(t *testing.T) {
 				Host:  "github.com",
 				Owner: "org",
 				Repo:  "gibson-tool-nmap",
-				Kind:  "tool",
-				Name:  "nmap",
 			},
 			expectError:   false,
 			useRealParser: true,
@@ -671,8 +591,6 @@ func TestMockGitOperations_ParseRepoURL(t *testing.T) {
 				assert.Equal(t, tt.expectedInfo.Host, info.Host)
 				assert.Equal(t, tt.expectedInfo.Owner, info.Owner)
 				assert.Equal(t, tt.expectedInfo.Repo, info.Repo)
-				assert.Equal(t, tt.expectedInfo.Kind, info.Kind)
-				assert.Equal(t, tt.expectedInfo.Name, info.Name)
 			}
 
 			// Verify operation was recorded
@@ -830,66 +748,6 @@ func isHexString(s string) bool {
 	return true
 }
 
-// TestParseRepoName tests the parseRepoName helper function indirectly
-func TestParseRepoName(t *testing.T) {
-	tests := []struct {
-		name          string
-		repoName      string
-		expectedKind  string
-		expectedName  string
-		expectedError string
-	}{
-		{
-			name:         "Valid agent",
-			repoName:     "gibson-agent-scanner",
-			expectedKind: "agent",
-			expectedName: "scanner",
-		},
-		{
-			name:         "Valid tool",
-			repoName:     "gibson-tool-nmap",
-			expectedKind: "tool",
-			expectedName: "nmap",
-		},
-		{
-			name:         "Valid plugin with hyphen",
-			repoName:     "gibson-plugin-vuln-db",
-			expectedKind: "plugin",
-			expectedName: "vuln-db",
-		},
-		{
-			name:          "Missing gibson prefix",
-			repoName:      "agent-scanner",
-			expectedError: "must start with 'gibson-'",
-		},
-		{
-			name:          "Invalid kind",
-			repoName:      "gibson-invalid-name",
-			expectedError: "invalid component kind",
-		},
-		{
-			name:          "Only gibson",
-			repoName:      "gibson",
-			expectedError: "must start with 'gibson-'",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			kind, name, err := parseRepoName(tt.repoName)
-
-			if tt.expectedError != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedError)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, tt.expectedKind, kind)
-				assert.Equal(t, tt.expectedName, name)
-			}
-		})
-	}
-}
-
 // TestGitOperationsInterface verifies that both implementations satisfy the interface
 func TestGitOperationsInterface(t *testing.T) {
 	var _ GitOperations = (*DefaultGitOperations)(nil)
@@ -943,8 +801,6 @@ func TestRepoInfo_AllMethods(t *testing.T) {
 		Host:  "github.com",
 		Owner: "zero-day",
 		Repo:  "gibson-tool-web-scanner",
-		Kind:  "tool",
-		Name:  "web-scanner",
 	}
 
 	// Test String
@@ -952,8 +808,6 @@ func TestRepoInfo_AllMethods(t *testing.T) {
 	assert.Contains(t, str, "github.com")
 	assert.Contains(t, str, "zero-day")
 	assert.Contains(t, str, "gibson-tool-web-scanner")
-	assert.Contains(t, str, "tool")
-	assert.Contains(t, str, "web-scanner")
 
 	// Test ToURL
 	url := info.ToURL()
@@ -962,8 +816,4 @@ func TestRepoInfo_AllMethods(t *testing.T) {
 	// Test ToSSHURL
 	sshURL := info.ToSSHURL()
 	assert.Equal(t, "git@github.com:zero-day/gibson-tool-web-scanner.git", sshURL)
-
-	// Test ComponentPath
-	path := info.ComponentPath()
-	assert.True(t, strings.HasSuffix(path, filepath.Join("tools", "web-scanner")))
 }

@@ -30,9 +30,18 @@ var agentListCmd = &cobra.Command{
 var agentInstallCmd = &cobra.Command{
 	Use:   "install REPO_URL",
 	Short: "Install an agent from a git repository",
-	Long:  `Install an agent by cloning from a git repository URL, building it, and registering it`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAgentInstall,
+	Long: `Install an agent from a git repository URL.
+
+For single-agent repositories:
+  gibson agent install https://github.com/user/gibson-agent-scanner
+
+For mono-repos with multiple agents, use the # fragment to specify the subdirectory:
+  gibson agent install https://github.com/user/gibson-agents#security/scanner
+  gibson agent install git@github.com:user/gibson-agents.git#recon/osint
+
+The component.yaml manifest must be in the root of the specified directory.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAgentInstall,
 }
 
 var agentUninstallCmd = &cobra.Command{
@@ -91,6 +100,24 @@ var agentLogsCmd = &cobra.Command{
 	RunE:  runAgentLogs,
 }
 
+var agentInstallAllCmd = &cobra.Command{
+	Use:   "install-all REPO_URL",
+	Short: "Install all agents from a mono-repo",
+	Long: `Clone a mono-repo and install all agents found within it.
+
+This command recursively walks the repository looking for component.yaml files
+and installs each component as an agent.
+
+Examples:
+  gibson agent install-all https://github.com/user/gibson-agents
+  gibson agent install-all git@github.com:user/gibson-agents.git
+
+Note: Repositories should contain only agents. Use separate repos for different
+component types (tools, agents, plugins).`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAgentInstallAll,
+}
+
 // Flags for agent install
 var (
 	agentInstallBranch       string
@@ -98,6 +125,15 @@ var (
 	agentInstallForce        bool
 	agentInstallSkipBuild    bool
 	agentInstallSkipRegister bool
+)
+
+// Flags for agent install-all
+var (
+	agentInstallAllBranch       string
+	agentInstallAllTag          string
+	agentInstallAllForce        bool
+	agentInstallAllSkipBuild    bool
+	agentInstallAllSkipRegister bool
 )
 
 // Flags for agent update
@@ -125,6 +161,13 @@ func init() {
 	agentInstallCmd.Flags().BoolVar(&agentInstallSkipBuild, "skip-build", false, "Skip building the agent")
 	agentInstallCmd.Flags().BoolVar(&agentInstallSkipRegister, "skip-register", false, "Skip registering the agent")
 
+	// Install-all command flags
+	agentInstallAllCmd.Flags().StringVar(&agentInstallAllBranch, "branch", "", "Git branch to install from")
+	agentInstallAllCmd.Flags().StringVar(&agentInstallAllTag, "tag", "", "Git tag to install from")
+	agentInstallAllCmd.Flags().BoolVar(&agentInstallAllForce, "force", false, "Force reinstall if agents exist")
+	agentInstallAllCmd.Flags().BoolVar(&agentInstallAllSkipBuild, "skip-build", false, "Skip building the agents")
+	agentInstallAllCmd.Flags().BoolVar(&agentInstallAllSkipRegister, "skip-register", false, "Skip registering the agents")
+
 	// Update command flags
 	agentUpdateCmd.Flags().BoolVar(&agentUpdateRestart, "restart", false, "Restart agent after update if it was running")
 	agentUpdateCmd.Flags().BoolVar(&agentUpdateSkipBuild, "skip-build", false, "Skip rebuilding the agent")
@@ -139,6 +182,7 @@ func init() {
 	// Add subcommands
 	agentCmd.AddCommand(agentListCmd)
 	agentCmd.AddCommand(agentInstallCmd)
+	agentCmd.AddCommand(agentInstallAllCmd)
 	agentCmd.AddCommand(agentUninstallCmd)
 	agentCmd.AddCommand(agentUpdateCmd)
 	agentCmd.AddCommand(agentShowCmd)
@@ -228,7 +272,7 @@ func runAgentInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Install agent
-	result, err := installer.Install(ctx, repoURL, opts)
+	result, err := installer.Install(ctx, repoURL, component.ComponentKindAgent, opts)
 	if err != nil {
 		return fmt.Errorf("failed to install agent: %w", err)
 	}
@@ -245,6 +289,85 @@ func runAgentInstall(cmd *cobra.Command, args []string) error {
 	if result.BuildOutput != "" && cmd.Flag("verbose").Changed {
 		cmd.Println("\nBuild output:")
 		cmd.Println(result.BuildOutput)
+	}
+
+	return nil
+}
+
+// runAgentInstallAll executes the agent install-all command
+func runAgentInstallAll(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	repoURL := args[0]
+
+	cmd.Printf("Installing all agents from %s...\n", repoURL)
+
+	// Create component registry
+	registry := component.NewDefaultComponentRegistry()
+
+	// Load existing registry
+	homeDir, err := getGibsonHome()
+	if err != nil {
+		return fmt.Errorf("failed to get Gibson home: %w", err)
+	}
+
+	registryPath := homeDir + "/registry.yaml"
+	if _, err := os.Stat(registryPath); err == nil {
+		if err := registry.LoadFromConfig(registryPath); err != nil {
+			return fmt.Errorf("failed to load registry: %w", err)
+		}
+	}
+
+	// Create installer with dependencies
+	gitOps := git.NewDefaultGitOperations()
+	builder := build.NewDefaultBuildExecutor()
+	installer := component.NewDefaultInstaller(gitOps, builder, registry)
+
+	// Prepare install options
+	opts := component.InstallOptions{
+		Branch:       agentInstallAllBranch,
+		Tag:          agentInstallAllTag,
+		Force:        agentInstallAllForce,
+		SkipBuild:    agentInstallAllSkipBuild,
+		SkipRegister: agentInstallAllSkipRegister,
+	}
+
+	// Install all agents
+	result, err := installer.InstallAll(ctx, repoURL, component.ComponentKindAgent, opts)
+	if err != nil {
+		return fmt.Errorf("installation failed: %w", err)
+	}
+
+	// Save registry
+	if !agentInstallAllSkipRegister {
+		if err := registry.Save(); err != nil {
+			return fmt.Errorf("failed to save registry: %w", err)
+		}
+	}
+
+	// Print summary
+	cmd.Printf("\nInstallation complete in %v\n", result.Duration)
+	cmd.Printf("Components found: %d\n", result.ComponentsFound)
+	cmd.Printf("Successfully installed: %d\n", len(result.Successful))
+	cmd.Printf("Failed: %d\n", len(result.Failed))
+
+	// List successful installations
+	if len(result.Successful) > 0 {
+		cmd.Printf("\nInstalled agents:\n")
+		for _, r := range result.Successful {
+			cmd.Printf("  - %s (v%s)\n", r.Component.Name, r.Component.Version)
+		}
+	}
+
+	// List failures
+	if len(result.Failed) > 0 {
+		cmd.Printf("\nFailed installations:\n")
+		for _, f := range result.Failed {
+			name := f.Name
+			if name == "" {
+				name = f.Path
+			}
+			cmd.Printf("  - %s: %v\n", name, f.Error)
+		}
 	}
 
 	return nil
@@ -492,10 +615,8 @@ func runAgentBuild(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	// Verify it's an agent
-	if manifest.Kind != component.ComponentKindAgent {
-		return fmt.Errorf("component is not an agent (kind: %s)", manifest.Kind)
-	}
+	// Note: We don't verify the kind here since this is the agent build command,
+	// we already know the intent is to build an agent from the command context.
 
 	if manifest.Build == nil {
 		return fmt.Errorf("no build configuration in manifest")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/component/build"
@@ -45,6 +46,35 @@ type InstallOptions struct {
 
 	// Timeout specifies the maximum time for the installation
 	Timeout time.Duration
+
+	// Subdir specifies a subdirectory within the repository where the component is located.
+	// This is useful for mono-repos that contain multiple components.
+	// Can also be specified in the repoURL using the fragment syntax: repo.git#path/to/component
+	Subdir string
+}
+
+// ParsedRepoURL contains the parsed components of a repository URL
+type ParsedRepoURL struct {
+	// RepoURL is the base repository URL without the subdirectory fragment
+	RepoURL string
+
+	// Subdir is the subdirectory path extracted from the URL fragment (if any)
+	Subdir string
+}
+
+// ParseRepoURL parses a repository URL that may contain a subdirectory fragment.
+// Supports the syntax: https://github.com/user/repo.git#path/to/component
+// or: git@github.com:user/repo.git#path/to/component
+func ParseRepoURL(fullURL string) ParsedRepoURL {
+	result := ParsedRepoURL{RepoURL: fullURL}
+
+	// Look for the fragment separator
+	if idx := strings.LastIndex(fullURL, "#"); idx != -1 {
+		result.RepoURL = fullURL[:idx]
+		result.Subdir = fullURL[idx+1:]
+	}
+
+	return result
 }
 
 // UpdateOptions contains options for updating a component
@@ -128,10 +158,43 @@ type UninstallResult struct {
 	WasRunning bool
 }
 
+// InstallAllResult contains the result of installing all components from a mono-repo
+type InstallAllResult struct {
+	// RepoURL is the repository that was cloned
+	RepoURL string
+
+	// Successful contains results for components that installed successfully
+	Successful []InstallResult
+
+	// Failed contains information about components that failed to install
+	Failed []InstallFailure
+
+	// Duration is the total time for the operation
+	Duration time.Duration
+
+	// ComponentsFound is the total number of components discovered
+	ComponentsFound int
+}
+
+// InstallFailure contains information about a failed installation
+type InstallFailure struct {
+	// Path is the subdirectory path where the component was found
+	Path string
+
+	// Name is the component name (if manifest was readable)
+	Name string
+
+	// Error is the error that occurred
+	Error error
+}
+
 // Installer defines the interface for installing, updating, and uninstalling components
 type Installer interface {
 	// Install installs a component from a git repository URL
-	Install(ctx context.Context, repoURL string, opts InstallOptions) (*InstallResult, error)
+	Install(ctx context.Context, repoURL string, kind ComponentKind, opts InstallOptions) (*InstallResult, error)
+
+	// InstallAll clones a mono-repo and installs all components of the specified kind found within it
+	InstallAll(ctx context.Context, repoURL string, kind ComponentKind, opts InstallOptions) (*InstallAllResult, error)
 
 	// Update updates an installed component to the latest version
 	Update(ctx context.Context, kind ComponentKind, name string, opts UpdateOptions) (*UpdateResult, error)
@@ -173,7 +236,7 @@ func getDefaultHomeDir() string {
 }
 
 // Install installs a component from a git repository URL
-func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, opts InstallOptions) (*InstallResult, error) {
+func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind ComponentKind, opts InstallOptions) (*InstallResult, error) {
 	// Start tracing span
 	ctx, span := i.tracer.Start(ctx, SpanComponentInstall)
 	defer span.End()
@@ -190,99 +253,123 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, opts Ins
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	// Step 1: Parse repository URL to extract component information
-	repoInfo, err := i.git.ParseRepoURL(repoURL)
-	if err != nil {
+	// Step 1: Validate component kind
+	if !kind.IsValid() {
+		err := NewInvalidKindError(kind.String())
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		span.SetAttributes(ErrorAttributes(err, "parse_repo_url")...)
-		return result, WrapComponentError(ErrCodeInvalidPath, "failed to parse repository URL", err)
+		span.SetAttributes(ErrorAttributes(err, "validate_kind")...)
+		return result, err
 	}
 
-	// Validate component kind
-	kind, err := ParseComponentKind(repoInfo.Kind)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		span.SetAttributes(ErrorAttributes(err, "parse_component_kind")...)
-		return result, NewInvalidKindError(repoInfo.Kind)
+	// Parse the repository URL for subdirectory fragment (e.g., repo.git#path/to/component)
+	parsed := ParseRepoURL(repoURL)
+	actualRepoURL := parsed.RepoURL
+
+	// Subdirectory can come from URL fragment or from options (options take precedence)
+	subdir := parsed.Subdir
+	if opts.Subdir != "" {
+		subdir = opts.Subdir
 	}
 
-	// Add component metadata to span
+	// Add component metadata to span (we'll add component name after reading manifest)
 	span.SetAttributes(
-		attribute.String(AttrRepoURL, repoURL),
+		attribute.String(AttrRepoURL, actualRepoURL),
 		attribute.String(AttrComponentKind, kind.String()),
-		attribute.String(AttrComponentName, repoInfo.Name),
 	)
-
-	// Step 2: Determine installation path
-	componentDir := filepath.Join(i.homeDir, kind.String()+"s", repoInfo.Name)
-	result.Path = componentDir
-
-	// Check if component already exists
-	if _, err := os.Stat(componentDir); err == nil {
-		if !opts.Force {
-			return result, NewComponentExistsError(repoInfo.Name).
-				WithContext("path", componentDir)
-		}
-		// Force install: remove existing directory
-		if err := os.RemoveAll(componentDir); err != nil {
-			return result, WrapComponentError(ErrCodePermissionDenied, "failed to remove existing component", err).
-				WithComponent(repoInfo.Name)
-		}
+	if subdir != "" {
+		span.SetAttributes(attribute.String("gibson.component.subdir", subdir))
 	}
 
-	// Step 3: Clone repository
+	// Step 2: Clone to temporary directory first
+	tempDir, err := os.MkdirTemp("", "gibson-install-*")
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(ErrorAttributes(err, "create_temp_dir")...)
+		return result, WrapComponentError(ErrCodeLoadFailed, "failed to create temporary directory", err)
+	}
+	defer os.RemoveAll(tempDir) // Clean up temp dir when done
+
 	cloneOpts := git.CloneOptions{
 		Branch: opts.Branch,
 		Tag:    opts.Tag,
 	}
 
-	if err := i.git.Clone(repoURL, componentDir, cloneOpts); err != nil {
-		// Cleanup on failure
-		_ = os.RemoveAll(componentDir)
+	if err := i.git.Clone(actualRepoURL, tempDir, cloneOpts); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(ErrorAttributes(err, "clone_repository")...)
 		return result, WrapComponentError(ErrCodeLoadFailed, "failed to clone repository", err).
-			WithComponent(repoInfo.Name).
-			WithContext("url", repoURL)
+			WithContext("url", actualRepoURL)
 	}
 
-	// Step 4: Load and validate manifest
-	manifestPath := filepath.Join(componentDir, ManifestFileName)
+	// Step 3: Determine the component directory (apply subdirectory if specified)
+	componentSourceDir := tempDir
+	if subdir != "" {
+		componentSourceDir = filepath.Join(tempDir, subdir)
+		// Verify the subdirectory exists
+		if _, err := os.Stat(componentSourceDir); os.IsNotExist(err) {
+			return result, WrapComponentError(ErrCodeManifestNotFound, "subdirectory not found in repository", err).
+				WithContext("subdir", subdir).
+				WithContext("url", actualRepoURL)
+		}
+	}
+
+	// Step 4: Load manifest from the component source directory
+	manifestPath := filepath.Join(componentSourceDir, ManifestFileName)
 	manifest, err := LoadManifest(manifestPath)
 	if err != nil {
-		// Cleanup on failure
-		_ = os.RemoveAll(componentDir)
 		return result, err // LoadManifest already returns proper ComponentError
 	}
 
-	// Verify manifest matches repository info
-	if manifest.Kind != kind {
-		_ = os.RemoveAll(componentDir)
-		return result, NewValidationFailedError(
-			fmt.Sprintf("manifest kind %s doesn't match repository kind %s", manifest.Kind, kind),
-			nil,
-		)
+	// Add component name to span now that we have it
+	span.SetAttributes(attribute.String(AttrComponentName, manifest.Name))
+
+	// Step 5: Determine final installation path
+	componentDir := filepath.Join(i.homeDir, kind.String()+"s", manifest.Name)
+	result.Path = componentDir
+
+	// Check if component already exists at final location
+	if _, err := os.Stat(componentDir); err == nil {
+		if !opts.Force {
+			return result, NewComponentExistsError(manifest.Name).
+				WithContext("path", componentDir)
+		}
+		// Force install: remove existing directory
+		if err := os.RemoveAll(componentDir); err != nil {
+			return result, WrapComponentError(ErrCodePermissionDenied, "failed to remove existing component", err).
+				WithComponent(manifest.Name)
+		}
 	}
 
-	if manifest.Name != repoInfo.Name {
-		_ = os.RemoveAll(componentDir)
-		return result, NewValidationFailedError(
-			fmt.Sprintf("manifest name %s doesn't match repository name %s", manifest.Name, repoInfo.Name),
-			nil,
-		)
+	// Step 6: Ensure parent directory exists
+	parentDir := filepath.Dir(componentDir)
+	if err := os.MkdirAll(parentDir, 0755); err != nil {
+		return result, WrapComponentError(ErrCodePermissionDenied, "failed to create parent directory", err).
+			WithContext("path", parentDir)
 	}
 
-	// Step 5: Check dependencies
+	// Step 7: Move component from source to final location
+	// When using a subdirectory, we only move that subdirectory (not the whole repo)
+	if err := os.Rename(componentSourceDir, componentDir); err != nil {
+		// If rename fails (e.g., cross-device link), fall back to copy
+		if err := copyDir(componentSourceDir, componentDir); err != nil {
+			return result, WrapComponentError(ErrCodeLoadFailed, "failed to move component to final location", err).
+				WithComponent(manifest.Name).
+				WithContext("from", componentSourceDir).
+				WithContext("to", componentDir)
+		}
+	}
+
+	// Step 8: Check dependencies
 	if err := i.checkDependencies(ctx, manifest); err != nil {
 		// Cleanup on failure
 		_ = os.RemoveAll(componentDir)
 		return result, err
 	}
 
-	// Step 6: Build component (unless SkipBuild is set)
+	// Step 9: Build component (unless SkipBuild is set)
 	var buildOutput string
 	if !opts.SkipBuild && manifest.Build != nil {
 		buildStart := time.Now()
@@ -314,10 +401,10 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, opts Ins
 		version = manifest.Version
 	}
 
-	// Step 7: Create component instance
+	// Step 10: Create component instance
 	component := &Component{
 		Kind:      kind,
-		Name:      repoInfo.Name,
+		Name:      manifest.Name,
 		Version:   version,
 		Path:      componentDir,
 		Source:    ComponentSourceExternal,
@@ -334,7 +421,7 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, opts Ins
 		return result, NewValidationFailedError("component validation failed", err)
 	}
 
-	// Step 8: Register component (unless SkipRegister is set)
+	// Step 11: Register component (unless SkipRegister is set)
 	if !opts.SkipRegister && i.registry != nil {
 		if err := i.registry.Register(component); err != nil {
 			// Cleanup on failure
@@ -343,7 +430,7 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, opts Ins
 			span.SetStatus(codes.Error, err.Error())
 			span.SetAttributes(ErrorAttributes(err, "register_component")...)
 			return result, WrapComponentError(ErrCodeLoadFailed, "failed to register component", err).
-				WithComponent(repoInfo.Name)
+				WithComponent(manifest.Name)
 		}
 	}
 
@@ -357,6 +444,169 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, opts Ins
 	span.SetAttributes(InstallResultAttributes(result)...)
 
 	return result, nil
+}
+
+// InstallAll clones a mono-repo and installs all components of the specified kind found within it.
+// It recursively walks the repository looking for component.yaml files and installs each one.
+func (i *DefaultInstaller) InstallAll(ctx context.Context, repoURL string, kind ComponentKind, opts InstallOptions) (*InstallAllResult, error) {
+	// Start tracing span
+	ctx, span := i.tracer.Start(ctx, "component.install_all")
+	defer span.End()
+
+	start := time.Now()
+	result := &InstallAllResult{
+		RepoURL:    repoURL,
+		Successful: make([]InstallResult, 0),
+		Failed:     make([]InstallFailure, 0),
+	}
+
+	// Set default timeout if not specified (longer for bulk operations)
+	if opts.Timeout == 0 {
+		opts.Timeout = DefaultInstallTimeout * 3 // 15 minutes for bulk install
+	}
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+
+	// Step 1: Validate component kind
+	if !kind.IsValid() {
+		err := NewInvalidKindError(kind.String())
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return result, err
+	}
+
+	// Parse the repository URL (strip any subdirectory fragment for bulk install)
+	parsed := ParseRepoURL(repoURL)
+	actualRepoURL := parsed.RepoURL
+
+	span.SetAttributes(
+		attribute.String(AttrRepoURL, actualRepoURL),
+		attribute.String(AttrComponentKind, kind.String()),
+	)
+
+	// Step 2: Clone to temporary directory
+	tempDir, err := os.MkdirTemp("", "gibson-install-all-*")
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return result, WrapComponentError(ErrCodeLoadFailed, "failed to create temporary directory", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	cloneOpts := git.CloneOptions{
+		Branch: opts.Branch,
+		Tag:    opts.Tag,
+	}
+
+	if err := i.git.Clone(actualRepoURL, tempDir, cloneOpts); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return result, WrapComponentError(ErrCodeLoadFailed, "failed to clone repository", err).
+			WithContext("url", actualRepoURL)
+	}
+
+	// Step 3: Walk the repository and find all component.yaml files
+	componentPaths, err := i.findComponentManifests(tempDir)
+	if err != nil {
+		return result, WrapComponentError(ErrCodeLoadFailed, "failed to scan repository for components", err)
+	}
+
+	result.ComponentsFound = len(componentPaths)
+	span.SetAttributes(attribute.Int("gibson.components_found", len(componentPaths)))
+
+	if len(componentPaths) == 0 {
+		result.Duration = time.Since(start)
+		return result, nil
+	}
+
+	// Step 4: Install each component
+	// Note: Repositories should contain only one type of component (tools-only, agents-only, etc.)
+	// The kind is determined by the CLI subcommand, not the manifest.
+	for _, manifestPath := range componentPaths {
+		// Get the subdirectory relative to the temp dir
+		subdir := filepath.Dir(manifestPath)
+		relSubdir, err := filepath.Rel(tempDir, subdir)
+		if err != nil {
+			relSubdir = subdir
+		}
+
+		// Load manifest to get component name for error reporting
+		manifest, err := LoadManifest(manifestPath)
+		if err != nil {
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  relSubdir,
+				Error: err,
+			})
+			continue
+		}
+
+		// Install this component using the subdirectory syntax
+		installURL := actualRepoURL + "#" + relSubdir
+		installResult, err := i.Install(ctx, installURL, kind, opts)
+		if err != nil {
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  relSubdir,
+				Name:  manifest.Name,
+				Error: err,
+			})
+			continue
+		}
+
+		result.Successful = append(result.Successful, *installResult)
+	}
+
+	result.Duration = time.Since(start)
+
+	// Set span status based on results
+	if len(result.Failed) == 0 {
+		span.SetStatus(codes.Ok, fmt.Sprintf("installed %d components successfully", len(result.Successful)))
+	} else if len(result.Successful) > 0 {
+		span.SetStatus(codes.Ok, fmt.Sprintf("installed %d components, %d failed", len(result.Successful), len(result.Failed)))
+	} else {
+		span.SetStatus(codes.Error, fmt.Sprintf("all %d components failed to install", len(result.Failed)))
+	}
+
+	span.SetAttributes(
+		attribute.Int("gibson.components_successful", len(result.Successful)),
+		attribute.Int("gibson.components_failed", len(result.Failed)),
+	)
+
+	return result, nil
+}
+
+// findComponentManifests recursively walks a directory and returns paths to all component.yaml files
+func (i *DefaultInstaller) findComponentManifests(rootDir string) ([]string, error) {
+	var manifests []string
+
+	err := filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // Skip directories we can't read
+		}
+
+		// Skip hidden directories (like .git)
+		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
+
+		// Skip common non-component directories
+		if d.IsDir() {
+			switch d.Name() {
+			case "node_modules", "vendor", "__pycache__", ".venv", "venv", "pkg", "build", "dist", "target":
+				return filepath.SkipDir
+			}
+		}
+
+		// Check if this is a component manifest
+		if !d.IsDir() && (d.Name() == "component.yaml" || d.Name() == "component.json") {
+			manifests = append(manifests, path)
+		}
+
+		return nil
+	})
+
+	return manifests, err
 }
 
 // Update updates an installed component to the latest version
@@ -733,6 +983,77 @@ func (i *DefaultInstaller) buildComponent(ctx context.Context, componentDir stri
 	}
 
 	return result, nil
+}
+
+// copyDir copies a directory recursively from src to dst
+func copyDir(src, dst string) error {
+	// Get source directory info
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	// Create destination directory
+	if err := os.MkdirAll(dst, srcInfo.Mode()); err != nil {
+		return err
+	}
+
+	// Read source directory entries
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+
+	// Copy each entry
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.IsDir() {
+			// Recursively copy subdirectory
+			if err := copyDir(srcPath, dstPath); err != nil {
+				return err
+			}
+		} else {
+			// Copy file
+			if err := copyFile(srcPath, dstPath); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// copyFile copies a single file from src to dst
+func copyFile(src, dst string) error {
+	// Get source file info
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+
+	// Open source file
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	// Create destination file
+	dstFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer dstFile.Close()
+
+	// Copy contents
+	if _, err := dstFile.ReadFrom(srcFile); err != nil {
+		return err
+	}
+
+	// Set permissions
+	return os.Chmod(dst, srcInfo.Mode())
 }
 
 // scanComponents scans the filesystem for installed components

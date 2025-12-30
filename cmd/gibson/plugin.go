@@ -32,9 +32,18 @@ var pluginListCmd = &cobra.Command{
 var pluginInstallCmd = &cobra.Command{
 	Use:   "install REPO_URL",
 	Short: "Install a plugin from a git repository",
-	Long:  `Install a plugin from a git repository URL (e.g., https://github.com/user/gibson-plugin-name)`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runPluginInstall,
+	Long: `Install a plugin from a git repository URL.
+
+For single-plugin repositories:
+  gibson plugin install https://github.com/user/gibson-plugin-database
+
+For mono-repos with multiple plugins, use the # fragment to specify the subdirectory:
+  gibson plugin install https://github.com/user/gibson-plugins#data/postgres
+  gibson plugin install git@github.com:user/gibson-plugins.git#integrations/slack
+
+The component.yaml manifest must be in the root of the specified directory.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPluginInstall,
 }
 
 var pluginUninstallCmd = &cobra.Command{
@@ -97,6 +106,24 @@ Example:
 	RunE: runPluginQuery,
 }
 
+var pluginInstallAllCmd = &cobra.Command{
+	Use:   "install-all REPO_URL",
+	Short: "Install all plugins from a mono-repo",
+	Long: `Clone a mono-repo and install all plugins found within it.
+
+This command recursively walks the repository looking for component.yaml files
+and installs each component as a plugin.
+
+Examples:
+  gibson plugin install-all https://github.com/user/gibson-plugins
+  gibson plugin install-all git@github.com:user/gibson-plugins.git
+
+Note: Repositories should contain only plugins. Use separate repos for different
+component types (tools, agents, plugins).`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPluginInstallAll,
+}
+
 // Flags for plugin install
 var (
 	pluginInstallBranch       string
@@ -104,6 +131,15 @@ var (
 	pluginInstallForce        bool
 	pluginInstallSkipBuild    bool
 	pluginInstallSkipRegister bool
+)
+
+// Flags for plugin install-all
+var (
+	pluginInstallAllBranch       string
+	pluginInstallAllTag          string
+	pluginInstallAllForce        bool
+	pluginInstallAllSkipBuild    bool
+	pluginInstallAllSkipRegister bool
 )
 
 // Flags for plugin update
@@ -131,6 +167,13 @@ func init() {
 	pluginInstallCmd.Flags().BoolVar(&pluginInstallSkipBuild, "skip-build", false, "Skip building the plugin")
 	pluginInstallCmd.Flags().BoolVar(&pluginInstallSkipRegister, "skip-register", false, "Skip registering in component registry")
 
+	// Install-all command flags
+	pluginInstallAllCmd.Flags().StringVar(&pluginInstallAllBranch, "branch", "", "Git branch to install from")
+	pluginInstallAllCmd.Flags().StringVar(&pluginInstallAllTag, "tag", "", "Git tag to install from")
+	pluginInstallAllCmd.Flags().BoolVar(&pluginInstallAllForce, "force", false, "Force reinstall if plugins exist")
+	pluginInstallAllCmd.Flags().BoolVar(&pluginInstallAllSkipBuild, "skip-build", false, "Skip building the plugins")
+	pluginInstallAllCmd.Flags().BoolVar(&pluginInstallAllSkipRegister, "skip-register", false, "Skip registering in component registry")
+
 	// Update command flags
 	pluginUpdateCmd.Flags().BoolVar(&pluginUpdateRestart, "restart", false, "Restart plugin after update if it was running")
 	pluginUpdateCmd.Flags().BoolVar(&pluginUpdateSkipBuild, "skip-build", false, "Skip rebuilding the plugin")
@@ -146,6 +189,7 @@ func init() {
 	// Add subcommands
 	pluginCmd.AddCommand(pluginListCmd)
 	pluginCmd.AddCommand(pluginInstallCmd)
+	pluginCmd.AddCommand(pluginInstallAllCmd)
 	pluginCmd.AddCommand(pluginUninstallCmd)
 	pluginCmd.AddCommand(pluginUpdateCmd)
 	pluginCmd.AddCommand(pluginShowCmd)
@@ -237,7 +281,7 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Install the plugin
-	result, err := installer.Install(ctx, repoURL, opts)
+	result, err := installer.Install(ctx, repoURL, component.ComponentKindPlugin, opts)
 	if err != nil {
 		return fmt.Errorf("installation failed: %w", err)
 	}
@@ -256,6 +300,85 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 
 	if result.BuildOutput != "" && !pluginInstallSkipBuild {
 		cmd.Printf("\nBuild output:\n%s\n", result.BuildOutput)
+	}
+
+	return nil
+}
+
+// runPluginInstallAll executes the plugin install-all command
+func runPluginInstallAll(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	repoURL := args[0]
+
+	cmd.Printf("Installing all plugins from %s...\n", repoURL)
+
+	// Create component registry
+	registry := component.NewDefaultComponentRegistry()
+
+	// Load existing registry
+	homeDir, err := getGibsonHome()
+	if err != nil {
+		return fmt.Errorf("failed to get Gibson home: %w", err)
+	}
+
+	registryPath := homeDir + "/registry.yaml"
+	if _, err := os.Stat(registryPath); err == nil {
+		if err := registry.LoadFromConfig(registryPath); err != nil {
+			return fmt.Errorf("failed to load registry: %w", err)
+		}
+	}
+
+	// Create installer with dependencies
+	gitOps := git.NewDefaultGitOperations()
+	builder := build.NewDefaultBuildExecutor()
+	installer := component.NewDefaultInstaller(gitOps, builder, registry)
+
+	// Prepare install options
+	opts := component.InstallOptions{
+		Branch:       pluginInstallAllBranch,
+		Tag:          pluginInstallAllTag,
+		Force:        pluginInstallAllForce,
+		SkipBuild:    pluginInstallAllSkipBuild,
+		SkipRegister: pluginInstallAllSkipRegister,
+	}
+
+	// Install all plugins
+	result, err := installer.InstallAll(ctx, repoURL, component.ComponentKindPlugin, opts)
+	if err != nil {
+		return fmt.Errorf("installation failed: %w", err)
+	}
+
+	// Save registry
+	if !pluginInstallAllSkipRegister {
+		if err := registry.Save(); err != nil {
+			return fmt.Errorf("failed to save registry: %w", err)
+		}
+	}
+
+	// Print summary
+	cmd.Printf("\nInstallation complete in %v\n", result.Duration)
+	cmd.Printf("Components found: %d\n", result.ComponentsFound)
+	cmd.Printf("Successfully installed: %d\n", len(result.Successful))
+	cmd.Printf("Failed: %d\n", len(result.Failed))
+
+	// List successful installations
+	if len(result.Successful) > 0 {
+		cmd.Printf("\nInstalled plugins:\n")
+		for _, r := range result.Successful {
+			cmd.Printf("  - %s (v%s)\n", r.Component.Name, r.Component.Version)
+		}
+	}
+
+	// List failures
+	if len(result.Failed) > 0 {
+		cmd.Printf("\nFailed installations:\n")
+		for _, f := range result.Failed {
+			name := f.Name
+			if name == "" {
+				name = f.Path
+			}
+			cmd.Printf("  - %s: %v\n", name, f.Error)
+		}
 	}
 
 	return nil

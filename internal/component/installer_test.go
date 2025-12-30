@@ -163,13 +163,12 @@ func createTestManifest(t *testing.T, dir string, manifest *Manifest) {
 
 	// Write manifest file
 	// For simplicity, we'll create a basic YAML file
-	content := fmt.Sprintf(`kind: %s
-name: %s
+	content := fmt.Sprintf(`name: %s
 version: %s
 runtime:
   type: go
   entrypoint: ./bin/%s
-`, manifest.Kind, manifest.Name, manifest.Version, manifest.Name)
+`, manifest.Name, manifest.Version, manifest.Name)
 
 	if manifest.Build != nil {
 		content += fmt.Sprintf(`build:
@@ -191,19 +190,10 @@ func TestInstall_Success(t *testing.T) {
 	componentKind := ComponentKindAgent
 
 	// Setup mocks
-	repoInfo := &git.RepoInfo{
-		Host:  "github.com",
-		Owner: "test",
-		Repo:  "gibson-agent-scanner",
-		Kind:  "agent",
-		Name:  componentName,
-	}
-	mockGit.On("ParseRepoURL", repoURL).Return(repoInfo, nil)
 	mockGit.On("Clone", repoURL, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		// Create manifest in the cloned directory
 		componentDir := args.Get(1).(string)
 		manifest := &Manifest{
-			Kind:    componentKind,
 			Name:    componentName,
 			Version: "1.0.0",
 			Runtime: RuntimeConfig{
@@ -229,7 +219,7 @@ func TestInstall_Success(t *testing.T) {
 
 	// Execute install
 	opts := InstallOptions{}
-	result, err := installer.Install(context.Background(), repoURL, opts)
+	result, err := installer.Install(context.Background(), repoURL, componentKind, opts)
 
 	// Assert
 	require.NoError(t, err)
@@ -264,7 +254,6 @@ func TestInstallerUpdate_Success(t *testing.T) {
 
 	// Create manifest
 	manifest := &Manifest{
-		Kind:    componentKind,
 		Name:    componentName,
 		Version: "1.0.0",
 		Runtime: RuntimeConfig{
@@ -341,7 +330,6 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 		require.NoError(t, err)
 
 		manifest := &Manifest{
-			Kind:    comp.Kind,
 			Name:    comp.Name,
 			Version: "1.0.0",
 			Runtime: RuntimeConfig{

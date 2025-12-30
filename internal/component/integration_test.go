@@ -62,8 +62,6 @@ func (s *simpleGitOps) ParseRepoURL(url string) (*git.RepoInfo, error) {
 		Host:  "github.com",
 		Owner: "test-org",
 		Repo:  "gibson-agent-scanner",
-		Kind:  "agent",
-		Name:  "scanner",
 	}, nil
 }
 
@@ -125,7 +123,7 @@ func TestFullInstallFlow(t *testing.T) {
 		Timeout:      30 * time.Second,
 	}
 
-	result, err := installer.Install(ctx, repoURL, opts)
+	result, err := installer.Install(ctx, repoURL, ComponentKindAgent, opts)
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.True(t, result.Installed)
@@ -146,7 +144,7 @@ func TestFullInstallFlow(t *testing.T) {
 	assert.FileExists(t, filepath.Join(componentDir, ManifestFileName))
 
 	// Test that re-installing without Force flag fails
-	_, err = installer.Install(ctx, repoURL, opts)
+	_, err = installer.Install(ctx, repoURL, ComponentKindAgent, opts)
 	assert.Error(t, err)
 	var compErr *ComponentError
 	assert.ErrorAs(t, err, &compErr)
@@ -158,7 +156,7 @@ func TestFullInstallFlow(t *testing.T) {
 	require.NoError(t, err)
 
 	opts.Force = true
-	result, err = installer.Install(ctx, repoURL, opts)
+	result, err = installer.Install(ctx, repoURL, ComponentKindAgent, opts)
 	require.NoError(t, err)
 	assert.True(t, result.Installed)
 }

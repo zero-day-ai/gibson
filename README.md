@@ -307,8 +307,11 @@ gibson mission run -f mission-workflow.yaml \
 # List installed agents
 gibson agent list
 
-# Install a new agent
+# Install a new agent from a dedicated repository
 gibson agent install https://github.com/zero-day-ai/gibson-agent-scanner
+
+# Install from a mono-repo using the # fragment to specify subdirectory
+gibson agent install https://github.com/zero-day-ai/gibson-agents#security/scanner
 
 # Start an agent
 gibson agent start scanner
@@ -316,6 +319,58 @@ gibson agent start scanner
 # View agent logs
 gibson agent logs scanner
 ```
+
+### 5. Manage Tools
+
+```bash
+# List installed tools
+gibson tool list
+
+# Install a tool from a dedicated repository
+gibson tool install https://github.com/zero-day-ai/gibson-tool-nmap
+
+# Install from a mono-repo (official tools collection)
+gibson tool install git@github.com:zero-day-ai/gibson-tools-official.git#discovery/nmap
+gibson tool install git@github.com:zero-day-ai/gibson-tools-official.git#reconnaissance/nuclei
+
+# Install ALL tools from a mono-repo at once
+gibson tool install-all git@github.com:zero-day-ai/gibson-tools-official.git
+
+# Show tool details
+gibson tool show nmap
+```
+
+### 6. Bulk Install from Mono-Repos
+
+Gibson supports installing all components from a mono-repo at once:
+
+```bash
+# Install all tools from the official tools collection
+gibson tool install-all https://github.com/zero-day-ai/gibson-tools-official
+
+# Install all agents from an agents mono-repo
+gibson agent install-all https://github.com/user/gibson-agents
+
+# Install all plugins from a plugins mono-repo
+gibson plugin install-all https://github.com/user/gibson-plugins
+
+# With options
+gibson tool install-all https://github.com/zero-day-ai/gibson-tools-official \
+  --branch main \
+  --force \
+  --skip-build
+```
+
+The `install-all` command:
+- Clones the entire repository
+- Recursively finds all `component.yaml` files
+- Installs each component to `~/.gibson/{kind}s/{name}/`
+- Reports success/failure for each component
+
+**Important:** Repositories should contain only one type of component. Use separate repos for tools, agents, and plugins:
+- `gibson-tools-*` repos → use `gibson tool install-all`
+- `gibson-agents-*` repos → use `gibson agent install-all`
+- `gibson-plugins-*` repos → use `gibson plugin install-all`
 
 * * *
 
@@ -550,7 +605,9 @@ Flags:
 
 ```bash
 gibson agent list                     # List installed agents
-gibson agent install [URL/PATH]       # Install an agent
+gibson agent install [URL]            # Install an agent
+gibson agent install [URL#SUBDIR]     # Install from mono-repo subdirectory
+gibson agent install-all [URL]        # Install all agents from mono-repo
 gibson agent uninstall [NAME]         # Uninstall an agent
 gibson agent update [NAME]            # Update an agent
 gibson agent show [NAME]              # Show agent details
@@ -558,6 +615,35 @@ gibson agent build [PATH]             # Build an agent from source
 gibson agent start [NAME]             # Start an agent
 gibson agent stop [NAME]              # Stop an agent
 gibson agent logs [NAME]              # View agent logs
+```
+
+### Tool Commands
+
+```bash
+gibson tool list                      # List installed tools
+gibson tool install [URL]             # Install a tool
+gibson tool install [URL#SUBDIR]      # Install from mono-repo subdirectory
+gibson tool install-all [URL]         # Install all tools from mono-repo
+gibson tool uninstall [NAME]          # Uninstall a tool
+gibson tool update [NAME]             # Update a tool
+gibson tool show [NAME]               # Show tool details
+gibson tool build [NAME]              # Build a tool
+gibson tool invoke [NAME] --input {}  # Invoke a tool with JSON input
+```
+
+### Plugin Commands
+
+```bash
+gibson plugin list                    # List installed plugins
+gibson plugin install [URL]           # Install a plugin
+gibson plugin install [URL#SUBDIR]    # Install from mono-repo subdirectory
+gibson plugin install-all [URL]       # Install all plugins from mono-repo
+gibson plugin uninstall [NAME]        # Uninstall a plugin
+gibson plugin update [NAME]           # Update a plugin
+gibson plugin show [NAME]             # Show plugin details
+gibson plugin start [NAME]            # Start a plugin
+gibson plugin stop [NAME]             # Stop a plugin
+gibson plugin query [NAME] --method X # Query a plugin method
 ```
 
 ### Mission Commands

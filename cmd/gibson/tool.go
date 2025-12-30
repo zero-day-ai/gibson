@@ -32,9 +32,18 @@ var toolListCmd = &cobra.Command{
 var toolInstallCmd = &cobra.Command{
 	Use:   "install REPO_URL",
 	Short: "Install a tool from a git repository",
-	Long:  `Install a tool from a git repository URL (e.g., https://github.com/user/gibson-tool-nmap)`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runToolInstall,
+	Long: `Install a tool from a git repository URL.
+
+For single-tool repositories:
+  gibson tool install https://github.com/user/gibson-tool-nmap
+
+For mono-repos with multiple tools, use the # fragment to specify the subdirectory:
+  gibson tool install https://github.com/user/gibson-tools#discovery/nmap
+  gibson tool install git@github.com:user/gibson-tools.git#reconnaissance/nuclei
+
+The component.yaml manifest must be in the root of the specified directory.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runToolInstall,
 }
 
 var toolUninstallCmd = &cobra.Command{
@@ -85,6 +94,24 @@ var toolInvokeCmd = &cobra.Command{
 	RunE:  runToolInvoke,
 }
 
+var toolInstallAllCmd = &cobra.Command{
+	Use:   "install-all REPO_URL",
+	Short: "Install all tools from a mono-repo",
+	Long: `Clone a mono-repo and install all tools found within it.
+
+This command recursively walks the repository looking for component.yaml files
+and installs each component as a tool.
+
+Examples:
+  gibson tool install-all https://github.com/zero-day-ai/gibson-tools-official
+  gibson tool install-all git@github.com:zero-day-ai/gibson-tools-official.git
+
+Note: Repositories should contain only tools. Use separate repos for different
+component types (tools, agents, plugins).`,
+	Args: cobra.ExactArgs(1),
+	RunE: runToolInstallAll,
+}
+
 // Flags for tool install
 var (
 	toolInstallBranch     string
@@ -110,6 +137,15 @@ var (
 	toolInvokeInput string
 )
 
+// Flags for tool install-all
+var (
+	toolInstallAllBranch      string
+	toolInstallAllTag         string
+	toolInstallAllForce       bool
+	toolInstallAllSkipBuild   bool
+	toolInstallAllSkipRegister bool
+)
+
 func init() {
 	// Install command flags
 	toolInstallCmd.Flags().StringVar(&toolInstallBranch, "branch", "", "Git branch to install")
@@ -117,6 +153,13 @@ func init() {
 	toolInstallCmd.Flags().BoolVar(&toolInstallForce, "force", false, "Force reinstall if tool exists")
 	toolInstallCmd.Flags().BoolVar(&toolInstallSkipBuild, "skip-build", false, "Skip building the tool")
 	toolInstallCmd.Flags().BoolVar(&toolInstallSkipRegister, "skip-register", false, "Skip registering in component registry")
+
+	// Install-all command flags
+	toolInstallAllCmd.Flags().StringVar(&toolInstallAllBranch, "branch", "", "Git branch to install from")
+	toolInstallAllCmd.Flags().StringVar(&toolInstallAllTag, "tag", "", "Git tag to install from")
+	toolInstallAllCmd.Flags().BoolVar(&toolInstallAllForce, "force", false, "Force reinstall if tools exist")
+	toolInstallAllCmd.Flags().BoolVar(&toolInstallAllSkipBuild, "skip-build", false, "Skip building the tools")
+	toolInstallAllCmd.Flags().BoolVar(&toolInstallAllSkipRegister, "skip-register", false, "Skip registering in component registry")
 
 	// Update command flags
 	toolUpdateCmd.Flags().BoolVar(&toolUpdateRestart, "restart", false, "Restart tool after update if it was running")
@@ -132,6 +175,7 @@ func init() {
 	// Add subcommands
 	toolCmd.AddCommand(toolListCmd)
 	toolCmd.AddCommand(toolInstallCmd)
+	toolCmd.AddCommand(toolInstallAllCmd)
 	toolCmd.AddCommand(toolUninstallCmd)
 	toolCmd.AddCommand(toolUpdateCmd)
 	toolCmd.AddCommand(toolShowCmd)
@@ -223,7 +267,7 @@ func runToolInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// Install the tool
-	result, err := installer.Install(ctx, repoURL, opts)
+	result, err := installer.Install(ctx, repoURL, component.ComponentKindTool, opts)
 	if err != nil {
 		return fmt.Errorf("installation failed: %w", err)
 	}
@@ -242,6 +286,85 @@ func runToolInstall(cmd *cobra.Command, args []string) error {
 
 	if result.BuildOutput != "" && !toolInstallSkipBuild {
 		cmd.Printf("\nBuild output:\n%s\n", result.BuildOutput)
+	}
+
+	return nil
+}
+
+// runToolInstallAll executes the tool install-all command
+func runToolInstallAll(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	repoURL := args[0]
+
+	cmd.Printf("Installing all tools from %s...\n", repoURL)
+
+	// Create component registry
+	registry := component.NewDefaultComponentRegistry()
+
+	// Load existing registry
+	homeDir, err := getGibsonHome()
+	if err != nil {
+		return fmt.Errorf("failed to get Gibson home: %w", err)
+	}
+
+	registryPath := homeDir + "/registry.yaml"
+	if _, err := os.Stat(registryPath); err == nil {
+		if err := registry.LoadFromConfig(registryPath); err != nil {
+			return fmt.Errorf("failed to load registry: %w", err)
+		}
+	}
+
+	// Create installer with dependencies
+	gitOps := git.NewDefaultGitOperations()
+	builder := build.NewDefaultBuildExecutor()
+	installer := component.NewDefaultInstaller(gitOps, builder, registry)
+
+	// Prepare install options
+	opts := component.InstallOptions{
+		Branch:       toolInstallAllBranch,
+		Tag:          toolInstallAllTag,
+		Force:        toolInstallAllForce,
+		SkipBuild:    toolInstallAllSkipBuild,
+		SkipRegister: toolInstallAllSkipRegister,
+	}
+
+	// Install all tools
+	result, err := installer.InstallAll(ctx, repoURL, component.ComponentKindTool, opts)
+	if err != nil {
+		return fmt.Errorf("installation failed: %w", err)
+	}
+
+	// Save registry
+	if !toolInstallAllSkipRegister {
+		if err := registry.Save(); err != nil {
+			return fmt.Errorf("failed to save registry: %w", err)
+		}
+	}
+
+	// Print summary
+	cmd.Printf("\nInstallation complete in %v\n", result.Duration)
+	cmd.Printf("Components found: %d\n", result.ComponentsFound)
+	cmd.Printf("Successfully installed: %d\n", len(result.Successful))
+	cmd.Printf("Failed: %d\n", len(result.Failed))
+
+	// List successful installations
+	if len(result.Successful) > 0 {
+		cmd.Printf("\nInstalled tools:\n")
+		for _, r := range result.Successful {
+			cmd.Printf("  - %s (v%s)\n", r.Component.Name, r.Component.Version)
+		}
+	}
+
+	// List failures
+	if len(result.Failed) > 0 {
+		cmd.Printf("\nFailed installations:\n")
+		for _, f := range result.Failed {
+			name := f.Name
+			if name == "" {
+				name = f.Path
+			}
+			cmd.Printf("  - %s: %v\n", name, f.Error)
+		}
 	}
 
 	return nil

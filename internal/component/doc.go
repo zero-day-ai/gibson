@@ -34,14 +34,16 @@
 // Installer handles component installation, updates, and removal:
 //
 //	type Installer interface {
-//	    Install(ctx context.Context, repoURL string, opts InstallOptions) (*InstallResult, error)
+//	    Install(ctx context.Context, repoURL string, kind ComponentKind, opts InstallOptions) (*InstallResult, error)
 //	    Update(ctx context.Context, kind ComponentKind, name string, opts UpdateOptions) (*UpdateResult, error)
 //	    UpdateAll(ctx context.Context, kind ComponentKind, opts UpdateOptions) ([]UpdateResult, error)
 //	    Uninstall(ctx context.Context, kind ComponentKind, name string) (*UninstallResult, error)
 //	}
 //
 // The installer clones git repositories, validates manifests, checks dependencies,
-// builds components, and registers them in the component registry.
+// builds components, and registers them in the component registry. The component kind
+// is provided by the command context (e.g., 'gibson agent install' vs 'gibson tool install'),
+// rather than being embedded in the manifest file.
 //
 // ## LifecycleManager
 //
@@ -81,13 +83,16 @@
 //
 // Example manifest:
 //
-//	kind: agent
 //	name: scanner
 //	version: 1.0.0
 //	description: Network vulnerability scanner agent
 //	author: Security Team
 //	license: MIT
 //	repository: https://github.com/org/gibson-agent-scanner
+//
+// Note: Component kind is no longer stored in the manifest. Instead, it is determined
+// by the installation command (e.g., 'gibson agent install' for agents). This allows
+// the same component to be used in different contexts if needed.
 //
 //	build:
 //	  command: make build
@@ -195,6 +200,7 @@
 //	    // Install component
 //	    ctx := context.Background()
 //	    repoURL := "https://github.com/org/gibson-agent-scanner"
+//	    kind := component.ComponentKindAgent  // Kind determined by command context
 //	    opts := component.InstallOptions{
 //	        Force:        false,
 //	        SkipBuild:    false,
@@ -202,7 +208,7 @@
 //	        Timeout:      5 * time.Minute,
 //	    }
 //
-//	    result, err := installer.Install(ctx, repoURL, opts)
+//	    result, err := installer.Install(ctx, repoURL, kind, opts)
 //	    if err != nil {
 //	        log.Fatalf("Installation failed: %v", err)
 //	    }
@@ -318,10 +324,10 @@
 //	    }
 //
 //	    // Access manifest fields
-//	    fmt.Printf("Component: %s (%s) v%s\n",
+//	    fmt.Printf("Component: %s v%s\n",
 //	        manifest.Name,
-//	        manifest.Kind,
 //	        manifest.Version)
+//	    // Note: Kind is not stored in manifest, it's provided during installation
 //
 //	    // Check runtime configuration
 //	    if manifest.Runtime.IsNetworkBased() {

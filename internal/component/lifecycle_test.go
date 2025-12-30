@@ -199,7 +199,6 @@ func TestStartComponent_AlreadyRunning(t *testing.T) {
 		Status:  ComponentStatusRunning,
 		PID:     cmd.Process.Pid,
 		Manifest: &Manifest{
-			Kind:    ComponentKindAgent,
 			Name:    "test-agent",
 			Version: "1.0.0",
 			Runtime: RuntimeConfig{
@@ -388,7 +387,6 @@ func TestGetStatus_RunningProcess(t *testing.T) {
 		PID:     cmd.Process.Pid,
 		Port:    50000,
 		Manifest: &Manifest{
-			Kind:    ComponentKindAgent,
 			Name:    "test-agent",
 			Version: "1.0.0",
 			Runtime: RuntimeConfig{

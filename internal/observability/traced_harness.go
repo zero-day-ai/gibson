@@ -64,9 +64,9 @@ func WithLogger(logger *TracedLogger) TracedHarnessOption {
 	}
 }
 
-// WithPromptCapture enables capturing full prompts in trace spans.
-// This is useful for debugging but may expose sensitive data.
-// Default is false for security.
+// WithPromptCapture enables or disables capturing full prompts in trace spans.
+// This is useful for debugging and observability.
+// Default is true. Set to false in production if handling sensitive data.
 func WithPromptCapture(capture bool) TracedHarnessOption {
 	return func(h *TracedAgentHarness) {
 		h.capturePrompt = capture
@@ -95,7 +95,7 @@ func NewTracedAgentHarness(inner harness.AgentHarness, opts ...TracedHarnessOpti
 		inner:         inner,
 		tracer:        inner.Tracer(),
 		metrics:       inner.Metrics(),
-		capturePrompt: false,
+		capturePrompt: true,
 		turnCounter:   &atomic.Int32{},
 	}
 
