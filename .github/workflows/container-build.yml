@@ -7,7 +7,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: zero-day-ai/gibson
+  IMAGE_OSS: zero-day-ai/gibson-oss
+  IMAGE_ENTERPRISE: zero-day-ai/gibson-enterprise
 
 jobs:
   validate:
@@ -60,8 +61,8 @@ jobs:
           file: ./build/Dockerfile.oss
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:oss-${{ needs.validate.outputs.gibson }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:oss-latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OSS }}:${{ needs.validate.outputs.gibson }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_OSS }}:latest
           build-args: |
             SDK_VERSION=${{ needs.validate.outputs.sdk }}
             GIBSON_VERSION=${{ needs.validate.outputs.gibson }}
@@ -90,8 +91,8 @@ jobs:
           file: ./build/Dockerfile.enterprise
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:enterprise-${{ needs.validate.outputs.gibson }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:enterprise-latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ENTERPRISE }}:${{ needs.validate.outputs.gibson }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_ENTERPRISE }}:latest
           build-args: |
             SDK_VERSION=${{ needs.validate.outputs.sdk }}
             GIBSON_VERSION=${{ needs.validate.outputs.gibson }}
