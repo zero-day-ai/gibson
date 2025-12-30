@@ -32,6 +32,7 @@ import (
 //   - Logger: Uses default slog logger if nil
 //   - FindingStore: Uses InMemoryFindingStore if nil
 //   - Metrics: Uses NoOpMetricsRecorder if nil
+//   - GraphRAGBridge: Uses NoopGraphRAGBridge if nil (no knowledge graph storage)
 type HarnessConfig struct {
 	// LLMRegistry provides access to registered LLM providers.
 	// Used for LLM completion operations (Complete, CompleteWithTools, Stream).
@@ -83,6 +84,16 @@ type HarnessConfig struct {
 	// Used for tracking LLM usage, tool execution, finding counts, etc.
 	// Optional: defaults to NoOpMetricsRecorder if nil.
 	Metrics MetricsRecorder
+
+	// GraphRAGBridge for storing findings to the knowledge graph.
+	// Used for async storage of findings to Neo4j with relationship detection.
+	// Optional: defaults to NoopGraphRAGBridge if nil.
+	GraphRAGBridge GraphRAGBridge
+
+	// GraphRAGQueryBridge provides access to GraphRAG query operations.
+	// If nil, a NoopGraphRAGQueryBridge will be created (GraphRAG operations will return ErrGraphRAGNotEnabled).
+	// To enable queries, provide a DefaultGraphRAGQueryBridge created with the same GraphRAGStore as GraphRAGBridge.
+	GraphRAGQueryBridge GraphRAGQueryBridge
 }
 
 // Validate checks that required fields are set and returns an error if validation fails.
@@ -120,6 +131,8 @@ func (c *HarnessConfig) Validate() error {
 //   - Logger: slog.Default()
 //   - FindingStore: NewInMemoryFindingStore()
 //   - Metrics: NewNoOpMetricsRecorder()
+//   - GraphRAGBridge: NoopGraphRAGBridge{} (no-op, no knowledge graph storage)
+//   - GraphRAGQueryBridge: NoopGraphRAGQueryBridge{} (no-op, GraphRAG queries disabled)
 //
 // Note: MemoryManager is not defaulted as it requires mission-specific configuration.
 // Note: SlotManager is not defaulted as it is a required field.
@@ -155,6 +168,14 @@ func (c *HarnessConfig) ApplyDefaults() {
 
 	if c.Metrics == nil {
 		c.Metrics = NewNoOpMetricsRecorder()
+	}
+
+	if c.GraphRAGBridge == nil {
+		c.GraphRAGBridge = &NoopGraphRAGBridge{}
+	}
+
+	if c.GraphRAGQueryBridge == nil {
+		c.GraphRAGQueryBridge = &NoopGraphRAGQueryBridge{}
 	}
 
 	// Note: MemoryManager is not defaulted - it requires mission-specific configuration

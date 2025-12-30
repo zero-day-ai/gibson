@@ -72,18 +72,21 @@ func (p *Panel) SetTitle(title string) {
 // Render renders the panel to a string with borders, title, and content.
 // It handles content truncation and adds scrolling indicators when needed.
 func (p *Panel) Render() string {
-	// Select the appropriate style based on focus state
-	var panelStyle lipgloss.Style
-	if p.focused {
-		panelStyle = p.theme.FocusedPanelStyle
-	} else {
-		panelStyle = p.theme.PanelStyle
-	}
+	// Border characters
+	const (
+		topLeft     = "┌"
+		topRight    = "┐"
+		bottomLeft  = "└"
+		bottomRight = "┘"
+		horizontal  = "─"
+		vertical    = "│"
+	)
 
-	// Calculate available content dimensions
-	// Account for borders (2 chars width, 2 chars height) and padding (2 chars width per side)
-	contentWidth := p.width - 6
-	contentHeight := p.height - 2
+	// Calculate content dimensions (inside borders, with 1 char padding each side)
+	// Total: border(1) + padding(1) + content + padding(1) + border(1) = width
+	// So content width = width - 4
+	contentWidth := p.width - 4
+	contentHeight := p.height - 2 // top and bottom borders
 
 	if contentWidth < 1 {
 		contentWidth = 1
@@ -92,95 +95,104 @@ func (p *Panel) Render() string {
 		contentHeight = 1
 	}
 
-	// Process content: split into lines and truncate/pad as needed
+	// Select border color based on focus state
+	borderColor := p.theme.Muted
+	if p.focused {
+		borderColor = p.theme.Primary
+	}
+	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
+	titleStyle := p.theme.TitleStyle
+
+	// Build top border with title
+	innerWidth := p.width - 2 // width between corner chars
+	var topBorder string
+	if p.title != "" {
+		titleText := " " + p.title + " "
+		titleLen := len(titleText)
+		remainingWidth := innerWidth - titleLen
+		if remainingWidth > 0 {
+			topBorder = borderStyle.Render(topLeft) +
+				titleStyle.Render(titleText) +
+				borderStyle.Render(strings.Repeat(horizontal, remainingWidth)+topRight)
+		} else {
+			topBorder = borderStyle.Render(topLeft + strings.Repeat(horizontal, innerWidth) + topRight)
+		}
+	} else {
+		topBorder = borderStyle.Render(topLeft + strings.Repeat(horizontal, innerWidth) + topRight)
+	}
+
+	// Build bottom border
+	bottomBorder := borderStyle.Render(bottomLeft + strings.Repeat(horizontal, innerWidth) + bottomRight)
+
+	// Process content lines
 	lines := strings.Split(p.content, "\n")
 	visibleLines := make([]string, 0, contentHeight)
 
 	// Determine if we need scrolling indicators
 	hasMoreContent := len(lines) > contentHeight
 
-	// Take only the lines that fit in the available height
+	// Take only the lines that fit
 	displayLines := lines
 	if hasMoreContent {
-		// Show the first contentHeight-1 lines and add an indicator
 		if contentHeight > 1 {
 			displayLines = lines[:contentHeight-1]
 		} else {
 			displayLines = lines[:1]
 		}
-	} else {
-		displayLines = lines
 	}
 
-	// Truncate each line to fit the width
+	// Process each line - truncate or pad to exact width
 	for _, line := range displayLines {
-		if len(line) > contentWidth {
-			// Truncate and add ellipsis
-			if contentWidth > 3 {
-				visibleLines = append(visibleLines, line[:contentWidth-3]+"...")
-			} else {
-				visibleLines = append(visibleLines, line[:contentWidth])
-			}
-		} else {
-			// Pad line to content width for consistent appearance
-			visibleLines = append(visibleLines, line+strings.Repeat(" ", contentWidth-len(line)))
-		}
+		visibleLines = append(visibleLines, p.fitLine(line, contentWidth))
 	}
 
-	// Add scrolling indicator if there's more content
+	// Add scrolling indicator if needed
 	if hasMoreContent && contentHeight > 0 {
 		indicator := "..."
-		if contentWidth > 3 {
-			indicator = strings.Repeat(" ", (contentWidth-3)/2) + "..." + strings.Repeat(" ", (contentWidth-3)/2)
-			if len(indicator) < contentWidth {
-				indicator += " "
-			}
-		}
-		visibleLines = append(visibleLines, indicator[:contentWidth])
+		visibleLines = append(visibleLines, p.fitLine(indicator, contentWidth))
 	}
 
-	// Pad with empty lines if we don't have enough content
+	// Pad with empty lines to fill height
 	for len(visibleLines) < contentHeight {
 		visibleLines = append(visibleLines, strings.Repeat(" ", contentWidth))
 	}
 
-	// Join lines into content string
-	contentStr := strings.Join(visibleLines, "\n")
-
-	// Apply the panel style with title
-	styledContent := panelStyle.
-		Width(contentWidth).
-		Height(contentHeight).
-		Render(contentStr)
-
-	// Add title if present
-	if p.title != "" {
-		titleStr := " " + p.theme.TitleStyle.Render(p.title) + " "
-
-		// Create the final panel with title in the top border
-		// We need to manually construct this because lipgloss doesn't have built-in title support
-		renderedLines := strings.Split(styledContent, "\n")
-		if len(renderedLines) > 0 {
-			// Insert title into the top border
-			topBorder := renderedLines[0]
-			// Find a good position for the title (after the first border character)
-			if len(topBorder) > 2 {
-				// Simple approach: replace part of the top border with the title
-				titleLen := lipgloss.Width(titleStr)
-				if titleLen < len(topBorder)-4 {
-					// Center the title in the top border
-					leftPad := (len(topBorder) - titleLen - 2) / 2
-					if leftPad < 1 {
-						leftPad = 1
-					}
-					renderedLines[0] = topBorder[:leftPad] + titleStr + topBorder[leftPad+titleLen:]
-				}
-			}
-		}
-		styledContent = strings.Join(renderedLines, "\n")
+	// Build content rows with borders
+	var rows []string
+	rows = append(rows, topBorder)
+	for _, line := range visibleLines {
+		row := borderStyle.Render(vertical) + " " + line + " " + borderStyle.Render(vertical)
+		rows = append(rows, row)
 	}
+	rows = append(rows, bottomBorder)
 
-	return styledContent
+	return strings.Join(rows, "\n")
+}
+
+// fitLine truncates or pads a line to exactly the specified width
+func (p *Panel) fitLine(line string, width int) string {
+	lineWidth := lipgloss.Width(line)
+	if lineWidth > width {
+		// Truncate
+		runes := []rune(line)
+		if width > 3 {
+			// Find how many runes we can keep
+			kept := 0
+			keptWidth := 0
+			for i, r := range runes {
+				rWidth := lipgloss.Width(string(r))
+				if keptWidth+rWidth > width-3 {
+					break
+				}
+				kept = i + 1
+				keptWidth += rWidth
+			}
+			return string(runes[:kept]) + "..." + strings.Repeat(" ", width-keptWidth-3)
+		}
+		return string(runes[:width])
+	}
+	// Pad
+	return line + strings.Repeat(" ", width-lineWidth)
 }
 
 // SetTheme sets the theme for the panel.

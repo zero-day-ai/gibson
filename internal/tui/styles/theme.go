@@ -38,13 +38,13 @@ type Theme struct {
 // DefaultTheme returns a theme with default colors and styles.
 func DefaultTheme() *Theme {
 	theme := &Theme{
-		// Define color palette
-		Primary: lipgloss.Color("#00A6FF"),
-		Success: lipgloss.Color("#00FF00"),
-		Warning: lipgloss.Color("#FFA500"),
-		Danger:  lipgloss.Color("#FF0000"),
-		Muted:   lipgloss.Color("#888888"),
-		Info:    lipgloss.Color("#00FFFF"),
+		// Define color palette - Amber CRT Theme
+		Primary: lipgloss.Color("#FFD966"),
+		Success: lipgloss.Color("#FFB000"),
+		Warning: lipgloss.Color("#FFB000"),
+		Danger:  lipgloss.Color("#FFD966"),
+		Muted:   lipgloss.Color("#805800"),
+		Info:    lipgloss.Color("#805800"),
 	}
 
 	// Create panel styles
@@ -62,45 +62,47 @@ func DefaultTheme() *Theme {
 		Foreground(theme.Primary).
 		Bold(true)
 
-	// Create severity styles
+	// Create severity styles - Brightness-based differentiation
 	theme.SeverityCritical = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(theme.Danger).
+		Foreground(lipgloss.Color("#000000")).
+		Background(lipgloss.Color("#FFB000")).
 		Bold(true)
 
 	theme.SeverityHigh = lipgloss.NewStyle().
-		Foreground(theme.Danger).
+		Foreground(lipgloss.Color("#FFD966")).
 		Bold(true)
 
 	theme.SeverityMedium = lipgloss.NewStyle().
-		Foreground(theme.Warning)
+		Foreground(lipgloss.Color("#FFB000"))
 
 	theme.SeverityLow = lipgloss.NewStyle().
-		Foreground(theme.Info)
+		Foreground(lipgloss.Color("#805800"))
 
 	theme.SeverityInfo = lipgloss.NewStyle().
-		Foreground(theme.Muted)
+		Foreground(lipgloss.Color("#805800"))
 
-	// Create status styles
+	// Create status styles - Brightness-based differentiation
 	theme.StatusRunning = lipgloss.NewStyle().
-		Foreground(theme.Success).
+		Foreground(lipgloss.Color("#FFD966")).
 		Bold(true)
 
 	theme.StatusPaused = lipgloss.NewStyle().
-		Foreground(theme.Warning)
+		Foreground(lipgloss.Color("#FFB000")).
+		Italic(true)
 
 	theme.StatusStopped = lipgloss.NewStyle().
-		Foreground(theme.Muted)
+		Foreground(lipgloss.Color("#805800"))
 
 	theme.StatusError = lipgloss.NewStyle().
-		Foreground(theme.Danger).
+		Foreground(lipgloss.Color("#000000")).
+		Background(lipgloss.Color("#FFD966")).
 		Bold(true)
 
 	theme.StatusComplete = lipgloss.NewStyle().
-		Foreground(theme.Success)
+		Foreground(lipgloss.Color("#FFB000"))
 
 	theme.StatusPending = lipgloss.NewStyle().
-		Foreground(theme.Muted)
+		Foreground(lipgloss.Color("#805800"))
 
 	return theme
 }

@@ -10,13 +10,13 @@ GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 BINARY_NAME=gibson
-BINARY_DIR=bin
+BINARY_DIR=build
 MAIN_PACKAGE=./cmd/gibson
 
 # CGO is required for SQLite FTS5
 export CGO_ENABLED=1
 
-# Build tags for FTS5 support
+# Build tags for FTS5 support (always enabled)
 BUILD_TAGS=-tags "fts5"
 
 # Coverage settings
@@ -89,7 +89,7 @@ tidy:
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	@rm -rf $(BINARY_DIR)
+	@rm -rf $(BINARY_DIR)/*
 	@rm -f $(COVERAGE_FILE) coverage.html
 	@echo "Clean complete"
 

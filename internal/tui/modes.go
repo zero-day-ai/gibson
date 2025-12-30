@@ -6,7 +6,7 @@ type AppMode int
 const (
 	// ModeDashboard is the main dashboard view showing system overview
 	ModeDashboard AppMode = iota
-	// ModeConsole is the interactive console view for agent communication
+	// ModeConsole is the console view for command execution
 	ModeConsole
 	// ModeMission is the mission management view
 	ModeMission

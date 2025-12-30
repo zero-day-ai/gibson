@@ -11,6 +11,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
+	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -60,6 +61,10 @@ type DefaultAgentHarness struct {
 	logger     *slog.Logger
 	metrics    MetricsRecorder
 	tokenUsage llm.TokenTracker
+
+	// Knowledge graph integration
+	graphRAGBridge      GraphRAGBridge
+	graphRAGQueryBridge GraphRAGQueryBridge
 }
 
 // Ensure DefaultAgentHarness implements AgentHarness
@@ -728,6 +733,20 @@ func (h *DefaultAgentHarness) SubmitFinding(ctx context.Context, finding agent.F
 		"finding_id", finding.ID.String(),
 		"title", finding.Title)
 
+	// Async store to GraphRAG knowledge graph (non-blocking)
+	// This happens after local store succeeds to ensure findings are never lost
+	if h.graphRAGBridge != nil {
+		// Get target ID from mission context if available
+		var targetID *types.ID
+		if h.targetInfo.ID != "" {
+			id, err := types.ParseID(string(h.targetInfo.ID))
+			if err == nil {
+				targetID = &id
+			}
+		}
+		h.graphRAGBridge.StoreAsync(ctx, finding, h.missionCtx.ID, targetID)
+	}
+
 	return nil
 }
 
@@ -837,4 +856,342 @@ func (h *DefaultAgentHarness) Log(level, message string, fields map[string]any) 
 	default:
 		h.logger.Info(message, attrs...)
 	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// GraphRAG Query Methods
+// ────────────────────────────────────────────────────────────────────────────
+
+// QueryGraphRAG performs a semantic or hybrid query against the knowledge graph.
+func (h *DefaultAgentHarness) QueryGraphRAG(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.QueryGraphRAG")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("querying graphrag",
+		"query_text", query.Text,
+		"top_k", query.TopK,
+		"max_hops", query.MaxHops)
+
+	// Delegate to query bridge
+	results, err := h.graphRAGQueryBridge.Query(ctx, query)
+	if err != nil {
+		h.logger.Error("graphrag query failed",
+			"query_text", query.Text,
+			"error", err)
+		return nil, err
+	}
+
+	h.logger.Debug("graphrag query completed",
+		"results_count", len(results))
+
+	return results, nil
+}
+
+// FindSimilarAttacks searches for attack patterns semantically similar to the given content.
+func (h *DefaultAgentHarness) FindSimilarAttacks(ctx context.Context, content string, topK int) ([]sdkgraphrag.AttackPattern, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.FindSimilarAttacks")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("finding similar attacks",
+		"content_length", len(content),
+		"top_k", topK)
+
+	// Delegate to query bridge
+	patterns, err := h.graphRAGQueryBridge.FindSimilarAttacks(ctx, content, topK)
+	if err != nil {
+		h.logger.Error("find similar attacks failed",
+			"error", err)
+		return nil, err
+	}
+
+	h.logger.Debug("find similar attacks completed",
+		"patterns_count", len(patterns))
+
+	return patterns, nil
+}
+
+// FindSimilarFindings searches for findings semantically similar to the referenced finding.
+func (h *DefaultAgentHarness) FindSimilarFindings(ctx context.Context, findingID string, topK int) ([]sdkgraphrag.FindingNode, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.FindSimilarFindings")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("finding similar findings",
+		"finding_id", findingID,
+		"top_k", topK)
+
+	// Delegate to query bridge
+	findings, err := h.graphRAGQueryBridge.FindSimilarFindings(ctx, findingID, topK)
+	if err != nil {
+		h.logger.Error("find similar findings failed",
+			"finding_id", findingID,
+			"error", err)
+		return nil, err
+	}
+
+	h.logger.Debug("find similar findings completed",
+		"findings_count", len(findings))
+
+	return findings, nil
+}
+
+// GetAttackChains discovers multi-step attack paths starting from a technique.
+func (h *DefaultAgentHarness) GetAttackChains(ctx context.Context, techniqueID string, maxDepth int) ([]sdkgraphrag.AttackChain, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.GetAttackChains")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("getting attack chains",
+		"technique_id", techniqueID,
+		"max_depth", maxDepth)
+
+	// Delegate to query bridge
+	chains, err := h.graphRAGQueryBridge.GetAttackChains(ctx, techniqueID, maxDepth)
+	if err != nil {
+		h.logger.Error("get attack chains failed",
+			"technique_id", techniqueID,
+			"error", err)
+		return nil, err
+	}
+
+	h.logger.Debug("get attack chains completed",
+		"chains_count", len(chains))
+
+	return chains, nil
+}
+
+// GetRelatedFindings retrieves findings connected via SIMILAR_TO or RELATED_TO relationships.
+func (h *DefaultAgentHarness) GetRelatedFindings(ctx context.Context, findingID string) ([]sdkgraphrag.FindingNode, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.GetRelatedFindings")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("getting related findings",
+		"finding_id", findingID)
+
+	// Delegate to query bridge
+	findings, err := h.graphRAGQueryBridge.GetRelatedFindings(ctx, findingID)
+	if err != nil {
+		h.logger.Error("get related findings failed",
+			"finding_id", findingID,
+			"error", err)
+		return nil, err
+	}
+
+	h.logger.Debug("get related findings completed",
+		"findings_count", len(findings))
+
+	return findings, nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// GraphRAG Storage Methods
+// ────────────────────────────────────────────────────────────────────────────
+
+// StoreGraphNode stores an arbitrary node in the knowledge graph.
+func (h *DefaultAgentHarness) StoreGraphNode(ctx context.Context, node sdkgraphrag.GraphNode) (string, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.StoreGraphNode")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return "", sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("storing graph node",
+		"node_type", node.Type)
+
+	// Delegate to query bridge with mission and agent context
+	nodeID, err := h.graphRAGQueryBridge.StoreNode(ctx, node, h.missionCtx.ID.String(), h.missionCtx.CurrentAgent)
+	if err != nil {
+		h.logger.Error("store graph node failed",
+			"node_type", node.Type,
+			"error", err)
+		return "", err
+	}
+
+	h.logger.Debug("store graph node completed",
+		"node_id", nodeID)
+
+	return nodeID, nil
+}
+
+// CreateGraphRelationship creates a relationship between two existing nodes.
+func (h *DefaultAgentHarness) CreateGraphRelationship(ctx context.Context, rel sdkgraphrag.Relationship) error {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.CreateGraphRelationship")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("creating graph relationship",
+		"relationship_type", rel.Type,
+		"from_id", rel.FromID,
+		"to_id", rel.ToID)
+
+	// Delegate to query bridge
+	err := h.graphRAGQueryBridge.CreateRelationship(ctx, rel)
+	if err != nil {
+		h.logger.Error("create graph relationship failed",
+			"relationship_type", rel.Type,
+			"error", err)
+		return err
+	}
+
+	h.logger.Debug("create graph relationship completed")
+
+	return nil
+}
+
+// StoreGraphBatch stores multiple nodes and relationships atomically.
+func (h *DefaultAgentHarness) StoreGraphBatch(ctx context.Context, batch sdkgraphrag.Batch) ([]string, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.StoreGraphBatch")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("storing graph batch",
+		"nodes_count", len(batch.Nodes),
+		"relationships_count", len(batch.Relationships))
+
+	// Delegate to query bridge with mission and agent context
+	nodeIDs, err := h.graphRAGQueryBridge.StoreBatch(ctx, batch, h.missionCtx.ID.String(), h.missionCtx.CurrentAgent)
+	if err != nil {
+		h.logger.Error("store graph batch failed",
+			"error", err)
+		return nil, err
+	}
+
+	h.logger.Debug("store graph batch completed",
+		"node_ids_count", len(nodeIDs))
+
+	return nodeIDs, nil
+}
+
+// TraverseGraph walks the graph from a starting node following relationships.
+func (h *DefaultAgentHarness) TraverseGraph(ctx context.Context, startNodeID string, opts sdkgraphrag.TraversalOptions) ([]sdkgraphrag.TraversalResult, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.TraverseGraph")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
+	}
+
+	h.logger.Debug("traversing graph",
+		"start_node_id", startNodeID,
+		"max_depth", opts.MaxDepth,
+		"direction", opts.Direction)
+
+	// Delegate to query bridge
+	results, err := h.graphRAGQueryBridge.Traverse(ctx, startNodeID, opts)
+	if err != nil {
+		h.logger.Error("traverse graph failed",
+			"start_node_id", startNodeID,
+			"error", err)
+		return nil, err
+	}
+
+	h.logger.Debug("traverse graph completed",
+		"results_count", len(results))
+
+	return results, nil
+}
+
+// GraphRAGHealth returns the health status of the GraphRAG subsystem.
+func (h *DefaultAgentHarness) GraphRAGHealth(ctx context.Context) types.HealthStatus {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.GraphRAGHealth")
+	defer span.End()
+
+	// Check if GraphRAG is enabled
+	if h.graphRAGQueryBridge == nil {
+		h.logger.Debug("graphrag query bridge not enabled")
+		return types.Unhealthy("graphrag query bridge not configured")
+	}
+
+	// Delegate to query bridge
+	status := h.graphRAGQueryBridge.Health(ctx)
+
+	h.logger.Debug("graphrag health check completed",
+		"state", status.State,
+		"message", status.Message)
+
+	return status
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Lifecycle Methods
+// ────────────────────────────────────────────────────────────────────────────
+
+// Close releases resources held by the harness, including waiting for
+// any pending async operations to complete.
+//
+// This method should be called when the harness is no longer needed, typically
+// at the end of an agent's execution or when the mission is complete.
+//
+// Close performs the following cleanup:
+//   - Waits for pending GraphRAG storage operations to complete
+//   - Logs any shutdown errors at WARN level
+//
+// The context can be used to set a timeout for the shutdown.
+func (h *DefaultAgentHarness) Close(ctx context.Context) error {
+	h.logger.Debug("closing harness")
+
+	// Shutdown GraphRAG bridge and wait for pending operations
+	if h.graphRAGBridge != nil {
+		if err := h.graphRAGBridge.Shutdown(ctx); err != nil {
+			h.logger.Warn("graphrag bridge shutdown error",
+				"error", err)
+			return err
+		}
+	}
+
+	h.logger.Debug("harness closed successfully")
+	return nil
 }

@@ -30,11 +30,12 @@ type App struct {
 
 	// Views
 	dashboardView *views.DashboardView
-	consoleView   *views.ConsoleView
 	missionView   *views.MissionView
 	findingsView  *views.FindingsView
+	consoleView   *views.ConsoleView
 
 	// Components
+	header         *components.Header
 	statusBar      *components.StatusBar
 	helpOverlay    *components.HelpOverlay
 	approvalDialog *components.ApprovalDialog
@@ -86,6 +87,11 @@ func NewApp(ctx context.Context, config AppConfig) *App {
 		agentRegistry:     config.AgentRegistry,
 	}
 
+	// Initialize header
+	app.header = components.NewHeader("GIBSON")
+	app.header.SetSubtitle("Security Testing Framework")
+	app.header.SetWidth(app.width)
+
 	// Initialize status bar
 	app.statusBar = components.NewStatusBar(app.width)
 	app.statusBar.SetMode(app.mode.String())
@@ -112,9 +118,6 @@ func (a *App) initViews() {
 		a.findingStore,
 	)
 
-	// Console view
-	a.consoleView = views.NewConsoleView(a.ctx, a.agentRegistry)
-
 	// Mission view
 	if a.missionDAO != nil {
 		a.missionView = views.NewMissionView(a.ctx, a.missionDAO)
@@ -124,6 +127,15 @@ func (a *App) initViews() {
 	if a.findingStore != nil {
 		a.findingsView = views.NewFindingsView(a.ctx, a.findingStore)
 	}
+
+	// Console view
+	a.consoleView = views.NewConsoleView(a.ctx, views.ConsoleConfig{
+		DB:                a.db,
+		ComponentRegistry: a.componentRegistry,
+		FindingStore:      a.findingStore,
+		HomeDir:           "", // Can be set from config later
+		ConfigFile:        "", // Can be set from config later
+	})
 }
 
 // Init initializes all child views and returns the initial command.
@@ -134,14 +146,14 @@ func (a *App) Init() tea.Cmd {
 	if a.dashboardView != nil {
 		cmds = append(cmds, a.dashboardView.Init())
 	}
-	if a.consoleView != nil {
-		cmds = append(cmds, a.consoleView.Init())
-	}
 	if a.missionView != nil {
 		cmds = append(cmds, a.missionView.Init())
 	}
 	if a.findingsView != nil {
 		cmds = append(cmds, a.findingsView.Init())
+	}
+	if a.consoleView != nil {
+		cmds = append(cmds, a.consoleView.Init())
 	}
 
 	// Start periodic tick for updates
@@ -171,8 +183,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Handle global keys
-		cmd := a.handleGlobalKey(msg)
-		if cmd != nil {
+		cmd, handled := a.handleGlobalKey(msg)
+		if handled {
 			return a, cmd
 		}
 
@@ -186,8 +198,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(cmds...)
 
 	case SwitchModeMsg:
-		a.setMode(msg.Mode)
-		return a, nil
+		cmd, _ := a.setMode(msg.Mode)
+		return a, cmd
 
 	case ApprovalRequestMsg:
 		return a.handleApprovalRequest(msg)
@@ -211,6 +223,9 @@ func (a *App) View() string {
 		return "Initializing Gibson TUI..."
 	}
 
+	// Render header
+	headerContent := a.header.Render()
+
 	// Render the active view
 	var viewContent string
 	switch a.mode {
@@ -219,12 +234,6 @@ func (a *App) View() string {
 			viewContent = a.dashboardView.View()
 		} else {
 			viewContent = a.renderPlaceholder("Dashboard")
-		}
-	case ModeConsole:
-		if a.consoleView != nil {
-			viewContent = a.consoleView.View()
-		} else {
-			viewContent = a.renderPlaceholder("Console")
 		}
 	case ModeMission:
 		if a.missionView != nil {
@@ -238,14 +247,21 @@ func (a *App) View() string {
 		} else {
 			viewContent = a.renderPlaceholder("Findings")
 		}
+	case ModeConsole:
+		if a.consoleView != nil {
+			viewContent = a.consoleView.View()
+		} else {
+			viewContent = a.renderPlaceholder("Console")
+		}
 	}
 
 	// Render status bar
 	statusBarContent := a.statusBar.Render()
 
-	// Combine view and status bar
+	// Combine header, view, and status bar
 	mainView := lipgloss.JoinVertical(
 		lipgloss.Left,
+		headerContent,
 		viewContent,
 		statusBarContent,
 	)
@@ -275,6 +291,9 @@ func (a *App) handleWindowResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	a.width = msg.Width
 	a.height = msg.Height
 
+	// Update header width
+	a.header.SetWidth(a.width)
+
 	// Update status bar width
 	a.statusBar.SetWidth(a.width)
 
@@ -286,8 +305,9 @@ func (a *App) handleWindowResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		a.approvalDialog.SetSize(a.width, a.height)
 	}
 
-	// Calculate view dimensions (reserve 1 line for status bar)
-	viewHeight := a.height - 1
+	// Calculate view dimensions (reserve space for header and status bar)
+	// Header is 2 lines (content + border), status bar is 1 line
+	viewHeight := a.height - a.header.Height() - 1
 	if viewHeight < 1 {
 		viewHeight = 1
 	}
@@ -296,14 +316,14 @@ func (a *App) handleWindowResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	if a.dashboardView != nil {
 		a.dashboardView.SetSize(a.width, viewHeight)
 	}
-	if a.consoleView != nil {
-		a.consoleView.SetSize(a.width, viewHeight)
-	}
 	if a.missionView != nil {
 		// Mission view handles its own resize through Update
 	}
 	if a.findingsView != nil {
 		a.findingsView.SetSize(a.width, viewHeight)
+	}
+	if a.consoleView != nil {
+		a.consoleView.SetSize(a.width, viewHeight)
 	}
 
 	// Propagate resize to active view
@@ -313,10 +333,6 @@ func (a *App) handleWindowResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		if a.dashboardView != nil {
 			_, cmd = a.dashboardView.Update(msg)
 		}
-	case ModeConsole:
-		if a.consoleView != nil {
-			_, cmd = a.consoleView.Update(msg)
-		}
 	case ModeMission:
 		if a.missionView != nil {
 			_, cmd = a.missionView.Update(msg)
@@ -325,52 +341,57 @@ func (a *App) handleWindowResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 		if a.findingsView != nil {
 			_, cmd = a.findingsView.Update(msg)
 		}
+	case ModeConsole:
+		if a.consoleView != nil {
+			_, cmd = a.consoleView.Update(msg)
+		}
 	}
 
 	return a, cmd
 }
 
 // handleGlobalKey handles global key bindings that work in all views.
-// Returns a command if the key was handled, nil otherwise.
-func (a *App) handleGlobalKey(msg tea.KeyMsg) tea.Cmd {
+// Returns a command and a boolean indicating whether the key was handled.
+// If handled is true, the key should not be forwarded to the active view.
+func (a *App) handleGlobalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	switch {
 	case key.Matches(msg, a.keyMap.Quit):
-		return tea.Quit
+		return tea.Quit, true
 
 	case key.Matches(msg, a.keyMap.Help):
 		a.showHelp = !a.showHelp
-		return nil
+		return nil, true
 
 	case key.Matches(msg, a.keyMap.Escape):
 		// Cancel any dialogs or overlays
 		if a.showHelp {
 			a.showHelp = false
-			return nil
+			return nil, true
 		}
 		if a.approvalDialog != nil && a.approvalDialog.IsVisible() {
 			a.approvalDialog.Hide()
-			return nil
+			return nil, true
 		}
-		return nil
+		return nil, false
 
 	case key.Matches(msg, a.keyMap.ViewDashboard):
-		a.setMode(ModeDashboard)
-		return nil
-
-	case key.Matches(msg, a.keyMap.ViewConsole):
-		a.setMode(ModeConsole)
-		return nil
+		cmd, _ := a.setMode(ModeDashboard)
+		return cmd, true // Always handled, even if mode didn't change
 
 	case key.Matches(msg, a.keyMap.ViewMission):
-		a.setMode(ModeMission)
-		return nil
+		cmd, _ := a.setMode(ModeMission)
+		return cmd, true
 
 	case key.Matches(msg, a.keyMap.ViewFindings):
-		a.setMode(ModeFindings)
-		return nil
+		cmd, _ := a.setMode(ModeFindings)
+		return cmd, true
+
+	case key.Matches(msg, a.keyMap.ViewConsole):
+		cmd, _ := a.setMode(ModeConsole)
+		return cmd, true
 	}
 
-	return nil
+	return nil, false
 }
 
 // handleHelpKey handles keys when help overlay is visible.
@@ -482,10 +503,6 @@ func (a *App) routeToActiveView(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.dashboardView != nil {
 			_, cmd = a.dashboardView.Update(msg)
 		}
-	case ModeConsole:
-		if a.consoleView != nil {
-			_, cmd = a.consoleView.Update(msg)
-		}
 	case ModeMission:
 		if a.missionView != nil {
 			_, cmd = a.missionView.Update(msg)
@@ -496,26 +513,54 @@ func (a *App) routeToActiveView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.findingsView = newView
 			cmd = c
 		}
+	case ModeConsole:
+		if a.consoleView != nil {
+			newView, c := a.consoleView.Update(msg)
+			if cv, ok := newView.(*views.ConsoleView); ok {
+				a.consoleView = cv
+			}
+			cmd = c
+		}
 	}
 
 	return a, cmd
 }
 
 // setMode changes the current view mode and updates the status bar.
-func (a *App) setMode(mode AppMode) {
+// It also manages focus for views with input fields.
+func (a *App) setMode(mode AppMode) (tea.Cmd, bool) {
 	if a.mode == mode {
-		return
+		return nil, false
 	}
+
+	// Blur console input when switching away from console view
+	if a.mode == ModeConsole && a.consoleView != nil {
+		a.consoleView.Blur()
+	}
+
 	a.mode = mode
 	a.statusBar.SetMode(mode.String())
 	a.statusBar.SetMessage("Switched to " + mode.String() + " view")
+
+	// Focus console input when switching to console view
+	if mode == ModeConsole && a.consoleView != nil {
+		return a.consoleView.Focus(), true
+	}
+
+	return nil, true
 }
 
 // renderPlaceholder renders a placeholder for views that aren't initialized.
 func (a *App) renderPlaceholder(viewName string) string {
+	// Calculate available height (minus header and status bar)
+	viewHeight := a.height - a.header.Height() - 1
+	if viewHeight < 1 {
+		viewHeight = 1
+	}
+
 	style := lipgloss.NewStyle().
 		Width(a.width).
-		Height(a.height-1).
+		Height(viewHeight).
 		Align(lipgloss.Center, lipgloss.Center).
 		Foreground(a.theme.Muted)
 

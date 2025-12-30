@@ -101,7 +101,6 @@ func init() {
 	rootCmd.AddCommand(attackCmd)
 	rootCmd.AddCommand(payloadCmd)
 	rootCmd.AddCommand(statusCmd)
-	rootCmd.AddCommand(consoleCmd)
 	rootCmd.AddCommand(completionCmd)
 	rootCmd.AddCommand(tuiCmd)
 }

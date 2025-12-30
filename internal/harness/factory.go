@@ -132,20 +132,22 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 
 	// Create and return DefaultAgentHarness
 	harness := &DefaultAgentHarness{
-		slotManager:    f.config.SlotManager,
-		llmRegistry:    f.config.LLMRegistry,
-		toolRegistry:   f.config.ToolRegistry,
-		pluginRegistry: f.config.PluginRegistry,
-		agentRegistry:  f.config.AgentRegistry,
-		memoryStore:    f.config.MemoryManager,
-		findingStore:   f.config.FindingStore,
-		factory:        selfFactory,
-		missionCtx:     updatedMissionCtx,
-		targetInfo:     target,
-		tracer:         f.config.Tracer,
-		logger:         logger,
-		metrics:        f.config.Metrics,
-		tokenUsage:     tokenTracker,
+		slotManager:         f.config.SlotManager,
+		llmRegistry:         f.config.LLMRegistry,
+		toolRegistry:        f.config.ToolRegistry,
+		pluginRegistry:      f.config.PluginRegistry,
+		agentRegistry:       f.config.AgentRegistry,
+		memoryStore:         f.config.MemoryManager,
+		findingStore:        f.config.FindingStore,
+		factory:             selfFactory,
+		missionCtx:          updatedMissionCtx,
+		targetInfo:          target,
+		tracer:              f.config.Tracer,
+		logger:              logger,
+		metrics:             f.config.Metrics,
+		tokenUsage:          tokenTracker,
+		graphRAGBridge:      f.config.GraphRAGBridge,
+		graphRAGQueryBridge: f.config.GraphRAGQueryBridge,
 	}
 
 	return harness, nil

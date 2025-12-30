@@ -32,7 +32,7 @@ func NewStatusBar(width int) *StatusBar {
 		theme:    theme,
 		isError:  false,
 		leftStyle: lipgloss.NewStyle().
-			Background(theme.Primary).
+			Background(lipgloss.Color("#FFB000")).
 			Foreground(lipgloss.Color("#000000")).
 			Bold(true).
 			Padding(0, 1),
@@ -78,7 +78,7 @@ func (s *StatusBar) SetTheme(theme *styles.Theme) {
 		s.theme = theme
 		// Update styles with new theme
 		s.leftStyle = lipgloss.NewStyle().
-			Background(theme.Primary).
+			Background(lipgloss.Color("#FFB000")).
 			Foreground(lipgloss.Color("#000000")).
 			Bold(true).
 			Padding(0, 1)
@@ -113,8 +113,10 @@ func (s *StatusBar) Render() string {
 	var centerStyle lipgloss.Style
 	if s.isError {
 		centerStyle = lipgloss.NewStyle().
-			Foreground(s.theme.Danger).
+			Foreground(lipgloss.Color("#FFC942")).
+			Background(lipgloss.Color("#000000")).
 			Bold(true).
+			Reverse(true).
 			Padding(0, 1)
 	} else {
 		centerStyle = lipgloss.NewStyle().
@@ -156,7 +158,7 @@ func (s *StatusBar) Render() string {
 	// Apply background to entire status bar
 	finalStyle := lipgloss.NewStyle().
 		Width(s.width).
-		Background(lipgloss.Color("#1a1a1a"))
+		Background(lipgloss.Color("#000000"))
 
 	return finalStyle.Render(statusBar)
 }

@@ -2,6 +2,7 @@ package components
 
 import (
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/stretchr/testify/assert"
@@ -466,4 +467,148 @@ func TestApprovalDialog_RenderWithNoplan(t *testing.T) {
 
 	output := dialog.Render()
 	assert.Empty(t, output) // No plan, should return empty even if visible
+}
+
+// TypeWriter Tests
+
+func TestNewTypeWriter(t *testing.T) {
+	tw := NewTypeWriter()
+
+	assert.NotNil(t, tw)
+	assert.Empty(t, tw.fullText)
+	assert.Equal(t, 0, tw.visibleChars)
+	assert.True(t, tw.cursor)
+	assert.False(t, tw.done)
+	assert.NotNil(t, tw.theme)
+}
+
+func TestTypeWriter_SetText(t *testing.T) {
+	tw := NewTypeWriter()
+	tw.SetText("Hello, World!")
+
+	assert.Equal(t, "Hello, World!", tw.fullText)
+	assert.Equal(t, 0, tw.visibleChars)
+	assert.True(t, tw.cursor)
+	assert.False(t, tw.done)
+}
+
+func TestTypeWriter_SetSpeed(t *testing.T) {
+	tw := NewTypeWriter()
+
+	tw.SetSpeed(100)
+	assert.Equal(t, 100*time.Millisecond, tw.speed)
+
+	// Zero/negative should be ignored
+	tw.SetSpeed(0)
+	assert.Equal(t, 100*time.Millisecond, tw.speed)
+
+	tw.SetSpeed(-50)
+	assert.Equal(t, 100*time.Millisecond, tw.speed)
+}
+
+func TestTypeWriter_SetTheme(t *testing.T) {
+	tw := NewTypeWriter()
+	theme := styles.DefaultTheme()
+
+	tw.SetTheme(theme)
+	assert.Equal(t, theme, tw.theme)
+
+	// Nil theme should be ignored
+	tw.SetTheme(nil)
+	assert.Equal(t, theme, tw.theme)
+}
+
+func TestTypeWriter_Done(t *testing.T) {
+	tw := NewTypeWriter()
+
+	assert.False(t, tw.Done())
+
+	tw.done = true
+	assert.True(t, tw.Done())
+}
+
+func TestTypeWriter_Skip(t *testing.T) {
+	tw := NewTypeWriter()
+	tw.SetText("Hello")
+
+	assert.Equal(t, 0, tw.visibleChars)
+	assert.False(t, tw.done)
+
+	tw.Skip()
+
+	assert.Equal(t, 5, tw.visibleChars)
+	assert.True(t, tw.done)
+	assert.True(t, tw.cursor)
+}
+
+func TestTypeWriter_View(t *testing.T) {
+	tw := NewTypeWriter()
+
+	// Empty text
+	output := tw.View()
+	assert.Empty(t, output)
+
+	// Set text but no visible chars
+	tw.SetText("Test")
+	output = tw.View()
+	assert.NotEmpty(t, output) // Should show cursor
+
+	// Reveal some characters
+	tw.visibleChars = 2
+	output = tw.View()
+	assert.NotEmpty(t, output)
+	assert.Contains(t, output, "Te")
+
+	// All characters visible
+	tw.visibleChars = 4
+	output = tw.View()
+	assert.NotEmpty(t, output)
+}
+
+func TestTypeWriter_Update(t *testing.T) {
+	tw := NewTypeWriter()
+	tw.SetText("Hi")
+
+	// Initial state
+	assert.Equal(t, 0, tw.visibleChars)
+	assert.False(t, tw.done)
+
+	// Simulate tick message
+	updatedTW, cmd := tw.Update(typewriterTickMsg{})
+	assert.NotNil(t, updatedTW)
+	assert.NotNil(t, cmd)
+	assert.Equal(t, 1, updatedTW.visibleChars)
+	assert.False(t, updatedTW.done)
+
+	// Another tick
+	updatedTW, cmd = updatedTW.Update(typewriterTickMsg{})
+	assert.NotNil(t, updatedTW)
+	assert.NotNil(t, cmd) // Should start cursor blink
+	assert.Equal(t, 2, updatedTW.visibleChars)
+	assert.True(t, updatedTW.done)
+
+	// Cursor blink
+	cursorState := updatedTW.cursor
+	updatedTW, cmd = updatedTW.Update(cursorBlinkMsg{})
+	assert.NotNil(t, updatedTW)
+	assert.NotNil(t, cmd)
+	assert.NotEqual(t, cursorState, updatedTW.cursor)
+}
+
+func TestTypeWriter_Start(t *testing.T) {
+	tw := NewTypeWriter()
+
+	// No text - should return nil
+	cmd := tw.Start()
+	assert.Nil(t, cmd)
+
+	// With text - should return command
+	tw.SetText("Test")
+	cmd = tw.Start()
+	assert.NotNil(t, cmd)
+
+	// Already done - should return nil
+	tw.done = true
+	cmd = tw.Start()
+	assert.Nil(t, cmd)
 }

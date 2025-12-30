@@ -97,6 +97,9 @@ func (d *DashboardView) Init() tea.Cmd {
 	// Load initial data
 	d.refreshData()
 
+	// Set initial panel sizes
+	d.updatePanelSizes()
+
 	// Set initial focus
 	d.missionPanel.SetFocused(true)
 
