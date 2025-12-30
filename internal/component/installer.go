@@ -963,8 +963,16 @@ func (i *DefaultInstaller) buildComponent(ctx context.Context, componentDir stri
 
 	// Override with manifest build command if specified
 	if buildCfg.Command != "" {
-		buildConfig.Command = buildCfg.Command
-		buildConfig.Args = []string{}
+		// Parse the command string into command and arguments
+		parts := strings.Fields(buildCfg.Command)
+		if len(parts) > 0 {
+			buildConfig.Command = parts[0]
+			if len(parts) > 1 {
+				buildConfig.Args = parts[1:]
+			} else {
+				buildConfig.Args = []string{}
+			}
+		}
 	}
 
 	// Set working directory if specified
