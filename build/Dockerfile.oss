@@ -1,9 +1,28 @@
 FROM kalilinux/kali-rolling
 
-# System dependencies
+# System dependencies and security tools
 RUN apt-get update && apt-get install -y \
     golang-go git build-essential curl wget \
+    # Core security tools (tool wrappers depend on these binaries)
+    nmap amass theharvester recon-ng \
+    sqlmap hydra gobuster \
+    john hashcat \
+    proxychains4 freerdp2-x11 \
+    tshark wireshark-common \
+    rclone \
+    metasploit-framework \
+    # Python tools
+    python3 python3-pip python3-venv \
+    # Playwright dependencies
+    libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+    libgbm1 libpango-1.0-0 libcairo2 libasound2 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Go-based security tools from ProjectDiscovery
+RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
+    go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 
 ENV GOPATH=/go
 ENV PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
@@ -25,7 +44,10 @@ RUN git clone --branch ${TOOLS_VERSION} --depth 1 \
 WORKDIR /src/gibson
 RUN go build -o /usr/local/bin/gibson ./cmd/gibson
 
+# Build tools with SDK and Gibson paths
 WORKDIR /src/tools
+ENV SDK_PATH=/src/sdk
+ENV GIBSON_PATH=/src/gibson
 RUN ./build.sh && ./install.sh
 
 # Local endpoints (0.0.0.0)
