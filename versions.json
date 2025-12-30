@@ -1,0 +1,7 @@
+{
+  "sdk": "v0.1.0",
+  "gibson": "v0.1.0",
+  "tools": "v0.1.0",
+  "agents": "v0.1.0",
+  "plugins": "main"
+}

@@ -1,0 +1,36 @@
+FROM kalilinux/kali-rolling
+
+# System dependencies
+RUN apt-get update && apt-get install -y \
+    golang-go git build-essential curl wget \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GOPATH=/go
+ENV PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
+
+# Version args
+ARG SDK_VERSION=main
+ARG GIBSON_VERSION=main
+ARG TOOLS_VERSION=main
+
+# Clone repos
+RUN git clone --branch ${SDK_VERSION} --depth 1 \
+    https://github.com/zero-day-ai/sdk.git /src/sdk
+RUN git clone --branch ${GIBSON_VERSION} --depth 1 \
+    https://github.com/zero-day-ai/gibson.git /src/gibson
+RUN git clone --branch ${TOOLS_VERSION} --depth 1 \
+    https://github.com/zero-day-ai/gibson-tools-official.git /src/tools
+
+# Build
+WORKDIR /src/gibson
+RUN go build -o /usr/local/bin/gibson ./cmd/gibson
+
+WORKDIR /src/tools
+RUN ./build.sh && ./install.sh
+
+# Local endpoints (0.0.0.0)
+ENV NEO4J_URI=bolt://0.0.0.0:7687
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=0.0.0.0:4317
+
+WORKDIR /gibson
+LABEL gibson.tier=oss
