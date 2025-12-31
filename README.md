@@ -123,6 +123,13 @@ The framework orchestrates multiple specialized AI agents that work together to 
 - **Prometheus metrics** and **Jaeger tracing**
 - **Langfuse LLM observability** integration
 
+### Interactive TUI
+- **Agent Focus Mode** for real-time agent observation and steering
+- **Streaming output** from running agents with reasoning traces
+- **Mid-execution steering** to guide agent behavior
+- **Interrupt/pause/resume** capabilities for runaway agents
+- **Console commands** for agent management and control
+
 * * *
 
 ## Architecture
@@ -568,6 +575,52 @@ graphRAGStore, err := graphrag.NewNeo4jStore(graphrag.Neo4jConfig{
 // - SIMILAR_TO (Finding -> Finding)
 // - BELONGS_TO_MISSION (Finding -> Mission)
 ```
+
+### Agent Focus Mode
+
+The TUI includes an Agent Focus mode (press `5`) for real-time agent observation and steering during mission execution. This interactive mode enables operators to:
+
+- **View streaming output** from running agents in real-time
+- **Send steering messages** to guide agent behavior mid-execution
+- **Interrupt agents** that are going off-track or exploring unproductive paths
+- **Switch modes** between autonomous and interactive execution
+- **Monitor tool calls** and finding submissions as they happen
+
+#### Keyboard Shortcuts (Agent Focus)
+
+| Key | Action |
+|-----|--------|
+| 5 | Switch to Agent Focus view |
+| Tab | Cycle through running agents |
+| Enter | Send steering message (type message first) |
+| Ctrl+C | Interrupt focused agent |
+| Esc | Clear input field |
+| ↑/↓ | Navigate agent list |
+
+#### Console Commands
+
+The TUI console supports agent management commands:
+
+```bash
+/agents focus <name>       # Focus on specific agent
+/agents mode <name> <mode> # Set mode (autonomous/interactive)
+/agents interrupt <name>   # Send interrupt signal
+/agents status <name>      # Show agent status and metrics
+/agents list              # List all running agents
+```
+
+#### Example Usage
+
+```
+1. Start a mission with multiple agents
+2. Press '5' to enter Agent Focus mode
+3. Use Tab to cycle through running agents
+4. Type a steering message and press Enter to guide an agent
+5. Press Ctrl+C to interrupt an agent going off-track
+6. Use ':' to enter console mode and run /agents commands
+```
+
+For more details on implementing streaming agents, see [Agent Streaming SDK Guide](docs/AGENT_STREAMING_SDK.md).
 
 * * *
 

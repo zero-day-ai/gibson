@@ -85,8 +85,9 @@ func RegisterDefaultCommands(registry *CommandRegistry) {
 	commands := []*SlashCommand{
 		{
 			Name:        "agents",
+			Aliases:     []string{"agent"},
 			Description: "List and manage agents",
-			Usage:       "/agents [list|start|stop|status] [name]",
+			Usage:       "/agents [list|focus|mode|interrupt|status] [name] [args]",
 			Handler:     nil,
 		},
 		{

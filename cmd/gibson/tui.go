@@ -14,6 +14,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/tui"
+	"go.opentelemetry.io/otel"
 	"golang.org/x/term"
 )
 
@@ -171,6 +172,24 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 	// Initialize agent registry
 	agentRegistry := agent.NewAgentRegistry()
 	appConfig.AgentRegistry = agentRegistry
+
+	// Initialize SessionDAO and StreamManager if database is available
+	if appConfig.DB != nil {
+		sessionDAO := database.NewSessionDAO(appConfig.DB)
+
+		// Initialize StreamManager with OpenTelemetry tracer
+		tracer := otel.Tracer("gibson-tui")
+		streamManager := agent.NewStreamManager(ctx, agent.StreamManagerConfig{
+			SessionDAO: sessionDAO,
+			Tracer:     tracer,
+		})
+		appConfig.StreamManager = streamManager
+
+		// Add cleanup function for StreamManager
+		cleanupFuncs = append(cleanupFuncs, func() {
+			_ = streamManager.DisconnectAll()
+		})
+	}
 
 	return appConfig, cleanup, nil
 }

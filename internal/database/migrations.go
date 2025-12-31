@@ -88,6 +88,12 @@ func getMigrations() []migration {
 			up:      getMissionOrchestratorSchema(),
 			down:    getDownMigration6(),
 		},
+		{
+			version: 7,
+			name:    "agent_steering",
+			up:      getAgentSteeringSchema(),
+			down:    getDownMigration7(),
+		},
 		// Future migrations will be added here
 	}
 
@@ -1105,5 +1111,112 @@ DROP INDEX IF EXISTS idx_missions_target_id;
 -- 3. Drop old table
 -- 4. Rename new table
 -- For simplicity, we're leaving the columns in place during rollback
+`
+}
+
+// getAgentSteeringSchema returns the schema for interactive agent steering
+func getAgentSteeringSchema() string {
+	return `
+-- Migration 7: Interactive Agent Steering Schema
+-- Creates tables for agent sessions, stream events, and steering messages
+
+-- ============================================================================
+-- Agent Sessions Table: Track agent execution sessions
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id TEXT PRIMARY KEY,
+    mission_id TEXT,
+    agent_name TEXT NOT NULL,
+    status TEXT NOT NULL,                    -- 'running', 'paused', 'waiting_for_input', 'interrupted', 'completed', 'failed'
+    mode TEXT NOT NULL,                      -- 'autonomous', 'interactive'
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    ended_at TIMESTAMP,
+    metadata TEXT                            -- JSON object for additional metadata
+);
+
+-- Indexes for agent sessions
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_mission ON agent_sessions(mission_id);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_status ON agent_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_agent_name ON agent_sessions(agent_name);
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_started_at ON agent_sessions(started_at DESC);
+
+-- ============================================================================
+-- Stream Events Table: Store all streaming events from agents
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS stream_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    event_type TEXT NOT NULL,                -- 'output', 'tool_call', 'tool_result', 'finding', 'status', 'error'
+    content TEXT NOT NULL,                   -- JSON content of the event
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    trace_id TEXT,                           -- OpenTelemetry trace ID for correlation
+    span_id TEXT,                            -- OpenTelemetry span ID for correlation
+    FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+);
+
+-- Indexes for stream events
+CREATE INDEX IF NOT EXISTS idx_stream_events_session ON stream_events(session_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_stream_events_type ON stream_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_stream_events_trace ON stream_events(trace_id);
+CREATE INDEX IF NOT EXISTS idx_stream_events_timestamp ON stream_events(timestamp DESC);
+
+-- ============================================================================
+-- Steering Messages Table: Track operator steering inputs
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS steering_messages (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    operator_id TEXT,                        -- Identifier for the operator who sent the message
+    message_type TEXT NOT NULL,              -- 'steer', 'interrupt', 'resume', 'cancel', 'set_mode'
+    content TEXT NOT NULL,                   -- JSON content of the steering message
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    acknowledged_at TIMESTAMP,               -- When the agent acknowledged the message
+    trace_id TEXT,                           -- OpenTelemetry trace ID for correlation
+    FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
+);
+
+-- Indexes for steering messages
+CREATE INDEX IF NOT EXISTS idx_steering_session ON steering_messages(session_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_steering_operator ON steering_messages(operator_id);
+CREATE INDEX IF NOT EXISTS idx_steering_type ON steering_messages(message_type);
+CREATE INDEX IF NOT EXISTS idx_steering_timestamp ON steering_messages(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_steering_acknowledged ON steering_messages(acknowledged_at);
+`
+}
+
+// getDownMigration7 returns the rollback SQL for migration 7
+func getDownMigration7() string {
+	return `
+-- Rollback Migration 7: Interactive Agent Steering Schema
+
+-- Drop indexes for steering messages
+DROP INDEX IF EXISTS idx_steering_acknowledged;
+DROP INDEX IF EXISTS idx_steering_timestamp;
+DROP INDEX IF EXISTS idx_steering_type;
+DROP INDEX IF EXISTS idx_steering_operator;
+DROP INDEX IF EXISTS idx_steering_session;
+
+-- Drop steering messages table
+DROP TABLE IF EXISTS steering_messages;
+
+-- Drop indexes for stream events
+DROP INDEX IF EXISTS idx_stream_events_timestamp;
+DROP INDEX IF EXISTS idx_stream_events_trace;
+DROP INDEX IF EXISTS idx_stream_events_type;
+DROP INDEX IF EXISTS idx_stream_events_session;
+
+-- Drop stream events table
+DROP TABLE IF EXISTS stream_events;
+
+-- Drop indexes for agent sessions
+DROP INDEX IF EXISTS idx_agent_sessions_started_at;
+DROP INDEX IF EXISTS idx_agent_sessions_agent_name;
+DROP INDEX IF EXISTS idx_agent_sessions_status;
+DROP INDEX IF EXISTS idx_agent_sessions_mission;
+
+-- Drop agent sessions table
+DROP TABLE IF EXISTS agent_sessions;
 `
 }

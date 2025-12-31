@@ -51,6 +51,8 @@ services:
     volumes:
       - gibson-data:/root/.gibson
       - gibson-logs:/var/log/gibson
+      # Mount local gibson binary for development
+      - ../build/gibson:/usr/local/bin/gibson:ro
       # Mount host tools directory for development
       - ${HOST_TOOLS_PATH:-./tools}:/opt/gibson/tools:ro
     ports:
@@ -69,12 +71,7 @@ services:
         condition: service_started
     networks:
       - gibson-net
-    healthcheck:
-      test: ["CMD", "gibson", "health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+    # No healthcheck - gibson is an interactive CLI tool
 
   # =============================================================================
   # KNOWLEDGE GRAPH - Neo4j
@@ -126,7 +123,7 @@ services:
     networks:
       - gibson-net
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:6333/readyz || exit 1"]
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/6333 && echo -e \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q \"200 OK\" <&3'"]
       interval: 10s
       timeout: 5s
       retries: 5

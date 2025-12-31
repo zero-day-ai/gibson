@@ -734,5 +734,87 @@ func formatMessagesForLogging(messages []llm.Message) string {
 	return result
 }
 
+// StartSteeringSpan creates a span for a steering operation.
+// This method should be called at the start of steering operations to enable
+// distributed tracing of agent steering interactions.
+//
+// Parameters:
+//   - ctx: Parent context for the span
+//   - operationType: Type of steering operation (e.g., "send", "interrupt", "set_mode")
+//   - agentName: Name of the agent being steered
+//
+// Returns:
+//   - context.Context: New context with the span
+//   - trace.Span: The created span (caller must call span.End())
+//
+// Example:
+//
+//	ctx, span := harness.StartSteeringSpan(ctx, "send", "scanner-agent")
+//	defer span.End()
+//	// ... perform steering operation
+func (h *TracedAgentHarness) StartSteeringSpan(ctx context.Context, operationType string, agentName string) (context.Context, trace.Span) {
+	spanName := fmt.Sprintf("gibson.steering.%s", operationType)
+	ctx, span := h.tracer.Start(ctx, spanName,
+		trace.WithAttributes(
+			attribute.String("steering.type", operationType),
+			attribute.String("agent.name", agentName),
+		),
+	)
+	return ctx, span
+}
+
+// RecordSteeringEvent records a steering event with attributes on an existing span.
+// This captures the details of a steering message including its ID, content, and acknowledgment status.
+//
+// Parameters:
+//   - span: The span to add the event to
+//   - messageID: Unique identifier for the steering message
+//   - content: The steering message content (will be truncated if > 500 chars)
+//   - acknowledged: Whether the agent has acknowledged the message
+//
+// Example:
+//
+//	harness.RecordSteeringEvent(span, msg.ID.String(), "Focus on API endpoints", true)
+func (h *TracedAgentHarness) RecordSteeringEvent(span trace.Span, messageID string, content string, acknowledged bool) {
+	span.AddEvent("steering.message",
+		trace.WithAttributes(
+			attribute.String("steering.message.id", messageID),
+			attribute.String("steering.content", truncateForSpan(content, 500)),
+			attribute.Bool("steering.acknowledged", acknowledged),
+		),
+	)
+}
+
+// RecordAgentStatusChange records an agent status transition on an existing span.
+// This tracks when an agent changes state (e.g., running -> paused -> interrupted).
+//
+// Parameters:
+//   - span: The span to add the event to
+//   - agentName: Name of the agent
+//   - oldStatus: Previous agent status
+//   - newStatus: New agent status
+//
+// Example:
+//
+//	harness.RecordAgentStatusChange(span, "scanner-agent", "running", "interrupted")
+func (h *TracedAgentHarness) RecordAgentStatusChange(span trace.Span, agentName string, oldStatus, newStatus string) {
+	span.AddEvent("agent.status_change",
+		trace.WithAttributes(
+			attribute.String("agent.name", agentName),
+			attribute.String("agent.status.old", oldStatus),
+			attribute.String("agent.status.new", newStatus),
+		),
+	)
+}
+
+// truncateForSpan truncates a string to a maximum length for span attributes.
+// This prevents excessively large span attributes that could impact observability backend performance.
+func truncateForSpan(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 // Ensure TracedAgentHarness implements AgentHarness at compile time
 var _ harness.AgentHarness = (*TracedAgentHarness)(nil)

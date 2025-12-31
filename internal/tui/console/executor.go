@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
@@ -19,6 +20,8 @@ type ExecutorConfig struct {
 	ComponentRegistry component.ComponentRegistry
 	// FindingStore provides access to security findings.
 	FindingStore finding.FindingStore
+	// StreamManager manages bidirectional streams to agents.
+	StreamManager *agent.StreamManager
 	// HomeDir is the Gibson home directory path (e.g., ~/.gibson).
 	HomeDir string
 	// ConfigFile is the path to the Gibson configuration file.
@@ -244,8 +247,31 @@ func (e *Executor) handleStatus(ctx context.Context, args []string) (*ExecutionR
 	}, nil
 }
 
-// handleAgents lists all registered agents from the component registry.
+// handleAgents routes to appropriate subcommand handler or lists agents.
 func (e *Executor) handleAgents(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if len(args) == 0 {
+		return e.handleAgentsList(ctx, args)
+	}
+
+	switch args[0] {
+	case "list":
+		return e.handleAgentsList(ctx, args[1:])
+	case "focus":
+		return e.handleAgentsFocus(ctx, args[1:])
+	case "mode":
+		return e.handleAgentsMode(ctx, args[1:])
+	case "interrupt":
+		return e.handleAgentsInterrupt(ctx, args[1:])
+	case "status":
+		return e.handleAgentsStatus(ctx, args[1:])
+	default:
+		// Treat as agent name for backward compatibility
+		return e.handleAgentsList(ctx, args)
+	}
+}
+
+// handleAgentsList lists all registered agents from the component registry.
+func (e *Executor) handleAgentsList(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if e.config.ComponentRegistry == nil {
 		return &ExecutionResult{
 			Output:   "Component registry not available\n",
@@ -287,6 +313,155 @@ func (e *Executor) handleAgents(ctx context.Context, args []string) (*ExecutionR
 	return &ExecutionResult{
 		Output:   output.String(),
 		IsError:  false,
+		ExitCode: 0,
+	}, nil
+}
+
+// handleAgentsFocus switches TUI focus to specific agent.
+func (e *Executor) handleAgentsFocus(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if len(args) < 1 {
+		return &ExecutionResult{
+			Output:   "Usage: /agents focus <agent-name>\n",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Return message indicating focus should switch (TUI handles actual focus)
+	return &ExecutionResult{
+		Output:   fmt.Sprintf("Focusing on agent: %s\nUse key '5' to switch to Agent Focus view.\n", args[0]),
+		ExitCode: 0,
+	}, nil
+}
+
+// handleAgentsMode changes agent mode (autonomous/interactive).
+func (e *Executor) handleAgentsMode(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if len(args) < 2 {
+		return &ExecutionResult{
+			Output:   "Usage: /agents mode <agent-name> <autonomous|interactive>\n",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	agentName := args[0]
+	mode := args[1]
+
+	if e.config.StreamManager == nil {
+		return &ExecutionResult{
+			Output:   "Stream manager not available\n",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	var agentMode database.AgentMode
+	switch mode {
+	case "autonomous", "auto":
+		agentMode = database.AgentModeAutonomous
+	case "interactive":
+		agentMode = database.AgentModeInteractive
+	default:
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("Invalid mode: %s. Use 'autonomous' or 'interactive'\n", mode),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	if err := e.config.StreamManager.SetMode(agentName, agentMode); err != nil {
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("Failed to set mode: %v\n", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	return &ExecutionResult{
+		Output:   fmt.Sprintf("Agent %s mode set to %s\n", agentName, mode),
+		ExitCode: 0,
+	}, nil
+}
+
+// handleAgentsInterrupt sends interrupt to agent.
+func (e *Executor) handleAgentsInterrupt(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if len(args) < 1 {
+		return &ExecutionResult{
+			Output:   "Usage: /agents interrupt <agent-name> [reason]\n",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	agentName := args[0]
+	reason := "User requested interrupt"
+	if len(args) > 1 {
+		reason = strings.Join(args[1:], " ")
+	}
+
+	if e.config.StreamManager == nil {
+		return &ExecutionResult{
+			Output:   "Stream manager not available\n",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	if err := e.config.StreamManager.SendInterrupt(agentName, reason); err != nil {
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("Failed to interrupt agent: %v\n", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	return &ExecutionResult{
+		Output:   fmt.Sprintf("Interrupt sent to agent %s\n", agentName),
+		ExitCode: 0,
+	}, nil
+}
+
+// handleAgentsStatus shows detailed status of an agent.
+func (e *Executor) handleAgentsStatus(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if len(args) < 1 {
+		return &ExecutionResult{
+			Output:   "Usage: /agents status <agent-name>\n",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	agentName := args[0]
+
+	if e.config.StreamManager == nil {
+		return &ExecutionResult{
+			Output:   "Stream manager not available\n",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	session, err := e.config.StreamManager.GetSession(agentName)
+	if err != nil {
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("Agent not found: %s\n", agentName),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Agent: %s\n", session.AgentName))
+	output.WriteString(fmt.Sprintf("Status: %s\n", session.Status))
+	output.WriteString(fmt.Sprintf("Mode: %s\n", session.Mode))
+	output.WriteString(fmt.Sprintf("Session ID: %s\n", session.ID))
+	output.WriteString(fmt.Sprintf("Started: %s\n", session.StartedAt.Format(time.RFC3339)))
+	if session.EndedAt != nil {
+		output.WriteString(fmt.Sprintf("Ended: %s\n", session.EndedAt.Format(time.RFC3339)))
+	}
+
+	return &ExecutionResult{
+		Output:   output.String(),
 		ExitCode: 0,
 	}, nil
 }

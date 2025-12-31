@@ -2,9 +2,15 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
+	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/gibson/internal/component"
+	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -21,19 +27,30 @@ type GRPCAgentClient struct {
 	name        string
 	version     string
 	description string
-	// gRPC connection fields will be added in Stage 7
-	// conn        *grpc.ClientConn
-	// client      pb.AgentServiceClient
+	conn        *grpc.ClientConn
+	client      proto.AgentServiceClient
 }
 
 // NewGRPCAgentClient creates a new gRPC agent client
 // Full implementation in Stage 7
 func NewGRPCAgentClient(address string) (*GRPCAgentClient, error) {
-	// Placeholder implementation
+	// Establish gRPC connection
+	conn, err := grpc.NewClient(
+		address,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
+	}
+
+	client := proto.NewAgentServiceClient(conn)
+
 	return &GRPCAgentClient{
 		name:        "grpc-agent",
 		version:     "0.1.0",
-		description: "External gRPC agent (not yet implemented)",
+		description: "External gRPC agent",
+		conn:        conn,
+		client:      client,
 	}, nil
 }
 
@@ -114,6 +131,44 @@ func (c *GRPCAgentClient) Health(ctx context.Context) types.HealthStatus {
 
 // Close closes the gRPC connection
 func (c *GRPCAgentClient) Close() error {
-	// Full implementation in Stage 7
+	if c.conn != nil {
+		return c.conn.Close()
+	}
 	return nil
+}
+
+// StreamExecute starts a bidirectional streaming execution.
+// Returns a StreamClient for sending steering messages and receiving events.
+// Falls back to regular Execute if the agent doesn't support streaming.
+func (c *GRPCAgentClient) StreamExecute(ctx context.Context, task Task, sessionID types.ID) (*StreamClient, error) {
+	// Check if we have a valid connection
+	if c.conn == nil {
+		return nil, fmt.Errorf("gRPC connection not established")
+	}
+
+	// Create the StreamClient, which internally establishes the bidirectional stream
+	streamClient := NewStreamClient(ctx, c.conn, c.name, sessionID)
+
+	// Marshal the task to JSON
+	taskJSON, err := json.Marshal(task)
+	if err != nil {
+		streamClient.Close()
+		return nil, fmt.Errorf("failed to marshal task: %w", err)
+	}
+
+	// Send the initial task with autonomous mode as default
+	if err := streamClient.Start(string(taskJSON), database.AgentModeAutonomous); err != nil {
+		streamClient.Close()
+		return nil, fmt.Errorf("failed to start execution: %w", err)
+	}
+
+	return streamClient, nil
+}
+
+// SupportsStreaming checks if the agent supports bidirectional streaming.
+// This can be called before StreamExecute to determine if fallback is needed.
+func (c *GRPCAgentClient) SupportsStreaming() bool {
+	// For now, assume all gRPC agents support streaming
+	// In the future, this could check agent capabilities via GetDescriptor
+	return c.conn != nil
 }
