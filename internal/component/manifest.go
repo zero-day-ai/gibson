@@ -85,20 +85,30 @@ func ParseRuntimeType(s string) (RuntimeType, error) {
 	return r, nil
 }
 
+// ContentEntry represents a component or manifest included in a repository.
+// Used by repository manifests to declare their contents.
+type ContentEntry struct {
+	Kind string `json:"kind" yaml:"kind"` // Type of component (agent, tool, plugin, repository)
+	Path string `json:"path" yaml:"path"` // Path to component manifest relative to repository root
+}
+
 // Manifest represents the metadata and configuration for a component.
 // It defines how the component should be built, run, and integrated.
 // The component kind (agent, tool, plugin) is determined by the CLI subcommand used,
 // not by the manifest. Repositories should contain only one type of component.
 type Manifest struct {
-	Name         string                `json:"name" yaml:"name"`                                     // Component name
-	Version      string                `json:"version" yaml:"version"`                               // Semantic version (e.g., 1.0.0)
-	Description  string                `json:"description,omitempty" yaml:"description,omitempty"`   // Brief description
-	Author       string                `json:"author,omitempty" yaml:"author,omitempty"`             // Author name or organization
-	License      string                `json:"license,omitempty" yaml:"license,omitempty"`           // License identifier (e.g., MIT, Apache-2.0)
-	Repository   string                `json:"repository,omitempty" yaml:"repository,omitempty"`     // Source repository URL
-	Build        *BuildConfig          `json:"build,omitempty" yaml:"build,omitempty"`               // Build configuration
-	Runtime      RuntimeConfig         `json:"runtime" yaml:"runtime"`                               // Runtime configuration
+	Kind         string                 `json:"kind,omitempty" yaml:"kind,omitempty"`                 // Kind of manifest (component, repository)
+	Name         string                 `json:"name" yaml:"name"`                                     // Component name
+	Version      string                 `json:"version" yaml:"version"`                               // Semantic version (e.g., 1.0.0)
+	Description  string                 `json:"description,omitempty" yaml:"description,omitempty"`   // Brief description
+	Author       string                 `json:"author,omitempty" yaml:"author,omitempty"`             // Author name or organization
+	License      string                 `json:"license,omitempty" yaml:"license,omitempty"`           // License identifier (e.g., MIT, Apache-2.0)
+	Repository   string                 `json:"repository,omitempty" yaml:"repository,omitempty"`     // Source repository URL
+	Build        *BuildConfig           `json:"build,omitempty" yaml:"build,omitempty"`               // Build configuration
+	Runtime      *RuntimeConfig         `json:"runtime,omitempty" yaml:"runtime,omitempty"`           // Runtime configuration (optional for repositories)
 	Dependencies *ComponentDependencies `json:"dependencies,omitempty" yaml:"dependencies,omitempty"` // Component dependencies
+	Contents     []ContentEntry         `json:"contents,omitempty" yaml:"contents,omitempty"`         // Repository contents (for repository manifests)
+	Discover     bool                   `json:"discover,omitempty" yaml:"discover,omitempty"`         // Auto-discover components in repository
 }
 
 // BuildConfig contains build configuration for the component.
@@ -197,9 +207,11 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("invalid version format: %s (must be semantic version like 1.0.0)", m.Version)
 	}
 
-	// Validate runtime config
-	if err := m.Runtime.Validate(); err != nil {
-		return fmt.Errorf("runtime config validation failed: %w", err)
+	// Validate runtime config if present (optional for repository manifests)
+	if m.Runtime != nil {
+		if err := m.Runtime.Validate(); err != nil {
+			return fmt.Errorf("runtime config validation failed: %w", err)
+		}
 	}
 
 	// Validate build config if present

@@ -73,7 +73,7 @@ func TestComponentAttributes(t *testing.T) {
 			Description: "Test plugin description",
 			Author:      "Test Author",
 			License:     "MIT",
-			Runtime: RuntimeConfig{
+			Runtime: &RuntimeConfig{
 				Type:       RuntimeTypeGo,
 				Entrypoint: "./plugin",
 				HealthURL:  "/health",
@@ -118,7 +118,7 @@ func TestManifestAttributes(t *testing.T) {
 			Description: "Test agent",
 			Author:      "Test Author",
 			License:     "Apache-2.0",
-			Runtime: RuntimeConfig{
+			Runtime: &RuntimeConfig{
 				Type:       RuntimeTypeGo,
 				Entrypoint: "./agent",
 				HealthURL:  "/healthz",

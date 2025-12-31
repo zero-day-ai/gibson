@@ -46,6 +46,13 @@ func setupTestStore(t *testing.T) (*database.DB, PayloadStore, func()) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
+	// Disable FK checks for analytics tests that don't need real targets
+	// This allows testing the analytics/tracking layer without creating full entity hierarchies
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+		cleanup()
+		t.Fatalf("failed to disable foreign keys: %v", err)
+	}
+
 	store := NewPayloadStore(db)
 
 	return db, store, cleanup

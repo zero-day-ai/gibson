@@ -188,6 +188,23 @@ type InstallFailure struct {
 	Error error
 }
 
+// ComponentDAO defines the database interface for component persistence operations.
+// This interface is defined in the component package to avoid import cycles,
+// while the implementation lives in the database package.
+type ComponentDAO interface {
+	// Create inserts a new component
+	Create(ctx context.Context, comp *Component) error
+
+	// GetByName retrieves a component by kind and name (unique key)
+	GetByName(ctx context.Context, kind ComponentKind, name string) (*Component, error)
+
+	// List returns all components of a specific kind
+	List(ctx context.Context, kind ComponentKind) ([]*Component, error)
+
+	// Delete removes a component by kind and name
+	Delete(ctx context.Context, kind ComponentKind, name string) error
+}
+
 // Installer defines the interface for installing, updating, and uninstalling components
 type Installer interface {
 	// Install installs a component from a git repository URL
@@ -206,23 +223,23 @@ type Installer interface {
 	Uninstall(ctx context.Context, kind ComponentKind, name string) (*UninstallResult, error)
 }
 
-// DefaultInstaller implements Installer using git, build executor, and component registry
+// DefaultInstaller implements Installer using git, build executor, and component DAO
 type DefaultInstaller struct {
-	git      git.GitOperations
-	builder  build.BuildExecutor
-	registry ComponentRegistry
-	homeDir  string
-	tracer   trace.Tracer
+	git     git.GitOperations
+	builder build.BuildExecutor
+	dao     ComponentDAO
+	homeDir string
+	tracer  trace.Tracer
 }
 
 // NewDefaultInstaller creates a new DefaultInstaller instance
-func NewDefaultInstaller(gitOps git.GitOperations, builder build.BuildExecutor, registry ComponentRegistry) *DefaultInstaller {
+func NewDefaultInstaller(gitOps git.GitOperations, builder build.BuildExecutor, dao ComponentDAO) *DefaultInstaller {
 	return &DefaultInstaller{
-		git:      gitOps,
-		builder:  builder,
-		registry: registry,
-		homeDir:  getDefaultHomeDir(),
-		tracer:   otel.GetTracerProvider().Tracer("gibson.component"),
+		git:     gitOps,
+		builder: builder,
+		dao:     dao,
+		homeDir: getDefaultHomeDir(),
+		tracer:  otel.GetTracerProvider().Tracer("gibson.component"),
 	}
 }
 
@@ -281,33 +298,56 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 		span.SetAttributes(attribute.String("gibson.component.subdir", subdir))
 	}
 
-	// Step 2: Clone to temporary directory first
-	tempDir, err := os.MkdirTemp("", "gibson-install-*")
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		span.SetAttributes(ErrorAttributes(err, "create_temp_dir")...)
-		return result, WrapComponentError(ErrCodeLoadFailed, "failed to create temporary directory", err)
-	}
-	defer os.RemoveAll(tempDir) // Clean up temp dir when done
+	// Step 2: Clone to _repos directory (persistent, not temporary)
+	// Extract repository name from URL
+	repoName := extractRepoName(actualRepoURL)
+	repoDir := filepath.Join(i.getReposDir(kind), repoName)
 
-	cloneOpts := git.CloneOptions{
-		Branch: opts.Branch,
-		Tag:    opts.Tag,
+	// Check if repository already exists
+	if _, err := os.Stat(repoDir); err == nil {
+		if !opts.Force {
+			// Repository exists, pull latest changes
+			if err := i.git.Pull(repoDir); err != nil {
+				span.AddEvent("git pull failed, using cached version", nil)
+			}
+		} else {
+			// Force install: remove existing repository
+			if err := os.RemoveAll(repoDir); err != nil {
+				return result, WrapComponentError(ErrCodePermissionDenied, "failed to remove existing repository", err).
+					WithContext("path", repoDir)
+			}
+		}
 	}
 
-	if err := i.git.Clone(actualRepoURL, tempDir, cloneOpts); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		span.SetAttributes(ErrorAttributes(err, "clone_repository")...)
-		return result, WrapComponentError(ErrCodeLoadFailed, "failed to clone repository", err).
-			WithContext("url", actualRepoURL)
+	// Clone repository if it doesn't exist or was removed
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		// Ensure _repos directory exists
+		if err := os.MkdirAll(i.getReposDir(kind), 0755); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(ErrorAttributes(err, "create_repos_dir")...)
+			return result, WrapComponentError(ErrCodePermissionDenied, "failed to create _repos directory", err).
+				WithContext("path", i.getReposDir(kind))
+		}
+
+		cloneOpts := git.CloneOptions{
+			Branch: opts.Branch,
+			Tag:    opts.Tag,
+		}
+
+		if err := i.git.Clone(actualRepoURL, repoDir, cloneOpts); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(ErrorAttributes(err, "clone_repository")...)
+			return result, WrapComponentError(ErrCodeLoadFailed, "failed to clone repository", err).
+				WithContext("url", actualRepoURL)
+		}
 	}
 
 	// Step 3: Determine the component directory (apply subdirectory if specified)
-	componentSourceDir := tempDir
+	componentSourceDir := repoDir
 	if subdir != "" {
-		componentSourceDir = filepath.Join(tempDir, subdir)
+		componentSourceDir = filepath.Join(repoDir, subdir)
 		// Verify the subdirectory exists
 		if _, err := os.Stat(componentSourceDir); os.IsNotExist(err) {
 			return result, WrapComponentError(ErrCodeManifestNotFound, "subdirectory not found in repository", err).
@@ -326,59 +366,39 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	// Add component name to span now that we have it
 	span.SetAttributes(attribute.String(AttrComponentName, manifest.Name))
 
-	// Step 5: Determine final installation path
-	componentDir := filepath.Join(i.homeDir, kind.String()+"s", manifest.Name)
-	result.Path = componentDir
-
-	// Check if component already exists at final location
-	if _, err := os.Stat(componentDir); err == nil {
-		if !opts.Force {
+	// Step 5: Check if component already exists in database
+	if !opts.Force && i.dao != nil {
+		if existing, err := i.dao.GetByName(ctx, kind, manifest.Name); err == nil && existing != nil {
 			return result, NewComponentExistsError(manifest.Name).
-				WithContext("path", componentDir)
-		}
-		// Force install: remove existing directory
-		if err := os.RemoveAll(componentDir); err != nil {
-			return result, WrapComponentError(ErrCodePermissionDenied, "failed to remove existing component", err).
-				WithComponent(manifest.Name)
+				WithContext("path", existing.RepoPath)
 		}
 	}
 
-	// Step 6: Ensure parent directory exists
-	parentDir := filepath.Dir(componentDir)
-	if err := os.MkdirAll(parentDir, 0755); err != nil {
-		return result, WrapComponentError(ErrCodePermissionDenied, "failed to create parent directory", err).
-			WithContext("path", parentDir)
-	}
-
-	// Step 7: Move component from source to final location
-	// When using a subdirectory, we only move that subdirectory (not the whole repo)
-	if err := os.Rename(componentSourceDir, componentDir); err != nil {
-		// If rename fails (e.g., cross-device link), fall back to copy
-		if err := copyDir(componentSourceDir, componentDir); err != nil {
-			return result, WrapComponentError(ErrCodeLoadFailed, "failed to move component to final location", err).
-				WithComponent(manifest.Name).
-				WithContext("from", componentSourceDir).
-				WithContext("to", componentDir)
-		}
-	}
-
-	// Step 8: Check dependencies
+	// Step 6: Check dependencies
 	if err := i.checkDependencies(ctx, manifest); err != nil {
-		// Cleanup on failure
-		_ = os.RemoveAll(componentDir)
 		return result, err
 	}
 
-	// Step 9: Build component (unless SkipBuild is set)
+	// Step 7: Build component (unless SkipBuild is set)
 	var buildOutput string
+	var buildWorkDir string
+
 	if !opts.SkipBuild && manifest.Build != nil {
+		// Determine build working directory
+		buildWorkDir = componentSourceDir
+		if manifest.Build.WorkDir != "" {
+			buildWorkDir = filepath.Join(componentSourceDir, manifest.Build.WorkDir)
+		}
+
 		buildStart := time.Now()
-		buildResult, err := i.buildComponent(ctx, componentDir, manifest)
+		buildResult, err := i.buildComponent(ctx, componentSourceDir, manifest)
 		buildDuration := time.Since(buildStart)
 
 		if err != nil {
-			// Cleanup on failure
-			_ = os.RemoveAll(componentDir)
+			// Cleanup on failure (remove repo if we just cloned it and force was set)
+			if opts.Force {
+				_ = os.RemoveAll(repoDir)
+			}
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			span.SetAttributes(ErrorAttributes(err, "build_component")...)
@@ -391,22 +411,50 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 			attribute.String(AttrBuildCommand, manifest.Build.Command),
 			attribute.Int64(AttrBuildDuration, buildDuration.Milliseconds()),
 		)
+	} else {
+		// If no build, use component source dir as work dir
+		buildWorkDir = componentSourceDir
 	}
+
 	result.BuildOutput = buildOutput
 
+	// Step 8: Copy artifacts to bin directory
+	var binPath string
+	if manifest.Build != nil && len(manifest.Build.Artifacts) > 0 {
+		// Copy artifacts from build work directory to bin/
+		primaryArtifact, err := i.copyArtifactsToBin(kind, manifest.Build.Artifacts, buildWorkDir)
+		if err != nil {
+			// Cleanup on failure
+			if opts.Force {
+				_ = os.RemoveAll(repoDir)
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(ErrorAttributes(err, "copy_artifacts")...)
+			return result, err
+		}
+		binPath = primaryArtifact
+	} else {
+		// No artifacts specified - this might be a script-based component
+		// Set binPath to empty string for now
+		binPath = ""
+	}
+
 	// Get the git version (commit hash)
-	version, err := i.git.GetVersion(componentDir)
+	version, err := i.git.GetVersion(repoDir)
 	if err != nil {
 		// Use manifest version as fallback
 		version = manifest.Version
 	}
 
-	// Step 10: Create component instance
+	// Step 9: Create component instance with RepoPath and BinPath
 	component := &Component{
 		Kind:      kind,
 		Name:      manifest.Name,
 		Version:   version,
-		Path:      componentDir,
+		Path:      componentSourceDir, // Deprecated field, kept for backward compatibility
+		RepoPath:  componentSourceDir, // Path to source in _repos/
+		BinPath:   binPath,            // Path to binary in bin/
 		Source:    ComponentSourceExternal,
 		Status:    ComponentStatusAvailable,
 		Manifest:  manifest,
@@ -417,15 +465,25 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	// Validate component
 	if err := component.Validate(); err != nil {
 		// Cleanup on failure
-		_ = os.RemoveAll(componentDir)
+		if binPath != "" {
+			_ = os.Remove(binPath)
+		}
+		if opts.Force {
+			_ = os.RemoveAll(repoDir)
+		}
 		return result, NewValidationFailedError("component validation failed", err)
 	}
 
-	// Step 11: Register component (unless SkipRegister is set)
-	if !opts.SkipRegister && i.registry != nil {
-		if err := i.registry.Register(component); err != nil {
+	// Step 10: Register component in database (unless SkipRegister is set)
+	if !opts.SkipRegister && i.dao != nil {
+		if err := i.dao.Create(ctx, component); err != nil {
 			// Cleanup on failure
-			_ = os.RemoveAll(componentDir)
+			if binPath != "" {
+				_ = os.Remove(binPath)
+			}
+			if opts.Force {
+				_ = os.RemoveAll(repoDir)
+			}
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			span.SetAttributes(ErrorAttributes(err, "register_component")...)
@@ -435,6 +493,7 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	}
 
 	result.Component = component
+	result.Path = componentSourceDir
 	result.Duration = time.Since(start)
 	result.Installed = true
 
@@ -447,133 +506,66 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 }
 
 // InstallAll clones a mono-repo and installs all components of the specified kind found within it.
-// It recursively walks the repository looking for component.yaml files and installs each one.
+// Uses persistent clones in _repos directory to avoid redundant cloning.
 func (i *DefaultInstaller) InstallAll(ctx context.Context, repoURL string, kind ComponentKind, opts InstallOptions) (*InstallAllResult, error) {
-	// Start tracing span
 	ctx, span := i.tracer.Start(ctx, "component.install_all")
 	defer span.End()
 
-	start := time.Now()
 	result := &InstallAllResult{
 		RepoURL:    repoURL,
 		Successful: make([]InstallResult, 0),
 		Failed:     make([]InstallFailure, 0),
 	}
 
-	// Set default timeout if not specified (longer for bulk operations)
-	if opts.Timeout == 0 {
-		opts.Timeout = DefaultInstallTimeout * 3 // 15 minutes for bulk install
-	}
+	// 1. Extract repo name using extractRepoName(repoURL)
+	repoName := extractRepoName(repoURL)
 
-	// Create context with timeout
-	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
-	defer cancel()
+	// 2. Determine persistent path: filepath.Join(i.homeDir, kind.String()+"s", "_repos", repoName)
+	repoDir := filepath.Join(i.homeDir, kind.String()+"s", "_repos", repoName)
 
-	// Step 1: Validate component kind
-	if !kind.IsValid() {
-		err := NewInvalidKindError(kind.String())
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+	// 3. Clone to persistent path (create parent dir, clone or update if exists && Force)
+	if err := os.MkdirAll(filepath.Dir(repoDir), 0755); err != nil {
 		return result, err
 	}
 
-	// Parse the repository URL (strip any subdirectory fragment for bulk install)
-	parsed := ParseRepoURL(repoURL)
-	actualRepoURL := parsed.RepoURL
-
-	span.SetAttributes(
-		attribute.String(AttrRepoURL, actualRepoURL),
-		attribute.String(AttrComponentKind, kind.String()),
-	)
-
-	// Step 2: Clone to temporary directory
-	tempDir, err := os.MkdirTemp("", "gibson-install-all-*")
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return result, WrapComponentError(ErrCodeLoadFailed, "failed to create temporary directory", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	cloneOpts := git.CloneOptions{
-		Branch: opts.Branch,
-		Tag:    opts.Tag,
-	}
-
-	if err := i.git.Clone(actualRepoURL, tempDir, cloneOpts); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		return result, WrapComponentError(ErrCodeLoadFailed, "failed to clone repository", err).
-			WithContext("url", actualRepoURL)
-	}
-
-	// Step 3: Walk the repository and find all component.yaml files
-	componentPaths, err := i.findComponentManifests(tempDir)
-	if err != nil {
-		return result, WrapComponentError(ErrCodeLoadFailed, "failed to scan repository for components", err)
-	}
-
-	result.ComponentsFound = len(componentPaths)
-	span.SetAttributes(attribute.Int("gibson.components_found", len(componentPaths)))
-
-	if len(componentPaths) == 0 {
-		result.Duration = time.Since(start)
-		return result, nil
-	}
-
-	// Step 4: Install each component
-	// Note: Repositories should contain only one type of component (tools-only, agents-only, etc.)
-	// The kind is determined by the CLI subcommand, not the manifest.
-	for _, manifestPath := range componentPaths {
-		// Get the subdirectory relative to the temp dir
-		subdir := filepath.Dir(manifestPath)
-		relSubdir, err := filepath.Rel(tempDir, subdir)
-		if err != nil {
-			relSubdir = subdir
+	if _, err := os.Stat(repoDir); os.IsNotExist(err) {
+		cloneOpts := git.CloneOptions{Branch: opts.Branch, Tag: opts.Tag}
+		if err := i.git.Clone(repoURL, repoDir, cloneOpts); err != nil {
+			return result, WrapComponentError(ErrCodeLoadFailed, "failed to clone repository", err)
 		}
-
-		// Load manifest to get component name for error reporting
-		manifest, err := LoadManifest(manifestPath)
-		if err != nil {
-			result.Failed = append(result.Failed, InstallFailure{
-				Path:  relSubdir,
-				Error: err,
-			})
-			continue
+	} else if opts.Force {
+		os.RemoveAll(repoDir)
+		cloneOpts := git.CloneOptions{Branch: opts.Branch, Tag: opts.Tag}
+		if err := i.git.Clone(repoURL, repoDir, cloneOpts); err != nil {
+			return result, WrapComponentError(ErrCodeLoadFailed, "failed to clone repository", err)
 		}
-
-		// Install this component using the subdirectory syntax
-		installURL := actualRepoURL + "#" + relSubdir
-		installResult, err := i.Install(ctx, installURL, kind, opts)
-		if err != nil {
-			result.Failed = append(result.Failed, InstallFailure{
-				Path:  relSubdir,
-				Name:  manifest.Name,
-				Error: err,
-			})
-			continue
-		}
-
-		result.Successful = append(result.Successful, *installResult)
-	}
-
-	result.Duration = time.Since(start)
-
-	// Set span status based on results
-	if len(result.Failed) == 0 {
-		span.SetStatus(codes.Ok, fmt.Sprintf("installed %d components successfully", len(result.Successful)))
-	} else if len(result.Successful) > 0 {
-		span.SetStatus(codes.Ok, fmt.Sprintf("installed %d components, %d failed", len(result.Successful), len(result.Failed)))
 	} else {
-		span.SetStatus(codes.Error, fmt.Sprintf("all %d components failed to install", len(result.Failed)))
+		// Repository exists and not forcing - check for updates
+		if err := i.git.Pull(repoDir); err != nil {
+			// Log warning but continue - the cached version might still work
+			// This handles cases like network issues or detached HEAD state
+			span.AddEvent("git pull failed, using cached version", nil)
+		}
 	}
 
-	span.SetAttributes(
-		attribute.Int("gibson.components_successful", len(result.Successful)),
-		attribute.Int("gibson.components_failed", len(result.Failed)),
-	)
+	// 4. Load top-level manifest - ERROR if not found
+	manifestPath := filepath.Join(repoDir, ManifestFileName)
+	manifest, err := LoadManifest(manifestPath)
+	if err != nil {
+		return result, fmt.Errorf("repository must have top-level component.yaml: %w", err)
+	}
 
-	return result, nil
+	// 5. Parse manifest.Kind and route
+	manifestKind := ComponentKind(manifest.Kind)
+
+	switch {
+	case manifestKind.IsRepositoryKind():
+		return i.installRepository(ctx, repoDir, manifest, kind, opts)
+	case manifestKind.IsComponentKind():
+		return i.installSingleComponent(ctx, repoDir, manifest, kind, opts)
+	default:
+		return result, fmt.Errorf("invalid manifest kind: %s (expected repository, tool, agent, or plugin)", manifest.Kind)
+	}
 }
 
 // findComponentManifests recursively walks a directory and returns paths to all component.yaml files
@@ -607,6 +599,468 @@ func (i *DefaultInstaller) findComponentManifests(rootDir string) ([]string, err
 	})
 
 	return manifests, err
+}
+
+// installRepository installs all components from a repository manifest.
+// It builds the repository once (if needed) and then registers all discovered/listed components.
+func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string, manifest *Manifest, kind ComponentKind, opts InstallOptions) (*InstallAllResult, error) {
+	// Start tracing span
+	ctx, span := i.tracer.Start(ctx, "component.install_repository")
+	defer span.End()
+
+	start := time.Now()
+	result := &InstallAllResult{
+		RepoURL:    repoDir,
+		Successful: make([]InstallResult, 0),
+		Failed:     make([]InstallFailure, 0),
+	}
+
+	span.SetAttributes(
+		attribute.String("gibson.repository.path", repoDir),
+		attribute.String(AttrComponentKind, kind.String()),
+	)
+
+	// Step 1: Run repository-level build if manifest has build config and build is not skipped
+	var buildOutput string
+	if !opts.SkipBuild && manifest.Build != nil {
+		buildStart := time.Now()
+		buildResult, err := i.buildAtPath(ctx, repoDir, manifest.Build)
+		buildDuration := time.Since(buildStart)
+
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(ErrorAttributes(err, "build_repository")...)
+			result.Duration = time.Since(start)
+			return result, err
+		}
+		buildOutput = buildResult.Stdout + "\n" + buildResult.Stderr
+
+		// Add build metrics to span
+		span.SetAttributes(
+			attribute.String(AttrBuildCommand, manifest.Build.Command),
+			attribute.Int64(AttrBuildDuration, buildDuration.Milliseconds()),
+		)
+	}
+
+	// Step 2: Find component paths
+	var componentPaths []string
+	var err error
+
+	if len(manifest.Contents) > 0 {
+		// Use explicit content list, filtering by kind
+		for _, entry := range manifest.Contents {
+			// Filter by kind if specified (empty kind means accept all)
+			if entry.Kind != "" && entry.Kind != kind.String() {
+				continue
+			}
+
+			// Build full path to component manifest
+			componentManifestPath := filepath.Join(repoDir, entry.Path, ManifestFileName)
+
+			// Verify the manifest exists
+			if _, err := os.Stat(componentManifestPath); err == nil {
+				componentPaths = append(componentPaths, componentManifestPath)
+			} else {
+				// Record as failure if manifest doesn't exist
+				result.Failed = append(result.Failed, InstallFailure{
+					Path:  entry.Path,
+					Error: WrapComponentError(ErrCodeManifestNotFound, "component manifest not found", err).
+						WithContext("path", entry.Path),
+				})
+			}
+		}
+	} else if manifest.Discover {
+		// Auto-discover components in the repository
+		componentPaths, err = i.findComponentManifests(repoDir)
+		if err != nil {
+			return result, WrapComponentError(ErrCodeLoadFailed, "failed to discover components", err)
+		}
+	}
+
+	result.ComponentsFound = len(componentPaths)
+	span.SetAttributes(attribute.Int("gibson.components_found", len(componentPaths)))
+
+	if len(componentPaths) == 0 {
+		result.Duration = time.Since(start)
+		return result, nil
+	}
+
+	// Step 3: Process each component
+	for _, manifestPath := range componentPaths {
+		// Load component manifest
+		compManifest, err := LoadManifest(manifestPath)
+		if err != nil {
+			// Get relative path for error reporting
+			relPath, _ := filepath.Rel(repoDir, filepath.Dir(manifestPath))
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  relPath,
+				Error: err,
+			})
+			continue
+		}
+
+		// Get component directory (where the component manifest is located)
+		componentDir := filepath.Dir(manifestPath)
+
+		// Get relative path for error reporting
+		relPath, err := filepath.Rel(repoDir, componentDir)
+		if err != nil {
+			relPath = componentDir
+		}
+
+		// Check if component already exists in database
+		if !opts.Force && i.dao != nil {
+			if existing, err := i.dao.GetByName(ctx, kind, compManifest.Name); err == nil && existing != nil {
+				result.Failed = append(result.Failed, InstallFailure{
+					Path:  relPath,
+					Name:  compManifest.Name,
+					Error: NewComponentExistsError(compManifest.Name),
+				})
+				continue
+			}
+		}
+
+		// If Force is set and component exists, delete it first
+		if opts.Force && i.dao != nil {
+			_ = i.dao.Delete(ctx, kind, compManifest.Name)
+		}
+
+		// Build component if it has its own build config (component-level build)
+		// Note: Repository-level build has already run in Step 1
+		var componentBuildOutput string
+		if !opts.SkipBuild && compManifest.Build != nil {
+			buildStart := time.Now()
+			buildResult, err := i.buildAtPath(ctx, componentDir, compManifest.Build)
+			buildDuration := time.Since(buildStart)
+
+			if err != nil {
+				result.Failed = append(result.Failed, InstallFailure{
+					Path:  relPath,
+					Name:  compManifest.Name,
+					Error: err,
+				})
+				continue
+			}
+			componentBuildOutput = buildResult.Stdout + "\n" + buildResult.Stderr
+
+			span.SetAttributes(
+				attribute.String(AttrBuildCommand+" component", compManifest.Build.Command),
+				attribute.Int64(AttrBuildDuration+" component", buildDuration.Milliseconds()),
+			)
+		}
+
+		// Determine the source directory for artifacts
+		// If component has build.workdir, artifacts are there; otherwise use componentDir
+		artifactSourceDir := componentDir
+		if compManifest.Build != nil && compManifest.Build.WorkDir != "" {
+			artifactSourceDir = filepath.Join(componentDir, compManifest.Build.WorkDir)
+		}
+
+		// Copy artifacts to bin/ directory
+		var binPath string
+		if compManifest.Build != nil && len(compManifest.Build.Artifacts) > 0 {
+			binPath, err = i.copyArtifactsToBin(kind, compManifest.Build.Artifacts, artifactSourceDir)
+			if err != nil {
+				result.Failed = append(result.Failed, InstallFailure{
+					Path:  relPath,
+					Name:  compManifest.Name,
+					Error: err,
+				})
+				continue
+			}
+		} else {
+			// No artifacts specified - this might be OK for some components
+			// Use empty binPath (component might be library, script, etc.)
+			binPath = ""
+		}
+
+		// Get the git version (commit hash) from the repository
+		version, err := i.git.GetVersion(repoDir)
+		if err != nil {
+			// Use manifest version as fallback
+			version = compManifest.Version
+		}
+
+		// Create component instance with new directory structure
+		// RepoPath points to the component's subdirectory in _repos/
+		// BinPath points to the artifact in bin/
+		component := &Component{
+			Kind:      kind,
+			Name:      compManifest.Name,
+			Version:   version,
+			RepoPath:  componentDir,                // Path to component in _repos/{repo-name}/{component-subdir}
+			BinPath:   binPath,                     // Path to binary in bin/{artifact-name}
+			Path:      componentDir,                // Deprecated: kept for backward compatibility
+			Source:    ComponentSourceExternal,
+			Status:    ComponentStatusAvailable,
+			Manifest:  compManifest,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		// Validate component
+		if err := component.Validate(); err != nil {
+			// Cleanup bin artifact on failure
+			if binPath != "" {
+				_ = os.Remove(binPath)
+			}
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  relPath,
+				Name:  compManifest.Name,
+				Error: NewValidationFailedError("component validation failed", err),
+			})
+			continue
+		}
+
+		// Register component in database (unless SkipRegister is set)
+		if !opts.SkipRegister && i.dao != nil {
+			if err := i.dao.Create(ctx, component); err != nil {
+				// Cleanup bin artifact on failure
+				if binPath != "" {
+					_ = os.Remove(binPath)
+				}
+				result.Failed = append(result.Failed, InstallFailure{
+					Path:  relPath,
+					Name:  compManifest.Name,
+					Error: WrapComponentError(ErrCodeLoadFailed, "failed to register component", err).
+						WithComponent(compManifest.Name),
+				})
+				continue
+			}
+		}
+
+		// Record success
+		// Merge repository build output with component-specific build output
+		finalBuildOutput := buildOutput
+		if componentBuildOutput != "" {
+			finalBuildOutput = buildOutput + "\n--- Component Build ---\n" + componentBuildOutput
+		}
+
+		installResult := InstallResult{
+			Component:   component,
+			Path:        componentDir, // Path to component source in _repos/
+			Duration:    0,            // Individual component installation is part of the overall repository installation
+			BuildOutput: finalBuildOutput,
+			Installed:   true,
+		}
+		result.Successful = append(result.Successful, installResult)
+	}
+
+	result.Duration = time.Since(start)
+
+	// Set span status based on results
+	if len(result.Failed) == 0 {
+		span.SetStatus(codes.Ok, fmt.Sprintf("installed %d components successfully", len(result.Successful)))
+	} else if len(result.Successful) > 0 {
+		span.SetStatus(codes.Ok, fmt.Sprintf("installed %d components, %d failed", len(result.Successful), len(result.Failed)))
+	} else {
+		span.SetStatus(codes.Error, fmt.Sprintf("all %d components failed to install", len(result.Failed)))
+	}
+
+	span.SetAttributes(
+		attribute.Int("gibson.components_successful", len(result.Successful)),
+		attribute.Int("gibson.components_failed", len(result.Failed)),
+	)
+
+	return result, nil
+}
+
+// installSingleComponent installs a single component from a repository directory.
+// This is optimized for repositories that contain only one component (no discovery needed).
+// It validates that the manifest kind matches the expected kind, builds the component if needed,
+// and registers it with the component registry.
+func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir string, manifest *Manifest, kind ComponentKind, opts InstallOptions) (*InstallAllResult, error) {
+	// Start tracing span
+	ctx, span := i.tracer.Start(ctx, "component.install_single_component")
+	defer span.End()
+
+	start := time.Now()
+	result := &InstallAllResult{
+		RepoURL:    repoDir,
+		Successful: make([]InstallResult, 0),
+		Failed:     make([]InstallFailure, 0),
+	}
+
+	// Add component metadata to span
+	span.SetAttributes(
+		attribute.String(AttrComponentKind, kind.String()),
+		attribute.String(AttrComponentName, manifest.Name),
+	)
+
+	// Step 1: Validate ComponentKind(manifest.Kind) == kind
+	// Convert manifest.Kind (string) to ComponentKind and compare
+	manifestKind := ComponentKind(manifest.Kind)
+	if manifestKind != kind {
+		err := fmt.Errorf("manifest kind %q does not match expected %q", manifest.Kind, kind.String())
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(ErrorAttributes(err, "validate_manifest_kind")...)
+		result.Failed = append(result.Failed, InstallFailure{
+			Path:  repoDir,
+			Name:  manifest.Name,
+			Error: err,
+		})
+		result.ComponentsFound = 1
+		result.Duration = time.Since(start)
+		return result, err
+	}
+
+	// Step 2: Build if manifest.Build != nil && !opts.SkipBuild
+	var buildOutput string
+	if !opts.SkipBuild && manifest.Build != nil {
+		buildStart := time.Now()
+		buildResult, err := i.buildComponent(ctx, repoDir, manifest)
+		buildDuration := time.Since(buildStart)
+
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(ErrorAttributes(err, "build_component")...)
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  repoDir,
+				Name:  manifest.Name,
+				Error: err,
+			})
+			result.ComponentsFound = 1
+			result.Duration = time.Since(start)
+			return result, err
+		}
+		buildOutput = buildResult.Stdout + "\n" + buildResult.Stderr
+
+		// Add build metrics to span
+		span.SetAttributes(
+			attribute.String(AttrBuildCommand, manifest.Build.Command),
+			attribute.Int64(AttrBuildDuration, buildDuration.Milliseconds()),
+		)
+	}
+
+	// Get the git version (commit hash)
+	version, err := i.git.GetVersion(repoDir)
+	if err != nil {
+		// Use manifest version as fallback
+		version = manifest.Version
+	}
+
+	// Determine the source directory for artifacts
+	// If component has build.workdir, artifacts are there; otherwise use repoDir
+	artifactSourceDir := repoDir
+	if manifest.Build != nil && manifest.Build.WorkDir != "" {
+		artifactSourceDir = filepath.Join(repoDir, manifest.Build.WorkDir)
+	}
+
+	// Copy artifacts to bin/ directory
+	var binPath string
+	if manifest.Build != nil && len(manifest.Build.Artifacts) > 0 {
+		binPath, err = i.copyArtifactsToBin(kind, manifest.Build.Artifacts, artifactSourceDir)
+		if err != nil {
+			validationErr := WrapComponentError(ErrCodeLoadFailed, "failed to copy artifacts to bin", err).
+				WithComponent(manifest.Name)
+			span.RecordError(validationErr)
+			span.SetStatus(codes.Error, validationErr.Error())
+			span.SetAttributes(ErrorAttributes(validationErr, "copy_artifacts")...)
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  repoDir,
+				Name:  manifest.Name,
+				Error: validationErr,
+			})
+			result.ComponentsFound = 1
+			result.Duration = time.Since(start)
+			return result, validationErr
+		}
+	} else {
+		// No artifacts specified - this might be OK for some components
+		// Use empty binPath (component might be library, script, etc.)
+		binPath = ""
+	}
+
+	// Step 3: Create Component with new directory structure
+	// RepoPath points to the cloned repository in _repos/
+	// BinPath points to the artifact in bin/
+	component := &Component{
+		Kind:      kind,
+		Name:      manifest.Name,
+		Version:   version,
+		RepoPath:  repoDir,            // Path to component in _repos/{repo-name}
+		BinPath:   binPath,            // Path to binary in bin/{artifact-name}
+		Path:      repoDir,            // Deprecated: kept for backward compatibility
+		Source:    ComponentSourceExternal,
+		Status:    ComponentStatusAvailable,
+		Manifest:  manifest,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	// Validate component
+	if err := component.Validate(); err != nil {
+		// Cleanup bin artifact on failure
+		if binPath != "" {
+			_ = os.Remove(binPath)
+		}
+		validationErr := NewValidationFailedError("component validation failed", err)
+		span.RecordError(validationErr)
+		span.SetStatus(codes.Error, validationErr.Error())
+		span.SetAttributes(ErrorAttributes(validationErr, "validate_component")...)
+		result.Failed = append(result.Failed, InstallFailure{
+			Path:  repoDir,
+			Name:  manifest.Name,
+			Error: validationErr,
+		})
+		result.ComponentsFound = 1
+		result.Duration = time.Since(start)
+		return result, validationErr
+	}
+
+	// Step 4: Register with i.dao.Create()
+	if !opts.SkipRegister && i.dao != nil {
+		if err := i.dao.Create(ctx, component); err != nil {
+			// Cleanup bin artifact on failure
+			if binPath != "" {
+				_ = os.Remove(binPath)
+			}
+			registerErr := WrapComponentError(ErrCodeLoadFailed, "failed to register component", err).
+				WithComponent(manifest.Name)
+			span.RecordError(registerErr)
+			span.SetStatus(codes.Error, registerErr.Error())
+			span.SetAttributes(ErrorAttributes(registerErr, "register_component")...)
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  repoDir,
+				Name:  manifest.Name,
+				Error: registerErr,
+			})
+			result.ComponentsFound = 1
+			result.Duration = time.Since(start)
+			return result, registerErr
+		}
+	}
+
+	// Create successful install result
+	installResult := InstallResult{
+		Component:   component,
+		Path:        repoDir,
+		Duration:    time.Since(start),
+		BuildOutput: buildOutput,
+		Installed:   true,
+		Updated:     false,
+	}
+
+	result.Successful = append(result.Successful, installResult)
+
+	// Step 5: Return result with ComponentsFound=1
+	result.ComponentsFound = 1
+	result.Duration = time.Since(start)
+
+	// Record successful installation
+	span.SetStatus(codes.Ok, "single component installed successfully")
+	span.SetAttributes(
+		ComponentAttributes(component)...,
+	)
+	span.SetAttributes(
+		attribute.Int("gibson.components_successful", 1),
+		attribute.Int("gibson.components_failed", 0),
+	)
+
+	return result, nil
 }
 
 // Update updates an installed component to the latest version
@@ -656,10 +1110,10 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 		return result, notFoundErr
 	}
 
-	// Get current component from registry if available
+	// Get current component from DAO if available
 	var wasRunning bool
-	if i.registry != nil {
-		if comp := i.registry.Get(kind, name); comp != nil {
+	if i.dao != nil {
+		if comp, err := i.dao.GetByName(ctx, kind, name); err == nil && comp != nil {
 			result.OldVersion = comp.Version
 			wasRunning = comp.IsRunning()
 
@@ -723,8 +1177,8 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 	}
 	result.BuildOutput = buildOutput
 
-	// Step 5: Re-register component
-	if i.registry != nil {
+	// Step 5: Update component in database
+	if i.dao != nil {
 		component := &Component{
 			Kind:      kind,
 			Name:      name,
@@ -737,11 +1191,11 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 			UpdatedAt: time.Now(),
 		}
 
-		// Unregister old version
-		_ = i.registry.Unregister(kind, name)
+		// Delete old version
+		_ = i.dao.Delete(ctx, kind, name)
 
-		// Register new version
-		if err := i.registry.Register(component); err != nil {
+		// Create new version
+		if err := i.dao.Create(ctx, component); err != nil {
 			return result, WrapComponentError(ErrCodeLoadFailed, "failed to re-register component", err).
 				WithComponent(name)
 		}
@@ -776,13 +1230,16 @@ func (i *DefaultInstaller) UpdateAll(ctx context.Context, kind ComponentKind, op
 		return nil, NewInvalidKindError(kind.String())
 	}
 
-	// Get all components of this kind from registry
+	// Get all components of this kind from DAO
 	var components []*Component
 	var err error
-	if i.registry != nil {
-		components = i.registry.List(kind)
+	if i.dao != nil {
+		components, err = i.dao.List(ctx, kind)
+		if err != nil {
+			return nil, err
+		}
 	} else {
-		// If no registry, scan filesystem
+		// If no DAO, scan filesystem
 		components, err = i.scanComponents(kind)
 		if err != nil {
 			return nil, err
@@ -834,47 +1291,131 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 		return result, err
 	}
 
-	// Get component path
-	componentDir := filepath.Join(i.homeDir, kind.String()+"s", name)
-	result.Path = componentDir
+	// Step 1: Get component from database to retrieve BinPath and RepoPath
+	var comp *Component
+	if i.dao != nil {
+		var err error
+		comp, err = i.dao.GetByName(ctx, kind, name)
+		if err != nil {
+			// Component not found in database
+			notFoundErr := NewComponentNotFoundError(name)
+			span.RecordError(notFoundErr)
+			span.SetStatus(codes.Error, notFoundErr.Error())
+			span.SetAttributes(ErrorAttributes(notFoundErr, "get_component")...)
+			return result, notFoundErr
+		}
 
-	// Verify component exists
-	if _, err := os.Stat(componentDir); os.IsNotExist(err) {
-		notFoundErr := NewComponentNotFoundError(name).
-			WithContext("path", componentDir)
-		span.RecordError(notFoundErr)
-		span.SetStatus(codes.Error, notFoundErr.Error())
-		span.SetAttributes(ErrorAttributes(notFoundErr, "check_exists")...)
-		return result, notFoundErr
-	}
+		// Check if component is running
+		if comp.IsRunning() {
+			result.WasRunning = true
+			// TODO: Implement stop via component manager
+			// For now, just note that it was running
+			result.WasStopped = false
+			span.SetAttributes(attribute.Bool("gibson.component.was_running", true))
+		}
 
-	// Step 1: Stop component if running
-	if i.registry != nil {
-		if comp := i.registry.Get(kind, name); comp != nil {
-			if comp.IsRunning() {
-				result.WasRunning = true
-				// TODO: Implement stop via component manager
-				// For now, just note that it was running
-				result.WasStopped = false
-				span.SetAttributes(attribute.Bool("gibson.component.was_running", true))
-			}
+		result.Path = comp.RepoPath
+	} else {
+		// Fallback to legacy path if no DAO
+		componentDir := filepath.Join(i.homeDir, kind.String()+"s", name)
+		result.Path = componentDir
+
+		// Verify component exists
+		if _, err := os.Stat(componentDir); os.IsNotExist(err) {
+			notFoundErr := NewComponentNotFoundError(name).
+				WithContext("path", componentDir)
+			span.RecordError(notFoundErr)
+			span.SetStatus(codes.Error, notFoundErr.Error())
+			span.SetAttributes(ErrorAttributes(notFoundErr, "check_exists")...)
+			return result, notFoundErr
 		}
 	}
 
-	// Step 2: Unregister from registry
-	if i.registry != nil {
-		_ = i.registry.Unregister(kind, name) // Ignore errors if not registered
+	// Step 2: Remove the binary file at BinPath (if it exists)
+	if comp != nil && comp.BinPath != "" {
+		if err := os.Remove(comp.BinPath); err != nil && !os.IsNotExist(err) {
+			// Log warning but don't fail - binary might already be missing
+			span.AddEvent("failed to remove binary", trace.WithAttributes(
+				attribute.String("path", comp.BinPath),
+				attribute.String("error", err.Error()),
+			))
+		} else if err == nil {
+			span.AddEvent("removed binary", trace.WithAttributes(
+				attribute.String("path", comp.BinPath),
+			))
+		}
 	}
 
-	// Step 3: Remove directory
-	if err := os.RemoveAll(componentDir); err != nil {
-		removeErr := WrapComponentError(ErrCodePermissionDenied, "failed to remove component directory", err).
-			WithComponent(name).
-			WithContext("path", componentDir)
-		span.RecordError(removeErr)
-		span.SetStatus(codes.Error, removeErr.Error())
-		span.SetAttributes(ErrorAttributes(removeErr, "remove_directory")...)
-		return result, removeErr
+	// Step 3: Delete from database
+	if i.dao != nil {
+		if err := i.dao.Delete(ctx, kind, name); err != nil {
+			// Log error but continue with cleanup
+			span.AddEvent("failed to delete from database", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		}
+	}
+
+	// Step 4: Optionally clean up repository if no other components use it
+	if comp != nil && comp.RepoPath != "" {
+		// Check if other components use the same repository
+		shouldRemoveRepo := true
+		if i.dao != nil {
+			// Get all components of this kind
+			allComponents, err := i.dao.List(ctx, kind)
+			if err == nil {
+				// Check if any other component shares the same repository path prefix
+				for _, otherComp := range allComponents {
+					if otherComp.Name != name && otherComp.RepoPath != "" {
+						// Check if this component shares the same repo parent directory
+						// For mono-repos, components may be in subdirectories of the same cloned repo
+						if strings.HasPrefix(otherComp.RepoPath, filepath.Dir(comp.RepoPath)) ||
+							strings.HasPrefix(comp.RepoPath, filepath.Dir(otherComp.RepoPath)) {
+							shouldRemoveRepo = false
+							span.AddEvent("repository shared with other components", trace.WithAttributes(
+								attribute.String("repo_path", comp.RepoPath),
+								attribute.String("shared_with", otherComp.Name),
+							))
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// Remove repository if no other components use it
+		if shouldRemoveRepo {
+			// For single-component repos, RepoPath points directly to the repo
+			// For mono-repos, we need to find the actual repository root in _repos/
+			repoRoot := comp.RepoPath
+
+			// Check if this is inside _repos/ directory
+			reposDir := i.getReposDir(kind)
+			if strings.HasPrefix(comp.RepoPath, reposDir) {
+				// Find the immediate subdirectory of _repos/ (the actual cloned repo)
+				relPath, err := filepath.Rel(reposDir, comp.RepoPath)
+				if err == nil && relPath != "." {
+					// Get the first component of the relative path (the repo directory)
+					pathParts := strings.Split(relPath, string(filepath.Separator))
+					if len(pathParts) > 0 {
+						repoRoot = filepath.Join(reposDir, pathParts[0])
+					}
+				}
+			}
+
+			// Remove the repository directory
+			if err := os.RemoveAll(repoRoot); err != nil && !os.IsNotExist(err) {
+				// Log warning but don't fail - partial cleanup is acceptable
+				span.AddEvent("failed to remove repository", trace.WithAttributes(
+					attribute.String("path", repoRoot),
+					attribute.String("error", err.Error()),
+				))
+			} else if err == nil {
+				span.AddEvent("removed repository", trace.WithAttributes(
+					attribute.String("path", repoRoot),
+				))
+			}
+		}
 	}
 
 	result.Duration = time.Since(start)
@@ -904,7 +1445,7 @@ func (i *DefaultInstaller) checkDependencies(ctx context.Context, manifest *Mani
 	}
 
 	// Check component dependencies
-	if i.registry != nil {
+	if i.dao != nil {
 		for _, compDep := range deps.GetComponents() {
 			if err := i.checkComponentDependency(compDep); err != nil {
 				return NewDependencyFailedError(manifest.Name, compDep, err, false)
@@ -986,8 +1527,20 @@ func (i *DefaultInstaller) buildComponent(ctx context.Context, componentDir stri
 
 	result, err := i.builder.Build(buildCtx, buildConfig, manifest.Name, manifest.Version, "dev")
 	if err != nil {
-		return result, WrapComponentError(ErrCodeLoadFailed, "build failed", err).
-			WithComponent(manifest.Name)
+		compErr := WrapComponentError(ErrCodeLoadFailed, "build failed", err).
+			WithComponent(manifest.Name).
+			WithContext("build_command", buildConfig.Command+" "+strings.Join(buildConfig.Args, " ")).
+			WithContext("work_dir", buildConfig.WorkDir)
+		// Include build output in error context for debugging
+		if result != nil {
+			if result.Stdout != "" {
+				compErr.WithContext("stdout", result.Stdout)
+			}
+			if result.Stderr != "" {
+				compErr.WithContext("stderr", result.Stderr)
+			}
+		}
+		return result, compErr
 	}
 
 	return result, nil
@@ -1118,4 +1671,160 @@ func (i *DefaultInstaller) scanComponents(kind ComponentKind) ([]*Component, err
 	}
 
 	return components, nil
+}
+
+// getBinDir returns the binary directory for a specific component kind.
+// Returns ~/.gibson/{kind}s/bin/ (e.g., ~/.gibson/agents/bin/, ~/.gibson/tools/bin/)
+func (i *DefaultInstaller) getBinDir(kind ComponentKind) string {
+	return filepath.Join(i.homeDir, kind.String()+"s", "bin")
+}
+
+// getReposDir returns the repositories directory for a specific component kind.
+// Returns ~/.gibson/{kind}s/_repos/ (e.g., ~/.gibson/agents/_repos/, ~/.gibson/tools/_repos/)
+func (i *DefaultInstaller) getReposDir(kind ComponentKind) string {
+	return filepath.Join(i.homeDir, kind.String()+"s", "_repos")
+}
+
+// copyArtifactsToBin copies build artifacts from sourceDir to the bin directory for the specified component kind.
+// It creates the bin directory if it doesn't exist, copies all artifacts preserving file permissions,
+// and returns the path to the primary artifact (first in the list).
+// Returns the absolute path to the primary artifact in the bin directory.
+func (i *DefaultInstaller) copyArtifactsToBin(kind ComponentKind, artifacts []string, sourceDir string) (string, error) {
+	if len(artifacts) == 0 {
+		return "", fmt.Errorf("no artifacts to copy")
+	}
+
+	// Get bin directory and ensure it exists
+	binDir := i.getBinDir(kind)
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return "", WrapComponentError(ErrCodePermissionDenied, "failed to create bin directory", err).
+			WithContext("path", binDir)
+	}
+
+	// Copy all artifacts to bin directory
+	var primaryArtifactPath string
+	for idx, artifact := range artifacts {
+		// Source path is relative to sourceDir
+		srcPath := filepath.Join(sourceDir, artifact)
+
+		// Destination path uses just the artifact filename (not the full path)
+		dstPath := filepath.Join(binDir, filepath.Base(artifact))
+
+		// Copy the file
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return "", WrapComponentError(ErrCodeLoadFailed, "failed to copy artifact", err).
+				WithContext("artifact", artifact).
+				WithContext("from", srcPath).
+				WithContext("to", dstPath)
+		}
+
+		// First artifact is the primary artifact
+		if idx == 0 {
+			primaryArtifactPath = dstPath
+		}
+	}
+
+	return primaryArtifactPath, nil
+}
+
+// extractRepoName extracts the repository name from a git repository URL.
+// It handles both HTTPS and SSH URL formats, with or without .git suffix.
+// Examples:
+//   - "https://github.com/zero-day-ai/gibson-tools-official.git" -> "gibson-tools-official"
+//   - "git@github.com:zero-day-ai/gibson-tools-official.git" -> "gibson-tools-official"
+//   - "https://github.com/zero-day-ai/gibson-tools-official" -> "gibson-tools-official"
+//   - "https://github.com/zero-day-ai/gibson-tools-official/" -> "gibson-tools-official"
+func extractRepoName(repoURL string) string {
+	// Remove trailing slashes
+	repoURL = strings.TrimRight(repoURL, "/")
+
+	// Extract the last path component
+	var pathPart string
+
+	// Handle SSH URLs (git@github.com:user/repo.git)
+	if strings.Contains(repoURL, ":") && strings.Contains(repoURL, "@") {
+		// SSH format: split by colon and take the part after it
+		parts := strings.Split(repoURL, ":")
+		if len(parts) > 1 {
+			pathPart = parts[len(parts)-1]
+		}
+	} else {
+		// HTTPS format: use the whole URL
+		pathPart = repoURL
+	}
+
+	// Now extract the last component from the path (after the last /)
+	parts := strings.Split(pathPart, "/")
+	lastPart := ""
+	if len(parts) > 0 {
+		lastPart = parts[len(parts)-1]
+	}
+
+	// Remove .git suffix if present
+	lastPart = strings.TrimSuffix(lastPart, ".git")
+
+	return lastPart
+}
+
+// buildAtPath builds a component at the specified directory using the given build configuration.
+// This is similar to buildComponent but operates on an explicit directory path rather than
+// deriving it from the manifest. It uses the build configuration from the manifest, defaulting
+// to "make build" if no command is specified.
+func (i *DefaultInstaller) buildAtPath(ctx context.Context, dir string, buildCfg *BuildConfig) (*build.BuildResult, error) {
+	// Prepare build configuration with defaults
+	buildConfig := build.BuildConfig{
+		WorkDir:    dir,
+		Command:    "make",
+		Args:       []string{"build"},
+		OutputPath: "", // Will be determined from build artifacts
+		Env:        nil,
+	}
+
+	// If build config is provided, use its settings
+	if buildCfg != nil {
+		buildConfig.Env = buildCfg.GetEnv()
+
+		// Override with manifest build command if specified
+		if buildCfg.Command != "" {
+			// Parse the command string into command and arguments
+			parts := strings.Fields(buildCfg.Command)
+			if len(parts) > 0 {
+				buildConfig.Command = parts[0]
+				if len(parts) > 1 {
+					buildConfig.Args = parts[1:]
+				} else {
+					buildConfig.Args = []string{}
+				}
+			}
+		}
+
+		// Set working directory if specified in build config
+		if buildCfg.WorkDir != "" {
+			buildConfig.WorkDir = filepath.Join(dir, buildCfg.WorkDir)
+		}
+	}
+
+	// Build with timeout
+	buildCtx, cancel := context.WithTimeout(ctx, DefaultBuildTimeout)
+	defer cancel()
+
+	// Execute the build
+	result, err := i.builder.Build(buildCtx, buildConfig, "", "", "dev")
+	if err != nil {
+		compErr := WrapComponentError(ErrCodeLoadFailed, "build failed", err).
+			WithContext("build_command", buildConfig.Command+" "+strings.Join(buildConfig.Args, " ")).
+			WithContext("work_dir", buildConfig.WorkDir)
+		// Include build output in error context for debugging
+		if result != nil {
+			if result.Stdout != "" {
+				compErr.WithContext("stdout", result.Stdout)
+			}
+			if result.Stderr != "" {
+				compErr.WithContext("stderr", result.Stderr)
+			}
+		}
+		return result, compErr
+	}
+
+	return result, nil
 }

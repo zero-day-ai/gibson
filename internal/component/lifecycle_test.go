@@ -78,10 +78,18 @@ func (m *mockHealthMonitor) getHealthEndpoint() string {
 	return m.healthEndpoint
 }
 
+// mockStatusUpdater is a mock implementation of StatusUpdater for testing.
+type mockStatusUpdater struct{}
+
+func (m *mockStatusUpdater) UpdateStatus(ctx context.Context, id int64, status ComponentStatus, pid, port int) error {
+	return nil
+}
+
 // TestNewLifecycleManager tests the creation of a new lifecycle manager.
 func TestNewLifecycleManager(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	assert.NotNil(t, manager)
 	assert.Equal(t, DefaultStartupTimeout, manager.startupTimeout)
@@ -94,6 +102,7 @@ func TestNewLifecycleManager(t *testing.T) {
 // TestNewLifecycleManagerWithTimeouts tests the creation with custom timeouts.
 func TestNewLifecycleManagerWithTimeouts(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
+	dao := &mockStatusUpdater{}
 	startupTimeout := 5 * time.Second
 	shutdownTimeout := 3 * time.Second
 	portStart := 40000
@@ -101,6 +110,7 @@ func TestNewLifecycleManagerWithTimeouts(t *testing.T) {
 
 	manager := NewLifecycleManagerWithTimeouts(
 		healthMonitor,
+		dao,
 		startupTimeout,
 		shutdownTimeout,
 		portStart,
@@ -117,7 +127,8 @@ func TestNewLifecycleManagerWithTimeouts(t *testing.T) {
 // TestFindAvailablePort tests finding an available port.
 func TestFindAvailablePort(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	port, err := manager.findAvailablePort()
 	require.NoError(t, err)
@@ -131,7 +142,8 @@ func TestFindAvailablePort(t *testing.T) {
 // TestIsPortAvailable tests port availability checking.
 func TestIsPortAvailable(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	// Find an available port
 	port, err := manager.findAvailablePort()
@@ -152,7 +164,8 @@ func TestIsPortAvailable(t *testing.T) {
 // TestStartComponent_NilComponent tests starting a nil component.
 func TestStartComponent_NilComponent(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	port, err := manager.StartComponent(ctx, nil)
@@ -164,7 +177,8 @@ func TestStartComponent_NilComponent(t *testing.T) {
 // TestStartComponent_NoManifest tests starting a component without a manifest.
 func TestStartComponent_NoManifest(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	comp := &Component{
@@ -183,7 +197,8 @@ func TestStartComponent_NoManifest(t *testing.T) {
 // TestStartComponent_AlreadyRunning tests starting an already running component.
 func TestStartComponent_AlreadyRunning(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	// Create a long-running process
@@ -201,7 +216,7 @@ func TestStartComponent_AlreadyRunning(t *testing.T) {
 		Manifest: &Manifest{
 			Name:    "test-agent",
 			Version: "1.0.0",
-			Runtime: RuntimeConfig{
+			Runtime: &RuntimeConfig{
 				Type:       RuntimeTypeBinary,
 				Entrypoint: "sleep",
 				Args:       []string{"10"},
@@ -218,7 +233,8 @@ func TestStartComponent_AlreadyRunning(t *testing.T) {
 // TestStopComponent_NilComponent tests stopping a nil component.
 func TestStopComponent_NilComponent(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	err := manager.StopComponent(ctx, nil)
@@ -229,7 +245,8 @@ func TestStopComponent_NilComponent(t *testing.T) {
 // TestStopComponent_NotRunning tests stopping a non-running component.
 func TestStopComponent_NotRunning(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	comp := &Component{
@@ -247,7 +264,8 @@ func TestStopComponent_NotRunning(t *testing.T) {
 // TestStopComponent_GracefulShutdown tests graceful shutdown.
 func TestStopComponent_GracefulShutdown(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	// Create a process that will shutdown gracefully
@@ -279,8 +297,10 @@ func TestStopComponent_GracefulShutdown(t *testing.T) {
 // TestStopComponent_ForceKill tests forced kill after timeout.
 func TestStopComponent_ForceKill(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
+	dao := &mockStatusUpdater{}
 	manager := NewLifecycleManagerWithTimeouts(
 		healthMonitor,
+		dao,
 		5*time.Second,
 		500*time.Millisecond, // Short timeout
 		50000,
@@ -317,7 +337,8 @@ func TestStopComponent_ForceKill(t *testing.T) {
 // TestGetStatus tests getting component status.
 func TestGetStatus(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -371,7 +392,8 @@ func TestGetStatus(t *testing.T) {
 // TestGetStatus_RunningProcess tests status check for running process.
 func TestGetStatus_RunningProcess(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	cmd := exec.Command("sleep", "5")
@@ -389,7 +411,7 @@ func TestGetStatus_RunningProcess(t *testing.T) {
 		Manifest: &Manifest{
 			Name:    "test-agent",
 			Version: "1.0.0",
-			Runtime: RuntimeConfig{
+			Runtime: &RuntimeConfig{
 				Type:       RuntimeTypeBinary,
 				Entrypoint: "sleep",
 			},
@@ -408,7 +430,8 @@ func TestGetStatus_RunningProcess(t *testing.T) {
 // TestGetStatus_DeadProcess tests status check for dead process.
 func TestGetStatus_DeadProcess(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 	ctx := context.Background()
 
 	cmd := exec.Command("sleep", "0.1")
@@ -437,7 +460,8 @@ func TestGetStatus_DeadProcess(t *testing.T) {
 // TestIsProcessAlive tests process alive checking.
 func TestIsProcessAlive(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	// Test with running process
 	cmd := exec.Command("sleep", "5")
@@ -454,7 +478,8 @@ func TestIsProcessAlive(t *testing.T) {
 // TestBuildHealthEndpoint tests health endpoint URL construction.
 func TestBuildHealthEndpoint(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	tests := []struct {
 		name        string
@@ -467,7 +492,7 @@ func TestBuildHealthEndpoint(t *testing.T) {
 			component: &Component{
 				Name: "test-agent",
 				Manifest: &Manifest{
-					Runtime: RuntimeConfig{},
+					Runtime: &RuntimeConfig{},
 				},
 			},
 			port:        8080,
@@ -478,7 +503,7 @@ func TestBuildHealthEndpoint(t *testing.T) {
 			component: &Component{
 				Name: "test-agent",
 				Manifest: &Manifest{
-					Runtime: RuntimeConfig{
+					Runtime: &RuntimeConfig{
 						HealthURL: "/api/health",
 					},
 				},
@@ -491,7 +516,7 @@ func TestBuildHealthEndpoint(t *testing.T) {
 			component: &Component{
 				Name: "test-agent",
 				Manifest: &Manifest{
-					Runtime: RuntimeConfig{
+					Runtime: &RuntimeConfig{
 						HealthURL: "healthcheck",
 					},
 				},
@@ -512,7 +537,8 @@ func TestBuildHealthEndpoint(t *testing.T) {
 // TestConcurrentOperations tests concurrent lifecycle operations.
 func TestConcurrentOperations(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	var wg sync.WaitGroup
 	iterations := 10
@@ -541,7 +567,8 @@ func TestConcurrentOperations(t *testing.T) {
 // TestKillProcess tests process killing.
 func TestKillProcess(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	// Test killing nil process
 	err := manager.killProcess(nil)
@@ -584,7 +611,8 @@ sleep 10
 // BenchmarkFindAvailablePort benchmarks port finding.
 func BenchmarkFindAvailablePort(b *testing.B) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -598,7 +626,8 @@ func BenchmarkFindAvailablePort(b *testing.B) {
 // BenchmarkIsPortAvailable benchmarks port availability check.
 func BenchmarkIsPortAvailable(b *testing.B) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -609,7 +638,8 @@ func BenchmarkIsPortAvailable(b *testing.B) {
 // BenchmarkIsProcessAlive benchmarks process alive check.
 func BenchmarkIsProcessAlive(b *testing.B) {
 	healthMonitor := newMockHealthMonitor()
-	manager := NewLifecycleManager(healthMonitor)
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManager(healthMonitor, dao)
 
 	cmd := exec.Command("sleep", "60")
 	err := cmd.Start()

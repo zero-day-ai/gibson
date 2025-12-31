@@ -137,12 +137,13 @@ runtime:
 			wantError: true,
 		},
 		{
-			name: "invalid YAML - missing runtime",
+			name: "valid YAML - missing runtime (repository manifest)",
 			content: `
 name: test-component
 version: 1.0.0
+kind: repository
 `,
-			wantError: true,
+			wantError: false,
 		},
 	}
 
@@ -276,6 +277,287 @@ func TestLoadManifest_Errors(t *testing.T) {
 		_, err = LoadManifest(manifestPath)
 		require.Error(t, err)
 	})
+}
+
+// TestManifest_ParseRepositoryKind tests parsing manifest with kind: repository
+func TestManifest_ParseRepositoryKind(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		wantError bool
+		validate  func(t *testing.T, m *Manifest)
+	}{
+		{
+			name: "repository manifest with contents",
+			content: `
+kind: repository
+name: test-repo
+version: 1.0.0
+description: A repository of components
+contents:
+  - kind: tool
+    path: tools/mytool
+  - kind: agent
+    path: agents/myagent
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.Equal(t, "repository", m.Kind)
+				assert.Equal(t, "test-repo", m.Name)
+				assert.Equal(t, "1.0.0", m.Version)
+				assert.Len(t, m.Contents, 2)
+				assert.Equal(t, "tool", m.Contents[0].Kind)
+				assert.Equal(t, "tools/mytool", m.Contents[0].Path)
+				assert.Equal(t, "agent", m.Contents[1].Kind)
+				assert.Equal(t, "agents/myagent", m.Contents[1].Path)
+			},
+		},
+		{
+			name: "repository manifest with discover",
+			content: `
+kind: repository
+name: auto-discover-repo
+version: 1.0.0
+discover: true
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.Equal(t, "repository", m.Kind)
+				assert.Equal(t, "auto-discover-repo", m.Name)
+				assert.True(t, m.Discover)
+				assert.Empty(t, m.Contents)
+			},
+		},
+		{
+			name: "repository manifest with build config",
+			content: `
+kind: repository
+name: build-repo
+version: 1.0.0
+build:
+  command: make build-all
+  workdir: .
+discover: true
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.Equal(t, "repository", m.Kind)
+				assert.Equal(t, "build-repo", m.Name)
+				require.NotNil(t, m.Build)
+				assert.Equal(t, "make build-all", m.Build.Command)
+				assert.True(t, m.Discover)
+			},
+		},
+		{
+			name: "repository manifest without runtime (should pass)",
+			content: `
+kind: repository
+name: no-runtime-repo
+version: 1.0.0
+discover: true
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.Equal(t, "repository", m.Kind)
+				assert.Nil(t, m.Runtime)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			manifestPath := filepath.Join(tmpDir, "component.yaml")
+			err := os.WriteFile(manifestPath, []byte(tt.content), 0644)
+			require.NoError(t, err)
+
+			manifest, err := LoadManifest(manifestPath)
+
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, manifest)
+				if tt.validate != nil {
+					tt.validate(t, manifest)
+				}
+			}
+		})
+	}
+}
+
+// TestManifest_ParseContents tests parsing manifest with contents array
+func TestManifest_ParseContents(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		wantError bool
+		validate  func(t *testing.T, m *Manifest)
+	}{
+		{
+			name: "contents with multiple entries",
+			content: `
+kind: repository
+name: multi-component-repo
+version: 1.0.0
+contents:
+  - kind: tool
+    path: cmd/tool1
+  - kind: tool
+    path: cmd/tool2
+  - kind: agent
+    path: pkg/agent
+  - kind: plugin
+    path: plugins/myplugin
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.Len(t, m.Contents, 4)
+				assert.Equal(t, "tool", m.Contents[0].Kind)
+				assert.Equal(t, "cmd/tool1", m.Contents[0].Path)
+				assert.Equal(t, "tool", m.Contents[1].Kind)
+				assert.Equal(t, "cmd/tool2", m.Contents[1].Path)
+				assert.Equal(t, "agent", m.Contents[2].Kind)
+				assert.Equal(t, "pkg/agent", m.Contents[2].Path)
+				assert.Equal(t, "plugin", m.Contents[3].Kind)
+				assert.Equal(t, "plugins/myplugin", m.Contents[3].Path)
+			},
+		},
+		{
+			name: "contents with empty array",
+			content: `
+kind: repository
+name: empty-contents-repo
+version: 1.0.0
+contents: []
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.NotNil(t, m.Contents)
+				assert.Len(t, m.Contents, 0)
+			},
+		},
+		{
+			name: "no contents field",
+			content: `
+kind: repository
+name: no-contents-repo
+version: 1.0.0
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.Empty(t, m.Contents)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			manifestPath := filepath.Join(tmpDir, "component.yaml")
+			err := os.WriteFile(manifestPath, []byte(tt.content), 0644)
+			require.NoError(t, err)
+
+			manifest, err := LoadManifest(manifestPath)
+
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, manifest)
+				if tt.validate != nil {
+					tt.validate(t, manifest)
+				}
+			}
+		})
+	}
+}
+
+// TestManifest_ParseDiscover tests parsing manifest with discover: true
+func TestManifest_ParseDiscover(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		wantError bool
+		validate  func(t *testing.T, m *Manifest)
+	}{
+		{
+			name: "discover set to true",
+			content: `
+kind: repository
+name: discover-repo
+version: 1.0.0
+discover: true
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.True(t, m.Discover)
+			},
+		},
+		{
+			name: "discover set to false",
+			content: `
+kind: repository
+name: no-discover-repo
+version: 1.0.0
+discover: false
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.False(t, m.Discover)
+			},
+		},
+		{
+			name: "discover field omitted (defaults to false)",
+			content: `
+kind: repository
+name: default-discover-repo
+version: 1.0.0
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.False(t, m.Discover)
+			},
+		},
+		{
+			name: "discover with contents array (both can coexist)",
+			content: `
+kind: repository
+name: both-repo
+version: 1.0.0
+discover: true
+contents:
+  - kind: tool
+    path: tools/special
+`,
+			wantError: false,
+			validate: func(t *testing.T, m *Manifest) {
+				assert.True(t, m.Discover)
+				assert.Len(t, m.Contents, 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			manifestPath := filepath.Join(tmpDir, "component.yaml")
+			err := os.WriteFile(manifestPath, []byte(tt.content), 0644)
+			require.NoError(t, err)
+
+			manifest, err := LoadManifest(manifestPath)
+
+			if tt.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, manifest)
+				if tt.validate != nil {
+					tt.validate(t, manifest)
+				}
+			}
+		})
+	}
 }
 
 // TestManifest_BackwardsCompatibility specifically tests that legacy manifests

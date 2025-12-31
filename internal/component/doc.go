@@ -9,25 +9,26 @@
 //
 // # Main Interfaces
 //
-// The package defines four primary interfaces for component management:
+// The package defines three primary interfaces for component management:
 //
-// ## ComponentRegistry
+// ## ComponentDAO (database.ComponentDAO)
 //
-// ComponentRegistry manages the registration and persistence of components:
+// ComponentDAO manages the registration and persistence of components in SQLite:
 //
-//	type ComponentRegistry interface {
-//	    Register(component *Component) error
-//	    Unregister(kind ComponentKind, name string) error
-//	    Get(kind ComponentKind, name string) *Component
-//	    List(kind ComponentKind) []*Component
-//	    ListAll() map[ComponentKind][]*Component
-//	    LoadFromConfig(path string) error
-//	    Save() error
+//	type ComponentDAO interface {
+//	    Create(ctx context.Context, comp *Component) error
+//	    GetByID(ctx context.Context, id int64) (*Component, error)
+//	    GetByName(ctx context.Context, kind ComponentKind, name string) (*Component, error)
+//	    List(ctx context.Context, kind ComponentKind) ([]*Component, error)
+//	    ListAll(ctx context.Context) (map[ComponentKind][]*Component, error)
+//	    Update(ctx context.Context, comp *Component) error
+//	    UpdateStatus(ctx context.Context, id int64, status ComponentStatus, pid, port int) error
+//	    Delete(ctx context.Context, kind ComponentKind, name string) error
 //	}
 //
-// The registry is thread-safe and supports concurrent operations. Components are
-// organized by kind (agent, tool, plugin) and name. The registry can be persisted
-// to disk and loaded from YAML configuration files.
+// The DAO is used by the Installer and LifecycleManager to persist component metadata.
+// Components are organized by kind (agent, tool, plugin) and name, with unique constraints
+// enforced by the database schema.
 //
 // ## Installer
 //
@@ -192,10 +193,10 @@
 //	    // Create dependencies
 //	    gitOps := git.NewDefaultGitOperations()
 //	    builder := build.NewDefaultBuildExecutor()
-//	    registry := component.NewDefaultComponentRegistry()
+//	    dao := database.NewComponentDAO(db)
 //
 //	    // Create installer
-//	    installer := component.NewDefaultInstaller(gitOps, builder, registry)
+//	    installer := component.NewDefaultInstaller(gitOps, builder, dao)
 //
 //	    // Install component
 //	    ctx := context.Background()
@@ -235,10 +236,10 @@
 //	    }
 //	    defer healthMonitor.Stop()
 //
-//	    // Get component from registry
-//	    registry := component.NewDefaultComponentRegistry()
-//	    comp := registry.Get(component.ComponentKindAgent, "scanner")
-//	    if comp == nil {
+//	    // Get component from database
+//	    dao := database.NewComponentDAO(db)
+//	    comp, err := dao.GetByName(ctx, component.ComponentKindAgent, "scanner")
+//	    if err != nil || comp == nil {
 //	        log.Fatal("Component not found")
 //	    }
 //
@@ -272,8 +273,9 @@
 //
 // Register, query, and persist components:
 //
-//	func useRegistry() {
-//	    registry := component.NewDefaultComponentRegistry()
+//	func useComponentDAO() {
+//	    dao := database.NewComponentDAO(db)
+//	    ctx := context.Background()
 //
 //	    // Create and register a component
 //	    comp := &component.Component{
@@ -287,29 +289,34 @@
 //	        UpdatedAt: time.Now(),
 //	    }
 //
-//	    if err := registry.Register(comp); err != nil {
+//	    // Register the component
+//	    if err := dao.Create(ctx, comp); err != nil {
 //	        log.Fatalf("Failed to register component: %v", err)
 //	    }
 //
 //	    // Query components
-//	    scanner := registry.Get(component.ComponentKindAgent, "scanner")
-//	    agents := registry.List(component.ComponentKindAgent)
-//	    allComponents := registry.ListAll()
+//	    scanner, err := dao.GetByName(ctx, component.ComponentKindAgent, "scanner")
+//	    if err != nil {
+//	        log.Fatalf("Failed to get component: %v", err)
+//	    }
+//	    agents, err := dao.List(ctx, component.ComponentKindAgent)
+//	    if err != nil {
+//	        log.Fatalf("Failed to list agents: %v", err)
+//	    }
 //
 //	    fmt.Printf("Found component: %s v%s\n", scanner.Name, scanner.Version)
 //	    fmt.Printf("Total agents: %d\n", len(agents))
-//	    fmt.Printf("Total components: %d\n", registry.Count())
 //
-//	    // Save registry to disk
-//	    if err := registry.Save(); err != nil {
-//	        log.Fatalf("Failed to save registry: %v", err)
+//	    // List all components
+//	    allComponents, err := dao.ListAll(ctx)
+//	    if err != nil {
+//	        log.Fatalf("Failed to list components: %v", err)
 //	    }
-//
-//	    // Load from config file
-//	    newRegistry := component.NewDefaultComponentRegistry()
-//	    if err := newRegistry.LoadFromConfig("/path/to/components.yaml"); err != nil {
-//	        log.Fatalf("Failed to load config: %v", err)
+//	    totalCount := 0
+//	    for _, components := range allComponents {
+//	        totalCount += len(components)
 //	    }
+//	    fmt.Printf("Total components: %d\n", totalCount)
 //	}
 //
 // ## Loading and Validating Manifests
@@ -360,10 +367,10 @@
 // The package provides structured error handling with ComponentError:
 //
 //	func handleErrors() {
-//	    registry := component.NewDefaultComponentRegistry()
-//	    comp := registry.Get(component.ComponentKindAgent, "scanner")
+//	    dao := database.NewComponentDAO(db)
+//	    comp, err := dao.GetByName(ctx, component.ComponentKindAgent, "scanner")
 //
-//	    if comp == nil {
+//	    if err != nil || comp == nil {
 //	        // Component not found - not an error, just nil
 //	        fmt.Println("Component not found")
 //	        return
@@ -409,8 +416,8 @@
 //	func updateComponents() {
 //	    gitOps := git.NewDefaultGitOperations()
 //	    builder := build.NewDefaultBuildExecutor()
-//	    registry := component.NewDefaultComponentRegistry()
-//	    installer := component.NewDefaultInstaller(gitOps, builder, registry)
+//	    dao := database.NewComponentDAO(db)
+//	    installer := component.NewDefaultInstaller(gitOps, builder, dao)
 //
 //	    ctx := context.Background()
 //	    opts := component.UpdateOptions{
@@ -449,9 +456,9 @@
 //
 // # Thread Safety
 //
-// The ComponentRegistry implementation is fully thread-safe and uses sync.RWMutex
-// for concurrent access control. Multiple goroutines can safely read from the
-// registry concurrently, while write operations are properly synchronized.
+// The ComponentDAO uses SQLite for persistence, which provides ACID guarantees
+// through transactions. Multiple processes can safely access the database
+// concurrently using SQLite's WAL mode.
 //
 // The HealthMonitor also uses proper synchronization for concurrent access to
 // monitored components and callbacks.
@@ -475,7 +482,7 @@
 //  3. Validate manifests before attempting installation
 //  4. Monitor component health in production environments
 //  5. Implement graceful shutdown handlers for component processes
-//  6. Use registry.Save() to persist component state
+//  6. Component state is automatically persisted to SQLite
 //  7. Handle dependency failures gracefully
 //  8. Set appropriate timeouts for install/build operations
 //  9. Clean up resources on installation failures

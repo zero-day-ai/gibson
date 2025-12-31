@@ -10,9 +10,10 @@ import (
 type ComponentKind string
 
 const (
-	ComponentKindAgent  ComponentKind = "agent"
-	ComponentKindTool   ComponentKind = "tool"
-	ComponentKindPlugin ComponentKind = "plugin"
+	ComponentKindAgent      ComponentKind = "agent"
+	ComponentKindTool       ComponentKind = "tool"
+	ComponentKindPlugin     ComponentKind = "plugin"
+	ComponentKindRepository ComponentKind = "repository"
 )
 
 // String returns the string representation of the ComponentKind.
@@ -24,6 +25,16 @@ func (k ComponentKind) String() string {
 // Any non-empty kind is considered valid.
 func (k ComponentKind) IsValid() bool {
 	return k != ""
+}
+
+// IsRepositoryKind returns true if the kind is repository.
+func (k ComponentKind) IsRepositoryKind() bool {
+	return k == ComponentKindRepository
+}
+
+// IsComponentKind returns true if the kind is agent, tool, or plugin (not repository).
+func (k ComponentKind) IsComponentKind() bool {
+	return k == ComponentKindAgent || k == ComponentKindTool || k == ComponentKindPlugin
 }
 
 // MarshalJSON implements the json.Marshaler interface.
@@ -56,6 +67,7 @@ func AllComponentKinds() []ComponentKind {
 		ComponentKindAgent,
 		ComponentKindTool,
 		ComponentKindPlugin,
+		ComponentKindRepository,
 	}
 }
 
@@ -207,19 +219,22 @@ func ParseComponentStatus(s string) (ComponentStatus, error) {
 // Components can be internal (built-in), external (local binaries), remote (network services),
 // or config-based (defined in configuration files).
 type Component struct {
-	Kind      ComponentKind   `json:"kind" yaml:"kind"`           // Type of component (agent, tool, plugin)
-	Name      string          `json:"name" yaml:"name"`           // Component name
-	Version   string          `json:"version" yaml:"version"`     // Semantic version
-	Path      string          `json:"path" yaml:"path"`           // File path or URL
-	Source    ComponentSource `json:"source" yaml:"source"`       // Where the component originates
-	Status    ComponentStatus `json:"status" yaml:"status"`       // Current runtime status
-	Manifest  *Manifest       `json:"manifest,omitempty" yaml:"manifest,omitempty"` // Component manifest
-	Port      int             `json:"port,omitempty" yaml:"port,omitempty"`         // Network port for remote components
-	PID       int             `json:"pid,omitempty" yaml:"pid,omitempty"`           // Process ID for running components
-	CreatedAt time.Time       `json:"created_at" yaml:"created_at"`                 // When the component was registered
-	UpdatedAt time.Time       `json:"updated_at" yaml:"updated_at"`                 // Last status update time
-	StartedAt *time.Time      `json:"started_at,omitempty" yaml:"started_at,omitempty"` // When the component started running
-	StoppedAt *time.Time      `json:"stopped_at,omitempty" yaml:"stopped_at,omitempty"` // When the component stopped
+	ID        int64           `json:"id" db:"id"`                 // Database primary key
+	Kind      ComponentKind   `json:"kind" yaml:"kind" db:"kind"` // Type of component (agent, tool, plugin)
+	Name      string          `json:"name" yaml:"name" db:"name"` // Component name
+	Version   string          `json:"version" yaml:"version" db:"version"` // Semantic version
+	RepoPath  string          `json:"repo_path" db:"repo_path"`   // Path to cloned source repository in _repos/
+	BinPath   string          `json:"bin_path" db:"bin_path"`     // Path to installed binary in bin/
+	Path      string          `json:"path" yaml:"path" db:"path"` // DEPRECATED: Use RepoPath/BinPath instead. Kept for backward compatibility
+	Source    ComponentSource `json:"source" yaml:"source" db:"source"` // Where the component originates
+	Status    ComponentStatus `json:"status" yaml:"status" db:"status"` // Current runtime status
+	Manifest  *Manifest       `json:"manifest,omitempty" yaml:"manifest,omitempty" db:"manifest"` // Component manifest (stored as JSON in DB)
+	Port      int             `json:"port,omitempty" yaml:"port,omitempty" db:"port"`         // Network port for remote components
+	PID       int             `json:"pid,omitempty" yaml:"pid,omitempty" db:"pid"`           // Process ID for running components
+	CreatedAt time.Time       `json:"created_at" yaml:"created_at" db:"created_at"`                 // When the component was registered
+	UpdatedAt time.Time       `json:"updated_at" yaml:"updated_at" db:"updated_at"`                 // Last status update time
+	StartedAt *time.Time      `json:"started_at,omitempty" yaml:"started_at,omitempty" db:"started_at"` // When the component started running
+	StoppedAt *time.Time      `json:"stopped_at,omitempty" yaml:"stopped_at,omitempty" db:"stopped_at"` // When the component stopped
 }
 
 // Validate validates the Component fields.

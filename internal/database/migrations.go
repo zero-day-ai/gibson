@@ -94,6 +94,12 @@ func getMigrations() []migration {
 			up:      getAgentSteeringSchema(),
 			down:    getDownMigration7(),
 		},
+		{
+			version: 8,
+			name:    "components_table",
+			up:      getComponentsTableSchema(),
+			down:    getDownMigration8(),
+		},
 		// Future migrations will be added here
 	}
 
@@ -1218,5 +1224,87 @@ DROP INDEX IF EXISTS idx_agent_sessions_mission;
 
 -- Drop agent sessions table
 DROP TABLE IF EXISTS agent_sessions;
+`
+}
+
+// getComponentsTableSchema returns the schema for components table
+func getComponentsTableSchema() string {
+	return `
+-- Migration 8: Components Table Schema
+-- Creates table for storing component metadata (agents, tools, plugins)
+
+-- ============================================================================
+-- Components Table: Store all component types in a single table
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS components (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL CHECK(kind IN ('agent', 'tool', 'plugin')),
+    name TEXT NOT NULL,
+    version TEXT NOT NULL,
+
+    -- Path information
+    repo_path TEXT,                          -- Path to cloned source repository (_repos/)
+    bin_path TEXT,                           -- Path to installed binary (bin/)
+
+    -- Metadata
+    source TEXT NOT NULL DEFAULT 'external', -- 'built-in', 'external', 'custom'
+    status TEXT NOT NULL DEFAULT 'available',-- 'available', 'running', 'stopped', 'error'
+    manifest TEXT,                           -- JSON serialized component.yaml
+
+    -- Runtime state
+    pid INTEGER,                             -- Process ID when running
+    port INTEGER,                            -- Network port when running
+
+    -- Timestamps
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,                    -- Last start time
+    stopped_at TIMESTAMP,                    -- Last stop time
+
+    -- Unique constraint: one component per (kind, name)
+    UNIQUE(kind, name)
+);
+
+-- ============================================================================
+-- Components Indexes for Efficient Queries
+-- ============================================================================
+
+-- Index for listing by kind (agent, tool, plugin)
+CREATE INDEX IF NOT EXISTS idx_components_kind ON components(kind);
+
+-- Index for filtering by kind and status
+CREATE INDEX IF NOT EXISTS idx_components_kind_status ON components(kind, status);
+
+-- Partial index for finding running components efficiently
+CREATE INDEX IF NOT EXISTS idx_components_status ON components(status) WHERE status = 'running';
+
+-- ============================================================================
+-- Trigger to update updated_at timestamp on components
+-- ============================================================================
+CREATE TRIGGER IF NOT EXISTS update_components_timestamp
+    AFTER UPDATE ON components
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE components SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+`
+}
+
+// getDownMigration8 returns the rollback SQL for migration 8
+func getDownMigration8() string {
+	return `
+-- Rollback Migration 8: Components Table Schema
+
+-- Drop trigger
+DROP TRIGGER IF EXISTS update_components_timestamp;
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_components_status;
+DROP INDEX IF EXISTS idx_components_kind_status;
+DROP INDEX IF EXISTS idx_components_kind;
+
+-- Drop table
+DROP TABLE IF EXISTS components;
 `
 }

@@ -73,29 +73,83 @@ func (m *MockBuildExecutor) Test(ctx context.Context, workDir string) (*build.Te
 	return args.Get(0).(*build.TestResult), args.Error(1)
 }
 
-// MockComponentRegistry is a mock implementation of ComponentRegistry
-type MockComponentRegistry struct {
+// MockComponentDAO is a mock implementation of ComponentDAO for testing
+type MockComponentDAO struct {
 	mock.Mock
 	components map[string]*Component
 }
 
-func NewMockComponentRegistry() *MockComponentRegistry {
-	return &MockComponentRegistry{
+func NewMockComponentDAO() *MockComponentDAO {
+	return &MockComponentDAO{
 		components: make(map[string]*Component),
 	}
 }
 
-func (m *MockComponentRegistry) Register(component *Component) error {
-	args := m.Called(component)
+func (m *MockComponentDAO) Create(ctx context.Context, comp *Component) error {
+	args := m.Called(ctx, comp)
 	if args.Error(0) == nil {
-		key := fmt.Sprintf("%s:%s", component.Kind, component.Name)
-		m.components[key] = component
+		key := fmt.Sprintf("%s:%s", comp.Kind, comp.Name)
+		m.components[key] = comp
 	}
 	return args.Error(0)
 }
 
-func (m *MockComponentRegistry) Unregister(kind ComponentKind, name string) error {
-	args := m.Called(kind, name)
+func (m *MockComponentDAO) GetByID(ctx context.Context, id int64) (*Component, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Component), args.Error(1)
+}
+
+func (m *MockComponentDAO) GetByName(ctx context.Context, kind ComponentKind, name string) (*Component, error) {
+	args := m.Called(ctx, kind, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*Component), args.Error(1)
+}
+
+func (m *MockComponentDAO) List(ctx context.Context, kind ComponentKind) ([]*Component, error) {
+	args := m.Called(ctx, kind)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*Component), args.Error(1)
+}
+
+func (m *MockComponentDAO) ListAll(ctx context.Context) (map[ComponentKind][]*Component, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[ComponentKind][]*Component), args.Error(1)
+}
+
+func (m *MockComponentDAO) ListByStatus(ctx context.Context, kind ComponentKind, status ComponentStatus) ([]*Component, error) {
+	args := m.Called(ctx, kind, status)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*Component), args.Error(1)
+}
+
+func (m *MockComponentDAO) Update(ctx context.Context, comp *Component) error {
+	args := m.Called(ctx, comp)
+	if args.Error(0) == nil {
+		key := fmt.Sprintf("%s:%s", comp.Kind, comp.Name)
+		m.components[key] = comp
+	}
+	return args.Error(0)
+}
+
+func (m *MockComponentDAO) UpdateStatus(ctx context.Context, id int64, status ComponentStatus, pid, port int) error {
+	args := m.Called(ctx, id, status, pid, port)
+	return args.Error(0)
+}
+
+func (m *MockComponentDAO) Delete(ctx context.Context, kind ComponentKind, name string) error {
+	args := m.Called(ctx, kind, name)
 	if args.Error(0) == nil {
 		key := fmt.Sprintf("%s:%s", kind, name)
 		delete(m.components, key)
@@ -103,54 +157,20 @@ func (m *MockComponentRegistry) Unregister(kind ComponentKind, name string) erro
 	return args.Error(0)
 }
 
-func (m *MockComponentRegistry) Get(kind ComponentKind, name string) *Component {
-	args := m.Called(kind, name)
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(*Component)
-}
-
-func (m *MockComponentRegistry) List(kind ComponentKind) []*Component {
-	args := m.Called(kind)
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).([]*Component)
-}
-
-func (m *MockComponentRegistry) ListAll() map[ComponentKind][]*Component {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(map[ComponentKind][]*Component)
-}
-
-func (m *MockComponentRegistry) LoadFromConfig(path string) error {
-	args := m.Called(path)
-	return args.Error(0)
-}
-
-func (m *MockComponentRegistry) Save() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
 // Helper functions for tests
 
-func setupTestInstaller(t *testing.T) (*DefaultInstaller, *MockGitOperations, *MockBuildExecutor, *MockComponentRegistry, string) {
+func setupTestInstaller(t *testing.T) (*DefaultInstaller, *MockGitOperations, *MockBuildExecutor, *MockComponentDAO, string) {
 	mockGit := new(MockGitOperations)
 	mockBuilder := new(MockBuildExecutor)
-	mockRegistry := NewMockComponentRegistry()
+	mockDAO := NewMockComponentDAO()
 
 	// Create temporary home directory
 	tmpDir := t.TempDir()
 
-	installer := NewDefaultInstaller(mockGit, mockBuilder, mockRegistry)
+	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO)
 	installer.homeDir = tmpDir
 
-	return installer, mockGit, mockBuilder, mockRegistry, tmpDir
+	return installer, mockGit, mockBuilder, mockDAO, tmpDir
 }
 
 func createTestManifest(t *testing.T, dir string, manifest *Manifest) {
@@ -196,7 +216,7 @@ func TestInstall_Success(t *testing.T) {
 		manifest := &Manifest{
 			Name:    componentName,
 			Version: "1.0.0",
-			Runtime: RuntimeConfig{
+			Runtime: &RuntimeConfig{
 				Type:       RuntimeTypeGo,
 				Entrypoint: "./bin/scanner",
 			},
@@ -215,7 +235,8 @@ func TestInstall_Success(t *testing.T) {
 		Stdout:     "build successful",
 	}
 	mockBuilder.On("Build", mock.Anything, mock.Anything, componentName, mock.Anything, mock.Anything).Return(buildResult, nil)
-	mockRegistry.On("Register", mock.Anything).Return(nil)
+	mockRegistry.On("GetByName", mock.Anything, componentKind, componentName).Return(nil, nil)
+	mockRegistry.On("Create", mock.Anything, mock.Anything).Return(nil)
 
 	// Execute install
 	opts := InstallOptions{}
@@ -256,7 +277,7 @@ func TestInstallerUpdate_Success(t *testing.T) {
 	manifest := &Manifest{
 		Name:    componentName,
 		Version: "1.0.0",
-		Runtime: RuntimeConfig{
+		Runtime: &RuntimeConfig{
 			Type:       RuntimeTypeGo,
 			Entrypoint: "./bin/scanner",
 		},
@@ -332,7 +353,7 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 		manifest := &Manifest{
 			Name:    comp.Name,
 			Version: "1.0.0",
-			Runtime: RuntimeConfig{
+			Runtime: &RuntimeConfig{
 				Type:       RuntimeTypeGo,
 				Entrypoint: "./bin/" + comp.Name,
 			},
@@ -413,13 +434,149 @@ func TestUninstall_Success(t *testing.T) {
 func TestNewDefaultInstaller(t *testing.T) {
 	mockGit := new(MockGitOperations)
 	mockBuilder := new(MockBuildExecutor)
-	mockRegistry := NewMockComponentRegistry()
+	mockDAO := NewMockComponentDAO()
 
-	installer := NewDefaultInstaller(mockGit, mockBuilder, mockRegistry)
+	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO)
 
 	assert.NotNil(t, installer)
 	assert.Equal(t, mockGit, installer.git)
 	assert.Equal(t, mockBuilder, installer.builder)
-	assert.Equal(t, mockRegistry, installer.registry)
+	assert.Equal(t, mockDAO, installer.dao)
 	assert.NotEmpty(t, installer.homeDir)
+}
+
+// TestExtractRepoName tests the extractRepoName helper function
+func TestExtractRepoName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "HTTPS URL with .git",
+			input:    "https://github.com/zero-day-ai/gibson-tools-official.git",
+			expected: "gibson-tools-official",
+		},
+		{
+			name:     "SSH URL with .git",
+			input:    "git@github.com:zero-day-ai/gibson-tools-official.git",
+			expected: "gibson-tools-official",
+		},
+		{
+			name:     "HTTPS URL without .git",
+			input:    "https://github.com/zero-day-ai/gibson-tools-official",
+			expected: "gibson-tools-official",
+		},
+		{
+			name:     "HTTPS URL with trailing slash",
+			input:    "https://github.com/zero-day-ai/gibson-tools-official/",
+			expected: "gibson-tools-official",
+		},
+		{
+			name:     "SSH URL without .git",
+			input:    "git@github.com:zero-day-ai/gibson-tools-official",
+			expected: "gibson-tools-official",
+		},
+		{
+			name:     "GitLab HTTPS URL",
+			input:    "https://gitlab.com/mygroup/myrepo.git",
+			expected: "myrepo",
+		},
+		{
+			name:     "GitLab SSH URL",
+			input:    "git@gitlab.com:mygroup/myrepo.git",
+			expected: "myrepo",
+		},
+		{
+			name:     "Nested path HTTPS",
+			input:    "https://github.com/org/team/project.git",
+			expected: "project",
+		},
+		{
+			name:     "Nested path SSH",
+			input:    "git@github.com:org/team/project.git",
+			expected: "project",
+		},
+		{
+			name:     "Self-hosted Git HTTPS",
+			input:    "https://git.company.com/repos/myproject.git",
+			expected: "myproject",
+		},
+		{
+			name:     "Self-hosted Git SSH",
+			input:    "git@git.company.com:repos/myproject.git",
+			expected: "myproject",
+		},
+		{
+			name:     "Repo name with dashes",
+			input:    "https://github.com/user/my-awesome-repo.git",
+			expected: "my-awesome-repo",
+		},
+		{
+			name:     "Repo name with underscores",
+			input:    "https://github.com/user/my_awesome_repo.git",
+			expected: "my_awesome_repo",
+		},
+		{
+			name:     "Single word repo name",
+			input:    "https://github.com/user/repo.git",
+			expected: "repo",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractRepoName(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+// TestParseRepoURL tests the ParseRepoURL function
+func TestParseRepoURL(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          string
+		expectedURL    string
+		expectedSubdir string
+	}{
+		{
+			name:           "URL without subdirectory",
+			input:          "https://github.com/user/repo.git",
+			expectedURL:    "https://github.com/user/repo.git",
+			expectedSubdir: "",
+		},
+		{
+			name:           "URL with subdirectory fragment",
+			input:          "https://github.com/user/repo.git#path/to/component",
+			expectedURL:    "https://github.com/user/repo.git",
+			expectedSubdir: "path/to/component",
+		},
+		{
+			name:           "SSH URL with subdirectory fragment",
+			input:          "git@github.com:user/repo.git#path/to/component",
+			expectedURL:    "git@github.com:user/repo.git",
+			expectedSubdir: "path/to/component",
+		},
+		{
+			name:           "URL with nested subdirectory",
+			input:          "https://github.com/user/repo.git#tools/mytool/v1",
+			expectedURL:    "https://github.com/user/repo.git",
+			expectedSubdir: "tools/mytool/v1",
+		},
+		{
+			name:           "URL with single-level subdirectory",
+			input:          "https://github.com/user/repo.git#tools",
+			expectedURL:    "https://github.com/user/repo.git",
+			expectedSubdir: "tools",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ParseRepoURL(tt.input)
+			assert.Equal(t, tt.expectedURL, result.RepoURL)
+			assert.Equal(t, tt.expectedSubdir, result.Subdir)
+		})
+	}
 }

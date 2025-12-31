@@ -12,7 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zero-day-ai/gibson/internal/agent"
-	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/tui/console"
@@ -23,8 +22,8 @@ import (
 type ConsoleConfig struct {
 	// DB is the database connection for data persistence operations.
 	DB *database.DB
-	// ComponentRegistry manages agents, tools, and plugins.
-	ComponentRegistry component.ComponentRegistry
+	// ComponentDAO provides access to component data.
+	ComponentDAO database.ComponentDAO
 	// FindingStore provides access to security findings.
 	FindingStore finding.FindingStore
 	// StreamManager manages bidirectional gRPC streams to agents.
@@ -117,12 +116,12 @@ func NewConsoleView(ctx context.Context, config ConsoleConfig) *ConsoleView {
 
 	// Initialize executor with configuration
 	executorConfig := console.ExecutorConfig{
-		DB:                config.DB,
-		ComponentRegistry: config.ComponentRegistry,
-		FindingStore:      config.FindingStore,
-		StreamManager:     config.StreamManager,
-		HomeDir:           config.HomeDir,
-		ConfigFile:        config.ConfigFile,
+		DB:            config.DB,
+		ComponentDAO:  config.ComponentDAO,
+		FindingStore:  config.FindingStore,
+		StreamManager: config.StreamManager,
+		HomeDir:       config.HomeDir,
+		ConfigFile:    config.ConfigFile,
 	}
 	executor := console.NewExecutor(ctx, registry, executorConfig)
 

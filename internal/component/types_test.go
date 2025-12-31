@@ -147,10 +147,55 @@ func TestParseComponentKind(t *testing.T) {
 // TestAllComponentKinds tests the AllComponentKinds function
 func TestAllComponentKinds(t *testing.T) {
 	kinds := AllComponentKinds()
-	assert.Len(t, kinds, 3)
+	assert.Len(t, kinds, 4)
 	assert.Contains(t, kinds, ComponentKindAgent)
 	assert.Contains(t, kinds, ComponentKindTool)
 	assert.Contains(t, kinds, ComponentKindPlugin)
+	assert.Contains(t, kinds, ComponentKindRepository)
+}
+
+// TestComponentKind_IsRepositoryKind tests that only ComponentKindRepository returns true
+func TestComponentKind_IsRepositoryKind(t *testing.T) {
+	tests := []struct {
+		name     string
+		kind     ComponentKind
+		expected bool
+	}{
+		{"Repository", ComponentKindRepository, true},
+		{"Tool", ComponentKindTool, false},
+		{"Agent", ComponentKindAgent, false},
+		{"Plugin", ComponentKindPlugin, false},
+		{"CustomKind", ComponentKind("custom"), false},
+		{"EmptyKind", ComponentKind(""), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.kind.IsRepositoryKind())
+		})
+	}
+}
+
+// TestComponentKind_IsComponentKind tests that tool, agent, plugin return true but repository returns false
+func TestComponentKind_IsComponentKind(t *testing.T) {
+	tests := []struct {
+		name     string
+		kind     ComponentKind
+		expected bool
+	}{
+		{"Tool", ComponentKindTool, true},
+		{"Agent", ComponentKindAgent, true},
+		{"Plugin", ComponentKindPlugin, true},
+		{"Repository", ComponentKindRepository, false},
+		{"CustomKind", ComponentKind("custom"), false},
+		{"EmptyKind", ComponentKind(""), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.kind.IsComponentKind())
+		})
+	}
 }
 
 // TestComponentSource_String tests the String method for ComponentSource
@@ -688,8 +733,7 @@ runtime:
 	t.Run("InvalidManifestContent", func(t *testing.T) {
 		manifestPath := filepath.Join(tmpDir, "invalid-content.json")
 		manifestContent := `{
-			"kind": "invalid-kind",
-			"name": "test",
+			"name": "",
 			"version": "1.0.0"
 		}`
 		err := os.WriteFile(manifestPath, []byte(manifestContent), 0644)
@@ -751,7 +795,7 @@ func TestManifest_Validate(t *testing.T) {
 			manifest: Manifest{
 				Name:    "test-agent",
 				Version: "1.0.0",
-				Runtime: RuntimeConfig{
+				Runtime: &RuntimeConfig{
 					Type:       RuntimeTypeGo,
 					Entrypoint: "./agent",
 				},
@@ -763,7 +807,7 @@ func TestManifest_Validate(t *testing.T) {
 			manifest: Manifest{
 				Name:    "test",
 				Version: "1.0.0",
-				Runtime: RuntimeConfig{
+				Runtime: &RuntimeConfig{
 					Type:       RuntimeType("invalid"),
 					Entrypoint: "./test",
 				},
@@ -775,7 +819,7 @@ func TestManifest_Validate(t *testing.T) {
 			manifest: Manifest{
 				Name:    "",
 				Version: "1.0.0",
-				Runtime: RuntimeConfig{
+				Runtime: &RuntimeConfig{
 					Type:       RuntimeTypeGo,
 					Entrypoint: "./test",
 				},
@@ -787,7 +831,7 @@ func TestManifest_Validate(t *testing.T) {
 			manifest: Manifest{
 				Name:    "test@invalid!",
 				Version: "1.0.0",
-				Runtime: RuntimeConfig{
+				Runtime: &RuntimeConfig{
 					Type:       RuntimeTypeGo,
 					Entrypoint: "./test",
 				},
@@ -799,7 +843,7 @@ func TestManifest_Validate(t *testing.T) {
 			manifest: Manifest{
 				Name:    "test",
 				Version: "",
-				Runtime: RuntimeConfig{
+				Runtime: &RuntimeConfig{
 					Type:       RuntimeTypeGo,
 					Entrypoint: "./test",
 				},
@@ -811,7 +855,7 @@ func TestManifest_Validate(t *testing.T) {
 			manifest: Manifest{
 				Name:    "test",
 				Version: "invalid",
-				Runtime: RuntimeConfig{
+				Runtime: &RuntimeConfig{
 					Type:       RuntimeTypeGo,
 					Entrypoint: "./test",
 				},

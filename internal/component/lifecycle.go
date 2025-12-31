@@ -35,6 +35,13 @@ const (
 	startupHealthCheckInterval = 500 * time.Millisecond
 )
 
+// StatusUpdater is a minimal interface for updating component status in the database.
+// This interface avoids import cycles with the database package.
+type StatusUpdater interface {
+	// UpdateStatus updates status, pid, port, and timestamps
+	UpdateStatus(ctx context.Context, id int64, status ComponentStatus, pid, port int) error
+}
+
 // LifecycleManager manages the lifecycle of external components.
 // It handles starting, stopping, restarting, and status monitoring.
 type LifecycleManager interface {
@@ -63,26 +70,31 @@ type DefaultLifecycleManager struct {
 	portRangeStart    int
 	portRangeEnd      int
 	healthCheckClient HealthMonitor
+	dao               StatusUpdater // optional, for persisting status to database
 	processes         map[string]*os.Process // component name -> process
 	tracer            trace.Tracer
 }
 
 // NewLifecycleManager creates a new DefaultLifecycleManager with default timeouts.
-func NewLifecycleManager(healthMonitor HealthMonitor) *DefaultLifecycleManager {
+// The dao parameter is optional; pass nil if status persistence is not needed.
+func NewLifecycleManager(healthMonitor HealthMonitor, dao StatusUpdater) *DefaultLifecycleManager {
 	return &DefaultLifecycleManager{
 		startupTimeout:    DefaultStartupTimeout,
 		shutdownTimeout:   DefaultShutdownTimeout,
 		portRangeStart:    DefaultPortRangeStart,
 		portRangeEnd:      DefaultPortRangeEnd,
 		healthCheckClient: healthMonitor,
+		dao:               dao,
 		processes:         make(map[string]*os.Process),
 		tracer:            otel.GetTracerProvider().Tracer("gibson.component"),
 	}
 }
 
 // NewLifecycleManagerWithTimeouts creates a new DefaultLifecycleManager with custom timeouts.
+// The dao parameter is optional; pass nil if status persistence is not needed.
 func NewLifecycleManagerWithTimeouts(
 	healthMonitor HealthMonitor,
+	dao StatusUpdater,
 	startupTimeout, shutdownTimeout time.Duration,
 	portRangeStart, portRangeEnd int,
 ) *DefaultLifecycleManager {
@@ -92,6 +104,7 @@ func NewLifecycleManagerWithTimeouts(
 		portRangeStart:    portRangeStart,
 		portRangeEnd:      portRangeEnd,
 		healthCheckClient: healthMonitor,
+		dao:               dao,
 		processes:         make(map[string]*os.Process),
 		tracer:            otel.GetTracerProvider().Tracer("gibson.component"),
 	}
@@ -139,11 +152,11 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 		return 0, err
 	}
 
-	if comp.Manifest.Runtime.Entrypoint == "" {
-		err := NewValidationFailedError("component runtime entrypoint is required", nil)
+	if comp.BinPath == "" {
+		err := NewValidationFailedError("component binary path is required", nil)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		span.SetAttributes(ErrorAttributes(err, "validate_entrypoint")...)
+		span.SetAttributes(ErrorAttributes(err, "validate_binpath")...)
 		return 0, err
 	}
 
@@ -168,8 +181,8 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 		args = append(args, "--health-endpoint", comp.Manifest.Runtime.HealthURL)
 	}
 
-	// Create command
-	cmd := exec.CommandContext(ctx, comp.Manifest.Runtime.Entrypoint, args...)
+	// Create command using BinPath (binary is self-contained in bin/)
+	cmd := exec.CommandContext(ctx, comp.BinPath, args...)
 
 	// Set environment variables
 	env := os.Environ()
@@ -177,11 +190,6 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 	cmd.Env = env
-
-	// Set working directory if specified
-	if comp.Manifest.Runtime.WorkDir != "" {
-		cmd.Dir = comp.Manifest.Runtime.WorkDir
-	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -223,6 +231,16 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 
 	// Update component status to running
 	comp.UpdateStatus(ComponentStatusRunning)
+
+	// Persist status update to database if DAO is available
+	if m.dao != nil && comp.ID > 0 {
+		if err := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusRunning, comp.PID, comp.Port); err != nil {
+			// Log warning but don't fail the start operation
+			span.AddEvent("failed to persist status update to database", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		}
+	}
 
 	// Record successful start
 	duration := time.Since(start)
@@ -273,11 +291,27 @@ func (m *DefaultLifecycleManager) StopComponent(ctx context.Context, comp *Compo
 			proc, err := os.FindProcess(comp.PID)
 			if err != nil {
 				comp.UpdateStatus(ComponentStatusStopped)
+				// Persist status update to database if DAO is available
+				if m.dao != nil && comp.ID > 0 {
+					if updateErr := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); updateErr != nil {
+						span.AddEvent("failed to persist status update to database", trace.WithAttributes(
+							attribute.String("error", updateErr.Error()),
+						))
+					}
+				}
 				return nil
 			}
 			process = proc
 		} else {
 			comp.UpdateStatus(ComponentStatusStopped)
+			// Persist status update to database if DAO is available
+			if m.dao != nil && comp.ID > 0 {
+				if updateErr := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); updateErr != nil {
+					span.AddEvent("failed to persist status update to database", trace.WithAttributes(
+						attribute.String("error", updateErr.Error()),
+					))
+				}
+			}
 			return nil
 		}
 	}
@@ -290,6 +324,14 @@ func (m *DefaultLifecycleManager) StopComponent(ctx context.Context, comp *Compo
 			m.mu.Lock()
 			delete(m.processes, comp.Name)
 			m.mu.Unlock()
+			// Persist status update to database if DAO is available
+			if m.dao != nil && comp.ID > 0 {
+				if updateErr := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); updateErr != nil {
+					span.AddEvent("failed to persist status update to database", trace.WithAttributes(
+						attribute.String("error", updateErr.Error()),
+					))
+				}
+			}
 			// Success - process already finished
 			duration := time.Since(start)
 			span.SetStatus(codes.Ok, "component stopped (already finished)")
@@ -350,6 +392,16 @@ func (m *DefaultLifecycleManager) StopComponent(ctx context.Context, comp *Compo
 	m.mu.Lock()
 	delete(m.processes, comp.Name)
 	m.mu.Unlock()
+
+	// Persist status update to database if DAO is available
+	if m.dao != nil && comp.ID > 0 {
+		if err := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); err != nil {
+			// Log warning but don't fail the stop operation
+			span.AddEvent("failed to persist status update to database", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		}
+	}
 
 	// Record successful stop
 	duration := time.Since(start)
@@ -476,7 +528,7 @@ func (m *DefaultLifecycleManager) waitForHealthCheck(ctx context.Context, health
 // buildHealthEndpoint constructs the health check endpoint URL.
 func (m *DefaultLifecycleManager) buildHealthEndpoint(comp *Component, port int) string {
 	healthURL := "/health"
-	if comp.Manifest != nil && comp.Manifest.Runtime.HealthURL != "" {
+	if comp.Manifest != nil && comp.Manifest.Runtime != nil && comp.Manifest.Runtime.HealthURL != "" {
 		healthURL = comp.Manifest.Runtime.HealthURL
 	}
 

@@ -32,9 +32,9 @@ type DashboardView struct {
 	focusedPanel int
 
 	// Data dependencies
-	db                *database.DB
-	componentRegistry component.ComponentRegistry
-	findingStore      finding.FindingStore
+	db           *database.DB
+	componentDAO database.ComponentDAO
+	findingStore finding.FindingStore
 
 	// Cached data
 	missions       []*database.Mission
@@ -73,22 +73,22 @@ var defaultDashboardKeys = dashboardKeyMap{
 }
 
 // NewDashboardView creates a new dashboard view with the given dependencies.
-func NewDashboardView(ctx context.Context, db *database.DB, registry component.ComponentRegistry, store finding.FindingStore) *DashboardView {
+func NewDashboardView(ctx context.Context, db *database.DB, dao database.ComponentDAO, store finding.FindingStore) *DashboardView {
 	return &DashboardView{
-		missionPanel:      components.NewPanel("Mission Summary"),
-		agentPanel:        components.NewPanel("Agent Status"),
-		findingPanel:      components.NewPanel("Recent Findings"),
-		metricsPanel:      components.NewPanel("System Metrics"),
-		focusedPanel:      0,
-		db:                db,
-		componentRegistry: registry,
-		findingStore:      store,
-		missions:          []*database.Mission{},
-		components:        make(map[component.ComponentKind][]*component.Component),
-		recentFindings:    []finding.EnhancedFinding{},
-		ctx:               ctx,
-		width:             80,
-		height:            24,
+		missionPanel:   components.NewPanel("Mission Summary"),
+		agentPanel:     components.NewPanel("Agent Status"),
+		findingPanel:   components.NewPanel("Recent Findings"),
+		metricsPanel:   components.NewPanel("System Metrics"),
+		focusedPanel:   0,
+		db:             db,
+		componentDAO:   dao,
+		findingStore:   store,
+		missions:       []*database.Mission{},
+		components:     make(map[component.ComponentKind][]*component.Component),
+		recentFindings: []finding.EnhancedFinding{},
+		ctx:            ctx,
+		width:          80,
+		height:         24,
 	}
 }
 
@@ -212,9 +212,12 @@ func (d *DashboardView) refreshData() {
 		}
 	}
 
-	// Load components from registry
-	if d.componentRegistry != nil {
-		d.components = d.componentRegistry.ListAll()
+	// Load components from DAO
+	if d.componentDAO != nil {
+		components, err := d.componentDAO.ListAll(d.ctx)
+		if err == nil {
+			d.components = components
+		}
 	}
 
 	// Load recent findings from store

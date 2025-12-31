@@ -141,7 +141,7 @@ func createTestAgent(name, version string, status component.ComponentStatus) *co
 			Name:        name,
 			Version:     version,
 			Description: "Test agent",
-			Runtime: component.RuntimeConfig{
+			Runtime: &component.RuntimeConfig{
 				Type:       component.RuntimeTypeBinary,
 				Entrypoint: "/test/bin/" + name,
 			},

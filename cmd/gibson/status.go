@@ -140,18 +140,25 @@ func checkComponentsStatus(homeDir string) ComponentsStatus {
 		Plugins: []ComponentInfo{},
 	}
 
-	// Create component registry
-	registry := component.NewDefaultComponentRegistry()
-
-	// Try to load registry from file
-	registryPath := filepath.Join(homeDir, "registry.yaml")
-	if err := registry.LoadFromConfig(registryPath); err != nil {
-		// Registry file may not exist yet, return empty status
+	// Open database connection
+	dbPath := filepath.Join(homeDir, "gibson.db")
+	db, err := database.Open(dbPath)
+	if err != nil {
+		// Database may not exist yet, return empty status
 		return componentStatus
 	}
+	defer db.Close()
+
+	// Create component DAO
+	dao := database.NewComponentDAO(db)
+	ctx := context.Background()
 
 	// Get all components
-	allComponents := registry.ListAll()
+	allComponents, err := dao.ListAll(ctx)
+	if err != nil {
+		// Error listing components, return empty status
+		return componentStatus
+	}
 
 	// Collect agents
 	for _, comp := range allComponents[component.ComponentKindAgent] {

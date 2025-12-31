@@ -52,6 +52,37 @@ func setupTestExecutionStore(t *testing.T) (*database.DB, ExecutionStore, Payloa
 	return db, execStore, payloadStore, cleanup
 }
 
+// createTestTargetForExecution creates and saves a test target, returns its ID
+func createTestTargetForExecution(t *testing.T, ctx context.Context, db *database.DB) types.ID {
+	t.Helper()
+
+	targetDAO := database.NewTargetDAO(db)
+	target := &types.Target{
+		ID:           types.NewID(),
+		Name:         "test-target-" + types.NewID().String()[:8],
+		Type:         types.TargetTypeLLMChat,
+		Provider:     types.ProviderOpenAI,
+		URL:          "https://api.openai.com/v1/chat/completions",
+		Model:        "gpt-4",
+		AuthType:     types.AuthTypeAPIKey,
+		Status:       types.TargetStatusActive,
+		Headers:      map[string]string{},
+		Config:       map[string]interface{}{},
+		Capabilities: []string{"chat", "completion"},
+		Tags:         []string{"test"},
+		Timeout:      30,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+
+	err := targetDAO.Create(ctx, target)
+	if err != nil {
+		t.Fatalf("failed to create test target: %v", err)
+	}
+
+	return target.ID
+}
+
 // createTestPayloadForExecution creates and saves a test payload, returns its ID
 func createTestPayloadForExecution(t *testing.T, ctx context.Context, store PayloadStore) types.ID {
 	t.Helper()
@@ -83,12 +114,12 @@ func createTestPayloadForExecution(t *testing.T, ctx context.Context, store Payl
 }
 
 // createTestExecution creates a test execution with default values
-func createTestExecution(payloadID types.ID) *Execution {
+func createTestExecution(payloadID, targetID types.ID) *Execution {
 	now := time.Now()
 	return &Execution{
 		ID:        types.NewID(),
 		PayloadID: payloadID,
-		TargetID:  types.NewID(),
+		TargetID:  targetID,
 		AgentID:   types.NewID(),
 		Status:    ExecutionStatusCompleted,
 		Parameters: map[string]interface{}{
@@ -123,12 +154,13 @@ func createTestExecution(payloadID types.ID) *Execution {
 
 // TestExecutionStore_Save tests saving an execution
 func TestExecutionStore_Save(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
-	execution := createTestExecution(payloadID)
+	targetID := createTestTargetForExecution(t, ctx, db)
+	execution := createTestExecution(payloadID, targetID)
 
 	err := store.Save(ctx, execution)
 	require.NoError(t, err, "Save should succeed")
@@ -148,14 +180,15 @@ func TestExecutionStore_Save(t *testing.T) {
 
 // TestExecutionStore_Save_WithMission tests saving execution with mission ID
 func TestExecutionStore_Save_WithMission(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 	missionID := types.NewID()
 
-	execution := createTestExecution(payloadID)
+	execution := createTestExecution(payloadID, targetID)
 	execution.MissionID = &missionID
 
 	err := store.Save(ctx, execution)
@@ -169,14 +202,15 @@ func TestExecutionStore_Save_WithMission(t *testing.T) {
 
 // TestExecutionStore_Save_WithFinding tests saving execution with finding ID
 func TestExecutionStore_Save_WithFinding(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 	findingID := types.NewID()
 
-	execution := createTestExecution(payloadID)
+	execution := createTestExecution(payloadID, targetID)
 	execution.FindingID = &findingID
 	execution.FindingCreated = true
 
@@ -192,12 +226,13 @@ func TestExecutionStore_Save_WithFinding(t *testing.T) {
 
 // TestExecutionStore_Get tests retrieving an execution by ID
 func TestExecutionStore_Get(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
-	execution := createTestExecution(payloadID)
+	targetID := createTestTargetForExecution(t, ctx, db)
+	execution := createTestExecution(payloadID, targetID)
 
 	// Save execution
 	err := store.Save(ctx, execution)
@@ -217,7 +252,7 @@ func TestExecutionStore_Get(t *testing.T) {
 
 // TestExecutionStore_List tests listing executions with filtering
 func TestExecutionStore_List(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -225,13 +260,12 @@ func TestExecutionStore_List(t *testing.T) {
 	// Create test executions
 	payload1 := createTestPayloadForExecution(t, ctx, payloadStore)
 	payload2 := createTestPayloadForExecution(t, ctx, payloadStore)
-	target1 := types.NewID()
-	target2 := types.NewID()
+	target1 := createTestTargetForExecution(t, ctx, db)
+	target2 := createTestTargetForExecution(t, ctx, db)
 	agent1 := types.NewID()
 	mission1 := types.NewID()
 
-	exec1 := createTestExecution(payload1)
-	exec1.TargetID = target1
+	exec1 := createTestExecution(payload1, target1)
 	exec1.AgentID = agent1
 	exec1.MissionID = &mission1
 	exec1.Success = true
@@ -240,13 +274,11 @@ func TestExecutionStore_List(t *testing.T) {
 	exec1.TargetProvider = types.ProviderOpenAI
 	exec1.ConfidenceScore = 0.9
 
-	exec2 := createTestExecution(payload2)
-	exec2.TargetID = target2
+	exec2 := createTestExecution(payload2, target2)
 	exec2.Success = false
 	exec2.Status = ExecutionStatusFailed
 
-	exec3 := createTestExecution(payload1)
-	exec3.TargetID = target1
+	exec3 := createTestExecution(payload1, target1)
 	exec3.Success = true
 	exec3.Status = ExecutionStatusCompleted
 	exec3.ConfidenceScore = 0.7
@@ -407,7 +439,7 @@ func TestExecutionStore_List(t *testing.T) {
 
 // TestExecutionStore_List_TimeFilters tests filtering by time
 func TestExecutionStore_List_TimeFilters(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -417,14 +449,15 @@ func TestExecutionStore_List_TimeFilters(t *testing.T) {
 	future := now.Add(1 * time.Hour)
 
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 
-	exec1 := createTestExecution(payloadID)
+	exec1 := createTestExecution(payloadID, targetID)
 	exec1.CreatedAt = past
 
-	exec2 := createTestExecution(payloadID)
+	exec2 := createTestExecution(payloadID, targetID)
 	exec2.CreatedAt = now
 
-	exec3 := createTestExecution(payloadID)
+	exec3 := createTestExecution(payloadID, targetID)
 	exec3.CreatedAt = now.Add(30 * time.Minute)
 
 	require.NoError(t, store.Save(ctx, exec1))
@@ -456,17 +489,18 @@ func TestExecutionStore_List_TimeFilters(t *testing.T) {
 
 // TestExecutionStore_GetByPayload tests retrieving executions for a payload
 func TestExecutionStore_GetByPayload(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 
-	exec1 := createTestExecution(payloadID)
-	exec2 := createTestExecution(payloadID)
+	exec1 := createTestExecution(payloadID, targetID)
+	exec2 := createTestExecution(payloadID, targetID)
 
 	payload2ID := createTestPayloadForExecution(t, ctx, payloadStore)
-	exec3 := createTestExecution(payload2ID) // Different payload
+	exec3 := createTestExecution(payload2ID, targetID) // Different payload
 
 	require.NoError(t, store.Save(ctx, exec1))
 	require.NoError(t, store.Save(ctx, exec2))
@@ -483,21 +517,22 @@ func TestExecutionStore_GetByPayload(t *testing.T) {
 
 // TestExecutionStore_GetByMission tests retrieving executions for a mission
 func TestExecutionStore_GetByMission(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 	missionID := types.NewID()
 	otherMissionID := types.NewID()
 
-	exec1 := createTestExecution(payloadID)
+	exec1 := createTestExecution(payloadID, targetID)
 	exec1.MissionID = &missionID
 
-	exec2 := createTestExecution(payloadID)
+	exec2 := createTestExecution(payloadID, targetID)
 	exec2.MissionID = &missionID
 
-	exec3 := createTestExecution(payloadID)
+	exec3 := createTestExecution(payloadID, targetID)
 	exec3.MissionID = &otherMissionID
 
 	require.NoError(t, store.Save(ctx, exec1))
@@ -516,14 +551,17 @@ func TestExecutionStore_GetByMission(t *testing.T) {
 
 // TestExecutionStore_GetStats tests aggregate statistics
 func TestExecutionStore_GetStats(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	target1 := createTestTargetForExecution(t, ctx, db)
+	target2 := createTestTargetForExecution(t, ctx, db)
+	target3 := createTestTargetForExecution(t, ctx, db)
 
 	// Create varied executions
-	exec1 := createTestExecution(payloadID)
+	exec1 := createTestExecution(payloadID, target1)
 	exec1.Success = true
 	exec1.ConfidenceScore = 0.9
 	exec1.ResponseTime = 100
@@ -531,7 +569,7 @@ func TestExecutionStore_GetStats(t *testing.T) {
 	exec1.Cost = 0.001
 	exec1.FindingCreated = true
 
-	exec2 := createTestExecution(payloadID)
+	exec2 := createTestExecution(payloadID, target2)
 	exec2.Success = true
 	exec2.ConfidenceScore = 0.8
 	exec2.ResponseTime = 200
@@ -539,7 +577,7 @@ func TestExecutionStore_GetStats(t *testing.T) {
 	exec2.Cost = 0.002
 	exec2.FindingCreated = true
 
-	exec3 := createTestExecution(payloadID)
+	exec3 := createTestExecution(payloadID, target3)
 	exec3.Success = false
 	exec3.ConfidenceScore = 0.3
 	exec3.ResponseTime = 50
@@ -571,20 +609,21 @@ func TestExecutionStore_GetStats(t *testing.T) {
 
 // TestExecutionStore_GetStats_WithFilter tests statistics with filtering
 func TestExecutionStore_GetStats_WithFilter(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payload1 := createTestPayloadForExecution(t, ctx, payloadStore)
 	payload2 := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 
-	exec1 := createTestExecution(payload1)
+	exec1 := createTestExecution(payload1, targetID)
 	exec1.Success = true
 
-	exec2 := createTestExecution(payload1)
+	exec2 := createTestExecution(payload1, targetID)
 	exec2.Success = false
 
-	exec3 := createTestExecution(payload2)
+	exec3 := createTestExecution(payload2, targetID)
 	exec3.Success = true
 
 	require.NoError(t, store.Save(ctx, exec1))
@@ -604,12 +643,13 @@ func TestExecutionStore_GetStats_WithFilter(t *testing.T) {
 
 // TestExecutionStore_Update tests updating an execution
 func TestExecutionStore_Update(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
-	execution := createTestExecution(payloadID)
+	targetID := createTestTargetForExecution(t, ctx, db)
+	execution := createTestExecution(payloadID, targetID)
 
 	// Save initial execution
 	err := store.Save(ctx, execution)
@@ -635,12 +675,13 @@ func TestExecutionStore_Update(t *testing.T) {
 
 // TestExecutionStore_Update_NonExistent tests updating non-existent execution
 func TestExecutionStore_Update_NonExistent(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
-	execution := createTestExecution(payloadID)
+	targetID := createTestTargetForExecution(t, ctx, db)
+	execution := createTestExecution(payloadID, targetID)
 
 	err := store.Update(ctx, execution)
 	assert.Error(t, err, "should fail to update non-existent execution")
@@ -648,7 +689,7 @@ func TestExecutionStore_Update_NonExistent(t *testing.T) {
 
 // TestExecutionStore_Count tests counting executions
 func TestExecutionStore_Count(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -660,15 +701,16 @@ func TestExecutionStore_Count(t *testing.T) {
 
 	// Create and save executions
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 
-	exec1 := createTestExecution(payloadID)
+	exec1 := createTestExecution(payloadID, targetID)
 	exec1.Success = true
 
-	exec2 := createTestExecution(payloadID)
+	exec2 := createTestExecution(payloadID, targetID)
 	exec2.Success = false
 
 	payload2ID := createTestPayloadForExecution(t, ctx, payloadStore)
-	exec3 := createTestExecution(payload2ID)
+	exec3 := createTestExecution(payload2ID, targetID)
 	exec3.Success = true
 
 	require.NoError(t, store.Save(ctx, exec1))
@@ -697,25 +739,24 @@ func TestExecutionStore_Count(t *testing.T) {
 
 // TestExecutionStore_ComplexFilter tests combining multiple filters
 func TestExecutionStore_ComplexFilter(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
-	targetID := types.NewID()
+	targetID := createTestTargetForExecution(t, ctx, db)
+	targetID2 := createTestTargetForExecution(t, ctx, db)
 
-	exec1 := createTestExecution(payloadID)
-	exec1.TargetID = targetID
+	exec1 := createTestExecution(payloadID, targetID)
 	exec1.Success = true
 	exec1.TargetType = types.TargetTypeLLMChat
 	exec1.ConfidenceScore = 0.9
 
-	exec2 := createTestExecution(payloadID)
-	exec2.TargetID = targetID
+	exec2 := createTestExecution(payloadID, targetID)
 	exec2.Success = false
 	exec2.TargetType = types.TargetTypeLLMChat
 
-	exec3 := createTestExecution(payloadID)
+	exec3 := createTestExecution(payloadID, targetID2)
 	exec3.Success = true
 	exec3.TargetType = types.TargetTypeLLMAPI
 	exec3.ConfidenceScore = 0.85
@@ -739,15 +780,16 @@ func TestExecutionStore_ComplexFilter(t *testing.T) {
 
 // TestExecutionStore_ConcurrentAccess tests thread-safe concurrent access
 func TestExecutionStore_ConcurrentAccess(t *testing.T) {
-	_, store, payloadStore, cleanup := setupTestExecutionStore(t)
+	db, store, payloadStore, cleanup := setupTestExecutionStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
+	targetID := createTestTargetForExecution(t, ctx, db)
 	const numGoroutines = 10
 
 	// Create and save initial execution
-	execution := createTestExecution(payloadID)
+	execution := createTestExecution(payloadID, targetID)
 	err := store.Save(ctx, execution)
 	require.NoError(t, err)
 

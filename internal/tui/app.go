@@ -7,7 +7,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zero-day-ai/gibson/internal/agent"
-	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/plan"
@@ -48,12 +47,12 @@ type App struct {
 	theme           *styles.Theme
 
 	// Dependencies (stored for view initialization)
-	db                *database.DB
-	missionDAO        database.MissionDAO
-	componentRegistry component.ComponentRegistry
-	findingStore      finding.FindingStore
-	agentRegistry     agent.AgentRegistry
-	streamManager     *agent.StreamManager
+	db            *database.DB
+	missionDAO    database.MissionDAO
+	componentDAO  database.ComponentDAO
+	findingStore  finding.FindingStore
+	agentRegistry agent.AgentRegistry
+	streamManager *agent.StreamManager
 
 	// Ready state
 	ready bool
@@ -61,12 +60,12 @@ type App struct {
 
 // AppConfig contains configuration options for creating a new App.
 type AppConfig struct {
-	DB                *database.DB
-	MissionDAO        database.MissionDAO
-	ComponentRegistry component.ComponentRegistry
-	FindingStore      finding.FindingStore
-	AgentRegistry     agent.AgentRegistry
-	StreamManager     *agent.StreamManager
+	DB            *database.DB
+	MissionDAO    database.MissionDAO
+	ComponentDAO  database.ComponentDAO
+	FindingStore  finding.FindingStore
+	AgentRegistry agent.AgentRegistry
+	StreamManager *agent.StreamManager
 }
 
 // NewApp creates a new TUI application with the given context and configuration.
@@ -75,20 +74,20 @@ func NewApp(ctx context.Context, config AppConfig) *App {
 	keyMap := DefaultKeyMap()
 
 	app := &App{
-		ctx:               ctx,
-		mode:              ModeDashboard,
-		width:             80,
-		height:            24,
-		keyMap:            keyMap,
-		theme:             theme,
-		showHelp:          false,
-		ready:             false,
-		db:                config.DB,
-		missionDAO:        config.MissionDAO,
-		componentRegistry: config.ComponentRegistry,
-		findingStore:      config.FindingStore,
-		agentRegistry:     config.AgentRegistry,
-		streamManager:     config.StreamManager,
+		ctx:           ctx,
+		mode:          ModeDashboard,
+		width:         80,
+		height:        24,
+		keyMap:        keyMap,
+		theme:         theme,
+		showHelp:      false,
+		ready:         false,
+		db:            config.DB,
+		missionDAO:    config.MissionDAO,
+		componentDAO:  config.ComponentDAO,
+		findingStore:  config.FindingStore,
+		agentRegistry: config.AgentRegistry,
+		streamManager: config.StreamManager,
 	}
 
 	// Initialize header
@@ -118,7 +117,7 @@ func (a *App) initViews() {
 	a.dashboardView = views.NewDashboardView(
 		a.ctx,
 		a.db,
-		a.componentRegistry,
+		a.componentDAO,
 		a.findingStore,
 	)
 
@@ -134,12 +133,12 @@ func (a *App) initViews() {
 
 	// Console view
 	a.consoleView = views.NewConsoleView(a.ctx, views.ConsoleConfig{
-		DB:                a.db,
-		ComponentRegistry: a.componentRegistry,
-		FindingStore:      a.findingStore,
-		StreamManager:     a.streamManager,
-		HomeDir:           "", // Can be set from config later
-		ConfigFile:        "", // Can be set from config later
+		DB:           a.db,
+		ComponentDAO: a.componentDAO,
+		FindingStore: a.findingStore,
+		StreamManager: a.streamManager,
+		HomeDir:      "", // Can be set from config later
+		ConfigFile:   "", // Can be set from config later
 	})
 
 	// Agent Focus view

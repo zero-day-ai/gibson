@@ -155,12 +155,14 @@ func ManifestAttributes(manifest *Manifest) []attribute.KeyValue {
 	}
 
 	// Add runtime configuration
-	if manifest.Runtime.Entrypoint != "" {
-		attrs = append(attrs, attribute.String("gibson.component.entrypoint", manifest.Runtime.Entrypoint))
-	}
+	if manifest.Runtime != nil {
+		if manifest.Runtime.Entrypoint != "" {
+			attrs = append(attrs, attribute.String("gibson.component.entrypoint", manifest.Runtime.Entrypoint))
+		}
 
-	if manifest.Runtime.HealthURL != "" {
-		attrs = append(attrs, attribute.String("gibson.component.health_url", manifest.Runtime.HealthURL))
+		if manifest.Runtime.HealthURL != "" {
+			attrs = append(attrs, attribute.String("gibson.component.health_url", manifest.Runtime.HealthURL))
+		}
 	}
 
 	// Add build configuration

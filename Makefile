@@ -1,7 +1,7 @@
 # Gibson Framework Makefile
 # Stage 1 - Foundation
 
-.PHONY: all build test test-coverage test-race lint clean install help proto proto-deps proto-clean
+.PHONY: all build bin test test-coverage test-race lint clean install help proto proto-deps proto-clean
 
 # Go parameters
 GOCMD=go
@@ -10,11 +10,14 @@ GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
 GOMOD=$(GOCMD) mod
 BINARY_NAME=gibson
-BINARY_DIR=build
+BINARY_DIR=bin
 MAIN_PACKAGE=./cmd/gibson
 
 # CGO is required for SQLite FTS5
 export CGO_ENABLED=1
+
+# CGO flags to enable SQLite FTS5 module in mattn/go-sqlite3
+export CGO_CFLAGS=-DSQLITE_ENABLE_FTS5
 
 # Build tags for FTS5 support (always enabled)
 BUILD_TAGS=-tags "fts5"
@@ -30,12 +33,16 @@ PROTO_OUT=api/gen/proto
 # Default target
 all: test build
 
-# Build the binary
-build:
+# Build the binary (quick local build)
+bin:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BINARY_DIR)
 	$(GOBUILD) $(BUILD_TAGS) -o $(BINARY_DIR)/$(BINARY_NAME) $(MAIN_PACKAGE)
 	@echo "Build complete: $(BINARY_DIR)/$(BINARY_NAME)"
+
+# Full build (for Docker/CI/CD)
+build: bin
+	@echo "Full build complete"
 
 # Run tests
 test:
@@ -132,7 +139,8 @@ proto-clean:
 help:
 	@echo "Gibson Framework - Makefile Targets"
 	@echo ""
-	@echo "  make build         - Build the gibson binary"
+	@echo "  make bin           - Build the gibson binary (quick local build)"
+	@echo "  make build         - Full build for Docker/CI/CD"
 	@echo "  make test          - Run all tests"
 	@echo "  make test-race     - Run tests with race detection"
 	@echo "  make test-coverage - Run tests with coverage (enforces $(COVERAGE_THRESHOLD)% threshold)"

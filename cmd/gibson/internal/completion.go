@@ -16,33 +16,24 @@ type CompletionFunc func(cmd *cobra.Command, args []string, toComplete string) (
 
 // CompletionContext holds dependencies for completion functions
 type CompletionContext struct {
-	Registry component.ComponentRegistry
-	DB       *database.DB
+	ComponentDAO database.ComponentDAO
+	DB           *database.DB
 }
 
 // NewCompletionContext creates a new completion context
-// It attempts to load the component registry and database, but returns
+// It attempts to load the database and component DAO, but returns
 // a minimal context on error to allow completions to work even if
 // the system is not fully initialized
 func NewCompletionContext() *CompletionContext {
 	ctx := &CompletionContext{}
 
-	// Try to load component registry
+	// Try to open database
 	homeDir, err := os.UserHomeDir()
 	if err == nil {
-		registry := component.NewDefaultComponentRegistry()
-		registryPath := filepath.Join(homeDir, ".gibson", "registry.yaml")
-		if _, err := os.Stat(registryPath); err == nil {
-			_ = registry.LoadFromConfig(registryPath)
-		}
-		ctx.Registry = registry
-	}
-
-	// Try to open database
-	if homeDir != "" {
 		dbPath := filepath.Join(homeDir, ".gibson", "gibson.db")
 		if db, err := database.Open(dbPath); err == nil {
 			ctx.DB = db
+			ctx.ComponentDAO = database.NewComponentDAO(db)
 		}
 	}
 
@@ -61,11 +52,15 @@ func CompleteAgentNames(cmd *cobra.Command, args []string, toComplete string) ([
 	ctx := NewCompletionContext()
 	defer ctx.Close()
 
-	if ctx.Registry == nil {
+	if ctx.ComponentDAO == nil {
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	agents := ctx.Registry.List(component.ComponentKindAgent)
+	agents, err := ctx.ComponentDAO.List(context.Background(), component.ComponentKindAgent)
+	if err != nil {
+		return []string{}, cobra.ShellCompDirectiveNoFileComp
+	}
+
 	names := make([]string, 0, len(agents))
 	for _, agent := range agents {
 		names = append(names, agent.Name)
@@ -79,11 +74,15 @@ func CompleteToolNames(cmd *cobra.Command, args []string, toComplete string) ([]
 	ctx := NewCompletionContext()
 	defer ctx.Close()
 
-	if ctx.Registry == nil {
+	if ctx.ComponentDAO == nil {
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	tools := ctx.Registry.List(component.ComponentKindTool)
+	tools, err := ctx.ComponentDAO.List(context.Background(), component.ComponentKindTool)
+	if err != nil {
+		return []string{}, cobra.ShellCompDirectiveNoFileComp
+	}
+
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)
@@ -97,11 +96,15 @@ func CompletePluginNames(cmd *cobra.Command, args []string, toComplete string) (
 	ctx := NewCompletionContext()
 	defer ctx.Close()
 
-	if ctx.Registry == nil {
+	if ctx.ComponentDAO == nil {
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	plugins := ctx.Registry.List(component.ComponentKindPlugin)
+	plugins, err := ctx.ComponentDAO.List(context.Background(), component.ComponentKindPlugin)
+	if err != nil {
+		return []string{}, cobra.ShellCompDirectiveNoFileComp
+	}
+
 	names := make([]string, 0, len(plugins))
 	for _, plugin := range plugins {
 		names = append(names, plugin.Name)
@@ -115,11 +118,15 @@ func CompleteComponentNames(cmd *cobra.Command, args []string, toComplete string
 	ctx := NewCompletionContext()
 	defer ctx.Close()
 
-	if ctx.Registry == nil {
+	if ctx.ComponentDAO == nil {
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	allComponents := ctx.Registry.ListAll()
+	allComponents, err := ctx.ComponentDAO.ListAll(context.Background())
+	if err != nil {
+		return []string{}, cobra.ShellCompDirectiveNoFileComp
+	}
+
 	names := make([]string, 0)
 
 	for _, components := range allComponents {

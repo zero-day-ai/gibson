@@ -16,8 +16,8 @@ import (
 type ExecutorConfig struct {
 	// DB is the database connection for data persistence operations.
 	DB *database.DB
-	// ComponentRegistry manages agents, tools, and plugins.
-	ComponentRegistry component.ComponentRegistry
+	// ComponentDAO provides access to component data from SQLite.
+	ComponentDAO database.ComponentDAO
 	// FindingStore provides access to security findings.
 	FindingStore finding.FindingStore
 	// StreamManager manages bidirectional streams to agents.
@@ -106,7 +106,7 @@ func (e *Executor) Execute(input string) (*ExecutionResult, error) {
 
 // SetupHandlers registers all command handlers with their implementations.
 // This wires up the slash commands to their actual functionality using the
-// provided dependencies (DB, ComponentRegistry, FindingStore).
+// provided dependencies (DB, ComponentDAO, FindingStore).
 func (e *Executor) SetupHandlers() {
 	// /help - Show available commands
 	if cmd, ok := e.registry.Get("help"); ok {
@@ -219,16 +219,16 @@ func (e *Executor) handleStatus(ctx context.Context, args []string) (*ExecutionR
 
 	output.WriteString("\n")
 
-	// Component registry status
-	if e.config.ComponentRegistry != nil {
-		agents := e.config.ComponentRegistry.List(component.ComponentKindAgent)
-		tools := e.config.ComponentRegistry.List(component.ComponentKindTool)
-		plugins := e.config.ComponentRegistry.List(component.ComponentKindPlugin)
+	// Component DAO status
+	if e.config.ComponentDAO != nil {
+		agents, _ := e.config.ComponentDAO.List(ctx, component.ComponentKindAgent)
+		tools, _ := e.config.ComponentDAO.List(ctx, component.ComponentKindTool)
+		plugins, _ := e.config.ComponentDAO.List(ctx, component.ComponentKindPlugin)
 
 		output.WriteString("Components:\n")
-		output.WriteString(fmt.Sprintf("  Agents:  %d registered\n", len(agents)))
-		output.WriteString(fmt.Sprintf("  Tools:   %d registered\n", len(tools)))
-		output.WriteString(fmt.Sprintf("  Plugins: %d registered\n", len(plugins)))
+		output.WriteString(fmt.Sprintf("  Agents:  %d installed\n", len(agents)))
+		output.WriteString(fmt.Sprintf("  Tools:   %d installed\n", len(tools)))
+		output.WriteString(fmt.Sprintf("  Plugins: %d installed\n", len(plugins)))
 	} else {
 		output.WriteString("Components: Not available\n")
 	}
@@ -270,21 +270,28 @@ func (e *Executor) handleAgents(ctx context.Context, args []string) (*ExecutionR
 	}
 }
 
-// handleAgentsList lists all registered agents from the component registry.
+// handleAgentsList lists all registered agents from the component DAO.
 func (e *Executor) handleAgentsList(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.ComponentRegistry == nil {
+	if e.config.ComponentDAO == nil {
 		return &ExecutionResult{
-			Output:   "Component registry not available\n",
+			Output:   "Component DAO not available\n",
 			IsError:  false,
 			ExitCode: 0,
 		}, nil
 	}
 
-	agents := e.config.ComponentRegistry.List(component.ComponentKindAgent)
+	agents, err := e.config.ComponentDAO.List(ctx, component.ComponentKindAgent)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to list agents: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, err
+	}
 
 	if len(agents) == 0 {
 		return &ExecutionResult{
-			Output:   "No agents registered\n",
+			Output:   "No agents installed\n",
 			IsError:  false,
 			ExitCode: 0,
 		}, nil
@@ -648,21 +655,28 @@ func (e *Executor) handleTargets(ctx context.Context, args []string) (*Execution
 	}, nil
 }
 
-// handleTools lists all registered tools from the component registry.
+// handleTools lists all registered tools from the component DAO.
 func (e *Executor) handleTools(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.ComponentRegistry == nil {
+	if e.config.ComponentDAO == nil {
 		return &ExecutionResult{
-			Output:   "Component registry not available\n",
+			Output:   "Component DAO not available\n",
 			IsError:  false,
 			ExitCode: 0,
 		}, nil
 	}
 
-	tools := e.config.ComponentRegistry.List(component.ComponentKindTool)
+	tools, err := e.config.ComponentDAO.List(ctx, component.ComponentKindTool)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to list tools: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, err
+	}
 
 	if len(tools) == 0 {
 		return &ExecutionResult{
-			Output:   "No tools registered\n",
+			Output:   "No tools installed\n",
 			IsError:  false,
 			ExitCode: 0,
 		}, nil
@@ -689,21 +703,28 @@ func (e *Executor) handleTools(ctx context.Context, args []string) (*ExecutionRe
 	}, nil
 }
 
-// handlePlugins lists all registered plugins from the component registry.
+// handlePlugins lists all registered plugins from the component DAO.
 func (e *Executor) handlePlugins(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.ComponentRegistry == nil {
+	if e.config.ComponentDAO == nil {
 		return &ExecutionResult{
-			Output:   "Component registry not available\n",
+			Output:   "Component DAO not available\n",
 			IsError:  false,
 			ExitCode: 0,
 		}, nil
 	}
 
-	plugins := e.config.ComponentRegistry.List(component.ComponentKindPlugin)
+	plugins, err := e.config.ComponentDAO.List(ctx, component.ComponentKindPlugin)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to list plugins: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, err
+	}
 
 	if len(plugins) == 0 {
 		return &ExecutionResult{
-			Output:   "No plugins registered\n",
+			Output:   "No plugins installed\n",
 			IsError:  false,
 			ExitCode: 0,
 		}, nil
@@ -752,16 +773,16 @@ func (e *Executor) handleConfig(ctx context.Context, args []string) (*ExecutionR
 
 	output.WriteString("\n")
 	output.WriteString("Components:\n")
-	if e.config.ComponentRegistry != nil {
-		output.WriteString("  Registry:       Available\n")
-		allComponents := e.config.ComponentRegistry.ListAll()
+	if e.config.ComponentDAO != nil {
+		output.WriteString("  DAO:            Available\n")
+		allComponents, _ := e.config.ComponentDAO.ListAll(ctx)
 		totalCount := 0
 		for _, components := range allComponents {
 			totalCount += len(components)
 		}
 		output.WriteString(fmt.Sprintf("  Total:          %d components\n", totalCount))
 	} else {
-		output.WriteString("  Registry:       Not available\n")
+		output.WriteString("  DAO:            Not available\n")
 	}
 
 	output.WriteString("\n")

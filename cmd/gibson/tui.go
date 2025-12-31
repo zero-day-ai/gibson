@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/internal/agent"
-	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
@@ -159,9 +158,11 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 		}
 	}
 
-	// Initialize component registry
-	registry := component.NewDefaultComponentRegistry()
-	appConfig.ComponentRegistry = registry
+	// Initialize ComponentDAO if database is available
+	if appConfig.DB != nil {
+		componentDAO := database.NewComponentDAO(appConfig.DB)
+		appConfig.ComponentDAO = componentDAO
+	}
 
 	// Initialize finding store if database is available
 	if appConfig.DB != nil {
