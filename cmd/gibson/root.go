@@ -9,24 +9,16 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"golang.org/x/term"
 )
 
-// contextKey is a type for context keys to avoid collisions
-type contextKey string
-
-// registryManagerKey is the context key for storing the registry manager
-const registryManagerKey contextKey = "registryManager"
-
 // GetRegistryManager retrieves the registry manager from the context.
-// Returns nil if the manager is not present in the context.
+// This is a convenience wrapper around component.GetRegistryManager.
 func GetRegistryManager(ctx context.Context) *registry.Manager {
-	if m, ok := ctx.Value(registryManagerKey).(*registry.Manager); ok {
-		return m
-	}
-	return nil
+	return component.GetRegistryManager(ctx)
 }
 
 // Mode flags for TUI vs headless operation
@@ -120,8 +112,8 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 	// Store manager globally for cleanup
 	globalRegistryManager = regManager
 
-	// Store manager in context for subcommands
-	ctx := context.WithValue(cmd.Context(), registryManagerKey, regManager)
+	// Store manager in context for subcommands using the shared key
+	ctx := component.WithRegistryManager(cmd.Context(), regManager)
 	cmd.SetContext(ctx)
 
 	if flags.IsVerbose() {

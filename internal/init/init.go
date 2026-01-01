@@ -361,6 +361,15 @@ tracing:
 metrics:
   enabled: %t
   port: %d
+
+registry:
+  type: %s
+  data_dir: %s
+  listen_address: %s
+  namespace: %s
+  ttl: %s
+  tls:
+    enabled: %t
 `,
 		cfg.Core.HomeDir,
 		cfg.Core.DataDir,
@@ -384,6 +393,12 @@ metrics:
 		cfg.Tracing.Endpoint,
 		cfg.Metrics.Enabled,
 		cfg.Metrics.Port,
+		cfg.Registry.Type,
+		cfg.Registry.DataDir,
+		cfg.Registry.ListenAddress,
+		cfg.Registry.Namespace,
+		cfg.Registry.TTL,
+		cfg.Registry.TLS.Enabled,
 	)
 
 	if _, err := file.WriteString(content); err != nil {

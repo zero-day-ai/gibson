@@ -28,19 +28,22 @@ const (
 	registryStopTimeout = 10 * time.Second
 )
 
-// contextKey is a type for context keys to avoid collisions
-type contextKey string
-
-// registryManagerKey is the context key for storing the registry manager
-const registryManagerKey contextKey = "registryManager"
+// RegistryManagerKey is the context key for storing the registry manager.
+// This is exported so that the main package can use the same key.
+type RegistryManagerKey struct{}
 
 // GetRegistryManager retrieves the registry manager from the context.
 // Returns nil if the manager is not present in the context.
 func GetRegistryManager(ctx context.Context) *registry.Manager {
-	if m, ok := ctx.Value(registryManagerKey).(*registry.Manager); ok {
+	if m, ok := ctx.Value(RegistryManagerKey{}).(*registry.Manager); ok {
 		return m
 	}
 	return nil
+}
+
+// WithRegistryManager returns a new context with the registry manager attached.
+func WithRegistryManager(ctx context.Context, m *registry.Manager) context.Context {
+	return context.WithValue(ctx, RegistryManagerKey{}, m)
 }
 
 // newStartCommand creates a start command for the specified component type.
