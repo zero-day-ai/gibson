@@ -183,47 +183,5 @@ func applyInterpolation(cfg *Config, interpolated map[string]interface{}) error 
 		}
 	}
 
-	// Apply RemoteAgents config interpolation
-	if remoteAgents, ok := interpolated["remote_agents"].(map[string]interface{}); ok {
-		for name, agentCfg := range remoteAgents {
-			if agentMap, ok := agentCfg.(map[string]interface{}); ok {
-				if agent, exists := cfg.RemoteAgents[name]; exists {
-					if address, ok := agentMap["address"].(string); ok {
-						agent.Address = interpolateString(address)
-						cfg.RemoteAgents[name] = agent
-					}
-				}
-			}
-		}
-	}
-
-	// Apply RemoteTools config interpolation
-	if remoteTools, ok := interpolated["remote_tools"].(map[string]interface{}); ok {
-		for name, toolCfg := range remoteTools {
-			if toolMap, ok := toolCfg.(map[string]interface{}); ok {
-				if tool, exists := cfg.RemoteTools[name]; exists {
-					if address, ok := toolMap["address"].(string); ok {
-						tool.Address = interpolateString(address)
-						cfg.RemoteTools[name] = tool
-					}
-				}
-			}
-		}
-	}
-
-	// Apply RemotePlugins config interpolation
-	if remotePlugins, ok := interpolated["remote_plugins"].(map[string]interface{}); ok {
-		for name, pluginCfg := range remotePlugins {
-			if pluginMap, ok := pluginCfg.(map[string]interface{}); ok {
-				if plugin, exists := cfg.RemotePlugins[name]; exists {
-					if address, ok := pluginMap["address"].(string); ok {
-						plugin.Address = interpolateString(address)
-						cfg.RemotePlugins[name] = plugin
-					}
-				}
-			}
-		}
-	}
-
 	return nil
 }

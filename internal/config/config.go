@@ -3,7 +3,6 @@ package config
 import (
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/prompt"
 )
@@ -16,13 +15,11 @@ type Config struct {
 	LLM           LLMConfig                                  `mapstructure:"llm" yaml:"llm"`
 	Memory        memory.MemoryConfig                        `mapstructure:"memory" yaml:"memory"`
 	Prompt        prompt.PromptConfig                        `mapstructure:"prompt" yaml:"prompt"`
-	Logging       LoggingConfig                              `mapstructure:"logging" yaml:"logging"`
-	Tracing       TracingConfig                              `mapstructure:"tracing" yaml:"tracing"`
-	Metrics       MetricsConfig                              `mapstructure:"metrics" yaml:"metrics"`
-	RemoteAgents  map[string]component.RemoteComponentConfig `mapstructure:"remote_agents" yaml:"remote_agents,omitempty"`
-	RemoteTools   map[string]component.RemoteComponentConfig `mapstructure:"remote_tools" yaml:"remote_tools,omitempty"`
-	RemotePlugins map[string]component.RemoteComponentConfig `mapstructure:"remote_plugins" yaml:"remote_plugins,omitempty"`
-	Registration  RegistrationConfig                         `mapstructure:"registration" yaml:"registration,omitempty"`
+	Logging      LoggingConfig      `mapstructure:"logging" yaml:"logging"`
+	Tracing      TracingConfig      `mapstructure:"tracing" yaml:"tracing"`
+	Metrics      MetricsConfig      `mapstructure:"metrics" yaml:"metrics"`
+	Registration RegistrationConfig `mapstructure:"registration" yaml:"registration,omitempty"`
+	Registry     RegistryConfig     `mapstructure:"registry" yaml:"registry"`
 }
 
 // CoreConfig contains core application settings.
@@ -78,9 +75,6 @@ type MetricsConfig struct {
 // RegistrationConfig contains configuration for the optional agent self-announcement server.
 // When enabled, agents can dynamically register themselves with Gibson by sending heartbeat
 // announcements with their capabilities and network addresses.
-//
-// This is an optional feature - the primary mechanism for remote component discovery is
-// static configuration via remote_agents, remote_tools, and remote_plugins.
 type RegistrationConfig struct {
 	// Enabled controls whether the registration server is started
 	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
@@ -96,4 +90,44 @@ type RegistrationConfig struct {
 	// HeartbeatTimeout is the duration after which an agent is considered dead if no heartbeat
 	// is received (default: 30s)
 	HeartbeatTimeout time.Duration `mapstructure:"heartbeat_timeout" yaml:"heartbeat_timeout,omitempty"`
+}
+
+// RegistryConfig contains configuration for service discovery via etcd-based registry.
+// Supports both embedded etcd (for local development) and external etcd cluster (for production).
+type RegistryConfig struct {
+	// Type specifies the registry mode: "embedded" (default) or "etcd"
+	Type string `mapstructure:"type" yaml:"type"`
+
+	// DataDir is the directory for embedded etcd data storage (default: ~/.gibson/etcd-data)
+	DataDir string `mapstructure:"data_dir" yaml:"data_dir"`
+
+	// ListenAddress is the address for embedded etcd to listen on (default: localhost:2379)
+	ListenAddress string `mapstructure:"listen_address" yaml:"listen_address"`
+
+	// Endpoints is the list of external etcd endpoints (required when Type="etcd")
+	Endpoints []string `mapstructure:"endpoints" yaml:"endpoints"`
+
+	// Namespace is the service prefix for all registry keys (default: "gibson")
+	Namespace string `mapstructure:"namespace" yaml:"namespace"`
+
+	// TTL is the lease time-to-live for service registration (default: "30s")
+	TTL string `mapstructure:"ttl" yaml:"ttl"`
+
+	// TLS contains TLS configuration for etcd connections
+	TLS TLSConfig `mapstructure:"tls" yaml:"tls"`
+}
+
+// TLSConfig contains TLS/SSL configuration for secure etcd connections.
+type TLSConfig struct {
+	// Enabled controls whether TLS is used for etcd connections
+	Enabled bool `mapstructure:"enabled" yaml:"enabled"`
+
+	// CertFile is the path to the client certificate file
+	CertFile string `mapstructure:"cert_file" yaml:"cert_file"`
+
+	// KeyFile is the path to the client private key file
+	KeyFile string `mapstructure:"key_file" yaml:"key_file"`
+
+	// CAFile is the path to the certificate authority file
+	CAFile string `mapstructure:"ca_file" yaml:"ca_file"`
 }

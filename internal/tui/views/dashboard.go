@@ -14,7 +14,9 @@ import (
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tui/components"
+	sdkRegistry "github.com/zero-day-ai/sdk/registry"
 )
 
 // DashboardView displays an overview of the Gibson system with four panels:
@@ -33,15 +35,19 @@ type DashboardView struct {
 	focusedPanel int
 
 	// Data dependencies
-	db           *database.DB
-	componentDAO database.ComponentDAO
-	findingStore finding.FindingStore
+	db              *database.DB
+	componentDAO    database.ComponentDAO
+	findingStore    finding.FindingStore
+	registryManager *registry.Manager
 
 	// Cached data
-	missions       []*mission.Mission
-	components     map[component.ComponentKind][]*component.Component
-	recentFindings []finding.EnhancedFinding
-	lastRefresh    time.Time
+	missions        []*mission.Mission
+	components      map[component.ComponentKind][]*component.Component
+	registryData    map[string][]sdkRegistry.ServiceInfo // kind -> services
+	registryStatus  *registry.RegistryStatus
+	recentFindings  []finding.EnhancedFinding
+	lastRefresh     time.Time
+	registryHealthy bool
 
 	// Dimensions
 	width  int
@@ -74,22 +80,25 @@ var defaultDashboardKeys = dashboardKeyMap{
 }
 
 // NewDashboardView creates a new dashboard view with the given dependencies.
-func NewDashboardView(ctx context.Context, db *database.DB, dao database.ComponentDAO, store finding.FindingStore) *DashboardView {
+func NewDashboardView(ctx context.Context, db *database.DB, dao database.ComponentDAO, store finding.FindingStore, regMgr *registry.Manager) *DashboardView {
 	return &DashboardView{
-		missionPanel:   components.NewPanel("Mission Summary"),
-		agentPanel:     components.NewPanel("Agent Status"),
-		findingPanel:   components.NewPanel("Recent Findings"),
-		metricsPanel:   components.NewPanel("System Metrics"),
-		focusedPanel:   0,
-		db:             db,
-		componentDAO:   dao,
-		findingStore:   store,
-		missions:       []*mission.Mission{},
-		components:     make(map[component.ComponentKind][]*component.Component),
-		recentFindings: []finding.EnhancedFinding{},
-		ctx:            ctx,
-		width:          80,
-		height:         24,
+		missionPanel:    components.NewPanel("Mission Summary"),
+		agentPanel:      components.NewPanel("Agent Status"),
+		findingPanel:    components.NewPanel("Recent Findings"),
+		metricsPanel:    components.NewPanel("System Metrics"),
+		focusedPanel:    0,
+		db:              db,
+		componentDAO:    dao,
+		findingStore:    store,
+		registryManager: regMgr,
+		missions:        []*mission.Mission{},
+		components:      make(map[component.ComponentKind][]*component.Component),
+		registryData:    make(map[string][]sdkRegistry.ServiceInfo),
+		recentFindings:  []finding.EnhancedFinding{},
+		ctx:             ctx,
+		width:           80,
+		height:          24,
+		registryHealthy: false,
 	}
 }
 
@@ -213,8 +222,36 @@ func (d *DashboardView) refreshData() {
 		}
 	}
 
-	// Load components from DAO
-	if d.componentDAO != nil {
+	// Load components from registry (new approach)
+	if d.registryManager != nil {
+		reg := d.registryManager.Registry()
+		if reg != nil {
+			// Query registry for all component kinds
+			ctx, cancel := context.WithTimeout(d.ctx, 2*time.Second)
+			defer cancel()
+
+			d.registryHealthy = true
+			d.registryData = make(map[string][]sdkRegistry.ServiceInfo)
+
+			for _, kind := range []string{"agent", "tool", "plugin"} {
+				services, err := reg.DiscoverAll(ctx, kind)
+				if err == nil {
+					d.registryData[kind] = services
+				} else {
+					d.registryHealthy = false
+				}
+			}
+
+			// Get registry status
+			status := d.registryManager.Status()
+			d.registryStatus = &status
+		} else {
+			d.registryHealthy = false
+		}
+	}
+
+	// Fallback: Load components from DAO if registry unavailable
+	if !d.registryHealthy && d.componentDAO != nil {
 		components, err := d.componentDAO.ListAll(d.ctx)
 		if err == nil {
 			d.components = components
@@ -297,9 +334,61 @@ func (d *DashboardView) renderMissionSummary() string {
 func (d *DashboardView) renderAgentStatus() string {
 	var lines []string
 
+	// Use registry data if available
+	if d.registryHealthy && len(d.registryData["agent"]) > 0 {
+		agents := d.registryData["agent"]
+
+		// Count unique agents and total instances
+		uniqueAgents := make(map[string][]sdkRegistry.ServiceInfo)
+		for _, svc := range agents {
+			uniqueAgents[svc.Name] = append(uniqueAgents[svc.Name], svc)
+		}
+
+		lines = append(lines, fmt.Sprintf("Total Agents: %d", len(uniqueAgents)))
+		lines = append(lines, fmt.Sprintf("Total Instances: %d", len(agents)))
+		lines = append(lines, "")
+
+		// Show agents with instance counts
+		if len(uniqueAgents) > 0 {
+			lines = append(lines, "Registered Agents:")
+			count := 0
+			for name, instances := range uniqueAgents {
+				if count >= 5 {
+					lines = append(lines, fmt.Sprintf("  ... and %d more", len(uniqueAgents)-5))
+					break
+				}
+
+				instanceCount := len(instances)
+				info := fmt.Sprintf("  %s", truncate(name, 20))
+				if instanceCount > 1 {
+					info += fmt.Sprintf(" (%dx)", instanceCount)
+				}
+
+				// Show endpoint of first instance
+				if len(instances) > 0 {
+					info += fmt.Sprintf(" @ %s", truncate(instances[0].Endpoint, 20))
+				}
+
+				lines = append(lines, info)
+				count++
+			}
+		}
+
+		return strings.Join(lines, "\n")
+	}
+
+	// Fallback to legacy component DAO data
 	agents, ok := d.components[component.ComponentKindAgent]
 	if !ok || len(agents) == 0 {
-		lines = append(lines, "No agents registered")
+		if d.registryManager != nil {
+			lines = append(lines, "No agents registered")
+			lines = append(lines, "")
+			lines = append(lines, "(Using registry discovery)")
+		} else {
+			lines = append(lines, "Registry unavailable")
+			lines = append(lines, "")
+			lines = append(lines, "No legacy data available")
+		}
 		return strings.Join(lines, "\n")
 	}
 
@@ -344,6 +433,9 @@ func (d *DashboardView) renderAgentStatus() string {
 			lines = append(lines, info)
 		}
 	}
+
+	lines = append(lines, "")
+	lines = append(lines, "(Legacy mode)")
 
 	return strings.Join(lines, "\n")
 }
@@ -393,7 +485,24 @@ func (d *DashboardView) renderRecentFindings() string {
 func (d *DashboardView) renderSystemMetrics() string {
 	var lines []string
 
+	// Registry status (new - show first)
+	lines = append(lines, "Registry:")
+	if d.registryStatus != nil {
+		status := "Healthy"
+		if !d.registryStatus.Healthy {
+			status = "Unhealthy"
+		}
+		lines = append(lines, fmt.Sprintf("  Type: %s", d.registryStatus.Type))
+		lines = append(lines, fmt.Sprintf("  Endpoint: %s", d.registryStatus.Endpoint))
+		lines = append(lines, fmt.Sprintf("  Status: %s", status))
+		lines = append(lines, fmt.Sprintf("  Services: %d", d.registryStatus.Services))
+	} else {
+		lines = append(lines, "  Status: Not Available")
+	}
+
 	// Database status
+	lines = append(lines, "")
+	lines = append(lines, "Database:")
 	dbStatus := "Unknown"
 	if d.db != nil {
 		err := d.db.Health(d.ctx)
@@ -403,26 +512,26 @@ func (d *DashboardView) renderSystemMetrics() string {
 			dbStatus = "Error"
 		}
 	}
-
-	lines = append(lines, "Database:")
 	lines = append(lines, fmt.Sprintf("  Status: %s", dbStatus))
 
-	// Component counts
+	// Component counts - use registry if available
 	lines = append(lines, "")
 	lines = append(lines, "Components:")
 
-	agentCount := len(d.components[component.ComponentKindAgent])
-	toolCount := len(d.components[component.ComponentKindTool])
-	pluginCount := len(d.components[component.ComponentKindPlugin])
+	var agentCount, toolCount, pluginCount int
+	if d.registryHealthy {
+		agentCount = len(d.registryData["agent"])
+		toolCount = len(d.registryData["tool"])
+		pluginCount = len(d.registryData["plugin"])
+	} else {
+		agentCount = len(d.components[component.ComponentKindAgent])
+		toolCount = len(d.components[component.ComponentKindTool])
+		pluginCount = len(d.components[component.ComponentKindPlugin])
+	}
 
 	lines = append(lines, fmt.Sprintf("  Agents:  %d", agentCount))
 	lines = append(lines, fmt.Sprintf("  Tools:   %d", toolCount))
 	lines = append(lines, fmt.Sprintf("  Plugins: %d", pluginCount))
-
-	// LLM health (placeholder - would need actual LLM client)
-	lines = append(lines, "")
-	lines = append(lines, "LLM Service:")
-	lines = append(lines, "  Status: Not Configured")
 
 	// Last refresh time
 	lines = append(lines, "")

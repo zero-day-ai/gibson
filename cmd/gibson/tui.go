@@ -13,6 +13,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tui"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/term"
@@ -142,6 +143,21 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 		}
 	}
 
+	// Initialize registry manager if configured
+	if cfg != nil {
+		regMgr := GetRegistryManager(ctx)
+		if regMgr == nil {
+			// Registry not initialized in root, create one for TUI
+			regMgr = initializeRegistryForTUI(ctx, cfg)
+			if regMgr != nil {
+				cleanupFuncs = append(cleanupFuncs, func() {
+					_ = regMgr.Stop(context.Background())
+				})
+			}
+		}
+		appConfig.RegistryManager = regMgr
+	}
+
 	// Initialize database if configured
 	if cfg != nil && cfg.Database.Path != "" {
 		// Expand any environment variables or ~ in the path
@@ -197,6 +213,17 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 	}
 
 	return appConfig, cleanup, nil
+}
+
+// initializeRegistryForTUI initializes the registry manager for TUI mode.
+// This is called when the TUI is launched without going through root command.
+func initializeRegistryForTUI(ctx context.Context, cfg *config.Config) *registry.Manager {
+	regMgr := registry.NewManager(cfg.Registry)
+	if err := regMgr.Start(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to start registry: %v\n", err)
+		return nil
+	}
+	return regMgr
 }
 
 // TUIAvailable returns true if the TUI can be launched.

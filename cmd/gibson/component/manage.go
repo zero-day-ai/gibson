@@ -13,7 +13,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/component/build"
 	"github.com/zero-day-ai/gibson/internal/component/git"
-	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -128,127 +127,11 @@ func runList(cmd *cobra.Command, args []string, cfg Config, flags *ListFlags) er
 	// Create component DAO
 	dao := database.NewComponentDAO(db)
 
-	// Create UnifiedDiscovery for live component status
-	discovery := createUnifiedDiscovery(homeDir)
-
-	// Discover components based on kind
-	var discovered []component.DiscoveredComponent
-	switch cfg.Kind {
-	case component.ComponentKindAgent:
-		discovered, err = discovery.DiscoverAgents(ctx)
-	case component.ComponentKindTool:
-		discovered, err = discovery.DiscoverTools(ctx)
-	case component.ComponentKindPlugin:
-		discovered, err = discovery.DiscoverPlugins(ctx)
-	default:
-		return fmt.Errorf("unknown component kind: %s", cfg.Kind)
-	}
-
-	// If discovery fails, fall back to database-only listing
-	if err != nil {
-		cmd.Printf("Warning: Live discovery failed (%v), showing database records only\n", err)
-		return runListFallback(cmd, ctx, cfg, flags, dao)
-	}
-
-	// Apply source filters
-	var filtered []component.DiscoveredComponent
-	for _, comp := range discovered {
-		if flags.Local && !comp.IsLocal() {
-			continue
-		}
-		if flags.Remote && !comp.IsRemote() {
-			continue
-		}
-		filtered = append(filtered, comp)
-	}
-
-	if len(filtered) == 0 {
-		cmd.Printf("No %s found.\n", cfg.DisplayPlural)
-		return nil
-	}
-
-	// Get metadata from database for each discovered component
-	type componentRow struct {
-		Name    string
-		Version string
-		Status  string
-		Port    string
-		Source  string
-		Path    string
-	}
-
-	rows := make([]componentRow, 0, len(filtered))
-	for _, disc := range filtered {
-		// Get metadata from database
-		meta, err := dao.GetByName(ctx, cfg.Kind, disc.Name)
-		version := "unknown"
-		path := "-"
-		if err == nil && meta != nil {
-			version = meta.Version
-			if meta.RepoPath != "" {
-				path = meta.RepoPath
-			}
-		}
-
-		// Determine status from discovery state
-		status := "stopped"
-		if disc.Healthy {
-			status = "running"
-		}
-
-		port := "-"
-		if disc.Port > 0 {
-			port = fmt.Sprintf("%d", disc.Port)
-		}
-
-		rows = append(rows, componentRow{
-			Name:    disc.Name,
-			Version: version,
-			Status:  status,
-			Port:    port,
-			Source:  string(disc.Source),
-			Path:    path,
-		})
-	}
-
-	// Display results in table format
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-
-	// Different headers based on component kind
-	if cfg.Kind == component.ComponentKindAgent {
-		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tPORT\tSOURCE")
-		fmt.Fprintln(w, "----\t-------\t------\t----\t------")
-
-		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				row.Name,
-				row.Version,
-				row.Status,
-				row.Port,
-				row.Source,
-			)
-		}
-	} else {
-		// For tools and plugins
-		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tSOURCE\tPATH")
-		fmt.Fprintln(w, "----\t-------\t------\t------\t----")
-
-		for _, row := range rows {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				row.Name,
-				row.Version,
-				row.Status,
-				row.Source,
-				row.Path,
-			)
-		}
-	}
-
-	w.Flush()
-	return nil
+	// Use database-only listing (legacy discovery removed)
+	return runListFallback(cmd, ctx, cfg, flags, dao)
 }
 
-// runListFallback provides database-only listing when UnifiedDiscovery fails.
+// runListFallback provides database-only listing.
 func runListFallback(cmd *cobra.Command, ctx context.Context, cfg Config, flags *ListFlags, dao database.ComponentDAO) error {
 	// Get all components of the specified kind from database
 	components, err := dao.List(ctx, cfg.Kind)
@@ -638,8 +521,12 @@ func runBuild(cmd *cobra.Command, args []string, cfg Config) error {
 
 	// Override with manifest build command if specified
 	if buildCfg.Command != "" {
-		buildConfig.Command = buildCfg.Command
-		buildConfig.Args = []string{}
+		// Split command into executable and args
+		parts := strings.Fields(buildCfg.Command)
+		if len(parts) > 0 {
+			buildConfig.Command = parts[0]
+			buildConfig.Args = parts[1:]
+		}
 	}
 
 	// Set working directory if specified
@@ -674,41 +561,3 @@ func openDatabase(dbPath string) (*database.DB, error) {
 	return database.Open(dbPath)
 }
 
-// createUnifiedDiscovery creates a UnifiedDiscovery instance for component discovery.
-// It configures both local and remote component discovery.
-func createUnifiedDiscovery(homeDir string) component.UnifiedDiscovery {
-	// Create local tracker
-	localTracker := component.NewDefaultLocalTracker()
-
-	// Load configuration for remote components
-	configFile := config.DefaultConfigPath(homeDir)
-	loader := config.NewConfigLoader(config.NewValidator())
-	cfg, err := loader.LoadWithDefaults(configFile)
-
-	// Create remote prober
-	remoteProber := component.NewDefaultRemoteProber()
-
-	// Load remote component configurations if config loaded successfully
-	if err == nil && (cfg.RemoteAgents != nil || cfg.RemoteTools != nil || cfg.RemotePlugins != nil) {
-		// Ensure maps are not nil
-		agents := cfg.RemoteAgents
-		tools := cfg.RemoteTools
-		plugins := cfg.RemotePlugins
-
-		if agents == nil {
-			agents = make(map[string]component.RemoteComponentConfig)
-		}
-		if tools == nil {
-			tools = make(map[string]component.RemoteComponentConfig)
-		}
-		if plugins == nil {
-			plugins = make(map[string]component.RemoteComponentConfig)
-		}
-
-		// Load configuration into prober (ignoring errors for CLI - will just have no remote components)
-		_ = remoteProber.LoadConfig(agents, tools, plugins)
-	}
-
-	// Create unified discovery with nil logger (silent mode)
-	return component.NewDefaultUnifiedDiscovery(localTracker, remoteProber, nil)
-}

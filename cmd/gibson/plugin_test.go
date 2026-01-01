@@ -118,7 +118,8 @@ func createTestPlugin(name, version string, status component.ComponentStatus) *c
 		Kind:      component.ComponentKindPlugin,
 		Name:      name,
 		Version:   version,
-		Path:      "/test/path/" + name,
+		RepoPath:  "/test/repos/" + name,
+		BinPath:   "/test/bin/" + name,
 		Source:    component.ComponentSourceExternal,
 		Status:    status,
 		Port:      50000,
@@ -129,7 +130,7 @@ func createTestPlugin(name, version string, status component.ComponentStatus) *c
 			Name:        name,
 			Version:     version,
 			Description: "Test plugin",
-			Runtime: component.RuntimeConfig{
+			Runtime: &component.RuntimeConfig{
 				Type:       component.RuntimeTypeBinary,
 				Entrypoint: "/test/bin/" + name,
 			},
@@ -358,7 +359,7 @@ func TestPluginUninstall_Success(t *testing.T) {
 	mockInstaller.On("Uninstall", mock.Anything, component.ComponentKindPlugin, pluginName).Return(&component.UninstallResult{
 		Name:     pluginName,
 		Kind:     component.ComponentKindPlugin,
-		Path:     pluginComp.Path,
+		Path:     pluginComp.RepoPath,
 		Duration: time.Second,
 	}, nil)
 
@@ -388,7 +389,7 @@ func TestPluginUninstall_StopsRunningPlugin(t *testing.T) {
 	mockInstaller.On("Uninstall", mock.Anything, component.ComponentKindPlugin, pluginName).Return(&component.UninstallResult{
 		Name:       pluginName,
 		Kind:       component.ComponentKindPlugin,
-		Path:       pluginComp.Path,
+		Path:       pluginComp.RepoPath,
 		Duration:   time.Second,
 		WasStopped: true,
 		WasRunning: true,

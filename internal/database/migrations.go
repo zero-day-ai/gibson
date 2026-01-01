@@ -1351,7 +1351,7 @@ func getRemoveComponentRuntimeColumnsSchema() string {
 	return `
 -- Migration 10: Remove Component Runtime Columns
 -- Remove pid, port, status, started_at, stopped_at from components table
--- These are now tracked via filesystem (LocalTracker) instead of database
+-- These are now tracked via process checking instead of database
 
 -- Step 1: Create new table without runtime columns
 CREATE TABLE components_new (

@@ -54,50 +54,11 @@ func (v *validatorImpl) Validate(cfg *Config) error {
 		}
 	}
 
-	// Custom validation for RemoteComponentConfig addresses
-	if err := v.validateRemoteComponents(cfg); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// validateRemoteComponents validates remote component configurations
-func (v *validatorImpl) validateRemoteComponents(cfg *Config) error {
-	var errorMessages []string
-
-	// Validate remote agents
-	for name, agentCfg := range cfg.RemoteAgents {
-		if agentCfg.Address == "" {
-			errorMessages = append(errorMessages, fmt.Sprintf("remote_agents.%s.address is required", name))
+	// Custom validation for RegistryConfig
+	if cfg.Registry.Type == "etcd" {
+		if len(cfg.Registry.Endpoints) == 0 {
+			return fmt.Errorf("configuration validation failed:\n  - registry.endpoints must be non-empty when registry.type is 'etcd'")
 		}
-		if agentCfg.HealthCheck != "" && agentCfg.HealthCheck != "grpc" && agentCfg.HealthCheck != "http" {
-			errorMessages = append(errorMessages, fmt.Sprintf("remote_agents.%s.health_check must be 'grpc' or 'http' (got: %s)", name, agentCfg.HealthCheck))
-		}
-	}
-
-	// Validate remote tools
-	for name, toolCfg := range cfg.RemoteTools {
-		if toolCfg.Address == "" {
-			errorMessages = append(errorMessages, fmt.Sprintf("remote_tools.%s.address is required", name))
-		}
-		if toolCfg.HealthCheck != "" && toolCfg.HealthCheck != "grpc" && toolCfg.HealthCheck != "http" {
-			errorMessages = append(errorMessages, fmt.Sprintf("remote_tools.%s.health_check must be 'grpc' or 'http' (got: %s)", name, toolCfg.HealthCheck))
-		}
-	}
-
-	// Validate remote plugins
-	for name, pluginCfg := range cfg.RemotePlugins {
-		if pluginCfg.Address == "" {
-			errorMessages = append(errorMessages, fmt.Sprintf("remote_plugins.%s.address is required", name))
-		}
-		if pluginCfg.HealthCheck != "" && pluginCfg.HealthCheck != "grpc" && pluginCfg.HealthCheck != "http" {
-			errorMessages = append(errorMessages, fmt.Sprintf("remote_plugins.%s.health_check must be 'grpc' or 'http' (got: %s)", name, pluginCfg.HealthCheck))
-		}
-	}
-
-	if len(errorMessages) > 0 {
-		return fmt.Errorf("configuration validation failed:\n  - %s", strings.Join(errorMessages, "\n  - "))
 	}
 
 	return nil

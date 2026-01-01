@@ -15,7 +15,6 @@ import (
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/attack"
-	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/harness"
@@ -314,7 +313,7 @@ func createAttackRunner() (attack.AttackRunner, error) {
 	pluginRegistry := plugin.NewPluginRegistry()
 	payloadRegistry := payload.NewPayloadRegistryWithDefaults(db)
 
-	// Step 2.5: Discover running agents using UnifiedDiscovery (Task 4.2)
+	// Step 2.5: Discover running agents (legacy discovery removed)
 	if err := discoverAndRegisterAgents(context.Background(), homeDir, agentRegistry); err != nil {
 		slog.Warn("failed to discover running agents", "error", err)
 	}
@@ -663,64 +662,11 @@ func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
 	return registry, slotManager, nil
 }
 
-// discoverAndRegisterAgents uses UnifiedDiscovery to find all healthy agents
-// and registers them with the GRPCAgentRegistry. This replaces the old database-based
-// discovery and supports both local (Unix socket) and remote (TCP) agents.
+// discoverAndRegisterAgents discovers and registers agents with the GRPCAgentRegistry.
+// Legacy discovery removed - this function is stubbed for now.
 func discoverAndRegisterAgents(ctx context.Context, homeDir string, registry *agent.GRPCAgentRegistry) error {
-	// Create local tracker for discovering local agents
-	localTracker := component.NewDefaultLocalTracker()
-
-	// Create remote prober for discovering remote agents
-	// For now, we'll create an empty prober since remote config isn't implemented yet
-	remoteProber := component.NewDefaultRemoteProber()
-
-	// Create unified discovery
-	discovery := component.NewDefaultUnifiedDiscovery(localTracker, remoteProber, &slogAdapter{})
-
-	// Discover all agents
-	agents, err := discovery.DiscoverAgents(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to discover agents: %w", err)
-	}
-
-	registered := 0
-	for _, discoveredAgent := range agents {
-		// Convert address based on source
-		address := discoveredAgent.Address
-
-		// For local agents, address is a Unix socket path (e.g., /home/user/.gibson/run/agent/k8skiller.sock)
-		// For remote agents, address is already TCP format (e.g., "k8skiller-container:50051")
-		// GRPCAgentRegistry needs to know how to connect to both
-
-		// For Unix sockets, we need to prefix with "unix://"
-		if discoveredAgent.IsLocal() {
-			address = "unix://" + address
-		}
-
-		// Register the agent's address with the registry
-		if err := registry.RegisterAddress(discoveredAgent.Name, address); err != nil {
-			slog.Warn("failed to register agent address",
-				"agent", discoveredAgent.Name,
-				"source", discoveredAgent.Source,
-				"address", address,
-				"error", err)
-			continue
-		}
-
-		slog.Info("registered agent with attack runner",
-			"agent", discoveredAgent.Name,
-			"source", discoveredAgent.Source,
-			"address", address,
-			"healthy", discoveredAgent.Healthy)
-		registered++
-	}
-
-	if registered > 0 {
-		slog.Info("discovered running agents", "count", registered)
-	} else {
-		slog.Debug("no healthy agents discovered")
-	}
-
+	// Legacy discovery removed - will be replaced with registry-based discovery in Phase 4
+	slog.Debug("agent discovery temporarily disabled (legacy code removed)")
 	return nil
 }
 

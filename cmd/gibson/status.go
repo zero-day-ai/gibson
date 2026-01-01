@@ -30,6 +30,7 @@ var statusCmd = &cobra.Command{
 // SystemStatus represents the complete system status
 type SystemStatus struct {
 	OverallHealth types.HealthStatus  `json:"overall_health"`
+	Registry      RegistryStatus      `json:"registry"`
 	Components    ComponentsStatus    `json:"components"`
 	Database      DatabaseStatus      `json:"database"`
 	LLMProviders  []LLMProviderStatus `json:"llm_providers"`
@@ -64,6 +65,16 @@ type LLMProviderStatus struct {
 	Name         string             `json:"name"`
 	Configured   bool               `json:"configured"`
 	HealthStatus types.HealthStatus `json:"health_status"`
+}
+
+// RegistryStatus represents registry health information
+type RegistryStatus struct {
+	Type     string    `json:"type"`
+	Endpoint string    `json:"endpoint"`
+	Healthy  bool      `json:"healthy"`
+	Uptime   string    `json:"uptime"`
+	Services int       `json:"services"`
+	Error    string    `json:"error,omitempty"`
 }
 
 func init() {
@@ -117,6 +128,9 @@ func collectSystemStatus(ctx context.Context, homeDir string) SystemStatus {
 		CheckedAt: time.Now(),
 	}
 
+	// Check registry
+	status.Registry = checkRegistryStatus(ctx)
+
 	// Check components
 	status.Components = checkComponentsStatus(homeDir)
 
@@ -130,6 +144,59 @@ func collectSystemStatus(ctx context.Context, homeDir string) SystemStatus {
 	status.OverallHealth = determineOverallHealth(status)
 
 	return status
+}
+
+// checkRegistryStatus checks the registry status
+func checkRegistryStatus(ctx context.Context) RegistryStatus {
+	regStatus := RegistryStatus{
+		Healthy: false,
+	}
+
+	// Get registry manager from context
+	regManager := GetRegistryManager(ctx)
+	if regManager == nil {
+		regStatus.Error = "registry not initialized"
+		return regStatus
+	}
+
+	// Get status from registry manager
+	status := regManager.Status()
+
+	regStatus.Type = status.Type
+	regStatus.Endpoint = status.Endpoint
+	regStatus.Healthy = status.Healthy
+	regStatus.Services = status.Services
+
+	// Calculate uptime if started
+	if !status.StartedAt.IsZero() && status.Healthy {
+		uptime := time.Since(status.StartedAt)
+		regStatus.Uptime = formatDuration(uptime)
+	} else {
+		regStatus.Uptime = "0s"
+	}
+
+	// Set error if unhealthy
+	if !status.Healthy {
+		regStatus.Error = "registry is not running"
+	}
+
+	return regStatus
+}
+
+// formatDuration formats a duration in a human-readable format (e.g., "2h 15m")
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	if minutes == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh %dm", hours, minutes)
 }
 
 // checkComponentsStatus checks the status of all components
@@ -371,6 +438,26 @@ func printTextStatus(formatter internal.Formatter, status SystemStatus) error {
 	fmt.Printf("\n%s Overall Status: %s\n", healthSymbol, status.OverallHealth.State)
 	if status.OverallHealth.Message != "" {
 		fmt.Printf("  %s\n", status.OverallHealth.Message)
+	}
+	fmt.Println()
+
+	// Print registry status
+	fmt.Println("Registry:")
+	if status.Registry.Healthy {
+		fmt.Printf("  ✓ Type:     %s\n", status.Registry.Type)
+		fmt.Printf("    Endpoint: %s\n", status.Registry.Endpoint)
+		fmt.Printf("    Healthy:  yes\n")
+		fmt.Printf("    Uptime:   %s\n", status.Registry.Uptime)
+		fmt.Printf("    Services: %d\n", status.Registry.Services)
+	} else {
+		fmt.Printf("  ✗ Type:     %s\n", status.Registry.Type)
+		if status.Registry.Endpoint != "" {
+			fmt.Printf("    Endpoint: %s\n", status.Registry.Endpoint)
+		}
+		fmt.Printf("    Healthy:  no\n")
+		if status.Registry.Error != "" {
+			fmt.Printf("    Error:    %s\n", status.Registry.Error)
+		}
 	}
 	fmt.Println()
 

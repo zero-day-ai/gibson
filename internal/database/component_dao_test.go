@@ -78,7 +78,7 @@ func TestComponentDAO_Create(t *testing.T) {
 		t.Errorf("expected Source external, got %s", retrieved.Source)
 	}
 	// Note: Status, PID, Port are no longer stored in database (migration 10)
-	// They are tracked via LocalTracker instead
+	// They are tracked via process checking instead
 	if retrieved.Manifest == nil {
 		t.Fatal("expected Manifest to be set")
 	}
@@ -467,7 +467,7 @@ func TestComponentDAO_ListAll(t *testing.T) {
 }
 
 // TestComponentDAO_ListByStatus is removed - status is no longer stored in database
-// Runtime state is tracked via LocalTracker (filesystem-based) starting from migration 10
+// Runtime state is tracked via process checking starting from migration 10
 // This test is disabled as ListByStatus method has been removed from ComponentDAO interface
 
 // TestComponentDAO_Update tests updating a component's metadata
@@ -561,7 +561,7 @@ func TestComponentDAO_Update_NotFound(t *testing.T) {
 }
 
 // TestComponentDAO_UpdateStatus tests updating component status with pid and port
-// NOTE: UpdateStatus is now a no-op since runtime state is tracked via LocalTracker (migration 10)
+// NOTE: UpdateStatus is now a no-op since runtime state is tracked via process checking (migration 10)
 func TestComponentDAO_UpdateStatus(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()

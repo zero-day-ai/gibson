@@ -1,13 +1,47 @@
 package component
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/registry"
+	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
+
+const (
+	// registryPollInterval is how often to check registry for component registration
+	registryPollInterval = 500 * time.Millisecond
+
+	// registryStartTimeout is how long to wait for component to register
+	registryStartTimeout = 30 * time.Second
+
+	// registryStopTimeout is how long to wait for graceful shutdown
+	registryStopTimeout = 10 * time.Second
+)
+
+// contextKey is a type for context keys to avoid collisions
+type contextKey string
+
+// registryManagerKey is the context key for storing the registry manager
+const registryManagerKey contextKey = "registryManager"
+
+// GetRegistryManager retrieves the registry manager from the context.
+// Returns nil if the manager is not present in the context.
+func GetRegistryManager(ctx context.Context) *registry.Manager {
+	if m, ok := ctx.Value(registryManagerKey).(*registry.Manager); ok {
+		return m
+	}
+	return nil
+}
 
 // newStartCommand creates a start command for the specified component type.
 func newStartCommand(cfg Config) *cobra.Command {
@@ -42,6 +76,17 @@ func runStart(cmd *cobra.Command, args []string, cfg Config) error {
 	ctx := cmd.Context()
 	componentName := args[0]
 
+	// Get registry manager from context
+	regManager := GetRegistryManager(ctx)
+	if regManager == nil {
+		return fmt.Errorf("registry not available (run 'gibson init' first)")
+	}
+
+	reg := regManager.Registry()
+	if reg == nil {
+		return fmt.Errorf("registry not started")
+	}
+
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
 	if err != nil {
@@ -68,24 +113,35 @@ func runStart(cmd *cobra.Command, args []string, cfg Config) error {
 		return fmt.Errorf("%s '%s' not found", cfg.DisplayName, componentName)
 	}
 
-	// Check if already running
-	if comp.IsRunning() {
-		return fmt.Errorf("%s '%s' is already running (PID: %d)", cfg.DisplayName, componentName, comp.PID)
+	// Check if already running by querying registry
+	instances, err := reg.Discover(ctx, string(cfg.Kind), componentName)
+	if err != nil {
+		return fmt.Errorf("failed to query registry: %w", err)
+	}
+	if len(instances) > 0 {
+		return fmt.Errorf("%s '%s' is already running (%d instance(s) found in registry)",
+			cfg.DisplayName, componentName, len(instances))
 	}
 
 	cmd.Printf("Starting %s '%s'...\n", cfg.DisplayName, componentName)
 
-	// Get lifecycle manager with DAO
-	lifecycleManager := getLifecycleManager(dao)
-
-	// Start component
-	port, err := lifecycleManager.StartComponent(ctx, comp)
+	// Start component with registry
+	port, pid, err := startComponentWithRegistry(ctx, comp, reg, regManager)
 	if err != nil {
 		return fmt.Errorf("failed to start %s: %w", cfg.DisplayName, err)
 	}
 
+	// Update component status in database
+	comp.PID = pid
+	comp.Port = port
+	comp.UpdateStatus(component.ComponentStatusRunning)
+	if err := dao.UpdateStatus(ctx, comp.ID, comp.Status, comp.PID, comp.Port); err != nil {
+		// Log warning but don't fail - component is running
+		cmd.PrintErrf("Warning: failed to update database: %v\n", err)
+	}
+
 	cmd.Printf("%s '%s' started successfully\n", capitalizeFirst(cfg.DisplayName), componentName)
-	cmd.Printf("PID: %d\n", comp.PID)
+	cmd.Printf("PID: %d\n", pid)
 	cmd.Printf("Port: %d\n", port)
 
 	return nil
@@ -96,6 +152,17 @@ func runStop(cmd *cobra.Command, args []string, cfg Config) error {
 	ctx := cmd.Context()
 	componentName := args[0]
 
+	// Get registry manager from context
+	regManager := GetRegistryManager(ctx)
+	if regManager == nil {
+		return fmt.Errorf("registry not available (run 'gibson init' first)")
+	}
+
+	reg := regManager.Registry()
+	if reg == nil {
+		return fmt.Errorf("registry not started")
+	}
+
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
 	if err != nil {
@@ -122,64 +189,317 @@ func runStop(cmd *cobra.Command, args []string, cfg Config) error {
 		return fmt.Errorf("%s '%s' not found", cfg.DisplayName, componentName)
 	}
 
-	// Check if running
-	if !comp.IsRunning() {
-		return fmt.Errorf("%s '%s' is not running", cfg.DisplayName, componentName)
+	// Query registry for running instances
+	instances, err := reg.Discover(ctx, string(cfg.Kind), componentName)
+	if err != nil {
+		return fmt.Errorf("failed to query registry: %w", err)
+	}
+	if len(instances) == 0 {
+		return fmt.Errorf("%s '%s' is not running (no instances found in registry)",
+			cfg.DisplayName, componentName)
 	}
 
-	cmd.Printf("Stopping %s '%s' (PID: %d)...\n", cfg.DisplayName, componentName, comp.PID)
+	cmd.Printf("Stopping %s '%s' (%d instance(s))...\n",
+		cfg.DisplayName, componentName, len(instances))
 
-	// Get lifecycle manager with DAO
-	lifecycleManager := getLifecycleManager(dao)
-
-	// Stop component
-	if err := lifecycleManager.StopComponent(ctx, comp); err != nil {
-		return fmt.Errorf("failed to stop %s: %w", cfg.DisplayName, err)
+	// Stop all instances
+	var lastErr error
+	stoppedCount := 0
+	for _, instance := range instances {
+		if err := stopComponentInstance(ctx, instance, reg); err != nil {
+			cmd.PrintErrf("Warning: failed to stop instance %s: %v\n",
+				instance.InstanceID, err)
+			lastErr = err
+		} else {
+			stoppedCount++
+		}
 	}
 
-	cmd.Printf("%s '%s' stopped successfully\n", capitalizeFirst(cfg.DisplayName), componentName)
+	if stoppedCount == 0 && lastErr != nil {
+		return fmt.Errorf("failed to stop any instances: %w", lastErr)
+	}
+
+	// Update component status in database
+	comp.UpdateStatus(component.ComponentStatusStopped)
+	comp.PID = 0
+	comp.Port = 0
+	if err := dao.UpdateStatus(ctx, comp.ID, comp.Status, comp.PID, comp.Port); err != nil {
+		// Log warning but don't fail - component is stopped
+		cmd.PrintErrf("Warning: failed to update database: %v\n", err)
+	}
+
+	cmd.Printf("%s '%s' stopped successfully (%d/%d instances)\n",
+		capitalizeFirst(cfg.DisplayName), componentName, stoppedCount, len(instances))
 
 	return nil
 }
 
-// getLifecycleManager creates a lifecycle manager with DAO for status updates
-// and LogWriter for capturing component output.
-//
-// The LogWriter is configured to write logs to ~/.gibson/logs/<component-name>.log
-// with automatic rotation (10MB max size, 5 backups). If the log directory cannot
-// be created or LogWriter initialization fails, a warning is printed to stderr
-// and the lifecycle manager is created without logging (LogWriter = nil).
-//
-// This ensures that component startup is resilient to logging failures - components
-// will still start and run even if log file creation fails due to permissions or
-// disk space issues.
-func getLifecycleManager(dao component.StatusUpdater) component.LifecycleManager {
-	healthMonitor := component.NewHealthMonitor()
-
-	// Create log writer for capturing component output to ~/.gibson/logs/
-	var logWriter component.LogWriter
-	homeDir, err := getGibsonHome()
-	if err == nil {
-		// Create log directory path
-		logDir := fmt.Sprintf("%s/logs", homeDir)
-
-		// Create DefaultLogWriter with rotation (10MB max, 5 backups)
-		logWriter, err = component.NewDefaultLogWriter(logDir, nil)
-		if err != nil {
-			// Warn but don't fail - continue with nil LogWriter (no logging)
-			fmt.Fprintf(os.Stderr, "Warning: Failed to create log writer: %v\n", err)
-			logWriter = nil
-		}
-	} else {
-		// Warn but don't fail - continue with nil LogWriter (no logging)
-		fmt.Fprintf(os.Stderr, "Warning: Failed to get Gibson home: %v\n", err)
-		logWriter = nil
+// startComponentWithRegistry starts a component process and waits for it to register.
+func startComponentWithRegistry(
+	ctx context.Context,
+	comp *component.Component,
+	reg sdkregistry.Registry,
+	regManager *registry.Manager,
+) (port int, pid int, error error) {
+	// Validate component has required fields
+	if comp.Manifest == nil {
+		return 0, 0, fmt.Errorf("component manifest is required")
+	}
+	if comp.BinPath == "" {
+		return 0, 0, fmt.Errorf("component binary path is required")
 	}
 
-	// Create local tracker for filesystem-based lifecycle management
-	localTracker := component.NewDefaultLocalTracker()
+	// Find available port
+	port, err := findAvailablePort()
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to find available port: %w", err)
+	}
 
-	return component.NewLifecycleManager(healthMonitor, dao, logWriter, localTracker)
+	// Prepare command arguments
+	args := append([]string{}, comp.Manifest.Runtime.GetArgs()...)
+	args = append(args, "--port", strconv.Itoa(port))
+
+	// Add health endpoint flag if specified in runtime config
+	if comp.Manifest.Runtime.HealthURL != "" {
+		args = append(args, "--health-endpoint", comp.Manifest.Runtime.HealthURL)
+	}
+
+	// Create command
+	cmd := exec.Command(comp.BinPath, args...)
+
+	// Set environment variables
+	env := os.Environ()
+	for k, v := range comp.Manifest.Runtime.GetEnv() {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Add registry endpoints to environment
+	registryEndpoint := regManager.Status().Endpoint
+	env = append(env, fmt.Sprintf("GIBSON_REGISTRY_ENDPOINTS=%s", registryEndpoint))
+
+	cmd.Env = env
+
+	// Detach the child process from the parent's process group
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	// Start the process
+	if err := cmd.Start(); err != nil {
+		return 0, 0, fmt.Errorf("failed to start process: %w", err)
+	}
+
+	pid = cmd.Process.Pid
+
+	// Wait for component to register in registry
+	if err := waitForRegistration(ctx, reg, string(comp.Kind), comp.Name, registryStartTimeout); err != nil {
+		// Registration failed, kill the process
+		_ = cmd.Process.Kill()
+		return 0, 0, fmt.Errorf("component failed to register: %w", err)
+	}
+
+	return port, pid, nil
+}
+
+// stopComponentInstance stops a single component instance.
+func stopComponentInstance(
+	ctx context.Context,
+	instance sdkregistry.ServiceInfo,
+	reg sdkregistry.Registry,
+) error {
+	// Extract port from endpoint (format: "host:port")
+	port, err := parsePortFromEndpoint(instance.Endpoint)
+	if err != nil {
+		return fmt.Errorf("failed to parse endpoint: %w", err)
+	}
+
+	// Find process by port
+	pid, err := findProcessByPort(port)
+	if err != nil {
+		return fmt.Errorf("failed to find process for port %d: %w", port, err)
+	}
+
+	// Find the process
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("failed to find process %d: %w", pid, err)
+	}
+
+	// Send SIGTERM for graceful shutdown
+	if err := process.Signal(syscall.SIGTERM); err != nil {
+		// Process may already be dead
+		if strings.Contains(err.Error(), "process already finished") {
+			// Already finished, consider it success
+			return nil
+		}
+		return fmt.Errorf("failed to send SIGTERM: %w", err)
+	}
+
+	// Wait for deregistration from registry with timeout
+	stopCtx, cancel := context.WithTimeout(ctx, registryStopTimeout)
+	defer cancel()
+
+	if err := waitForDeregistration(stopCtx, reg, instance.Kind, instance.Name, instance.InstanceID); err != nil {
+		// Timeout reached, send SIGKILL
+		if err := process.Kill(); err != nil {
+			if !strings.Contains(err.Error(), "process already finished") {
+				return fmt.Errorf("failed to kill process: %w", err)
+			}
+		}
+		// Wait a bit for kill to complete
+		time.Sleep(time.Second)
+	}
+
+	return nil
+}
+
+// waitForRegistration polls the registry until the component appears.
+func waitForRegistration(
+	ctx context.Context,
+	reg sdkregistry.Registry,
+	kind, name string,
+	timeout time.Duration,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(registryPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for component to register")
+		case <-ticker.C:
+			instances, err := reg.Discover(ctx, kind, name)
+			if err != nil {
+				// Continue polling on transient errors
+				continue
+			}
+			if len(instances) > 0 {
+				// Component registered successfully
+				return nil
+			}
+		}
+	}
+}
+
+// waitForDeregistration polls the registry until a specific instance disappears.
+func waitForDeregistration(
+	ctx context.Context,
+	reg sdkregistry.Registry,
+	kind, name, instanceID string,
+) error {
+	ticker := time.NewTicker(registryPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timeout waiting for deregistration")
+		case <-ticker.C:
+			instances, err := reg.Discover(ctx, kind, name)
+			if err != nil {
+				// Continue polling on transient errors
+				continue
+			}
+
+			// Check if our instance is still present
+			found := false
+			for _, instance := range instances {
+				if instance.InstanceID == instanceID {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				// Instance deregistered successfully
+				return nil
+			}
+		}
+	}
+}
+
+// parsePortFromEndpoint extracts the port number from an endpoint string.
+func parsePortFromEndpoint(endpoint string) (int, error) {
+	// Handle unix sockets (not supported for port extraction)
+	if strings.HasPrefix(endpoint, "unix://") {
+		return 0, fmt.Errorf("unix sockets not supported for port-based process lookup")
+	}
+
+	// Extract port from "host:port" format
+	parts := strings.Split(endpoint, ":")
+	if len(parts) != 2 {
+		return 0, fmt.Errorf("invalid endpoint format: %s", endpoint)
+	}
+
+	port, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, fmt.Errorf("invalid port number: %s", parts[1])
+	}
+
+	return port, nil
+}
+
+// findProcessByPort finds the PID of the process listening on the specified port.
+func findProcessByPort(port int) (int, error) {
+	// Use lsof to find the process listening on the port
+	// lsof -t -i:PORT returns the PID
+	cmd := exec.Command("lsof", "-t", fmt.Sprintf("-i:%d", port))
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("lsof failed: %w", err)
+	}
+
+	// Parse PID from output
+	pidStr := strings.TrimSpace(string(output))
+	if pidStr == "" {
+		return 0, fmt.Errorf("no process found on port %d", port)
+	}
+
+	// If multiple PIDs, take the first one
+	lines := strings.Split(pidStr, "\n")
+	pid, err := strconv.Atoi(lines[0])
+	if err != nil {
+		return 0, fmt.Errorf("invalid PID: %s", lines[0])
+	}
+
+	return pid, nil
+}
+
+// findAvailablePort scans for an available port in the default range.
+func findAvailablePort() (int, error) {
+	// Use the same port range as the component lifecycle manager
+	const portRangeStart = 50000
+	const portRangeEnd = 60000
+
+	for port := portRangeStart; port <= portRangeEnd; port++ {
+		if isPortAvailable(port) {
+			return port, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no available ports in range %d-%d", portRangeStart, portRangeEnd)
+}
+
+// isPortAvailable checks if a port is available for use.
+func isPortAvailable(port int) bool {
+	conn, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.Close(conn)
+
+	var sockaddr syscall.SockaddrInet4
+	sockaddr.Port = port
+	copy(sockaddr.Addr[:], []byte{127, 0, 0, 1})
+
+	err = syscall.Bind(conn, &sockaddr)
+	if err != nil {
+		return false
+	}
+	return true
 }
 
 // capitalizeFirst capitalizes the first letter of a string.

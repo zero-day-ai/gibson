@@ -1007,9 +1007,7 @@ func (e *Executor) handleAgentStart(ctx context.Context, args []string) (*Execut
 	}
 
 	// Create lifecycle manager
-	healthMonitor := component.NewHealthMonitor()
-	localTracker := component.NewDefaultLocalTracker()
-	lifecycleManager := component.NewLifecycleManager(healthMonitor, e.config.ComponentDAO, nil, localTracker)
+	lifecycleManager := component.NewLifecycleManager(e.config.ComponentDAO, nil)
 
 	// Start the agent
 	port, err := lifecycleManager.StartComponent(ctx, agent)
@@ -1196,9 +1194,7 @@ func (e *Executor) handleAgentStop(ctx context.Context, args []string) (*Executi
 	}
 
 	// Create lifecycle manager
-	healthMonitor := component.NewHealthMonitor()
-	localTracker := component.NewDefaultLocalTracker()
-	lifecycleManager := component.NewLifecycleManager(healthMonitor, e.config.ComponentDAO, nil, localTracker)
+	lifecycleManager := component.NewLifecycleManager(e.config.ComponentDAO, nil)
 
 	// Stop the agent
 	if err := lifecycleManager.StopComponent(ctx, agent); err != nil {
@@ -2129,9 +2125,7 @@ func (e *Executor) handlePluginUninstall(ctx context.Context, args []string) (*E
 
 // getLifecycleManager creates a lifecycle manager for component operations.
 func (e *Executor) getLifecycleManager() component.LifecycleManager {
-	healthMonitor := component.NewHealthMonitor()
-	localTracker := component.NewDefaultLocalTracker()
-	return component.NewLifecycleManager(healthMonitor, e.config.ComponentDAO, nil, localTracker)
+	return component.NewLifecycleManager(e.config.ComponentDAO, nil)
 }
 
 // handleFocus switches TUI focus to a specific agent and subscribes to its event stream.

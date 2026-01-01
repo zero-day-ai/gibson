@@ -333,7 +333,7 @@ func TestNewAttackRunner(t *testing.T) {
 
 // TestRun_Success verifies successful attack execution without findings
 func TestRun_Success(t *testing.T) {
-	runner, orchestrator, _, _, _, _, targetResolver, agentSelector, payloadFilter := setupRunner(t)
+	runner, orchestrator, _, _, missionStore, _, targetResolver, agentSelector, payloadFilter := setupRunner(t)
 	ctx := context.Background()
 
 	opts := &AttackOptions{
@@ -364,6 +364,7 @@ func TestRun_Success(t *testing.T) {
 	targetResolver.On("Resolve", mock.Anything, opts).Return(targetConfig, nil)
 	agentSelector.On("Select", mock.Anything, "test-agent").Return(mockAgent, nil)
 	payloadFilter.On("Filter", mock.Anything, opts).Return([]payload.Payload{}, nil)
+	missionStore.On("Save", mock.Anything, mock.AnythingOfType("*mission.Mission")).Return(nil)
 	orchestrator.On("Execute", mock.Anything, mock.AnythingOfType("*mission.Mission")).Return(missionResult, nil)
 
 	result, err := runner.Run(ctx, opts)
@@ -490,9 +491,10 @@ func TestRun_NoPersistFlag(t *testing.T) {
 	targetResolver.On("Resolve", mock.Anything, opts).Return(targetConfig, nil)
 	agentSelector.On("Select", mock.Anything, "test-agent").Return(mockAgent, nil)
 	payloadFilter.On("Filter", mock.Anything, opts).Return([]payload.Payload{}, nil)
+	missionStore.On("Save", mock.Anything, mock.AnythingOfType("*mission.Mission")).Return(nil)
 	orchestrator.On("Execute", mock.Anything, mock.AnythingOfType("*mission.Mission")).Return(missionResult, nil)
 	findingStore.On("Get", mock.Anything, findingID).Return(testFinding, nil)
-	// Note: missionStore.Save should NOT be called
+	// Note: ephemeral mission is saved for orchestrator tracking, but not persisted permanently
 
 	result, err := runner.Run(ctx, opts)
 

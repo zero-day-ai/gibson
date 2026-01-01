@@ -789,7 +789,149 @@ Gibson supports environment variable substitution in configuration:
 - `${HOME}` - User home directory
 - `${ANTHROPIC_API_KEY}` - Anthropic API key
 - `${OPENAI_API_KEY}` - OpenAI API key
+- `${GIBSON_REGISTRY_ENDPOINTS}` - Registry endpoints for component discovery
 - Any other environment variable using `${VAR_NAME}` syntax
+
+### Registry Configuration
+
+Gibson uses an etcd-based service registry for component discovery and health monitoring. Components (agents, tools, plugins) register themselves when they start and are automatically discovered by the Gibson CLI.
+
+#### Embedded Mode (Default)
+
+For local development and single-node deployments, Gibson runs an embedded etcd instance:
+
+```yaml
+registry:
+  type: embedded
+  data_dir: ${HOME}/.gibson/etcd-data
+  listen_address: localhost:2379
+  namespace: gibson
+  ttl: 30s
+```
+
+The embedded registry:
+- Starts automatically with Gibson
+- Requires no external dependencies
+- Persists data to disk at `data_dir`
+- Suitable for development and testing
+
+#### External Mode (Production)
+
+For production deployments with multiple Gibson instances or distributed components:
+
+```yaml
+registry:
+  type: etcd
+  endpoints:
+    - https://etcd1.example.com:2379
+    - https://etcd2.example.com:2379
+    - https://etcd3.example.com:2379
+  namespace: gibson
+  ttl: 30s
+  tls:
+    enabled: true
+    cert_file: /path/to/client.crt
+    key_file: /path/to/client.key
+    ca_file: /path/to/ca.crt
+```
+
+External registry benefits:
+- High availability with etcd cluster
+- Shared state across multiple Gibson instances
+- Production-grade reliability and performance
+- Support for distributed component deployments
+
+#### Component Self-Registration
+
+Components built with the Gibson SDK automatically register themselves when started:
+
+```go
+import (
+    "github.com/zero-day-ai/sdk/serve"
+    "github.com/zero-day-ai/sdk/registry"
+)
+
+func main() {
+    myAgent, _ := agent.New(cfg)
+
+    // Automatic registration using environment variable
+    serve.Agent(myAgent,
+        serve.WithPort(50051),
+        serve.WithRegistryFromEnv(), // Reads GIBSON_REGISTRY_ENDPOINTS
+    )
+}
+```
+
+When Gibson starts a component via `gibson agent start`, it automatically sets the `GIBSON_REGISTRY_ENDPOINTS` environment variable:
+
+```bash
+# Gibson sets this automatically:
+GIBSON_REGISTRY_ENDPOINTS=localhost:2379
+
+# For external etcd:
+GIBSON_REGISTRY_ENDPOINTS=etcd1:2379,etcd2:2379,etcd3:2379
+```
+
+#### Registry Status
+
+Check registry health and registered components:
+
+```bash
+# View registry status
+gibson status
+
+# Output shows:
+# Registry: embedded (localhost:2379) - healthy
+#   Uptime: 2h 15m
+#   Registered Services: 12
+
+# View registered agents
+gibson agent status
+
+# Output shows:
+# NAME              VERSION    INSTANCES    ENDPOINTS
+# prompt-injector   1.0.0      2            localhost:50051, localhost:50052
+# jailbreaker       1.2.1      1            localhost:50053
+
+# View specific agent instances
+gibson agent status prompt-injector
+
+# Output shows:
+# INSTANCE                              ENDPOINT           STARTED
+# prompt-injector-a1b2c3d4-5678-9abc   localhost:50051    2024-01-15 10:30:15
+# prompt-injector-e4f5g6h7-8901-2def   localhost:50052    2024-01-15 10:31:22
+```
+
+#### Multi-Instance Support
+
+The registry supports running multiple instances of the same component for load balancing and high availability:
+
+```bash
+# Start multiple instances on different ports
+gibson agent start scanner --port 50051
+gibson agent start scanner --port 50052
+gibson agent start scanner --port 50053
+
+# Gibson automatically load-balances across all instances
+gibson agent status scanner
+# Shows 3 instances registered
+
+# Instances auto-deregister when stopped
+gibson agent stop scanner --port 50051
+gibson agent status scanner
+# Shows 2 instances remaining
+```
+
+#### Registry Lifecycle
+
+Components maintain their registry entries via TTL-based keepalive:
+
+1. **Registration**: Component registers on startup with metadata (name, version, endpoint, capabilities)
+2. **Keepalive**: Component renews its registry entry every `TTL/3` (default: 10s)
+3. **Deregistration**: Component explicitly deregisters on graceful shutdown
+4. **Auto-expiry**: If component crashes, entry expires after TTL (default: 30s)
+
+This ensures the registry always reflects the current state of running components without requiring manual cleanup of stale entries.
 
 * * *
 

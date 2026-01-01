@@ -60,23 +60,6 @@
 // The lifecycle manager starts components as processes, assigns ports, monitors
 // process health, and performs graceful shutdown (SIGTERM followed by SIGKILL).
 //
-// ## HealthMonitor
-//
-// HealthMonitor performs periodic health checks on running components:
-//
-//	type HealthMonitor interface {
-//	    Start(ctx context.Context) error
-//	    Stop() error
-//	    CheckComponent(ctx context.Context, healthEndpoint string) error
-//	    OnStatusChange(callback StatusChangeCallback)
-//	    GetHealth(componentName string) HealthStatus
-//	    RegisterComponent(name string, healthEndpoint string)
-//	    UnregisterComponent(name string)
-//	}
-//
-// The health monitor runs in the background, periodically checking registered
-// components and invoking callbacks when health status changes.
-//
 // # Manifest Format
 //
 // Components are described by a manifest file (component.yaml) that defines
@@ -314,16 +297,10 @@
 // Start, monitor, and stop a component:
 //
 //	func manageComponent() {
-//	    // Create lifecycle manager and health monitor
-//	    healthMonitor := component.NewHealthMonitor()
-//	    lifecycleManager := component.NewLifecycleManager(healthMonitor)
+//	    // Create lifecycle manager
+//	    lifecycleManager := component.NewLifecycleManager(nil, nil)
 //
-//	    // Start health monitoring
 //	    ctx := context.Background()
-//	    if err := healthMonitor.Start(ctx); err != nil {
-//	        log.Fatalf("Failed to start health monitor: %v", err)
-//	    }
-//	    defer healthMonitor.Stop()
 //
 //	    // Get component from database
 //	    dao := database.NewComponentDAO(db)
@@ -664,9 +641,6 @@
 // The ComponentDAO uses SQLite for persistence, which provides ACID guarantees
 // through transactions. Multiple processes can safely access the database
 // concurrently using SQLite's WAL mode.
-//
-// The HealthMonitor also uses proper synchronization for concurrent access to
-// monitored components and callbacks.
 //
 // # Error Handling
 //

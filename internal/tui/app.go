@@ -11,6 +11,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/plan"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tui/components"
 	"github.com/zero-day-ai/gibson/internal/tui/styles"
 	"github.com/zero-day-ai/gibson/internal/tui/views"
@@ -47,12 +48,13 @@ type App struct {
 	theme           *styles.Theme
 
 	// Dependencies (stored for view initialization)
-	db            *database.DB
-	missionStore  mission.MissionStore
-	componentDAO  database.ComponentDAO
-	findingStore  finding.FindingStore
-	agentRegistry agent.AgentRegistry
-	streamManager *agent.StreamManager
+	db              *database.DB
+	missionStore    mission.MissionStore
+	componentDAO    database.ComponentDAO
+	findingStore    finding.FindingStore
+	agentRegistry   agent.AgentRegistry
+	streamManager   *agent.StreamManager
+	registryManager *registry.Manager
 
 	// Ready state
 	ready bool
@@ -60,12 +62,13 @@ type App struct {
 
 // AppConfig contains configuration options for creating a new App.
 type AppConfig struct {
-	DB            *database.DB
-	MissionStore  mission.MissionStore
-	ComponentDAO  database.ComponentDAO
-	FindingStore  finding.FindingStore
-	AgentRegistry agent.AgentRegistry
-	StreamManager *agent.StreamManager
+	DB              *database.DB
+	MissionStore    mission.MissionStore
+	ComponentDAO    database.ComponentDAO
+	FindingStore    finding.FindingStore
+	AgentRegistry   agent.AgentRegistry
+	StreamManager   *agent.StreamManager
+	RegistryManager *registry.Manager
 }
 
 // NewApp creates a new TUI application with the given context and configuration.
@@ -74,20 +77,21 @@ func NewApp(ctx context.Context, config AppConfig) *App {
 	keyMap := DefaultKeyMap()
 
 	app := &App{
-		ctx:           ctx,
-		mode:          ModeDashboard,
-		width:         80,
-		height:        24,
-		keyMap:        keyMap,
-		theme:         theme,
-		showHelp:      false,
-		ready:         false,
-		db:            config.DB,
-		missionStore:  config.MissionStore,
-		componentDAO:  config.ComponentDAO,
-		findingStore:  config.FindingStore,
-		agentRegistry: config.AgentRegistry,
-		streamManager: config.StreamManager,
+		ctx:             ctx,
+		mode:            ModeDashboard,
+		width:           80,
+		height:          24,
+		keyMap:          keyMap,
+		theme:           theme,
+		showHelp:        false,
+		ready:           false,
+		db:              config.DB,
+		missionStore:    config.MissionStore,
+		componentDAO:    config.ComponentDAO,
+		findingStore:    config.FindingStore,
+		agentRegistry:   config.AgentRegistry,
+		streamManager:   config.StreamManager,
+		registryManager: config.RegistryManager,
 	}
 
 	// Initialize header
@@ -119,6 +123,7 @@ func (a *App) initViews() {
 		a.db,
 		a.componentDAO,
 		a.findingStore,
+		a.registryManager,
 	)
 
 	// Mission view

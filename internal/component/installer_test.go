@@ -364,11 +364,12 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 		createTestManifest(t, comp.RepoPath, manifest)
 	}
 
-	mockRegistry.On("List", componentKind).Return(components, nil)
+	mockRegistry.On("List", mock.Anything, componentKind).Return(components, nil)
 
 	// Setup mocks for both components
 	for _, comp := range components {
 		mockRegistry.On("Get", componentKind, comp.Name).Return(comp, nil)
+		mockRegistry.On("GetByName", mock.Anything, componentKind, comp.Name).Return(comp, nil)
 		mockGit.On("Pull", comp.RepoPath).Return(nil)
 		mockGit.On("GetVersion", comp.RepoPath).Return("newversion", nil)
 

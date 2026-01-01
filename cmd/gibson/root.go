@@ -2,20 +2,41 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/internal/config"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"golang.org/x/term"
 )
+
+// contextKey is a type for context keys to avoid collisions
+type contextKey string
+
+// registryManagerKey is the context key for storing the registry manager
+const registryManagerKey contextKey = "registryManager"
+
+// GetRegistryManager retrieves the registry manager from the context.
+// Returns nil if the manager is not present in the context.
+func GetRegistryManager(ctx context.Context) *registry.Manager {
+	if m, ok := ctx.Value(registryManagerKey).(*registry.Manager); ok {
+		return m
+	}
+	return nil
+}
 
 // Mode flags for TUI vs headless operation
 var (
 	printMode bool // Force headless/print mode
 	tuiMode   bool // Force TUI mode
 )
+
+// Global registry manager for cleanup
+var globalRegistryManager *registry.Manager
 
 var rootCmd = &cobra.Command{
 	Use:   "gibson",
@@ -25,10 +46,11 @@ red-teaming LLM systems, RAG pipelines, and AI agents.
 
 When run without a subcommand in an interactive terminal, Gibson
 launches the TUI dashboard. Use --print to force headless mode.`,
-	PersistentPreRunE: loadConfig,
-	SilenceUsage:      true,
-	SilenceErrors:     true,
-	RunE:              runRootCmd,
+	PersistentPreRunE:  loadConfig,
+	PersistentPostRunE: shutdownRegistry,
+	SilenceUsage:       true,
+	SilenceErrors:      true,
+	RunE:               runRootCmd,
 }
 
 // Execute runs the root command with signal handling
@@ -40,7 +62,7 @@ func Execute(ctx context.Context) error {
 	return rootCmd.ExecuteContext(ctx)
 }
 
-// loadConfig is called before any command runs to load configuration
+// loadConfig is called before any command runs to load configuration and initialize the registry
 func loadConfig(cmd *cobra.Command, args []string) error {
 	// Parse global flags
 	flags, err := ParseGlobalFlags(cmd)
@@ -63,19 +85,68 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		configFile = config.DefaultConfigPath(homeDir)
 	}
 
-	// For init, version, status, and help commands, skip config loading since config may not exist yet
-	if cmd.Name() == "init" || cmd.Name() == "version" || cmd.Name() == "status" || cmd.Name() == "help" {
+	// For init, version, and help commands, skip config loading since config may not exist yet
+	// Note: status command now needs registry, so we don't skip it
+	if cmd.Name() == "init" || cmd.Name() == "version" || cmd.Name() == "help" {
 		return nil
 	}
 
-	// Check if config exists, but don't fail if it doesn't
-	// Commands should handle missing config gracefully
+	// Check if config exists
 	if _, err := os.Stat(configFile); err != nil {
-		if os.IsNotExist(err) && flags.IsVerbose() {
-			cmd.PrintErrf("Config file not found at %s (run 'gibson init' to create)\n", configFile)
+		if os.IsNotExist(err) {
+			// Config doesn't exist - commands should handle this gracefully
+			if flags.IsVerbose() {
+				cmd.PrintErrf("Config file not found at %s (run 'gibson init' to create)\n", configFile)
+			}
+			// For now, continue without registry for commands that don't strictly need it
+			return nil
 		}
+		return fmt.Errorf("failed to access config file: %w", err)
 	}
 
+	// Load the configuration
+	loader := config.NewConfigLoader(config.NewValidator())
+	cfg, err := loader.LoadWithDefaults(configFile)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Initialize registry manager
+	regManager := registry.NewManager(cfg.Registry)
+	if err := regManager.Start(cmd.Context()); err != nil {
+		return fmt.Errorf("failed to start registry: %w", err)
+	}
+
+	// Store manager globally for cleanup
+	globalRegistryManager = regManager
+
+	// Store manager in context for subcommands
+	ctx := context.WithValue(cmd.Context(), registryManagerKey, regManager)
+	cmd.SetContext(ctx)
+
+	if flags.IsVerbose() {
+		status := regManager.Status()
+		cmd.PrintErrf("Registry started: %s (%s)\n", status.Type, status.Endpoint)
+	}
+
+	return nil
+}
+
+// shutdownRegistry gracefully shuts down the registry when Gibson exits
+func shutdownRegistry(cmd *cobra.Command, args []string) error {
+	if globalRegistryManager != nil {
+		// Use a background context with timeout for shutdown
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := globalRegistryManager.Stop(ctx); err != nil {
+			// Log error but don't fail - we're shutting down anyway
+			if globalFlags.IsVerbose() {
+				cmd.PrintErrf("Warning: failed to stop registry cleanly: %v\n", err)
+			}
+		}
+		globalRegistryManager = nil
+	}
 	return nil
 }
 

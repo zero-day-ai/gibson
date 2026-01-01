@@ -10,7 +10,7 @@ import (
 
 func TestNewDashboardView(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 
 	assert.NotNil(t, view)
 	assert.NotNil(t, view.missionPanel)
@@ -24,7 +24,7 @@ func TestNewDashboardView(t *testing.T) {
 
 func TestDashboardView_Init(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 
 	cmd := view.Init()
 
@@ -37,7 +37,7 @@ func TestDashboardView_Init(t *testing.T) {
 
 func TestDashboardView_SetSize(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 
 	view.SetSize(120, 40)
 
@@ -47,7 +47,7 @@ func TestDashboardView_SetSize(t *testing.T) {
 
 func TestDashboardView_CycleFocus(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 	view.Init()
 
 	// Initially panel 0 is focused
@@ -78,7 +78,7 @@ func TestDashboardView_CycleFocus(t *testing.T) {
 
 func TestDashboardView_Update_Tab(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 	view.Init()
 
 	// Press Tab to cycle focus
@@ -90,7 +90,7 @@ func TestDashboardView_Update_Tab(t *testing.T) {
 
 func TestDashboardView_Update_Refresh(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 	view.Init()
 
 	// Press 'r' to refresh
@@ -103,7 +103,7 @@ func TestDashboardView_Update_Refresh(t *testing.T) {
 
 func TestDashboardView_Update_WindowSize(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 	view.Init()
 
 	msg := tea.WindowSizeMsg{Width: 150, Height: 50}
@@ -115,7 +115,7 @@ func TestDashboardView_Update_WindowSize(t *testing.T) {
 
 func TestDashboardView_View(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 	view.Init()
 	view.SetSize(100, 30)
 
@@ -127,7 +127,7 @@ func TestDashboardView_View(t *testing.T) {
 
 func TestDashboardView_RenderMissionSummary(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 
 	content := view.renderMissionSummary()
 
@@ -136,7 +136,7 @@ func TestDashboardView_RenderMissionSummary(t *testing.T) {
 
 func TestDashboardView_RenderAgentStatus(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 
 	content := view.renderAgentStatus()
 
@@ -146,7 +146,7 @@ func TestDashboardView_RenderAgentStatus(t *testing.T) {
 
 func TestDashboardView_RenderRecentFindings(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 
 	content := view.renderRecentFindings()
 
@@ -156,7 +156,7 @@ func TestDashboardView_RenderRecentFindings(t *testing.T) {
 
 func TestDashboardView_RenderSystemMetrics(t *testing.T) {
 	ctx := context.Background()
-	view := NewDashboardView(ctx, nil, nil, nil)
+	view := NewDashboardView(ctx, nil, nil, nil, nil)
 
 	content := view.renderSystemMetrics()
 

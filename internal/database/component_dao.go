@@ -29,7 +29,7 @@ type ComponentDAO interface {
 	// Update updates a component's metadata
 	Update(ctx context.Context, comp *component.Component) error
 
-	// UpdateStatus is deprecated and does nothing - runtime state is tracked via LocalTracker
+	// UpdateStatus is deprecated and does nothing - runtime state is tracked via process checking
 	// This method is kept for backward compatibility and will be removed when StatusUpdater interface is removed
 	UpdateStatus(ctx context.Context, id int64, status component.ComponentStatus, pid, port int) error
 
@@ -341,7 +341,7 @@ func (d *componentDAO) Update(ctx context.Context, comp *component.Component) er
 	return nil
 }
 
-// UpdateStatus is deprecated and does nothing - runtime state is tracked via LocalTracker
+// UpdateStatus is deprecated and does nothing - runtime state is tracked via process checking
 // This method is kept for backward compatibility and will be removed when StatusUpdater interface is removed
 func (d *componentDAO) UpdateStatus(ctx context.Context, id int64, status component.ComponentStatus, pid, port int) error {
 	// No-op: runtime state is no longer stored in the database

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"time"
 )
@@ -79,58 +80,31 @@ func (s *StatusChecker) CheckStatus(ctx context.Context, comp *Component) (*Stat
 	}, nil
 }
 
-// performHealthCheck performs a health check on the component.
-// It creates a ProtocolAwareHealthChecker using the component's manifest
-// health check configuration, or defaults to gRPC on the component's port
-// if no manifest config is available.
-//
-// Returns a HealthCheckResult with the status, protocol, response time,
+// performHealthCheck performs a simple port connectivity check on the component.
+// Returns a HealthCheckResult with the status, response time,
 // and any error that occurred during the health check.
 func (s *StatusChecker) performHealthCheck(ctx context.Context, comp *Component) *HealthCheckResult {
-	// Get health check configuration from manifest
-	var healthConfig *HealthCheckConfig
-	if comp.Manifest != nil && comp.Manifest.Runtime != nil {
-		healthConfig = comp.Manifest.Runtime.HealthCheck
-	}
-	if healthConfig == nil {
-		// Default to auto-detection on the component's port
-		healthConfig = &HealthCheckConfig{
-			Protocol: HealthCheckProtocolAuto,
-		}
-	}
-
-	// Create protocol-aware health checker
-	checker := NewProtocolAwareHealthChecker("localhost", comp.Port, healthConfig)
-	defer checker.Close()
-
 	// Measure response time
 	startTime := time.Now()
-	err := checker.Check(ctx)
+
+	// Simple TCP connection check
+	addr := fmt.Sprintf("localhost:%d", comp.Port)
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 	responseTime := time.Since(startTime)
 
 	// Build result based on error
 	result := &HealthCheckResult{
-		Protocol:     checker.Protocol(),
+		Protocol:     "tcp",
 		ResponseTime: responseTime,
 	}
 
 	if err != nil {
-		// Health check failed
+		// Connection failed
 		result.Error = err.Error()
-
-		// Determine status based on error type
-		if isHealthCheckError(err) {
-			// Component responded but is not healthy
-			result.Status = "NOT_SERVING"
-		} else if isProtocolDetectError(err) {
-			// Protocol detection failed
-			result.Status = "UNKNOWN"
-		} else {
-			// Generic error (connection failed, timeout, etc.)
-			result.Status = "ERROR"
-		}
+		result.Status = "ERROR"
 	} else {
-		// Health check succeeded
+		// Connection succeeded
+		conn.Close()
 		result.Status = "SERVING"
 	}
 

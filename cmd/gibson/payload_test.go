@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -208,7 +210,7 @@ func TestPayloadCreate(t *testing.T) {
 
 	// Create test payload file
 	testPayload := createTestPayload(t)
-	testPayload.ID = types.ID{} // Clear ID so it gets generated
+	testPayload.ID = "" // Clear ID so it gets generated
 
 	yamlFile := filepath.Join(tempDir, "test-payload.yaml")
 	data, err := yaml.Marshal(testPayload)
@@ -397,7 +399,7 @@ func TestValidatePayload(t *testing.T) {
 				Template:   "test",
 				Categories: []payload.PayloadCategory{payload.CategoryJailbreak},
 				SuccessIndicators: []payload.SuccessIndicator{
-					{Type: payload.IndicatorTypeContains, Value: "test"},
+					{Type: payload.IndicatorContains, Value: "test"},
 				},
 			},
 			wantError: true,
@@ -408,7 +410,7 @@ func TestValidatePayload(t *testing.T) {
 				Name:       "Test",
 				Categories: []payload.PayloadCategory{payload.CategoryJailbreak},
 				SuccessIndicators: []payload.SuccessIndicator{
-					{Type: payload.IndicatorTypeContains, Value: "test"},
+					{Type: payload.IndicatorContains, Value: "test"},
 				},
 			},
 			wantError: true,
@@ -419,7 +421,7 @@ func TestValidatePayload(t *testing.T) {
 				Name:     "Test",
 				Template: "test",
 				SuccessIndicators: []payload.SuccessIndicator{
-					{Type: payload.IndicatorTypeContains, Value: "test"},
+					{Type: payload.IndicatorContains, Value: "test"},
 				},
 			},
 			wantError: true,
@@ -440,7 +442,7 @@ func TestValidatePayload(t *testing.T) {
 				Template:   "test",
 				Categories: []payload.PayloadCategory{payload.CategoryJailbreak},
 				SuccessIndicators: []payload.SuccessIndicator{
-					{Type: payload.IndicatorTypeContains, Value: "test"},
+					{Type: payload.IndicatorContains, Value: "test"},
 				},
 			},
 			wantError: false,
@@ -527,15 +529,15 @@ func TestParseParameters(t *testing.T) {
 func TestIsValidSeverity(t *testing.T) {
 	tests := []struct {
 		name     string
-		severity interface{}
+		severity agent.FindingSeverity
 		want     bool
 	}{
-		{"critical", "critical", true},
-		{"high", "high", true},
-		{"medium", "medium", true},
-		{"low", "low", true},
-		{"info", "info", true},
-		{"invalid", "invalid", false},
+		{"critical", agent.FindingSeverityCritical, true},
+		{"high", agent.FindingSeverityHigh, true},
+		{"medium", agent.FindingSeverityMedium, true},
+		{"low", agent.FindingSeverityLow, true},
+		{"info", agent.FindingSeverityInfo, true},
+		{"invalid", agent.FindingSeverity("invalid"), false},
 	}
 
 	for _, tt := range tests {
@@ -567,7 +569,7 @@ func createTestPayload(t *testing.T) *payload.Payload {
 		},
 		SuccessIndicators: []payload.SuccessIndicator{
 			{
-				Type:        payload.IndicatorTypeContains,
+				Type:        payload.IndicatorContains,
 				Value:       "DAN",
 				Description: "Response mentions DAN mode",
 				Weight:      1.0,
@@ -582,7 +584,7 @@ func createTestPayload(t *testing.T) *payload.Payload {
 		},
 		BuiltIn:   false,
 		Enabled:   true,
-		CreatedAt: types.Now(),
-		UpdatedAt: types.Now(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 }
