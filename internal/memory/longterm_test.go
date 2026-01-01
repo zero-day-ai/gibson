@@ -120,7 +120,7 @@ func TestLongTermMemory_Search_WithFilters(t *testing.T) {
 
 	// Search with filters
 	filters := map[string]any{
-		"type": "finding",
+		"type":     "finding",
 		"severity": "high",
 	}
 	results, err := ltm.Search(ctx, "test query", 5, filters)

@@ -359,21 +359,6 @@ func (r *DefaultPayloadRegistry) cachePayload(payload *Payload) {
 	}
 }
 
-// getCachedPayload retrieves a payload from cache (caller must hold read lock)
-func (r *DefaultPayloadRegistry) getCachedPayload(id types.ID) (*Payload, bool) {
-	cached, ok := r.cache[id]
-	if !ok {
-		return nil, false
-	}
-
-	// Check expiration if auto-expire is enabled
-	if r.enableAutoExpire && time.Now().After(cached.expiresAt) {
-		return nil, false
-	}
-
-	return cached.payload, true
-}
-
 // GetCacheStats returns statistics about the cache
 func (r *DefaultPayloadRegistry) GetCacheStats() (size int, ttl time.Duration) {
 	r.mu.RLock()

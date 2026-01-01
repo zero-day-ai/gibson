@@ -17,26 +17,26 @@ import (
 // MockGraphRAGStore implements graphrag.GraphRAGStore for testing
 type MockGraphRAGStore struct {
 	// Control flags
-	ShouldFailQuery                bool
-	ShouldFailFindSimilarAttacks   bool
-	ShouldFailFindSimilarFindings  bool
-	ShouldFailGetAttackChains      bool
-	ShouldFailGetRelatedFindings   bool
-	ShouldFailStore                bool
-	ShouldFailStoreBatch           bool
-	IsHealthy                      bool
-	HealthMessage                  string
+	ShouldFailQuery               bool
+	ShouldFailFindSimilarAttacks  bool
+	ShouldFailFindSimilarFindings bool
+	ShouldFailGetAttackChains     bool
+	ShouldFailGetRelatedFindings  bool
+	ShouldFailStore               bool
+	ShouldFailStoreBatch          bool
+	IsHealthy                     bool
+	HealthMessage                 string
 
 	// Capture method calls
-	QueryCalled                 bool
-	FindSimilarAttacksCalled    bool
-	FindSimilarFindingsCalled   bool
-	GetAttackChainsCalled       bool
-	GetRelatedFindingsCalled    bool
-	StoreCalled                 bool
-	StoreBatchCalled            bool
-	HealthCalled                bool
-	CloseCalled                 bool
+	QueryCalled               bool
+	FindSimilarAttacksCalled  bool
+	FindSimilarFindingsCalled bool
+	GetAttackChainsCalled     bool
+	GetRelatedFindingsCalled  bool
+	StoreCalled               bool
+	StoreBatchCalled          bool
+	HealthCalled              bool
+	CloseCalled               bool
 
 	// Captured arguments
 	LastQuery              *graphrag.GraphRAGQuery
@@ -51,12 +51,12 @@ type MockGraphRAGStore struct {
 	LastRelatedFindingID   string
 
 	// Return values
-	QueryResults           []graphrag.GraphRAGResult
-	AttackPatterns         []graphrag.AttackPattern
-	Findings               []graphrag.FindingNode
-	AttackChains           []graphrag.AttackChain
-	RelatedFindings        []graphrag.FindingNode
-	StoredNodeID           types.ID
+	QueryResults    []graphrag.GraphRAGResult
+	AttackPatterns  []graphrag.AttackPattern
+	Findings        []graphrag.FindingNode
+	AttackChains    []graphrag.AttackChain
+	RelatedFindings []graphrag.FindingNode
+	StoredNodeID    types.ID
 }
 
 // Query executes a hybrid GraphRAG query
@@ -239,10 +239,10 @@ func TestDefaultGraphRAGQueryBridge_Query(t *testing.T) {
 			},
 		},
 		{
-			name:  "empty results",
-			query: createValidSDKQuery(),
+			name:        "empty results",
+			query:       createValidSDKQuery(),
 			mockResults: []graphrag.GraphRAGResult{},
-			shouldFail: false,
+			shouldFail:  false,
 			checkResult: func(t *testing.T, results []sdkgraphrag.Result, mock *MockGraphRAGStore) {
 				assert.Len(t, results, 0)
 				assert.True(t, mock.QueryCalled)
@@ -310,12 +310,12 @@ func TestDefaultGraphRAGQueryBridge_Query(t *testing.T) {
 // TestDefaultGraphRAGQueryBridge_FindSimilarAttacks tests the FindSimilarAttacks method
 func TestDefaultGraphRAGQueryBridge_FindSimilarAttacks(t *testing.T) {
 	tests := []struct {
-		name           string
-		content        string
-		topK           int
-		mockPatterns   []graphrag.AttackPattern
-		shouldFail     bool
-		checkResult    func(t *testing.T, patterns []sdkgraphrag.AttackPattern, mock *MockGraphRAGStore)
+		name         string
+		content      string
+		topK         int
+		mockPatterns []graphrag.AttackPattern
+		shouldFail   bool
+		checkResult  func(t *testing.T, patterns []sdkgraphrag.AttackPattern, mock *MockGraphRAGStore)
 	}{
 		{
 			name:    "successful attack pattern search",
@@ -474,12 +474,12 @@ func TestDefaultGraphRAGQueryBridge_FindSimilarFindings(t *testing.T) {
 // TestDefaultGraphRAGQueryBridge_GetAttackChains tests the GetAttackChains method
 func TestDefaultGraphRAGQueryBridge_GetAttackChains(t *testing.T) {
 	tests := []struct {
-		name         string
-		techniqueID  string
-		maxDepth     int
-		mockChains   []graphrag.AttackChain
-		shouldFail   bool
-		checkResult  func(t *testing.T, chains []sdkgraphrag.AttackChain, mock *MockGraphRAGStore)
+		name        string
+		techniqueID string
+		maxDepth    int
+		mockChains  []graphrag.AttackChain
+		shouldFail  bool
+		checkResult func(t *testing.T, chains []sdkgraphrag.AttackChain, mock *MockGraphRAGStore)
 	}{
 		{
 			name:        "successful attack chain discovery",
@@ -571,11 +571,11 @@ func TestDefaultGraphRAGQueryBridge_GetAttackChains(t *testing.T) {
 // TestDefaultGraphRAGQueryBridge_GetRelatedFindings tests the GetRelatedFindings method
 func TestDefaultGraphRAGQueryBridge_GetRelatedFindings(t *testing.T) {
 	tests := []struct {
-		name            string
-		findingID       string
-		mockFindings    []graphrag.FindingNode
-		shouldFail      bool
-		checkResult     func(t *testing.T, findings []sdkgraphrag.FindingNode, mock *MockGraphRAGStore)
+		name         string
+		findingID    string
+		mockFindings []graphrag.FindingNode
+		shouldFail   bool
+		checkResult  func(t *testing.T, findings []sdkgraphrag.FindingNode, mock *MockGraphRAGStore)
 	}{
 		{
 			name:      "successful related findings retrieval",
@@ -990,10 +990,10 @@ func TestDefaultGraphRAGQueryBridge_Traverse(t *testing.T) {
 // TestDefaultGraphRAGQueryBridge_Health tests the Health method
 func TestDefaultGraphRAGQueryBridge_Health(t *testing.T) {
 	tests := []struct {
-		name           string
-		isHealthy      bool
-		healthMessage  string
-		checkResult    func(t *testing.T, status types.HealthStatus)
+		name          string
+		isHealthy     bool
+		healthMessage string
+		checkResult   func(t *testing.T, status types.HealthStatus)
 	}{
 		{
 			name:          "healthy store",

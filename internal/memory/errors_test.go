@@ -298,28 +298,28 @@ func TestErrorCodeMatching(t *testing.T) {
 // TestErrorMessages tests that error messages are descriptive
 func TestErrorMessages(t *testing.T) {
 	tests := []struct {
-		name        string
-		err         *types.GibsonError
+		name          string
+		err           *types.GibsonError
 		shouldContain string
 	}{
 		{
-			name:        "working memory full",
-			err:         NewWorkingMemoryFullError("test message"),
+			name:          "working memory full",
+			err:           NewWorkingMemoryFullError("test message"),
 			shouldContain: "test message",
 		},
 		{
-			name:        "mission memory not found",
-			err:         NewMissionMemoryNotFoundError("my-key"),
+			name:          "mission memory not found",
+			err:           NewMissionMemoryNotFoundError("my-key"),
 			shouldContain: "my-key",
 		},
 		{
-			name:        "vector not found",
-			err:         NewVectorNotFoundError("vec-123"),
+			name:          "vector not found",
+			err:           NewVectorNotFoundError("vec-123"),
 			shouldContain: "vec-123",
 		},
 		{
-			name:        "invalid config",
-			err:         NewInvalidConfigError("bad config"),
+			name:          "invalid config",
+			err:           NewInvalidConfigError("bad config"),
 			shouldContain: "bad config",
 		},
 	}

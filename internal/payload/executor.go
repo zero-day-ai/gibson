@@ -42,13 +42,13 @@ func DefaultExecutorConfig() ExecutorConfig {
 
 // payloadExecutor implements PayloadExecutor
 type payloadExecutor struct {
-	config        ExecutorConfig
-	substitutor   ParameterSubstitutor
-	matcher       IndicatorMatcher
-	registry      PayloadRegistry
+	config         ExecutorConfig
+	substitutor    ParameterSubstitutor
+	matcher        IndicatorMatcher
+	registry       PayloadRegistry
 	executionStore ExecutionStore
-	findingStore  finding.FindingStore
-	agentRegistry agent.AgentRegistry
+	findingStore   finding.FindingStore
+	agentRegistry  agent.AgentRegistry
 }
 
 // NewPayloadExecutor creates a new payload executor
@@ -60,13 +60,13 @@ func NewPayloadExecutor(
 	config ExecutorConfig,
 ) PayloadExecutor {
 	return &payloadExecutor{
-		config:        config,
-		substitutor:   NewParameterSubstitutor(),
-		matcher:       NewIndicatorMatcher(),
-		registry:      registry,
+		config:         config,
+		substitutor:    NewParameterSubstitutor(),
+		matcher:        NewIndicatorMatcher(),
+		registry:       registry,
 		executionStore: executionStore,
-		findingStore:  findingStore,
-		agentRegistry: agentRegistry,
+		findingStore:   findingStore,
+		agentRegistry:  agentRegistry,
 	}
 }
 
@@ -390,7 +390,7 @@ func (e *payloadExecutor) createFinding(
 					"payload_text": execution.InstantiatedText,
 					"payload_id":   string(payload.ID),
 				},
-				Timestamp:   execution.CreatedAt,
+				Timestamp: execution.CreatedAt,
 			},
 			{
 				Type:        "response",
@@ -399,15 +399,15 @@ func (e *payloadExecutor) createFinding(
 					"response_text":   response,
 					"response_length": len(response),
 				},
-				Timestamp:   *execution.CompletedAt,
+				Timestamp: *execution.CompletedAt,
 			},
 		},
 		Metadata: map[string]interface{}{
-			"payload_id":        string(payload.ID),
-			"payload_name":      payload.Name,
-			"payload_version":   payload.Version,
-			"execution_id":      string(execution.ID),
-			"confidence_score":  execution.ConfidenceScore,
+			"payload_id":         string(payload.ID),
+			"payload_name":       payload.Name,
+			"payload_version":    payload.Version,
+			"execution_id":       string(execution.ID),
+			"confidence_score":   execution.ConfidenceScore,
 			"indicators_matched": execution.IndicatorsMatched,
 		},
 		CreatedAt: time.Now(),
@@ -482,11 +482,4 @@ func mapSeverityToRiskScore(severity agent.FindingSeverity) float64 {
 
 func timePtr(t time.Time) *time.Time {
 	return &t
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

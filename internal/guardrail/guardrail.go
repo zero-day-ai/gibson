@@ -6,12 +6,11 @@ import "context"
 type GuardrailType string
 
 const (
-	GuardrailTypeScope      GuardrailType = "scope"
-	GuardrailTypeContent    GuardrailType = "content"
-	GuardrailTypeRate       GuardrailType = "rate"
-	GuardrailTypeTool       GuardrailType = "tool"
-	GuardrailTypePII        GuardrailType = "pii"
-	GuardrailTypeCompliance GuardrailType = "compliance"
+	GuardrailTypeScope   GuardrailType = "scope"
+	GuardrailTypeContent GuardrailType = "content"
+	GuardrailTypeRate    GuardrailType = "rate"
+	GuardrailTypeTool    GuardrailType = "tool"
+	GuardrailTypePII     GuardrailType = "pii"
 )
 
 // Guardrail defines the interface for safety checks

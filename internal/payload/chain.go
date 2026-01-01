@@ -156,7 +156,6 @@ type ChainStage struct {
 	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
-
 // ChainMetadata contains descriptive metadata about an attack chain.
 type ChainMetadata struct {
 	// Author is the creator of this attack chain.
@@ -264,4 +263,3 @@ func (ac *AttackChain) HasParallelStages() bool {
 	}
 	return false
 }
-

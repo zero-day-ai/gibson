@@ -294,17 +294,17 @@ func TestInstallerUpdate_Success(t *testing.T) {
 		Version: "abc123",
 		Status:  ComponentStatusAvailable,
 	}
-	mockRegistry.On("Get", componentKind, componentName).Return(oldComponent, nil)
+	mockRegistry.On("GetByName", mock.Anything, componentKind, componentName).Return(oldComponent, nil)
 	mockGit.On("Pull", componentDir).Return(nil)
-	mockGit.On("GetVersion", componentDir).Return("xyz789", nil).Once()  // New version (after pull)
+	mockGit.On("GetVersion", componentDir).Return("xyz789", nil).Once() // New version (after pull)
 
 	buildResult := &build.BuildResult{
 		Success: true,
 		Stdout:  "build successful",
 	}
 	mockBuilder.On("Build", mock.Anything, mock.Anything, componentName, mock.Anything, mock.Anything).Return(buildResult, nil)
-	mockRegistry.On("Unregister", componentKind, componentName).Return(nil)
-	mockRegistry.On("Register", mock.Anything).Return(nil)
+	mockRegistry.On("Delete", mock.Anything, componentKind, componentName).Return(nil)
+	mockRegistry.On("Create", mock.Anything, mock.Anything).Return(nil)
 
 	opts := UpdateOptions{}
 	result, err := installer.Update(context.Background(), componentKind, componentName, opts)
@@ -330,24 +330,24 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 	// Create two components
 	components := []*Component{
 		{
-			Kind:    componentKind,
-			Name:    "scanner",
-			Version: "abc123",
-			Path:    filepath.Join(tmpDir, "agents", "scanner"),
-			Status:  ComponentStatusAvailable,
+			Kind:     componentKind,
+			Name:     "scanner",
+			Version:  "abc123",
+			RepoPath: filepath.Join(tmpDir, "agents", "scanner"),
+			Status:   ComponentStatusAvailable,
 		},
 		{
-			Kind:    componentKind,
-			Name:    "recon",
-			Version: "def456",
-			Path:    filepath.Join(tmpDir, "agents", "recon"),
-			Status:  ComponentStatusAvailable,
+			Kind:     componentKind,
+			Name:     "recon",
+			Version:  "def456",
+			RepoPath: filepath.Join(tmpDir, "agents", "recon"),
+			Status:   ComponentStatusAvailable,
 		},
 	}
 
 	// Create directories and manifests for both
 	for _, comp := range components {
-		err := os.MkdirAll(comp.Path, 0755)
+		err := os.MkdirAll(comp.RepoPath, 0755)
 		require.NoError(t, err)
 
 		manifest := &Manifest{
@@ -361,7 +361,7 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 				Command: "make build",
 			},
 		}
-		createTestManifest(t, comp.Path, manifest)
+		createTestManifest(t, comp.RepoPath, manifest)
 	}
 
 	mockRegistry.On("List", componentKind).Return(components, nil)
@@ -369,8 +369,8 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 	// Setup mocks for both components
 	for _, comp := range components {
 		mockRegistry.On("Get", componentKind, comp.Name).Return(comp, nil)
-		mockGit.On("Pull", comp.Path).Return(nil)
-		mockGit.On("GetVersion", comp.Path).Return("newversion", nil)
+		mockGit.On("Pull", comp.RepoPath).Return(nil)
+		mockGit.On("GetVersion", comp.RepoPath).Return("newversion", nil)
 
 		buildResult := &build.BuildResult{
 			Success: true,

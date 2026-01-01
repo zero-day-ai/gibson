@@ -188,8 +188,8 @@ func TestHandleError_ComponentError(t *testing.T) {
 		checkOutput  func(t *testing.T, output string)
 	}{
 		{
-			name: "component not found",
-			err: component.NewComponentNotFoundError("test-component"),
+			name:         "component not found",
+			err:          component.NewComponentNotFoundError("test-component"),
 			expectedCode: ExitComponentError,
 			checkOutput: func(t *testing.T, output string) {
 				if !bytes.Contains([]byte(output), []byte("component not found")) {
@@ -198,8 +198,8 @@ func TestHandleError_ComponentError(t *testing.T) {
 			},
 		},
 		{
-			name: "component timeout",
-			err: component.NewTimeoutError("test-component", "start"),
+			name:         "component timeout",
+			err:          component.NewTimeoutError("test-component", "start"),
 			expectedCode: ExitTimeout,
 			checkOutput: func(t *testing.T, output string) {
 				if !bytes.Contains([]byte(output), []byte("timeout")) {
@@ -208,8 +208,8 @@ func TestHandleError_ComponentError(t *testing.T) {
 			},
 		},
 		{
-			name: "component already running",
-			err: component.NewAlreadyRunningError("test-component", 12345),
+			name:         "component already running",
+			err:          component.NewAlreadyRunningError("test-component", 12345),
 			expectedCode: ExitComponentError,
 			checkOutput: func(t *testing.T, output string) {
 				if !bytes.Contains([]byte(output), []byte("already running")) {
@@ -218,8 +218,8 @@ func TestHandleError_ComponentError(t *testing.T) {
 			},
 		},
 		{
-			name: "component not running",
-			err: component.NewNotRunningError("test-component"),
+			name:         "component not running",
+			err:          component.NewNotRunningError("test-component"),
 			expectedCode: ExitComponentError,
 			checkOutput: func(t *testing.T, output string) {
 				if !bytes.Contains([]byte(output), []byte("not running")) {
@@ -228,8 +228,8 @@ func TestHandleError_ComponentError(t *testing.T) {
 			},
 		},
 		{
-			name: "invalid manifest",
-			err: component.NewInvalidManifestError("bad format", errors.New("parse error")),
+			name:         "invalid manifest",
+			err:          component.NewInvalidManifestError("bad format", errors.New("parse error")),
 			expectedCode: ExitComponentError,
 			checkOutput: func(t *testing.T, output string) {
 				if !bytes.Contains([]byte(output), []byte("INVALID_MANIFEST")) {
@@ -238,8 +238,8 @@ func TestHandleError_ComponentError(t *testing.T) {
 			},
 		},
 		{
-			name: "permission denied",
-			err: component.NewPermissionDeniedError("test-component", "start"),
+			name:         "permission denied",
+			err:          component.NewPermissionDeniedError("test-component", "start"),
 			expectedCode: ExitComponentError,
 			checkOutput: func(t *testing.T, output string) {
 				if !bytes.Contains([]byte(output), []byte("permission denied")) {

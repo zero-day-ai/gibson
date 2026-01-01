@@ -16,7 +16,7 @@ type TracingConfig struct {
 }
 
 // Validate validates the TracingConfig fields.
-// Returns an error if Provider is invalid (must be jaeger, otlp, or zipkin),
+// Returns an error if Provider is invalid (must be otlp, zipkin, langfuse, or noop),
 // or if SampleRate is out of range (must be between 0.0 and 1.0).
 func (c *TracingConfig) Validate() error {
 	if !c.Enabled {
@@ -24,7 +24,7 @@ func (c *TracingConfig) Validate() error {
 	}
 
 	// Validate provider
-	validProviders := []string{"jaeger", "otlp", "zipkin", "langfuse", "noop"}
+	validProviders := []string{"otlp", "zipkin", "langfuse", "noop"}
 	provider := strings.ToLower(c.Provider)
 	isValid := false
 	for _, valid := range validProviders {

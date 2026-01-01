@@ -298,8 +298,8 @@ func TestAnalyticsAcrossMultipleFindings(t *testing.T) {
 	// Get remediation progress
 	open, resolved, err := analytics.GetRemediationProgress(ctx, missionID)
 	require.NoError(t, err)
-	assert.Equal(t, 2, open)      // Open + Confirmed
-	assert.Equal(t, 1, resolved)  // Resolved
+	assert.Equal(t, 2, open)     // Open + Confirmed
+	assert.Equal(t, 1, resolved) // Resolved
 }
 
 // TestCompositeClassifierWithHeuristicHit tests classification without LLM

@@ -23,21 +23,21 @@ type MockCall struct {
 // It generates deterministic embeddings based on text hash, ensuring
 // the same text always produces the same embedding.
 type MockEmbedder struct {
-	mu          sync.RWMutex
-	dimensions  int
-	model       string
-	calls       []MockCall
-	embedError  error
-	batchError  error
+	mu           sync.RWMutex
+	dimensions   int
+	model        string
+	calls        []MockCall
+	embedError   error
+	batchError   error
 	healthStatus types.HealthStatus
 }
 
 // NewMockEmbedder creates a new mock embedder for testing.
 func NewMockEmbedder() *MockEmbedder {
 	return &MockEmbedder{
-		dimensions: 1536, // Default to OpenAI text-embedding-3-small dimensions
-		model:      "mock-embedder",
-		calls:      make([]MockCall, 0),
+		dimensions:   1536, // Default to OpenAI text-embedding-3-small dimensions
+		model:        "mock-embedder",
+		calls:        make([]MockCall, 0),
 		healthStatus: types.NewHealthStatus(types.HealthStateHealthy, "mock embedder"),
 	}
 }
@@ -91,7 +91,7 @@ func (m *MockEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]floa
 func (m *MockEmbedder) generateEmbedding(text string) []float64 {
 	// Hash the text to get deterministic seed
 	hash := sha256.Sum256([]byte(text))
-	
+
 	// Use first 8 bytes of hash as seed
 	seed := int64(binary.BigEndian.Uint64(hash[:8]))
 	rng := rand.New(rand.NewSource(seed))
@@ -221,7 +221,7 @@ func normalizeVector(v []float64) []float64 {
 	for _, val := range v {
 		sum += val * val
 	}
-	
+
 	if sum == 0 {
 		return v
 	}
@@ -231,6 +231,6 @@ func normalizeVector(v []float64) []float64 {
 	for i, val := range v {
 		normalized[i] = val / norm
 	}
-	
+
 	return normalized
 }

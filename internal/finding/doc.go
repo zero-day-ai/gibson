@@ -208,5 +208,4 @@
 // Run integration tests with:
 //
 //	go test -tags=integration ./internal/finding/...
-//
 package finding

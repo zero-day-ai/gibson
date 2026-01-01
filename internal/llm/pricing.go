@@ -23,8 +23,8 @@ type ModelPricing struct {
 // PricingConfig manages pricing information for all providers and models.
 // It maintains a hierarchical map structure: provider -> model -> pricing.
 type PricingConfig struct {
-	mu       sync.RWMutex
-	Pricing  map[string]map[string]ModelPricing `mapstructure:"pricing" yaml:"pricing"`
+	mu      sync.RWMutex
+	Pricing map[string]map[string]ModelPricing `mapstructure:"pricing" yaml:"pricing"`
 }
 
 // NewPricingConfig creates a new PricingConfig with default pricing data.

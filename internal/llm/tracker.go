@@ -33,11 +33,11 @@ func (s UsageScope) Key() string {
 
 // UsageRecord tracks token usage and associated costs for a specific scope
 type UsageRecord struct {
-	Scope        UsageScope  // The scope of this usage record
-	InputTokens  int         // Total input tokens used
-	OutputTokens int         // Total output tokens used
-	TotalCost    float64     // Total cost in USD
-	CallCount    int         // Number of API calls made
+	Scope        UsageScope // The scope of this usage record
+	InputTokens  int        // Total input tokens used
+	OutputTokens int        // Total output tokens used
+	TotalCost    float64    // Total cost in USD
+	CallCount    int        // Number of API calls made
 }
 
 // Budget defines spending limits for token usage

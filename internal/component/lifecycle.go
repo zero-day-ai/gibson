@@ -70,14 +70,22 @@ type DefaultLifecycleManager struct {
 	portRangeStart    int
 	portRangeEnd      int
 	healthCheckClient HealthMonitor
-	dao               StatusUpdater // optional, for persisting status to database
+	dao               StatusUpdater          // optional, for persisting metadata to database
+	logWriter         LogWriter              // optional, for capturing process output to log files
 	processes         map[string]*os.Process // component name -> process
+	localTracker      LocalTracker           // required, for local component lifecycle tracking
 	tracer            trace.Tracer
 }
 
 // NewLifecycleManager creates a new DefaultLifecycleManager with default timeouts.
-// The dao parameter is optional; pass nil if status persistence is not needed.
-func NewLifecycleManager(healthMonitor HealthMonitor, dao StatusUpdater) *DefaultLifecycleManager {
+// The dao and logWriter parameters are optional; pass nil if not needed.
+// The localTracker parameter is required for local component tracking.
+func NewLifecycleManager(healthMonitor HealthMonitor, dao StatusUpdater, logWriter LogWriter, localTracker LocalTracker) *DefaultLifecycleManager {
+	// If no LocalTracker is provided, create a default one
+	if localTracker == nil {
+		localTracker = NewDefaultLocalTracker()
+	}
+
 	return &DefaultLifecycleManager{
 		startupTimeout:    DefaultStartupTimeout,
 		shutdownTimeout:   DefaultShutdownTimeout,
@@ -85,19 +93,29 @@ func NewLifecycleManager(healthMonitor HealthMonitor, dao StatusUpdater) *Defaul
 		portRangeEnd:      DefaultPortRangeEnd,
 		healthCheckClient: healthMonitor,
 		dao:               dao,
+		logWriter:         logWriter,
 		processes:         make(map[string]*os.Process),
+		localTracker:      localTracker,
 		tracer:            otel.GetTracerProvider().Tracer("gibson.component"),
 	}
 }
 
 // NewLifecycleManagerWithTimeouts creates a new DefaultLifecycleManager with custom timeouts.
-// The dao parameter is optional; pass nil if status persistence is not needed.
+// The dao and logWriter parameters are optional; pass nil if not needed.
+// The localTracker parameter is required for local component tracking.
 func NewLifecycleManagerWithTimeouts(
 	healthMonitor HealthMonitor,
 	dao StatusUpdater,
+	logWriter LogWriter,
+	localTracker LocalTracker,
 	startupTimeout, shutdownTimeout time.Duration,
 	portRangeStart, portRangeEnd int,
 ) *DefaultLifecycleManager {
+	// If no LocalTracker is provided, create a default one
+	if localTracker == nil {
+		localTracker = NewDefaultLocalTracker()
+	}
+
 	return &DefaultLifecycleManager{
 		startupTimeout:    startupTimeout,
 		shutdownTimeout:   shutdownTimeout,
@@ -105,7 +123,9 @@ func NewLifecycleManagerWithTimeouts(
 		portRangeEnd:      portRangeEnd,
 		healthCheckClient: healthMonitor,
 		dao:               dao,
+		logWriter:         logWriter,
 		processes:         make(map[string]*os.Process),
+		localTracker:      localTracker,
 		tracer:            otel.GetTracerProvider().Tracer("gibson.component"),
 	}
 }
@@ -182,7 +202,10 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 	}
 
 	// Create command using BinPath (binary is self-contained in bin/)
-	cmd := exec.CommandContext(ctx, comp.BinPath, args...)
+	// Note: We use exec.Command instead of exec.CommandContext because we want
+	// the child process to survive after Gibson exits. CommandContext kills the
+	// child when the context is cancelled, which happens when Gibson exits.
+	cmd := exec.Command(comp.BinPath, args...)
 
 	// Set environment variables
 	env := os.Environ()
@@ -190,6 +213,38 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
 	}
 	cmd.Env = env
+
+	// Detach the child process from the parent's process group.
+	// This ensures the component continues running after Gibson CLI exits.
+	// Setpgid=true creates a new process group for the child.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+
+	// Set up log writers if configured
+	if m.logWriter != nil {
+		// Create stdout writer
+		stdoutWriter, err := m.logWriter.CreateWriter(comp.Name, "stdout")
+		if err != nil {
+			// Log warning but don't fail startup
+			span.AddEvent("failed to create stdout log writer", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		} else {
+			cmd.Stdout = stdoutWriter
+		}
+
+		// Create stderr writer
+		stderrWriter, err := m.logWriter.CreateWriter(comp.Name, "stderr")
+		if err != nil {
+			// Log warning but don't fail startup
+			span.AddEvent("failed to create stderr log writer", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		} else {
+			cmd.Stderr = stderrWriter
+		}
+	}
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -215,8 +270,19 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 	healthCtx, cancel := context.WithTimeout(ctx, m.startupTimeout)
 	defer cancel()
 
+	// Create protocol-aware health checker from manifest config
+	var healthChecker HealthChecker
+	var healthCheckConfig *HealthCheckConfig
+	if comp.Manifest != nil && comp.Manifest.Runtime != nil {
+		healthCheckConfig = comp.Manifest.Runtime.HealthCheck
+	}
+
+	// Create a ProtocolAwareHealthChecker for startup checks
+	healthChecker = NewProtocolAwareHealthChecker("localhost", port, healthCheckConfig)
+	defer healthChecker.Close()
+
 	healthEndpoint := m.buildHealthEndpoint(comp, port)
-	if err := m.waitForHealthCheck(healthCtx, healthEndpoint); err != nil {
+	if err := m.waitForHealthCheck(healthCtx, healthChecker, healthEndpoint); err != nil {
 		// Health check failed, kill the process
 		_ = m.killProcess(cmd.Process)
 		m.mu.Lock()
@@ -229,17 +295,29 @@ func (m *DefaultLifecycleManager) StartComponent(ctx context.Context, comp *Comp
 		return 0, startErr
 	}
 
+	// Register with health monitor for ongoing monitoring
+	if m.healthCheckClient != nil {
+		// Create a new checker for ongoing monitoring (the startup one is closed)
+		monitorChecker := NewProtocolAwareHealthChecker("localhost", port, healthCheckConfig)
+		m.healthCheckClient.RegisterComponentWithChecker(comp.Name, monitorChecker)
+	}
+
 	// Update component status to running
 	comp.UpdateStatus(ComponentStatusRunning)
 
-	// Persist status update to database if DAO is available
-	if m.dao != nil && comp.ID > 0 {
-		if err := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusRunning, comp.PID, comp.Port); err != nil {
-			// Log warning but don't fail the start operation
-			span.AddEvent("failed to persist status update to database", trace.WithAttributes(
-				attribute.String("error", err.Error()),
-			))
-		}
+	// Register with local tracker for filesystem-based lifecycle tracking
+	// This creates PID file, acquires lock, and waits for socket
+	if err := m.localTracker.Start(ctx, comp); err != nil {
+		// Local tracking failed, kill the process
+		_ = m.killProcess(cmd.Process)
+		m.mu.Lock()
+		delete(m.processes, comp.Name)
+		m.mu.Unlock()
+		startErr := NewStartFailedError(comp.Name, fmt.Errorf("local tracker start failed: %w", err), true)
+		span.RecordError(startErr)
+		span.SetStatus(codes.Error, startErr.Error())
+		span.SetAttributes(ErrorAttributes(startErr, "local_tracker")...)
+		return 0, startErr
 	}
 
 	// Record successful start
@@ -291,27 +369,15 @@ func (m *DefaultLifecycleManager) StopComponent(ctx context.Context, comp *Compo
 			proc, err := os.FindProcess(comp.PID)
 			if err != nil {
 				comp.UpdateStatus(ComponentStatusStopped)
-				// Persist status update to database if DAO is available
-				if m.dao != nil && comp.ID > 0 {
-					if updateErr := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); updateErr != nil {
-						span.AddEvent("failed to persist status update to database", trace.WithAttributes(
-							attribute.String("error", updateErr.Error()),
-						))
-					}
-				}
+				// Unregister from local tracker
+				_ = m.localTracker.Stop(ctx, comp)
 				return nil
 			}
 			process = proc
 		} else {
 			comp.UpdateStatus(ComponentStatusStopped)
-			// Persist status update to database if DAO is available
-			if m.dao != nil && comp.ID > 0 {
-				if updateErr := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); updateErr != nil {
-					span.AddEvent("failed to persist status update to database", trace.WithAttributes(
-						attribute.String("error", updateErr.Error()),
-					))
-				}
-			}
+			// Unregister from local tracker
+			_ = m.localTracker.Stop(ctx, comp)
 			return nil
 		}
 	}
@@ -324,14 +390,8 @@ func (m *DefaultLifecycleManager) StopComponent(ctx context.Context, comp *Compo
 			m.mu.Lock()
 			delete(m.processes, comp.Name)
 			m.mu.Unlock()
-			// Persist status update to database if DAO is available
-			if m.dao != nil && comp.ID > 0 {
-				if updateErr := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); updateErr != nil {
-					span.AddEvent("failed to persist status update to database", trace.WithAttributes(
-						attribute.String("error", updateErr.Error()),
-					))
-				}
-			}
+			// Unregister from local tracker
+			_ = m.localTracker.Stop(ctx, comp)
 			// Success - process already finished
 			duration := time.Since(start)
 			span.SetStatus(codes.Ok, "component stopped (already finished)")
@@ -385,6 +445,16 @@ func (m *DefaultLifecycleManager) StopComponent(ctx context.Context, comp *Compo
 		}
 	}
 
+	// Close log writers and flush buffers
+	if m.logWriter != nil {
+		if err := m.logWriter.Close(comp.Name); err != nil {
+			// Log warning but don't fail the stop operation
+			span.AddEvent("failed to close log writer", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+		}
+	}
+
 	// Update component status
 	comp.UpdateStatus(ComponentStatusStopped)
 
@@ -393,14 +463,12 @@ func (m *DefaultLifecycleManager) StopComponent(ctx context.Context, comp *Compo
 	delete(m.processes, comp.Name)
 	m.mu.Unlock()
 
-	// Persist status update to database if DAO is available
-	if m.dao != nil && comp.ID > 0 {
-		if err := m.dao.UpdateStatus(ctx, comp.ID, ComponentStatusStopped, 0, 0); err != nil {
-			// Log warning but don't fail the stop operation
-			span.AddEvent("failed to persist status update to database", trace.WithAttributes(
-				attribute.String("error", err.Error()),
-			))
-		}
+	// Unregister from local tracker (releases lock, removes PID file)
+	if err := m.localTracker.Stop(ctx, comp); err != nil {
+		// Log warning but don't fail the stop operation
+		span.AddEvent("failed to stop local tracker", trace.WithAttributes(
+			attribute.String("error", err.Error()),
+		))
 	}
 
 	// Record successful stop
@@ -442,34 +510,44 @@ func (m *DefaultLifecycleManager) GetStatus(ctx context.Context, comp *Component
 		return "", NewComponentError(ErrCodeValidationFailed, "component cannot be nil")
 	}
 
-	// If component thinks it's running, verify the process
-	if comp.IsRunning() && comp.PID > 0 {
-		if !m.isProcessAlive(comp.PID) {
-			// Process died, update status
+	// Check if component is running using LocalTracker
+	// This checks both the lock file and socket existence
+	isRunning, err := m.localTracker.IsRunning(ctx, comp.Kind, comp.Name)
+	if err != nil {
+		// Error checking status - return current status
+		return comp.Status, fmt.Errorf("failed to check component status: %w", err)
+	}
+
+	if !isRunning {
+		// Component is not running according to LocalTracker
+		if comp.IsRunning() {
+			// Update component status to stopped if it thinks it's running
 			comp.UpdateStatus(ComponentStatusStopped)
 			m.mu.Lock()
 			delete(m.processes, comp.Name)
 			m.mu.Unlock()
-			return ComponentStatusStopped, nil
 		}
-
-		// Process is alive, check health if possible
-		if comp.Port > 0 {
-			healthEndpoint := m.buildHealthEndpoint(comp, comp.Port)
-			if m.healthCheckClient != nil {
-				if err := m.healthCheckClient.CheckComponent(ctx, healthEndpoint); err != nil {
-					// Health check failed, mark as error
-					comp.UpdateStatus(ComponentStatusError)
-					return ComponentStatusError, nil
-				}
-			}
-		}
-
-		return ComponentStatusRunning, nil
+		return ComponentStatusStopped, nil
 	}
 
-	// Return current status
-	return comp.Status, nil
+	// Component is running, check health if possible
+	if comp.Port > 0 {
+		healthEndpoint := m.buildHealthEndpoint(comp, comp.Port)
+		if m.healthCheckClient != nil {
+			if err := m.healthCheckClient.CheckComponent(ctx, healthEndpoint); err != nil {
+				// Health check failed, mark as error
+				comp.UpdateStatus(ComponentStatusError)
+				return ComponentStatusError, nil
+			}
+		}
+	}
+
+	// Update component status to running if it's not already
+	if !comp.IsRunning() {
+		comp.UpdateStatus(ComponentStatusRunning)
+	}
+
+	return ComponentStatusRunning, nil
 }
 
 // findAvailablePort scans for an available port starting from portRangeStart.
@@ -497,7 +575,26 @@ func (m *DefaultLifecycleManager) isPortAvailable(port int) bool {
 }
 
 // waitForHealthCheck waits for the component to pass its health check.
-func (m *DefaultLifecycleManager) waitForHealthCheck(ctx context.Context, healthEndpoint string) error {
+// If checker is nil, falls back to using healthCheckClient with HTTP endpoint.
+func (m *DefaultLifecycleManager) waitForHealthCheck(ctx context.Context, checker HealthChecker, healthEndpoint string) error {
+	// Use checker if provided
+	if checker != nil {
+		ticker := time.NewTicker(startupHealthCheckInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return NewTimeoutError("component", "health check")
+			case <-ticker.C:
+				if err := checker.Check(ctx); err == nil {
+					return nil
+				}
+			}
+		}
+	}
+
+	// Fall back to HTTP health check client
 	if m.healthCheckClient == nil {
 		// No health check client, just wait a bit for process to stabilize
 		select {

@@ -646,15 +646,15 @@ func TestLabelsToAttributes(t *testing.T) {
 func TestMetricNameConstants(t *testing.T) {
 	// Verify all metric constants are non-empty and follow naming convention
 	metrics := map[string]string{
-		"LLM Completions":     MetricLLMCompletions,
-		"LLM Input Tokens":    MetricLLMTokensInput,
-		"LLM Output Tokens":   MetricLLMTokensOutput,
-		"LLM Latency":         MetricLLMLatency,
-		"LLM Cost":            MetricLLMCost,
-		"Tool Calls":          MetricToolCalls,
-		"Tool Duration":       MetricToolDuration,
-		"Findings Submitted":  MetricFindingsSubmitted,
-		"Agent Delegations":   MetricAgentDelegations,
+		"LLM Completions":    MetricLLMCompletions,
+		"LLM Input Tokens":   MetricLLMTokensInput,
+		"LLM Output Tokens":  MetricLLMTokensOutput,
+		"LLM Latency":        MetricLLMLatency,
+		"LLM Cost":           MetricLLMCost,
+		"Tool Calls":         MetricToolCalls,
+		"Tool Duration":      MetricToolDuration,
+		"Findings Submitted": MetricFindingsSubmitted,
+		"Agent Delegations":  MetricAgentDelegations,
 	}
 
 	for name, constant := range metrics {

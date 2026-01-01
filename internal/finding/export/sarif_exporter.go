@@ -112,12 +112,12 @@ type Driver struct {
 
 // Rule describes a rule that can generate results
 type Rule struct {
-	ID               string           `json:"id"`
-	Name             string           `json:"name"`
-	ShortDescription MessageString    `json:"shortDescription"`
-	FullDescription  MessageString    `json:"fullDescription,omitempty"`
-	Help             MessageString    `json:"help,omitempty"`
-	Properties       *RuleProperties  `json:"properties,omitempty"`
+	ID               string          `json:"id"`
+	Name             string          `json:"name"`
+	ShortDescription MessageString   `json:"shortDescription"`
+	FullDescription  MessageString   `json:"fullDescription,omitempty"`
+	Help             MessageString   `json:"help,omitempty"`
+	Properties       *RuleProperties `json:"properties,omitempty"`
 }
 
 // RuleProperties contains additional rule metadata
@@ -164,10 +164,10 @@ type ArtifactLocation struct {
 
 // Region describes a region within an artifact
 type Region struct {
-	StartLine   int    `json:"startLine,omitempty"`
-	StartColumn int    `json:"startColumn,omitempty"`
-	EndLine     int    `json:"endLine,omitempty"`
-	EndColumn   int    `json:"endColumn,omitempty"`
+	StartLine   int      `json:"startLine,omitempty"`
+	StartColumn int      `json:"startColumn,omitempty"`
+	EndLine     int      `json:"endLine,omitempty"`
+	EndColumn   int      `json:"endColumn,omitempty"`
 	Snippet     *Snippet `json:"snippet,omitempty"`
 }
 
@@ -203,7 +203,7 @@ func buildRules(findings []*finding.EnhancedFinding) []Rule {
 					Text: buildHelpText(f),
 				},
 				Properties: &RuleProperties{
-					Tags:     []string{string(f.Severity)},
+					Tags: []string{string(f.Severity)},
 					Metadata: map[string]interface{}{
 						"category": f.Category,
 					},

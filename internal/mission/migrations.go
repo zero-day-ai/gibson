@@ -46,29 +46,3 @@ CREATE TRIGGER IF NOT EXISTS missions_au AFTER UPDATE ON missions BEGIN
 END;
 `
 }
-
-// getDownMigration6 returns the rollback SQL for migration 6
-func getDownMigration6() string {
-	return `
--- Rollback Mission Orchestrator Schema Enhancements
-
--- Drop FTS5 triggers
-DROP TRIGGER IF EXISTS missions_au;
-DROP TRIGGER IF EXISTS missions_ad;
-DROP TRIGGER IF EXISTS missions_ai;
-
--- Drop FTS5 table
-DROP TABLE IF EXISTS missions_fts;
-
--- Drop index
-DROP INDEX IF EXISTS idx_missions_target_id;
-
--- Note: SQLite doesn't support DROP COLUMN directly
--- In production, you would need to:
--- 1. Create a new table without the enhanced columns
--- 2. Copy data from old table to new table
--- 3. Drop old table
--- 4. Rename new table
--- For simplicity, we're leaving the columns in place during rollback
-`
-}

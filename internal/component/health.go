@@ -57,28 +57,32 @@ type HealthMonitor interface {
 	// RegisterComponent adds a component to be monitored.
 	RegisterComponent(name string, healthEndpoint string)
 
+	// RegisterComponentWithChecker adds a component with a custom HealthChecker to be monitored.
+	RegisterComponentWithChecker(name string, checker HealthChecker)
+
 	// UnregisterComponent removes a component from monitoring.
 	UnregisterComponent(name string)
 }
 
 // DefaultHealthMonitor is the default implementation of HealthMonitor.
 type DefaultHealthMonitor struct {
-	mu                sync.RWMutex
-	client            *http.Client
-	interval          time.Duration
-	timeout           time.Duration
-	retries           int
-	components        map[string]*monitoredComponent
-	callbacks         []StatusChangeCallback
-	stopCh            chan struct{}
-	stoppedCh         chan struct{}
-	running           bool
+	mu         sync.RWMutex
+	client     *http.Client
+	interval   time.Duration
+	timeout    time.Duration
+	retries    int
+	components map[string]*monitoredComponent
+	callbacks  []StatusChangeCallback
+	stopCh     chan struct{}
+	stoppedCh  chan struct{}
+	running    bool
 }
 
 // monitoredComponent represents a component being monitored.
 type monitoredComponent struct {
 	name           string
 	healthEndpoint string
+	checker        HealthChecker // optional HealthChecker
 	currentStatus  HealthStatus
 	failureCount   int
 	lastCheck      time.Time
@@ -222,11 +226,31 @@ func (m *DefaultHealthMonitor) RegisterComponent(name string, healthEndpoint str
 	}
 }
 
+// RegisterComponentWithChecker adds a component with a custom HealthChecker to be monitored.
+// This allows using gRPC or protocol-aware health checkers instead of the default HTTP checker.
+func (m *DefaultHealthMonitor) RegisterComponentWithChecker(name string, checker HealthChecker) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.components[name] = &monitoredComponent{
+		name:          name,
+		checker:       checker,
+		currentStatus: HealthStatusUnknown,
+		failureCount:  0,
+		lastCheck:     time.Time{},
+	}
+}
+
 // UnregisterComponent removes a component from monitoring.
 func (m *DefaultHealthMonitor) UnregisterComponent(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if comp, exists := m.components[name]; exists {
+		if comp.checker != nil {
+			comp.checker.Close()
+		}
+	}
 	delete(m.components, name)
 }
 
@@ -269,8 +293,14 @@ func (m *DefaultHealthMonitor) checkComponentHealth(ctx context.Context, comp *m
 	checkCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
 
-	// Perform health check
-	err := m.CheckComponent(checkCtx, comp.healthEndpoint)
+	var err error
+	if comp.checker != nil {
+		// Use the component's custom health checker
+		err = comp.checker.Check(checkCtx)
+	} else {
+		// Fall back to HTTP health check using endpoint
+		err = m.CheckComponent(checkCtx, comp.healthEndpoint)
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

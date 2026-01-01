@@ -303,7 +303,7 @@ func TestDefaultGraphRAGStore_FindSimilarFindings(t *testing.T) {
 
 	// Vector search returns both findings
 	mockProvider.vectorResults = []VectorResult{
-		{NodeID: sourceFindingID, Similarity: 1.0},    // Source itself
+		{NodeID: sourceFindingID, Similarity: 1.0},   // Source itself
 		{NodeID: similarFindingID, Similarity: 0.85}, // Similar finding
 	}
 

@@ -22,18 +22,18 @@ type MockGraphClient struct {
 	mu sync.RWMutex
 
 	// State
-	connected    bool
-	healthStatus types.HealthStatus
-	nodes        map[string]mockNode
+	connected     bool
+	healthStatus  types.HealthStatus
+	nodes         map[string]mockNode
 	relationships []mockRelationship
-	calls        []MockCall
-	nextNodeID   int
+	calls         []MockCall
+	nextNodeID    int
 
 	// Configurable responses
-	queryResults  []QueryResult
-	queryError    error
-	connectError  error
-	closeError    error
+	queryResults    []QueryResult
+	queryError      error
+	connectError    error
+	closeError      error
 	createNodeError error
 	createRelError  error
 	deleteNodeError error
@@ -48,10 +48,10 @@ type mockNode struct {
 
 // mockRelationship represents a stored relationship for the mock.
 type mockRelationship struct {
-	FromID  string
-	ToID    string
-	Type    string
-	Props   map[string]any
+	FromID string
+	ToID   string
+	Type   string
+	Props  map[string]any
 }
 
 // NewMockGraphClient creates a new mock graph client for testing.

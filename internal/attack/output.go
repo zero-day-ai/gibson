@@ -313,7 +313,6 @@ func (h *TextOutputHandler) OnError(err error) {
 // JSONOutputHandler implements OutputHandler for JSON output
 type JSONOutputHandler struct {
 	encoder *json.Encoder
-	events  []jsonEvent
 }
 
 // jsonEvent represents a single event in the JSON stream
@@ -327,7 +326,6 @@ type jsonEvent struct {
 func NewJSONOutputHandler(writer io.Writer) *JSONOutputHandler {
 	return &JSONOutputHandler{
 		encoder: json.NewEncoder(writer),
-		events:  []jsonEvent{},
 	}
 }
 
@@ -337,11 +335,11 @@ func (h *JSONOutputHandler) OnStart(opts *AttackOptions) {
 		Type:      "start",
 		Timestamp: time.Now(),
 		Data: map[string]interface{}{
-			"target":   getTargetIdentifier(opts),
-			"agent":    opts.AgentName,
-			"goal":     opts.Goal,
+			"target":    getTargetIdentifier(opts),
+			"agent":     opts.AgentName,
+			"goal":      opts.Goal,
 			"max_turns": opts.MaxTurns,
-			"timeout":  opts.Timeout.String(),
+			"timeout":   opts.Timeout.String(),
 		},
 	}
 	h.encoder.Encode(event)
@@ -644,19 +642,19 @@ type sarifTool struct {
 }
 
 type sarifDriver struct {
-	Name           string       `json:"name"`
-	Version        string       `json:"version"`
-	InformationUri string       `json:"informationUri,omitempty"`
-	Rules          []sarifRule  `json:"rules,omitempty"`
+	Name           string      `json:"name"`
+	Version        string      `json:"version"`
+	InformationUri string      `json:"informationUri,omitempty"`
+	Rules          []sarifRule `json:"rules,omitempty"`
 }
 
 type sarifRule struct {
-	ID               string                `json:"id"`
-	Name             string                `json:"name"`
-	ShortDescription sarifMessageString    `json:"shortDescription"`
-	FullDescription  sarifMessageString    `json:"fullDescription,omitempty"`
-	Help             *sarifMessageString   `json:"help,omitempty"`
-	Properties       *sarifRuleProperties  `json:"properties,omitempty"`
+	ID               string               `json:"id"`
+	Name             string               `json:"name"`
+	ShortDescription sarifMessageString   `json:"shortDescription"`
+	FullDescription  sarifMessageString   `json:"fullDescription,omitempty"`
+	Help             *sarifMessageString  `json:"help,omitempty"`
+	Properties       *sarifRuleProperties `json:"properties,omitempty"`
 }
 
 type sarifRuleProperties struct {
@@ -679,8 +677,8 @@ type sarifMessage struct {
 }
 
 type sarifInvocation struct {
-	ExecutionSuccessful bool                    `json:"executionSuccessful"`
-	ExecutionFailure    *sarifExecutionFailure  `json:"executionFailure,omitempty"`
+	ExecutionSuccessful bool                   `json:"executionSuccessful"`
+	ExecutionFailure    *sarifExecutionFailure `json:"executionFailure,omitempty"`
 }
 
 type sarifExecutionFailure struct {

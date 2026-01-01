@@ -701,7 +701,7 @@ func validatePayload(p *payload.Payload) error {
 			return fmt.Errorf("success indicator %d: invalid type %s", i, indicator.Type)
 		}
 		if indicator.Value == "" {
-			return fmt.Errorf("success indicator %d: value is required", i, indicator.Type)
+			return fmt.Errorf("success indicator %d: value is required", i)
 		}
 	}
 

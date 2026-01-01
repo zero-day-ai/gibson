@@ -64,12 +64,12 @@ type GraphRAGProvider interface {
 // RelQuery represents a query for relationships.
 // Used to filter relationships by type, node connections, and properties.
 type RelQuery struct {
-	FromID     *types.ID      `json:"from_id,omitempty"`     // Filter by source node
-	ToID       *types.ID      `json:"to_id,omitempty"`       // Filter by target node
-	Types      []RelationType `json:"types,omitempty"`       // Filter by relationship types
-	Properties map[string]any `json:"properties,omitempty"`  // Filter by relationship properties
-	MinWeight  float64        `json:"min_weight,omitempty"`  // Minimum relationship weight
-	Limit      int            `json:"limit,omitempty"`       // Maximum results to return
+	FromID     *types.ID      `json:"from_id,omitempty"`    // Filter by source node
+	ToID       *types.ID      `json:"to_id,omitempty"`      // Filter by target node
+	Types      []RelationType `json:"types,omitempty"`      // Filter by relationship types
+	Properties map[string]any `json:"properties,omitempty"` // Filter by relationship properties
+	MinWeight  float64        `json:"min_weight,omitempty"` // Minimum relationship weight
+	Limit      int            `json:"limit,omitempty"`      // Maximum results to return
 }
 
 // NewRelQuery creates a new RelQuery with default values.
@@ -150,7 +150,8 @@ func (pt ProviderType) IsValid() bool {
 // for interface documentation purposes.
 //
 // Usage:
-//   provider, err := provider.NewProvider(config)
+//
+//	provider, err := provider.NewProvider(config)
 func NewGraphRAGProvider(config GraphRAGConfig) (GraphRAGProvider, error) {
 	// This is a stub - use provider.NewProvider() instead
 	return nil, NewConfigError(

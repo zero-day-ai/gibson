@@ -731,21 +731,21 @@ func (s *DBFindingStore) scanFinding(scanner interface {
 }) (*EnhancedFinding, error) {
 	var f EnhancedFinding
 	var (
-		idStr              string
-		missionIDStr       string
-		severityStr        string
-		statusStr          string
-		delegatedFrom      sql.NullString
-		subcategory        sql.NullString
-		remediation        sql.NullString
-		cvssVector         sql.NullString
-		cvssScore          sql.NullFloat64
-		mitreAttackJSON    string
-		mitreAtlasJSON     string
-		referencesJSON     string
-		reproStepsJSON     string
-		relatedIDsJSON     string
-		cweJSON            string
+		idStr           string
+		missionIDStr    string
+		severityStr     string
+		statusStr       string
+		delegatedFrom   sql.NullString
+		subcategory     sql.NullString
+		remediation     sql.NullString
+		cvssVector      sql.NullString
+		cvssScore       sql.NullFloat64
+		mitreAttackJSON string
+		mitreAtlasJSON  string
+		referencesJSON  string
+		reproStepsJSON  string
+		relatedIDsJSON  string
+		cweJSON         string
 	)
 
 	err := scanner.Scan(

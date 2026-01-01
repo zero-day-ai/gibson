@@ -31,13 +31,13 @@ type mockHarness struct {
 	mu sync.Mutex
 
 	// Execution tracking
-	executionOrder []string               // Track order of node executions
+	executionOrder []string             // Track order of node executions
 	executionTimes map[string]time.Time // Track when each node started
 
 	// Behavior configuration
-	failNodes  map[string]int           // Map of node ID -> number of times to fail before succeeding
-	failCounts map[string]int           // Track current failure count for each node
-	delayNodes map[string]time.Duration // Map of node ID -> execution delay
+	failNodes   map[string]int            // Map of node ID -> number of times to fail before succeeding
+	failCounts  map[string]int            // Track current failure count for each node
+	delayNodes  map[string]time.Duration  // Map of node ID -> execution delay
 	outputNodes map[string]map[string]any // Map of node ID -> output to return
 
 	// Agent/Tool/Plugin results

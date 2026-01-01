@@ -2,6 +2,7 @@ package component
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/internal/component"
@@ -141,10 +142,44 @@ func runStop(cmd *cobra.Command, args []string, cfg Config) error {
 	return nil
 }
 
-// getLifecycleManager creates a lifecycle manager with DAO for status updates.
+// getLifecycleManager creates a lifecycle manager with DAO for status updates
+// and LogWriter for capturing component output.
+//
+// The LogWriter is configured to write logs to ~/.gibson/logs/<component-name>.log
+// with automatic rotation (10MB max size, 5 backups). If the log directory cannot
+// be created or LogWriter initialization fails, a warning is printed to stderr
+// and the lifecycle manager is created without logging (LogWriter = nil).
+//
+// This ensures that component startup is resilient to logging failures - components
+// will still start and run even if log file creation fails due to permissions or
+// disk space issues.
 func getLifecycleManager(dao component.StatusUpdater) component.LifecycleManager {
 	healthMonitor := component.NewHealthMonitor()
-	return component.NewLifecycleManager(healthMonitor, dao)
+
+	// Create log writer for capturing component output to ~/.gibson/logs/
+	var logWriter component.LogWriter
+	homeDir, err := getGibsonHome()
+	if err == nil {
+		// Create log directory path
+		logDir := fmt.Sprintf("%s/logs", homeDir)
+
+		// Create DefaultLogWriter with rotation (10MB max, 5 backups)
+		logWriter, err = component.NewDefaultLogWriter(logDir, nil)
+		if err != nil {
+			// Warn but don't fail - continue with nil LogWriter (no logging)
+			fmt.Fprintf(os.Stderr, "Warning: Failed to create log writer: %v\n", err)
+			logWriter = nil
+		}
+	} else {
+		// Warn but don't fail - continue with nil LogWriter (no logging)
+		fmt.Fprintf(os.Stderr, "Warning: Failed to get Gibson home: %v\n", err)
+		logWriter = nil
+	}
+
+	// Create local tracker for filesystem-based lifecycle management
+	localTracker := component.NewDefaultLocalTracker()
+
+	return component.NewLifecycleManager(healthMonitor, dao, logWriter, localTracker)
 }
 
 // capitalizeFirst capitalizes the first letter of a string.

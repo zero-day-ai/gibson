@@ -805,9 +805,9 @@ func TestConditionEvaluator_NodeStatusField(t *testing.T) {
 				Duration: 5 * time.Second,
 			},
 			"failed_task": {
-				NodeID:   "failed_task",
-				Status:   NodeStatusFailed,
-				Output:   map[string]any{},
+				NodeID: "failed_task",
+				Status: NodeStatusFailed,
+				Output: map[string]any{},
 				Error: &NodeError{
 					Code:    "TIMEOUT",
 					Message: "connection timeout",

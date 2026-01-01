@@ -27,8 +27,7 @@ const (
 	ErrCodeYAMLValidation types.ErrorCode = "YAML_VALIDATION_FAILED"
 
 	// Assembly and relay errors
-	ErrCodeRelayFailed    types.ErrorCode = "RELAY_TRANSFORM_FAILED"
-	ErrCodeAssemblyFailed types.ErrorCode = "ASSEMBLY_FAILED"
+	ErrCodeRelayFailed types.ErrorCode = "RELAY_TRANSFORM_FAILED"
 
 	// Example validation errors
 	ErrCodeInvalidExample types.ErrorCode = "INVALID_EXAMPLE"
@@ -124,15 +123,6 @@ func NewRelayFailedError(relayName string, cause error) error {
 	return types.WrapError(
 		ErrCodeRelayFailed,
 		fmt.Sprintf("relay transformation failed: %s", relayName),
-		cause,
-	)
-}
-
-// NewAssemblyFailedError creates an error for prompt assembly failures
-func NewAssemblyFailedError(promptID string, cause error) error {
-	return types.WrapError(
-		ErrCodeAssemblyFailed,
-		fmt.Sprintf("failed to assemble prompt: %s", promptID),
 		cause,
 	)
 }

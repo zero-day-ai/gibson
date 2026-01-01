@@ -678,11 +678,11 @@ func TestPipeline_ConcurrentUsage(t *testing.T) {
 // TestPipeline_RedactionThroughMultipleGuardrails tests content modifications across pipeline
 func TestPipeline_RedactionThroughMultipleGuardrails(t *testing.T) {
 	tests := []struct {
-		name           string
-		guardrails     []guardrail.Guardrail
-		input          string
-		expectedOutput string
-		checkContains  []string
+		name             string
+		guardrails       []guardrail.Guardrail
+		input            string
+		expectedOutput   string
+		checkContains    []string
 		checkNotContains []string
 	}{
 		{

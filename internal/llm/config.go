@@ -63,10 +63,10 @@ func (c *LLMConfig) Validate() error {
 // It includes authentication credentials, API endpoints, available models,
 // and provider-specific options.
 type ProviderConfig struct {
-	Type         ProviderType          `mapstructure:"type" yaml:"type" validate:"required,oneof=anthropic openai google custom"`
-	APIKey       string                `mapstructure:"api_key" yaml:"api_key" validate:"required"`
-	BaseURL      string                `mapstructure:"base_url" yaml:"base_url"`
-	DefaultModel string                `mapstructure:"default_model" yaml:"default_model" validate:"required"`
+	Type         ProviderType           `mapstructure:"type" yaml:"type" validate:"required,oneof=anthropic openai google custom"`
+	APIKey       string                 `mapstructure:"api_key" yaml:"api_key" validate:"required"`
+	BaseURL      string                 `mapstructure:"base_url" yaml:"base_url"`
+	DefaultModel string                 `mapstructure:"default_model" yaml:"default_model" validate:"required"`
 	Models       map[string]ModelConfig `mapstructure:"models" yaml:"models" validate:"dive"`
 	Options      map[string]interface{} `mapstructure:"options" yaml:"options"`
 }

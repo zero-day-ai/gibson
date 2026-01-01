@@ -390,34 +390,34 @@ func TestValidateConstraints_ContextWindow(t *testing.T) {
 	manager := NewSlotManager(nil)
 
 	tests := []struct {
-		name              string
-		minContextWindow  int
+		name               string
+		minContextWindow   int
 		modelContextWindow int
-		expectError       bool
+		expectError        bool
 	}{
 		{
-			name:              "sufficient context window",
-			minContextWindow:  4096,
+			name:               "sufficient context window",
+			minContextWindow:   4096,
 			modelContextWindow: 8192,
-			expectError:       false,
+			expectError:        false,
 		},
 		{
-			name:              "exact context window",
-			minContextWindow:  8192,
+			name:               "exact context window",
+			minContextWindow:   8192,
 			modelContextWindow: 8192,
-			expectError:       false,
+			expectError:        false,
 		},
 		{
-			name:              "insufficient context window",
-			minContextWindow:  16384,
+			name:               "insufficient context window",
+			minContextWindow:   16384,
 			modelContextWindow: 8192,
-			expectError:       true,
+			expectError:        true,
 		},
 		{
-			name:              "no constraint (0)",
-			minContextWindow:  0,
+			name:               "no constraint (0)",
+			minContextWindow:   0,
 			modelContextWindow: 8192,
-			expectError:       false,
+			expectError:        false,
 		},
 	}
 

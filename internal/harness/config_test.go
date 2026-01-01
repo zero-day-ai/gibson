@@ -115,3 +115,45 @@ func TestHarnessConfig_ApplyDefaults_Idempotent(t *testing.T) {
 		t.Error("expected LLMRegistry to remain the same after second ApplyDefaults")
 	}
 }
+
+// TestHarnessFactoryConfig_Alias tests that HarnessFactoryConfig type alias works
+func TestHarnessFactoryConfig_Alias(t *testing.T) {
+	// Test that HarnessFactoryConfig is an alias for HarnessConfig
+	var factoryConfig HarnessFactoryConfig
+	factoryConfig.SlotManager = llm.NewSlotManager(llm.NewLLMRegistry())
+
+	// Should be assignable to HarnessConfig without conversion
+	var harnessConfig HarnessConfig = factoryConfig
+
+	if harnessConfig.SlotManager == nil {
+		t.Error("expected SlotManager to be set via alias")
+	}
+}
+
+// TestNewDefaultHarnessFactory_Alias tests that NewDefaultHarnessFactory function alias works
+func TestNewDefaultHarnessFactory_Alias(t *testing.T) {
+	config := HarnessFactoryConfig{
+		SlotManager: llm.NewSlotManager(llm.NewLLMRegistry()),
+	}
+
+	// Test that NewDefaultHarnessFactory works
+	factory, err := NewDefaultHarnessFactory(config)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if factory == nil {
+		t.Fatal("expected factory to be non-nil")
+	}
+
+	// Verify factory has correct config
+	factoryConfig := factory.Config()
+	if factoryConfig.SlotManager == nil {
+		t.Error("expected factory to have SlotManager configured")
+	}
+
+	// Verify defaults were applied
+	if factoryConfig.LLMRegistry == nil {
+		t.Error("expected factory to have LLMRegistry defaulted")
+	}
+}

@@ -11,8 +11,8 @@ import (
 
 // PromptFile represents a YAML file containing prompts.
 // It supports two formats:
-//   1. Multiple prompts: prompts: [...]
-//   2. Single prompt: direct YAML mapping
+//  1. Multiple prompts: prompts: [...]
+//  2. Single prompt: direct YAML mapping
 type PromptFile struct {
 	Prompts []Prompt `yaml:"prompts"`
 }

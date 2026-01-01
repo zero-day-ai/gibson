@@ -496,11 +496,11 @@ func TestFormatAgentInfoList(t *testing.T) {
 // Table-driven test for agent selection scenarios
 func TestAgentSelector_Select_TableDriven(t *testing.T) {
 	tests := []struct {
-		name          string
-		agentName     string
-		setupMock     func(*MockAgentRegistry)
-		expectError   bool
-		errorChecker  func(*testing.T, error)
+		name         string
+		agentName    string
+		setupMock    func(*MockAgentRegistry)
+		expectError  bool
+		errorChecker func(*testing.T, error)
 	}{
 		{
 			name:      "successful selection",

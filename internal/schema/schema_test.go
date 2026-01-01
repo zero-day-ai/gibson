@@ -36,10 +36,10 @@ func TestNewArraySchema(t *testing.T) {
 // TestFieldConstructors tests all field constructor functions
 func TestFieldConstructors(t *testing.T) {
 	tests := []struct {
-		name        string
-		field       SchemaField
+		name         string
+		field        SchemaField
 		expectedType string
-		description string
+		description  string
 	}{
 		{
 			name:         "string field",
@@ -153,9 +153,9 @@ func TestSchemaFieldBuilders(t *testing.T) {
 // TestSchemaJSONSerialization tests JSON Schema draft-07 compatibility
 func TestSchemaJSONSerialization(t *testing.T) {
 	schema := NewObjectSchema(map[string]SchemaField{
-		"name": NewStringField("User name").WithMinLength(1).WithMaxLength(100),
-		"age":  NewIntegerField("User age").WithMinMax(0, 150),
-		"email": NewStringField("User email").WithFormat("email"),
+		"name":   NewStringField("User name").WithMinLength(1).WithMaxLength(100),
+		"age":    NewIntegerField("User age").WithMinMax(0, 150),
+		"email":  NewStringField("User email").WithFormat("email"),
 		"status": NewStringField("User status").WithEnum("active", "inactive"),
 	}, []string{"name", "email"})
 
@@ -186,8 +186,8 @@ func TestValidateRequiredFields(t *testing.T) {
 	}, []string{"name", "email"})
 
 	tests := []struct {
-		name          string
-		data          map[string]any
+		name           string
+		data           map[string]any
 		expectedErrors int
 		missingFields  []string
 	}{
@@ -239,9 +239,9 @@ func TestValidateTypeChecking(t *testing.T) {
 	validator := NewValidator()
 
 	tests := []struct {
-		name          string
-		schema        JSONSchema
-		data          map[string]any
+		name           string
+		schema         JSONSchema
+		data           map[string]any
 		expectedErrors int
 	}{
 		{
@@ -329,9 +329,9 @@ func TestValidateNumericConstraints(t *testing.T) {
 	validator := NewValidator()
 
 	tests := []struct {
-		name          string
-		schema        JSONSchema
-		data          map[string]any
+		name           string
+		schema         JSONSchema
+		data           map[string]any
 		expectedErrors int
 	}{
 		{
@@ -399,9 +399,9 @@ func TestValidateStringConstraints(t *testing.T) {
 	validator := NewValidator()
 
 	tests := []struct {
-		name          string
-		schema        JSONSchema
-		data          map[string]any
+		name           string
+		schema         JSONSchema
+		data           map[string]any
 		expectedErrors int
 	}{
 		{
@@ -472,8 +472,8 @@ func TestValidateEnumConstraint(t *testing.T) {
 	}, nil)
 
 	tests := []struct {
-		name          string
-		data          map[string]any
+		name           string
+		data           map[string]any
 		expectedErrors int
 	}{
 		{
@@ -512,10 +512,10 @@ func TestValidateFormatConstraints(t *testing.T) {
 	validator := NewValidator()
 
 	tests := []struct {
-		name          string
-		format        string
-		value         string
-		shouldPass    bool
+		name       string
+		format     string
+		value      string
+		shouldPass bool
 	}{
 		{
 			name:       "valid email",
@@ -630,8 +630,8 @@ func TestValidateNestedObject(t *testing.T) {
 	}, []string{"name"})
 
 	tests := []struct {
-		name          string
-		data          map[string]any
+		name           string
+		data           map[string]any
 		expectedErrors int
 		errorFields    []string
 	}{
@@ -707,9 +707,9 @@ func TestValidateArray(t *testing.T) {
 	validator := NewValidator()
 
 	tests := []struct {
-		name          string
-		schema        JSONSchema
-		data          map[string]any
+		name           string
+		schema         JSONSchema
+		data           map[string]any
 		expectedErrors int
 	}{
 		{
@@ -824,8 +824,8 @@ func TestValidateAdditionalProperties(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		data          map[string]any
+		name           string
+		data           map[string]any
 		expectedErrors int
 	}{
 		{

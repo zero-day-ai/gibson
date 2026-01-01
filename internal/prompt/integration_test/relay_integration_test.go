@@ -345,9 +345,9 @@ func TestRelay_Integration_ComplexScenario(t *testing.T) {
 		TargetAgent: "DynamicScanner",
 		Task:        "Perform runtime security testing on authentication endpoints",
 		Memory: map[string]any{
-			"endpoints":     []string{"/login", "/logout", "/refresh"},
-			"test_level":    "safe",
-			"max_requests":  1000,
+			"endpoints":    []string{"/login", "/logout", "/refresh"},
+			"test_level":   "safe",
+			"max_requests": 1000,
 		},
 		Constraints: []string{
 			"Use only safe testing methods",

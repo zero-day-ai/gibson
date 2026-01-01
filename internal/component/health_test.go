@@ -102,11 +102,11 @@ func TestHealthMonitor_CheckComponent_Success(t *testing.T) {
 // TestHealthMonitor_CheckComponent_Failure tests failed health check.
 func TestHealthMonitor_CheckComponent_Failure(t *testing.T) {
 	tests := []struct {
-		name           string
-		statusCode     int
-		serverFunc     func(http.ResponseWriter, *http.Request)
-		expectError    bool
-		errorContains  string
+		name          string
+		statusCode    int
+		serverFunc    func(http.ResponseWriter, *http.Request)
+		expectError   bool
+		errorContains string
 	}{
 		{
 			name:       "status 500",
@@ -605,6 +605,201 @@ func TestHealthMonitor_ConcurrentAccess(t *testing.T) {
 	count = len(monitor.components)
 	monitor.mu.RUnlock()
 	assert.Equal(t, 0, count)
+}
+
+// TestHealthMonitor_RegisterComponentWithChecker tests registering a component with a custom health checker.
+func TestHealthMonitor_RegisterComponentWithChecker(t *testing.T) {
+	monitor := NewHealthMonitor()
+
+	// Create a mock health checker
+	mockChecker := &mockHealthChecker{
+		checkFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	// Register component with custom checker
+	monitor.RegisterComponentWithChecker("test-component", mockChecker)
+
+	// Verify component was registered
+	monitor.mu.RLock()
+	comp, exists := monitor.components["test-component"]
+	monitor.mu.RUnlock()
+
+	assert.True(t, exists)
+	assert.NotNil(t, comp.checker)
+	assert.Equal(t, "test-component", comp.name)
+	assert.Equal(t, HealthStatusUnknown, comp.currentStatus)
+
+	// Verify the checker is called when monitoring
+	ctx := context.Background()
+	monitor.checkComponentHealth(ctx, comp)
+
+	// Component should become healthy
+	assert.Equal(t, HealthStatusHealthy, comp.currentStatus)
+	assert.Equal(t, 1, mockChecker.checkCallCount)
+}
+
+// TestHealthMonitor_RegisterComponentWithChecker_Failure tests health checker failure handling.
+func TestHealthMonitor_RegisterComponentWithChecker_Failure(t *testing.T) {
+	monitor := NewHealthMonitorWithConfig(100*time.Millisecond, 5*time.Second, 2)
+
+	// Create a mock health checker that fails
+	mockChecker := &mockHealthChecker{
+		checkFunc: func(ctx context.Context) error {
+			return fmt.Errorf("health check failed")
+		},
+	}
+
+	// Register component with failing checker
+	monitor.RegisterComponentWithChecker("test-component", mockChecker)
+
+	// Get component
+	monitor.mu.RLock()
+	comp := monitor.components["test-component"]
+	monitor.mu.RUnlock()
+
+	ctx := context.Background()
+
+	// First failure - should not mark unhealthy yet (needs 2 retries)
+	monitor.checkComponentHealth(ctx, comp)
+	assert.Equal(t, HealthStatusUnknown, comp.currentStatus)
+	assert.Equal(t, 1, comp.failureCount)
+
+	// Second failure - should now mark unhealthy
+	monitor.checkComponentHealth(ctx, comp)
+	assert.Equal(t, HealthStatusUnhealthy, comp.currentStatus)
+	assert.Equal(t, 2, comp.failureCount)
+}
+
+// TestHealthMonitor_UnregisterComponent_ClosesChecker tests that unregistering closes the checker.
+func TestHealthMonitor_UnregisterComponent_ClosesChecker(t *testing.T) {
+	monitor := NewHealthMonitor()
+
+	// Create a mock health checker
+	mockChecker := &mockHealthChecker{
+		checkFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+
+	// Register component
+	monitor.RegisterComponentWithChecker("test-component", mockChecker)
+
+	// Verify component exists
+	monitor.mu.RLock()
+	_, exists := monitor.components["test-component"]
+	monitor.mu.RUnlock()
+	assert.True(t, exists)
+
+	// Unregister component
+	monitor.UnregisterComponent("test-component")
+
+	// Verify component was removed
+	monitor.mu.RLock()
+	_, exists = monitor.components["test-component"]
+	monitor.mu.RUnlock()
+	assert.False(t, exists)
+
+	// Verify checker was closed
+	assert.True(t, mockChecker.closed)
+}
+
+// TestHealthMonitor_BackwardCompatibility tests that HTTP endpoint registration still works.
+func TestHealthMonitor_BackwardCompatibility(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	monitor := NewHealthMonitor()
+
+	// Register component using old method (HTTP endpoint)
+	monitor.RegisterComponent("http-component", server.URL+"/health")
+
+	// Get component
+	monitor.mu.RLock()
+	comp, exists := monitor.components["http-component"]
+	monitor.mu.RUnlock()
+
+	assert.True(t, exists)
+	assert.Equal(t, server.URL+"/health", comp.healthEndpoint)
+	assert.Nil(t, comp.checker) // Should not have a checker
+
+	// Verify health check still works via HTTP
+	ctx := context.Background()
+	monitor.checkComponentHealth(ctx, comp)
+	assert.Equal(t, HealthStatusHealthy, comp.currentStatus)
+}
+
+// TestHealthMonitor_MixedComponents tests monitoring both HTTP and checker-based components.
+func TestHealthMonitor_MixedComponents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	monitor := NewHealthMonitor()
+
+	// Register HTTP component
+	monitor.RegisterComponent("http-component", server.URL+"/health")
+
+	// Register component with custom checker
+	mockChecker := &mockHealthChecker{
+		checkFunc: func(ctx context.Context) error {
+			return nil
+		},
+	}
+	monitor.RegisterComponentWithChecker("grpc-component", mockChecker)
+
+	// Verify both components registered
+	monitor.mu.RLock()
+	httpComp, httpExists := monitor.components["http-component"]
+	grpcComp, grpcExists := monitor.components["grpc-component"]
+	monitor.mu.RUnlock()
+
+	assert.True(t, httpExists)
+	assert.True(t, grpcExists)
+	assert.Nil(t, httpComp.checker)
+	assert.NotNil(t, grpcComp.checker)
+
+	// Health check both
+	ctx := context.Background()
+	monitor.checkComponentHealth(ctx, httpComp)
+	monitor.checkComponentHealth(ctx, grpcComp)
+
+	assert.Equal(t, HealthStatusHealthy, httpComp.currentStatus)
+	assert.Equal(t, HealthStatusHealthy, grpcComp.currentStatus)
+	assert.Equal(t, 1, mockChecker.checkCallCount)
+}
+
+// mockHealthChecker is a mock implementation of HealthChecker for testing.
+type mockHealthChecker struct {
+	checkFunc      func(ctx context.Context) error
+	checkCallCount int
+	closed         bool
+	mu             sync.Mutex
+}
+
+func (m *mockHealthChecker) Check(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checkCallCount++
+	if m.checkFunc != nil {
+		return m.checkFunc(ctx)
+	}
+	return nil
+}
+
+func (m *mockHealthChecker) Protocol() HealthCheckProtocol {
+	return HealthCheckProtocolGRPC
+}
+
+func (m *mockHealthChecker) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	return nil
 }
 
 // Benchmark tests

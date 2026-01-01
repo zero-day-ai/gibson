@@ -175,6 +175,24 @@ func (m *MockMissionStore) Count(ctx context.Context, filter *mission.MissionFil
 	return args.Int(0), args.Error(1)
 }
 
+func (m *MockMissionStore) GetByName(ctx context.Context, name string) (*mission.Mission, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*mission.Mission), args.Error(1)
+}
+
+func (m *MockMissionStore) UpdateStatus(ctx context.Context, id types.ID, status mission.MissionStatus) error {
+	args := m.Called(ctx, id, status)
+	return args.Error(0)
+}
+
+func (m *MockMissionStore) UpdateProgress(ctx context.Context, id types.ID, progress float64) error {
+	args := m.Called(ctx, id, progress)
+	return args.Error(0)
+}
+
 type MockFindingStore struct {
 	mock.Mock
 }

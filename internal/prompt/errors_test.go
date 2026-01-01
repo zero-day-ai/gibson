@@ -162,14 +162,6 @@ func TestAssemblyAndRelayErrors(t *testing.T) {
 			wantCode: ErrCodeRelayFailed,
 			wantMsg:  []string{"relay transformation failed", "json-relay"},
 		},
-		{
-			name: "assembly failed error",
-			errFunc: func() error {
-				return NewAssemblyFailedError("complex-prompt", errors.New("circular dependency"))
-			},
-			wantCode: ErrCodeAssemblyFailed,
-			wantMsg:  []string{"failed to assemble prompt", "complex-prompt"},
-		},
 	}
 
 	for _, tt := range tests {
@@ -256,14 +248,6 @@ func TestErrorWrapping(t *testing.T) {
 			causeMsg:   "relay error",
 			shouldWrap: true,
 		},
-		{
-			name: "assembly failed wraps cause",
-			errFunc: func() error {
-				return NewAssemblyFailedError("test", errors.New("assembly error"))
-			},
-			causeMsg:   "assembly error",
-			shouldWrap: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -310,11 +294,10 @@ func TestErrorCodeConstants(t *testing.T) {
 		ErrCodeYAMLParse:           true,
 		ErrCodeYAMLValidation:      true,
 		ErrCodeRelayFailed:         true,
-		ErrCodeAssemblyFailed:      true,
 		ErrCodeInvalidExample:      true,
 	}
 
-	expectedCount := 13
+	expectedCount := 12
 	if len(codes) != expectedCount {
 		t.Errorf("expected %d unique error codes, got %d", expectedCount, len(codes))
 	}

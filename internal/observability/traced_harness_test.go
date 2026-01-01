@@ -22,24 +22,24 @@ import (
 
 // MockAgentHarness is a mock implementation of harness.AgentHarness for testing.
 type MockAgentHarness struct {
-	CompleteFunc           func(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (*llm.CompletionResponse, error)
-	CompleteWithToolsFunc  func(ctx context.Context, slot string, messages []llm.Message, tools []llm.ToolDef, opts ...harness.CompletionOption) (*llm.CompletionResponse, error)
-	StreamFunc             func(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (<-chan llm.StreamChunk, error)
-	CallToolFunc           func(ctx context.Context, name string, input map[string]any) (map[string]any, error)
-	QueryPluginFunc        func(ctx context.Context, name string, method string, params map[string]any) (any, error)
-	DelegateToAgentFunc    func(ctx context.Context, name string, task agent.Task) (agent.Result, error)
-	SubmitFindingFunc      func(ctx context.Context, finding agent.Finding) error
-	GetFindingsFunc        func(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error)
-	MemoryFunc             func() memory.MemoryStore
-	MissionFunc            func() harness.MissionContext
-	TargetFunc             func() harness.TargetInfo
-	ListToolsFunc          func() []harness.ToolDescriptor
-	ListPluginsFunc        func() []harness.PluginDescriptor
-	ListAgentsFunc         func() []harness.AgentDescriptor
-	TracerFunc             func() oteltrace.Tracer
-	LoggerFunc             func() *slog.Logger
-	MetricsFunc            func() harness.MetricsRecorder
-	TokenUsageFunc         func() *llm.TokenTracker
+	CompleteFunc          func(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (*llm.CompletionResponse, error)
+	CompleteWithToolsFunc func(ctx context.Context, slot string, messages []llm.Message, tools []llm.ToolDef, opts ...harness.CompletionOption) (*llm.CompletionResponse, error)
+	StreamFunc            func(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (<-chan llm.StreamChunk, error)
+	CallToolFunc          func(ctx context.Context, name string, input map[string]any) (map[string]any, error)
+	QueryPluginFunc       func(ctx context.Context, name string, method string, params map[string]any) (any, error)
+	DelegateToAgentFunc   func(ctx context.Context, name string, task agent.Task) (agent.Result, error)
+	SubmitFindingFunc     func(ctx context.Context, finding agent.Finding) error
+	GetFindingsFunc       func(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error)
+	MemoryFunc            func() memory.MemoryStore
+	MissionFunc           func() harness.MissionContext
+	TargetFunc            func() harness.TargetInfo
+	ListToolsFunc         func() []harness.ToolDescriptor
+	ListPluginsFunc       func() []harness.PluginDescriptor
+	ListAgentsFunc        func() []harness.AgentDescriptor
+	TracerFunc            func() oteltrace.Tracer
+	LoggerFunc            func() *slog.Logger
+	MetricsFunc           func() harness.MetricsRecorder
+	TokenUsageFunc        func() *llm.TokenTracker
 }
 
 func (m *MockAgentHarness) Complete(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (*llm.CompletionResponse, error) {

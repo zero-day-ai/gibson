@@ -21,16 +21,16 @@ func TestNewDefaultBuildExecutor(t *testing.T) {
 // TestDefaultBuildExecutor_Build tests the Build method.
 func TestDefaultBuildExecutor_Build(t *testing.T) {
 	tests := []struct {
-		name              string
-		config            BuildConfig
-		componentName     string
-		componentVersion  string
-		gibsonVersion     string
-		setupFunc         func(t *testing.T) string // Returns temp dir
-		cleanupFunc       func(t *testing.T, dir string)
-		expectError       bool
-		expectSuccess     bool
-		validateResult    func(t *testing.T, result *BuildResult)
+		name             string
+		config           BuildConfig
+		componentName    string
+		componentVersion string
+		gibsonVersion    string
+		setupFunc        func(t *testing.T) string // Returns temp dir
+		cleanupFunc      func(t *testing.T, dir string)
+		expectError      bool
+		expectSuccess    bool
+		validateResult   func(t *testing.T, result *BuildResult)
 	}{
 		{
 			name: "successful build with echo command",
@@ -307,11 +307,11 @@ func TestDefaultBuildExecutor_Clean(t *testing.T) {
 			},
 		},
 		{
-			name:          "clean with empty work directory",
-			workDir:       "",
-			setupFunc:     func(t *testing.T) string { return "" },
-			expectError:   true,
-			expectSuccess: false,
+			name:           "clean with empty work directory",
+			workDir:        "",
+			setupFunc:      func(t *testing.T) string { return "" },
+			expectError:    true,
+			expectSuccess:  false,
 			validateResult: nil, // Result will be nil when validation happens before result creation
 		},
 	}
@@ -403,11 +403,11 @@ func TestDefaultBuildExecutor_Test(t *testing.T) {
 			},
 		},
 		{
-			name:          "test with empty work directory",
-			workDir:       "",
-			setupFunc:     func(t *testing.T) string { return "" },
-			expectError:   true,
-			expectSuccess: false,
+			name:           "test with empty work directory",
+			workDir:        "",
+			setupFunc:      func(t *testing.T) string { return "" },
+			expectError:    true,
+			expectSuccess:  false,
 			validateResult: nil, // Result will be nil when validation happens before result creation
 		},
 	}

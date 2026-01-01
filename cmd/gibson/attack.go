@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,9 +13,21 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
+	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/attack"
+	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/harness"
+	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/llm/providers"
+	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/payload"
+	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/gibson/internal/workflow"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // attackCmd represents the attack command
@@ -50,8 +63,8 @@ Examples:
 
   # List available agents
   gibson attack --list-agents`,
-	Args:             cobra.MaximumNArgs(1),
-	RunE:             runAttackCommand,
+	Args:              cobra.MaximumNArgs(1),
+	RunE:              runAttackCommand,
 	ValidArgsFunction: nil,
 }
 
@@ -70,8 +83,8 @@ var (
 	attackTimeout  string
 
 	// Payload filtering
-	attackPayloads []string
-	attackCategory string
+	attackPayloads   []string
+	attackCategory   string
 	attackTechniques []string
 
 	// Execution constraints
@@ -276,7 +289,7 @@ func buildAttackOptions(targetURL string) (*attack.AttackOptions, error) {
 	return opts, nil
 }
 
-// createAttackRunner creates an AttackRunner with all dependencies (Task 8.3)
+// createAttackRunner creates an AttackRunner with all dependencies (Task 4.1, 4.2)
 func createAttackRunner() (attack.AttackRunner, error) {
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
@@ -291,12 +304,69 @@ func createAttackRunner() (attack.AttackRunner, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// TODO: Initialize all required dependencies
-	// For now, return a placeholder error since the full infrastructure
-	// will be wired up in integration stages
-	_ = db // Use db to avoid unused variable error
+	// Step 1: Create stores
+	missionStore := mission.NewDBMissionStore(db)
+	findingStore := finding.NewDBFindingStore(db)
 
-	return nil, fmt.Errorf("attack runner initialization not yet implemented (requires mission orchestrator, registries, etc.)")
+	// Step 2: Create registries
+	agentRegistry := agent.NewGRPCAgentRegistry()
+	toolRegistry := tool.NewToolRegistry()
+	pluginRegistry := plugin.NewPluginRegistry()
+	payloadRegistry := payload.NewPayloadRegistryWithDefaults(db)
+
+	// Step 2.5: Discover running agents using UnifiedDiscovery (Task 4.2)
+	if err := discoverAndRegisterAgents(context.Background(), homeDir, agentRegistry); err != nil {
+		slog.Warn("failed to discover running agents", "error", err)
+	}
+
+	// Step 3: Create LLM components
+	llmRegistry, slotManager, err := initializeLLMComponents()
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize LLM components: %w", err)
+	}
+
+	// Step 4: Create harness factory
+	harnessConfig := harness.HarnessConfig{
+		LLMRegistry:    llmRegistry,
+		SlotManager:    slotManager,
+		ToolRegistry:   toolRegistry,
+		PluginRegistry: pluginRegistry,
+		AgentRegistry:  agentRegistry,
+		FindingStore:   nil, // Will be created per-harness if needed
+		Logger:         slog.Default(),
+		Tracer:         trace.NewNoopTracerProvider().Tracer("attack-runner"),
+	}
+
+	harnessFactory, err := harness.NewDefaultHarnessFactory(harnessConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create harness factory: %w", err)
+	}
+
+	// Step 5: Create workflow executor
+	workflowExecutor := workflow.NewWorkflowExecutor(
+		workflow.WithLogger(slog.Default()),
+		workflow.WithTracer(trace.NewNoopTracerProvider().Tracer("workflow")),
+	)
+
+	// Step 6: Create mission orchestrator
+	orchestrator := mission.NewMissionOrchestrator(
+		missionStore,
+		mission.WithWorkflowExecutor(workflowExecutor),
+		mission.WithHarnessFactory(harnessFactory),
+	)
+
+	// Step 7: Create and return attack runner
+	runner := attack.NewAttackRunner(
+		orchestrator,
+		agentRegistry,
+		payloadRegistry,
+		missionStore,
+		findingStore,
+		attack.WithLogger(slog.Default()),
+		attack.WithTracer(trace.NewNoopTracerProvider().Tracer("attack-runner")),
+	)
+
+	return runner, nil
 }
 
 // runListAgents lists all available agents (Task 8.2)
@@ -466,4 +536,209 @@ func setupSignalHandler(ctx context.Context) (context.Context, context.CancelFun
 	}()
 
 	return ctx, cancel
+}
+
+// initializeLLMComponents creates and configures LLM registry and slot manager (Task 4.2)
+func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
+	// Create registry
+	registry := llm.NewLLMRegistry()
+
+	// Track number of providers successfully registered
+	providersRegistered := 0
+
+	// Check for Anthropic
+	if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+		cfg := llm.ProviderConfig{
+			Type:         llm.ProviderAnthropic,
+			APIKey:       apiKey,
+			DefaultModel: "claude-3-5-sonnet-20241022", // Latest Claude model
+		}
+
+		provider, err := providers.NewAnthropicProvider(cfg)
+		if err != nil {
+			slog.Warn("failed to create Anthropic provider", "error", err)
+		} else {
+			if err := registry.RegisterProvider(provider); err != nil {
+				slog.Warn("failed to register Anthropic provider", "error", err)
+			} else {
+				slog.Info("registered Anthropic LLM provider")
+				providersRegistered++
+			}
+		}
+	}
+
+	// Check for OpenAI
+	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+		cfg := llm.ProviderConfig{
+			Type:         llm.ProviderOpenAI,
+			APIKey:       apiKey,
+			DefaultModel: "gpt-4o", // Latest GPT-4 model
+		}
+
+		provider, err := providers.NewOpenAIProvider(cfg)
+		if err != nil {
+			slog.Warn("failed to create OpenAI provider", "error", err)
+		} else {
+			if err := registry.RegisterProvider(provider); err != nil {
+				slog.Warn("failed to register OpenAI provider", "error", err)
+			} else {
+				slog.Info("registered OpenAI LLM provider")
+				providersRegistered++
+			}
+		}
+	}
+
+	// Check for Google
+	if apiKey := os.Getenv("GOOGLE_API_KEY"); apiKey != "" {
+		cfg := llm.ProviderConfig{
+			Type:         llm.ProviderGoogle,
+			APIKey:       apiKey,
+			DefaultModel: "gemini-2.0-flash-exp", // Latest Gemini model
+		}
+
+		provider, err := providers.NewGoogleProvider(cfg)
+		if err != nil {
+			slog.Warn("failed to create Google provider", "error", err)
+		} else {
+			if err := registry.RegisterProvider(provider); err != nil {
+				slog.Warn("failed to register Google provider", "error", err)
+			} else {
+				slog.Info("registered Google LLM provider")
+				providersRegistered++
+			}
+		}
+	}
+
+	// Check for Ollama (local, no API key required)
+	if ollamaURL := os.Getenv("OLLAMA_URL"); ollamaURL != "" {
+		cfg := llm.ProviderConfig{
+			Type:         "ollama",
+			BaseURL:      ollamaURL,
+			DefaultModel: "llama3.1", // Default Ollama model
+		}
+
+		provider, err := providers.NewOllamaProvider(cfg)
+		if err != nil {
+			slog.Warn("failed to create Ollama provider", "error", err)
+		} else {
+			if err := registry.RegisterProvider(provider); err != nil {
+				slog.Warn("failed to register Ollama provider", "error", err)
+			} else {
+				slog.Info("registered Ollama LLM provider", "url", ollamaURL)
+				providersRegistered++
+			}
+		}
+	} else {
+		// Try default Ollama URL (localhost:11434)
+		cfg := llm.ProviderConfig{
+			Type:         "ollama",
+			BaseURL:      "http://localhost:11434",
+			DefaultModel: "llama3.1",
+		}
+
+		provider, err := providers.NewOllamaProvider(cfg)
+		if err != nil {
+			// Don't warn for default Ollama - it's optional
+			slog.Debug("Ollama not available at default URL", "error", err)
+		} else {
+			if err := registry.RegisterProvider(provider); err != nil {
+				slog.Debug("failed to register default Ollama provider", "error", err)
+			} else {
+				slog.Info("registered Ollama LLM provider at default URL")
+				providersRegistered++
+			}
+		}
+	}
+
+	// Log warning if no providers are available
+	if providersRegistered == 0 {
+		slog.Warn("no LLM providers available - set ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, or configure Ollama")
+	} else {
+		slog.Info("LLM initialization complete", "providers", providersRegistered)
+	}
+
+	// Create slot manager
+	slotManager := llm.NewSlotManager(registry)
+
+	return registry, slotManager, nil
+}
+
+// discoverAndRegisterAgents uses UnifiedDiscovery to find all healthy agents
+// and registers them with the GRPCAgentRegistry. This replaces the old database-based
+// discovery and supports both local (Unix socket) and remote (TCP) agents.
+func discoverAndRegisterAgents(ctx context.Context, homeDir string, registry *agent.GRPCAgentRegistry) error {
+	// Create local tracker for discovering local agents
+	localTracker := component.NewDefaultLocalTracker()
+
+	// Create remote prober for discovering remote agents
+	// For now, we'll create an empty prober since remote config isn't implemented yet
+	remoteProber := component.NewDefaultRemoteProber()
+
+	// Create unified discovery
+	discovery := component.NewDefaultUnifiedDiscovery(localTracker, remoteProber, &slogAdapter{})
+
+	// Discover all agents
+	agents, err := discovery.DiscoverAgents(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to discover agents: %w", err)
+	}
+
+	registered := 0
+	for _, discoveredAgent := range agents {
+		// Convert address based on source
+		address := discoveredAgent.Address
+
+		// For local agents, address is a Unix socket path (e.g., /home/user/.gibson/run/agent/k8skiller.sock)
+		// For remote agents, address is already TCP format (e.g., "k8skiller-container:50051")
+		// GRPCAgentRegistry needs to know how to connect to both
+
+		// For Unix sockets, we need to prefix with "unix://"
+		if discoveredAgent.IsLocal() {
+			address = "unix://" + address
+		}
+
+		// Register the agent's address with the registry
+		if err := registry.RegisterAddress(discoveredAgent.Name, address); err != nil {
+			slog.Warn("failed to register agent address",
+				"agent", discoveredAgent.Name,
+				"source", discoveredAgent.Source,
+				"address", address,
+				"error", err)
+			continue
+		}
+
+		slog.Info("registered agent with attack runner",
+			"agent", discoveredAgent.Name,
+			"source", discoveredAgent.Source,
+			"address", address,
+			"healthy", discoveredAgent.Healthy)
+		registered++
+	}
+
+	if registered > 0 {
+		slog.Info("discovered running agents", "count", registered)
+	} else {
+		slog.Debug("no healthy agents discovered")
+	}
+
+	return nil
+}
+
+// slogAdapter adapts slog.Logger to the component.Logger interface
+type slogAdapter struct{}
+
+func (s *slogAdapter) Infof(format string, args ...interface{}) {
+	slog.Info(fmt.Sprintf(format, args...))
+}
+
+func (s *slogAdapter) Warnf(format string, args ...interface{}) {
+	slog.Warn(fmt.Sprintf(format, args...))
+}
+
+func (s *slogAdapter) Errorf(format string, args ...interface{}) {
+	slog.Error(fmt.Sprintf(format, args...))
+}
+
+func (s *slogAdapter) Debugf(format string, args ...interface{}) {
+	slog.Debug(fmt.Sprintf(format, args...))
 }

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/jaeger"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -55,7 +54,7 @@ func WithBatchTimeout(timeout time.Duration) TracingOption {
 }
 
 // InitTracing initializes distributed tracing with the specified configuration.
-// It supports multiple tracing providers: "langfuse", "otlp", "jaeger", and "noop".
+// It supports multiple tracing providers: "langfuse", "otlp", and "noop".
 //
 // Parameters:
 //   - ctx: Context for initialization and potential cancellation
@@ -142,20 +141,12 @@ func InitTracing(ctx context.Context, cfg TracingConfig, langfuse *LangfuseConfi
 			return nil, NewExporterConnectionError(cfg.Endpoint, err)
 		}
 
-	case "jaeger":
-		exporter, err = jaeger.New(
-			jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(cfg.Endpoint)),
-		)
-		if err != nil {
-			return nil, NewExporterConnectionError(cfg.Endpoint, err)
-		}
-
 	case "noop":
 		// Return no-op provider for explicit noop configuration
 		return sdktrace.NewTracerProvider(), nil
 
 	default:
-		return nil, NewObservabilityError(ErrExporterConnection, fmt.Sprintf("unsupported tracing provider: %s", cfg.Provider))
+		return nil, NewObservabilityError(ErrExporterConnection, fmt.Sprintf("unsupported tracing provider: %s (jaeger is no longer supported, use otlp)", cfg.Provider))
 	}
 
 	// Create tracer provider with batch span processor

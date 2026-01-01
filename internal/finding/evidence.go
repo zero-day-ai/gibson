@@ -10,22 +10,22 @@ import (
 type EvidenceType string
 
 const (
-	EvidenceHTTPRequest   EvidenceType = "http_request"
-	EvidenceHTTPResponse  EvidenceType = "http_response"
-	EvidenceScreenshot    EvidenceType = "screenshot"
-	EvidenceLog           EvidenceType = "log"
-	EvidencePayload       EvidenceType = "payload"
-	EvidenceConversation  EvidenceType = "conversation"
-	EvidenceCodeSnippet   EvidenceType = "code_snippet"
-	EvidenceNetworkTrace  EvidenceType = "network_trace"
+	EvidenceHTTPRequest  EvidenceType = "http_request"
+	EvidenceHTTPResponse EvidenceType = "http_response"
+	EvidenceScreenshot   EvidenceType = "screenshot"
+	EvidenceLog          EvidenceType = "log"
+	EvidencePayload      EvidenceType = "payload"
+	EvidenceConversation EvidenceType = "conversation"
+	EvidenceCodeSnippet  EvidenceType = "code_snippet"
+	EvidenceNetworkTrace EvidenceType = "network_trace"
 )
 
 // EnhancedEvidence extends the base evidence type with structured data
 type EnhancedEvidence struct {
-	Type      EvidenceType   `json:"type"`
-	Title     string         `json:"title"`
-	Content   any            `json:"content"` // Type-specific structured content
-	Timestamp time.Time      `json:"timestamp"`
+	Type      EvidenceType `json:"type"`
+	Title     string       `json:"title"`
+	Content   any          `json:"content"` // Type-specific structured content
+	Timestamp time.Time    `json:"timestamp"`
 }
 
 // HTTPRequestEvidence represents HTTP request evidence
@@ -51,7 +51,7 @@ type ConversationEvidence struct {
 
 // ConversationMessage represents a single message in a conversation
 type ConversationMessage struct {
-	Role      string    `json:"role"`      // user, assistant, system
+	Role      string    `json:"role"` // user, assistant, system
 	Content   string    `json:"content"`
 	Timestamp time.Time `json:"timestamp"`
 }

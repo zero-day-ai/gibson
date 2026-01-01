@@ -11,7 +11,6 @@ import (
 )
 
 // Helper to create test IDs with readable names for debugging
-var testIDCounter = 0
 var testIDMap = make(map[string]types.ID)
 
 func testID(name string) types.ID {
@@ -20,7 +19,6 @@ func testID(name string) types.ID {
 	}
 	id := types.NewID()
 	testIDMap[name] = id
-	testIDCounter++
 	return id
 }
 
@@ -382,12 +380,12 @@ func TestDefaultMergeReranker_Rerank(t *testing.T) {
 // TestDefaultQueryProcessor_ProcessQuery tests the full query pipeline.
 func TestDefaultQueryProcessor_ProcessQuery(t *testing.T) {
 	tests := []struct {
-		name          string
-		query         GraphRAGQuery
-		setupMocks    func(*MockEmbedder, *MockGraphRAGProvider)
-		wantErr       bool
-		wantCount     int
-		wantMinScore  float64
+		name         string
+		query        GraphRAGQuery
+		setupMocks   func(*MockEmbedder, *MockGraphRAGProvider)
+		wantErr      bool
+		wantCount    int
+		wantMinScore float64
 	}{
 		{
 			name: "successful hybrid query with text",

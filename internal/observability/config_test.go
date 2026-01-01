@@ -18,7 +18,7 @@ func TestTracingConfig_Validate(t *testing.T) {
 		errMsg    string
 	}{
 		{
-			name: "valid jaeger config",
+			name: "invalid jaeger config - no longer supported",
 			config: TracingConfig{
 				Enabled:     true,
 				Provider:    "jaeger",
@@ -26,7 +26,8 @@ func TestTracingConfig_Validate(t *testing.T) {
 				ServiceName: "gibson-test",
 				SampleRate:  1.0,
 			},
-			wantError: false,
+			wantError: true,
+			errMsg:    "invalid tracing provider",
 		},
 		{
 			name: "valid otlp config",
@@ -77,8 +78,8 @@ func TestTracingConfig_Validate(t *testing.T) {
 			name: "sample rate too low",
 			config: TracingConfig{
 				Enabled:     true,
-				Provider:    "jaeger",
-				Endpoint:    "http://localhost:14268",
+				Provider:    "otlp",
+				Endpoint:    "http://localhost:4318",
 				ServiceName: "gibson",
 				SampleRate:  -0.1,
 			},
@@ -89,8 +90,8 @@ func TestTracingConfig_Validate(t *testing.T) {
 			name: "sample rate too high",
 			config: TracingConfig{
 				Enabled:     true,
-				Provider:    "jaeger",
-				Endpoint:    "http://localhost:14268",
+				Provider:    "otlp",
+				Endpoint:    "http://localhost:4318",
 				ServiceName: "gibson",
 				SampleRate:  1.5,
 			},
@@ -101,7 +102,7 @@ func TestTracingConfig_Validate(t *testing.T) {
 			name: "missing endpoint",
 			config: TracingConfig{
 				Enabled:     true,
-				Provider:    "jaeger",
+				Provider:    "otlp",
 				Endpoint:    "",
 				ServiceName: "gibson",
 				SampleRate:  1.0,
@@ -113,8 +114,8 @@ func TestTracingConfig_Validate(t *testing.T) {
 			name: "missing service name",
 			config: TracingConfig{
 				Enabled:     true,
-				Provider:    "jaeger",
-				Endpoint:    "http://localhost:14268",
+				Provider:    "otlp",
+				Endpoint:    "http://localhost:4318",
 				ServiceName: "",
 				SampleRate:  1.0,
 			},
@@ -125,8 +126,8 @@ func TestTracingConfig_Validate(t *testing.T) {
 			name: "case insensitive provider",
 			config: TracingConfig{
 				Enabled:     true,
-				Provider:    "JAEGER",
-				Endpoint:    "http://localhost:14268",
+				Provider:    "OTLP",
+				Endpoint:    "http://localhost:4318",
 				ServiceName: "gibson",
 				SampleRate:  1.0,
 			},
@@ -465,8 +466,8 @@ func TestLoggingConfig_Validate(t *testing.T) {
 func TestTracingConfig_YAMLSerialization(t *testing.T) {
 	original := TracingConfig{
 		Enabled:     true,
-		Provider:    "jaeger",
-		Endpoint:    "http://localhost:14268",
+		Provider:    "otlp",
+		Endpoint:    "http://localhost:4318",
 		ServiceName: "gibson-test",
 		SampleRate:  0.75,
 	}
@@ -479,8 +480,8 @@ func TestTracingConfig_YAMLSerialization(t *testing.T) {
 	// Verify YAML contains expected fields
 	yamlStr := string(data)
 	assert.Contains(t, yamlStr, "enabled: true")
-	assert.Contains(t, yamlStr, "provider: jaeger")
-	assert.Contains(t, yamlStr, "endpoint: http://localhost:14268")
+	assert.Contains(t, yamlStr, "provider: otlp")
+	assert.Contains(t, yamlStr, "endpoint: http://localhost:4318")
 	assert.Contains(t, yamlStr, "service_name: gibson-test")
 	assert.Contains(t, yamlStr, "sample_rate: 0.75")
 
@@ -655,8 +656,8 @@ logging:
 // TestYAMLDeserialization_InvalidConfig tests unmarshaling with invalid values.
 func TestYAMLDeserialization_InvalidConfig(t *testing.T) {
 	tests := []struct {
-		name      string
-		yaml      string
+		name         string
+		yaml         string
 		validateFunc func(*testing.T, interface{})
 	}{
 		{
@@ -679,8 +680,8 @@ sample_rate: 1.0
 			name: "invalid sample rate",
 			yaml: `
 enabled: true
-provider: jaeger
-endpoint: http://localhost:14268
+provider: otlp
+endpoint: http://localhost:4318
 service_name: gibson
 sample_rate: 1.5
 `,
@@ -729,8 +730,8 @@ port: 99999
 func BenchmarkTracingConfig_Validate(b *testing.B) {
 	config := TracingConfig{
 		Enabled:     true,
-		Provider:    "jaeger",
-		Endpoint:    "http://localhost:14268",
+		Provider:    "otlp",
+		Endpoint:    "http://localhost:4318",
 		ServiceName: "gibson",
 		SampleRate:  1.0,
 	}

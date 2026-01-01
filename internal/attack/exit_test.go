@@ -172,7 +172,7 @@ func TestExitCodeFromResult_UsingSeverityMap(t *testing.T) {
 			expectedExit: ExitWithFindings,
 		},
 		{
-			name: "empty map",
+			name:               "empty map",
 			findingsBySeverity: map[string]int{},
 			expectedExit:       ExitSuccess,
 		},

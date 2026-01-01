@@ -80,12 +80,12 @@ type YAMLWorkflow struct {
 // It supports all node types: agent, tool, plugin, condition, parallel, and join.
 type YAMLNode struct {
 	// Common fields for all node types
-	ID          string   `yaml:"id"`
-	Type        string   `yaml:"type"`
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description"`
-	DependsOn   []string `yaml:"depends_on,omitempty"`
-	Timeout     string   `yaml:"timeout,omitempty"`
+	ID          string     `yaml:"id"`
+	Type        string     `yaml:"type"`
+	Name        string     `yaml:"name"`
+	Description string     `yaml:"description"`
+	DependsOn   []string   `yaml:"depends_on,omitempty"`
+	Timeout     string     `yaml:"timeout,omitempty"`
 	Retry       *YAMLRetry `yaml:"retry,omitempty"`
 
 	// Agent node fields

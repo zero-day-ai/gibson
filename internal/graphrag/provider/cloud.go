@@ -392,9 +392,9 @@ func (c *CloudGraphRAGProvider) TraverseGraph(ctx context.Context, startID strin
 
 	// Prepare traversal request
 	request := map[string]any{
-		"start_id":  startID,
-		"max_hops":  maxHops,
-		"filters":   filters,
+		"start_id": startID,
+		"max_hops": maxHops,
+		"filters":  filters,
 	}
 
 	payload, err := json.Marshal(request)

@@ -92,15 +92,15 @@ func TestSeverityStyle(t *testing.T) {
 	require.NotNil(t, theme, "DefaultTheme should return a non-nil theme")
 
 	tests := []struct {
-		name           string
-		severity       string
-		expectedStyle  lipgloss.Style
-		checkBg        bool
-		expectedBg     lipgloss.Color
-		checkFg        bool
-		expectedFg     lipgloss.Color
-		checkBold      bool
-		expectedBold   bool
+		name          string
+		severity      string
+		expectedStyle lipgloss.Style
+		checkBg       bool
+		expectedBg    lipgloss.Color
+		checkFg       bool
+		expectedFg    lipgloss.Color
+		checkBold     bool
+		expectedBold  bool
 	}{
 		{
 			name:          "critical should have background color (inverse style)",

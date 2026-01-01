@@ -21,8 +21,8 @@ type HealthChecker interface {
 // componentState tracks the current and previous health status of a component
 // to detect state transitions (healthy -> degraded, degraded -> healthy, etc.)
 type componentState struct {
-	checker      HealthChecker
-	lastStatus   types.HealthStatus
+	checker       HealthChecker
+	lastStatus    types.HealthStatus
 	lastCheckedAt time.Time
 }
 
@@ -71,7 +71,7 @@ func (h *HealthMonitor) Register(name string, checker HealthChecker) {
 	h.components[name] = &componentState{
 		checker: checker,
 		// Initialize with unhealthy status to detect first transition to healthy
-		lastStatus: types.NewHealthStatus(types.HealthStateUnhealthy, "not yet checked"),
+		lastStatus:    types.NewHealthStatus(types.HealthStateUnhealthy, "not yet checked"),
 		lastCheckedAt: time.Time{}, // Zero time indicates never checked
 	}
 }

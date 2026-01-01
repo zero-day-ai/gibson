@@ -82,9 +82,12 @@ func ComponentAttributes(component *Component) []attribute.KeyValue {
 		attribute.String(AttrComponentStatus, component.Status.String()),
 	)
 
-	// Add path if present
-	if component.Path != "" {
-		attrs = append(attrs, attribute.String("gibson.component.path", component.Path))
+	// Add paths if present
+	if component.RepoPath != "" {
+		attrs = append(attrs, attribute.String("gibson.component.repo_path", component.RepoPath))
+	}
+	if component.BinPath != "" {
+		attrs = append(attrs, attribute.String("gibson.component.bin_path", component.BinPath))
 	}
 
 	// Add port if set (for running components)

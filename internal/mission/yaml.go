@@ -75,20 +75,20 @@ type InlineWorkflowConfig struct {
 
 // MissionConstraintsConfig defines execution constraints.
 type MissionConstraintsConfig struct {
-	MaxDuration       string  `yaml:"max_duration,omitempty"`
-	MaxFindings       *int    `yaml:"max_findings,omitempty"`
+	MaxDuration       string   `yaml:"max_duration,omitempty"`
+	MaxFindings       *int     `yaml:"max_findings,omitempty"`
 	MaxCost           *float64 `yaml:"max_cost,omitempty"`
-	SeverityThreshold *string `yaml:"severity_threshold,omitempty"`
-	RequireApproval   *bool   `yaml:"require_approval,omitempty"`
+	SeverityThreshold *string  `yaml:"severity_threshold,omitempty"`
+	RequireApproval   *bool    `yaml:"require_approval,omitempty"`
 }
 
 // GuardrailConfig defines safety guardrails.
 type GuardrailConfig struct {
-	MaxTokens         *int64   `yaml:"max_tokens,omitempty"`
-	RateLimitRPS      *int     `yaml:"rate_limit_rps,omitempty"`
-	AllowedAgents     []string `yaml:"allowed_agents,omitempty"`
-	BlockedAgents     []string `yaml:"blocked_agents,omitempty"`
-	RequireConfirmation *bool  `yaml:"require_confirmation,omitempty"`
+	MaxTokens           *int64   `yaml:"max_tokens,omitempty"`
+	RateLimitRPS        *int     `yaml:"rate_limit_rps,omitempty"`
+	AllowedAgents       []string `yaml:"allowed_agents,omitempty"`
+	BlockedAgents       []string `yaml:"blocked_agents,omitempty"`
+	RequireConfirmation *bool    `yaml:"require_confirmation,omitempty"`
 }
 
 // ReportingConfig defines reporting options.

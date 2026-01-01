@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/tui/styles"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
@@ -21,7 +21,7 @@ import (
 type MissionSummary struct {
 	ID           string
 	Name         string
-	Status       database.MissionStatus
+	Status       mission.MissionStatus
 	Progress     float64
 	FindingCount int
 	StartedAt    *time.Time
@@ -46,7 +46,7 @@ func (m MissionSummary) Description() string {
 // MissionView represents the mission management view with list and details.
 type MissionView struct {
 	ctx   context.Context
-	db    database.MissionDAO
+	store mission.MissionStore
 	theme *styles.Theme
 
 	// UI components
@@ -55,7 +55,7 @@ type MissionView struct {
 
 	// State
 	missions        []MissionSummary
-	selectedMission *database.Mission
+	selectedMission *mission.Mission
 	workflow        *workflow.Workflow
 	logs            []string
 	detailsExpanded bool
@@ -69,7 +69,7 @@ type MissionView struct {
 }
 
 // NewMissionView creates a new mission view.
-func NewMissionView(ctx context.Context, db database.MissionDAO) *MissionView {
+func NewMissionView(ctx context.Context, store mission.MissionStore) *MissionView {
 	// Create list with default delegate
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
@@ -88,7 +88,7 @@ func NewMissionView(ctx context.Context, db database.MissionDAO) *MissionView {
 
 	return &MissionView{
 		ctx:             ctx,
-		db:              db,
+		store:           store,
 		theme:           styles.DefaultTheme(),
 		list:            l,
 		logViewport:     vp,
@@ -105,7 +105,7 @@ func (m *MissionView) Init() tea.Cmd {
 
 // loadMissions loads missions from the database.
 func (m *MissionView) loadMissions() tea.Msg {
-	missions, err := m.db.List(m.ctx, "")
+	missions, err := m.store.List(m.ctx, nil)
 	if err != nil {
 		return errMsg{err}
 	}
@@ -212,29 +212,29 @@ func (m *MissionView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			// Run/resume mission
 			if m.selectedMission != nil &&
-				(m.selectedMission.Status == database.MissionStatusPending ||
-					m.selectedMission.Status == database.MissionStatusCancelled) {
+				(m.selectedMission.Status == mission.MissionStatusPending ||
+					m.selectedMission.Status == mission.MissionStatusCancelled) {
 				cmds = append(cmds, m.runMission(m.selectedMission.ID))
 			}
 			return m, tea.Batch(cmds...)
 
 		case "p":
 			// Pause mission
-			if m.selectedMission != nil && m.selectedMission.Status == database.MissionStatusRunning {
+			if m.selectedMission != nil && m.selectedMission.Status == mission.MissionStatusRunning {
 				cmds = append(cmds, m.pauseMission(m.selectedMission.ID))
 			}
 			return m, tea.Batch(cmds...)
 
 		case "s":
 			// Stop mission
-			if m.selectedMission != nil && m.selectedMission.Status == database.MissionStatusRunning {
+			if m.selectedMission != nil && m.selectedMission.Status == mission.MissionStatusRunning {
 				cmds = append(cmds, m.stopMission(m.selectedMission.ID))
 			}
 			return m, tea.Batch(cmds...)
 
 		case "d":
 			// Delete mission (only if not running)
-			if m.selectedMission != nil && m.selectedMission.Status != database.MissionStatusRunning {
+			if m.selectedMission != nil && m.selectedMission.Status != mission.MissionStatusRunning {
 				cmds = append(cmds, m.deleteMission(m.selectedMission.ID))
 			}
 			return m, tea.Batch(cmds...)
@@ -499,7 +499,7 @@ func (m *MissionView) updateSizes() {
 // loadMissionDetails loads the full details for a mission.
 func (m *MissionView) loadMissionDetails(missionID string) tea.Cmd {
 	return func() tea.Msg {
-		mission, err := m.db.GetByID(m.ctx, types.ID(missionID))
+		mission, err := m.store.Get(m.ctx, types.ID(missionID))
 		if err != nil {
 			return errMsg{err}
 		}
@@ -522,7 +522,7 @@ func (m *MissionView) loadMissionDetails(missionID string) tea.Cmd {
 // runMission starts or resumes a mission.
 func (m *MissionView) runMission(missionID types.ID) tea.Cmd {
 	return func() tea.Msg {
-		if err := m.db.UpdateStatus(m.ctx, missionID, database.MissionStatusRunning); err != nil {
+		if err := m.store.UpdateStatus(m.ctx, missionID, mission.MissionStatusRunning); err != nil {
 			return errMsg{err}
 		}
 		return m.loadMissions()
@@ -532,8 +532,8 @@ func (m *MissionView) runMission(missionID types.ID) tea.Cmd {
 // pauseMission pauses a running mission.
 func (m *MissionView) pauseMission(missionID types.ID) tea.Cmd {
 	return func() tea.Msg {
-		// For now, we don't have a paused status in the database, so we use cancelled
-		if err := m.db.UpdateStatus(m.ctx, missionID, database.MissionStatusCancelled); err != nil {
+		// Use the paused status
+		if err := m.store.UpdateStatus(m.ctx, missionID, mission.MissionStatusPaused); err != nil {
 			return errMsg{err}
 		}
 		return m.loadMissions()
@@ -543,7 +543,7 @@ func (m *MissionView) pauseMission(missionID types.ID) tea.Cmd {
 // stopMission stops a running mission.
 func (m *MissionView) stopMission(missionID types.ID) tea.Cmd {
 	return func() tea.Msg {
-		if err := m.db.UpdateStatus(m.ctx, missionID, database.MissionStatusCancelled); err != nil {
+		if err := m.store.UpdateStatus(m.ctx, missionID, mission.MissionStatusCancelled); err != nil {
 			return errMsg{err}
 		}
 		return m.loadMissions()
@@ -553,7 +553,7 @@ func (m *MissionView) stopMission(missionID types.ID) tea.Cmd {
 // deleteMission deletes a mission.
 func (m *MissionView) deleteMission(missionID types.ID) tea.Cmd {
 	return func() tea.Msg {
-		if err := m.db.Delete(m.ctx, missionID); err != nil {
+		if err := m.store.Delete(m.ctx, missionID); err != nil {
 			return errMsg{err}
 		}
 		return m.loadMissions()
@@ -567,7 +567,7 @@ type missionsLoadedMsg struct {
 }
 
 type missionDetailsLoadedMsg struct {
-	mission  *database.Mission
+	mission  *mission.Mission
 	workflow *workflow.Workflow
 }
 
@@ -585,7 +585,7 @@ func (m *MissionView) handleMissionDetailsLoaded(msg missionDetailsLoadedMsg) te
 
 	// TODO: Load logs from a log storage system when available
 	// For now, show placeholder logs
-	if msg.mission.Status == database.MissionStatusRunning {
+	if msg.mission.Status == mission.MissionStatusRunning {
 		m.logs = append(m.logs,
 			fmt.Sprintf("[%s] Mission started", time.Now().Format(time.RFC3339)),
 			"Initializing workflow execution...",

@@ -43,7 +43,8 @@ func TestComponentAttributes(t *testing.T) {
 			Kind:      ComponentKindTool,
 			Name:      "test-tool",
 			Version:   "2.0.0",
-			Path:      "/path/to/tool",
+			RepoPath:  "/path/to/tool",
+			BinPath:   "/path/to/bin/tool",
 			Source:    ComponentSourceExternal,
 			Status:    ComponentStatusRunning,
 			Port:      8080,
@@ -63,7 +64,8 @@ func TestComponentAttributes(t *testing.T) {
 		assertHasAttribute(t, attrs, AttrComponentStatus, "running")
 		assertHasIntAttribute(t, attrs, AttrComponentPort, 8080)
 		assertHasIntAttribute(t, attrs, AttrComponentPID, 12345)
-		assertHasAttribute(t, attrs, "gibson.component.path", "/path/to/tool")
+		assertHasAttribute(t, attrs, "gibson.component.repo_path", "/path/to/tool")
+		assertHasAttribute(t, attrs, "gibson.component.bin_path", "/path/to/bin/tool")
 	})
 
 	t.Run("component with manifest", func(t *testing.T) {

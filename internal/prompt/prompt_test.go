@@ -301,7 +301,6 @@ func TestPrompt_ValidationEdgeCases(t *testing.T) {
 
 func TestPrompt_ErrorCodes(t *testing.T) {
 	t.Run("error codes are defined correctly", func(t *testing.T) {
-		assert.Equal(t, types.ErrorCode("PROMPT_VALIDATION_FAILED"), PROMPT_VALIDATION_FAILED)
 		assert.Equal(t, types.ErrorCode("PROMPT_INVALID_POSITION"), PROMPT_INVALID_POSITION)
 		assert.Equal(t, types.ErrorCode("PROMPT_EMPTY_ID"), PROMPT_EMPTY_ID)
 		assert.Equal(t, types.ErrorCode("PROMPT_EMPTY_CONTENT"), PROMPT_EMPTY_CONTENT)

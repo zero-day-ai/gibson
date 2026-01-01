@@ -270,9 +270,9 @@ func TestGetRiskScore_WithFindings(t *testing.T) {
 	// Create findings with known severities
 	// Critical = 10, High = 7, Medium = 4, Low = 1
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),      // weight: 10
-		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.0),    // weight: 7
-		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),   // weight: 4
+		createTestFinding(agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),        // weight: 10
+		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.0),      // weight: 7
+		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),     // weight: 4
 		createTestFinding(agent.SeverityLow, CategoryInformationDisclosure, StatusOpen, 1.0), // weight: 1
 	}
 
@@ -294,9 +294,9 @@ func TestGetRiskScore_ExcludesResolved(t *testing.T) {
 
 	// Create findings with some resolved
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),      // weight: 10
+		createTestFinding(agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),       // weight: 10
 		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusResolved, 7.0), // excluded
-		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),   // weight: 4
+		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),    // weight: 4
 	}
 
 	for _, f := range findings {

@@ -29,11 +29,11 @@ var statusCmd = &cobra.Command{
 
 // SystemStatus represents the complete system status
 type SystemStatus struct {
-	OverallHealth types.HealthStatus        `json:"overall_health"`
-	Components    ComponentsStatus          `json:"components"`
-	Database      DatabaseStatus            `json:"database"`
-	LLMProviders  []LLMProviderStatus       `json:"llm_providers"`
-	CheckedAt     time.Time                 `json:"checked_at"`
+	OverallHealth types.HealthStatus  `json:"overall_health"`
+	Components    ComponentsStatus    `json:"components"`
+	Database      DatabaseStatus      `json:"database"`
+	LLMProviders  []LLMProviderStatus `json:"llm_providers"`
+	CheckedAt     time.Time           `json:"checked_at"`
 }
 
 // ComponentsStatus represents the status of all components
@@ -61,9 +61,9 @@ type DatabaseStatus struct {
 
 // LLMProviderStatus represents LLM provider health information
 type LLMProviderStatus struct {
-	Name          string             `json:"name"`
-	Configured    bool               `json:"configured"`
-	HealthStatus  types.HealthStatus `json:"health_status"`
+	Name         string             `json:"name"`
+	Configured   bool               `json:"configured"`
+	HealthStatus types.HealthStatus `json:"health_status"`
 }
 
 func init() {
@@ -262,8 +262,8 @@ func checkLLMProviders(ctx context.Context, homeDir string) []LLMProviderStatus 
 		if err != nil {
 			// Provider not registered, add as unconfigured
 			providers = append(providers, LLMProviderStatus{
-				Name:       cfg.LLM.DefaultProvider,
-				Configured: false,
+				Name:         cfg.LLM.DefaultProvider,
+				Configured:   false,
 				HealthStatus: types.Unhealthy("provider not registered"),
 			})
 		} else {
@@ -280,8 +280,8 @@ func checkLLMProviders(ctx context.Context, homeDir string) []LLMProviderStatus 
 	// If no providers configured, note that
 	if len(providers) == 0 {
 		providers = append(providers, LLMProviderStatus{
-			Name:       "none",
-			Configured: false,
+			Name:         "none",
+			Configured:   false,
 			HealthStatus: types.Unhealthy("no LLM providers configured"),
 		})
 	}

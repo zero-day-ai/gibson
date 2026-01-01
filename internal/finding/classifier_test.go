@@ -71,19 +71,18 @@ func (m *MockLLMCaller) GetCallCount() int {
 	return m.callCount
 }
 
-
 // ────────────────────────────────────────────────────────────────────────────
 // HeuristicClassifier Tests
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestHeuristicClassifier_Classify_Jailbreak(t *testing.T) {
 	tests := []struct {
-		name               string
-		title              string
-		description        string
-		expectedCategory   FindingCategory
+		name                string
+		title               string
+		description         string
+		expectedCategory    FindingCategory
 		expectedSubcategory string
-		minConfidence      float64
+		minConfidence       float64
 	}{
 		{
 			name:                "Explicit jailbreak",
@@ -135,10 +134,10 @@ func TestHeuristicClassifier_Classify_Jailbreak(t *testing.T) {
 
 func TestHeuristicClassifier_Classify_PromptInjection(t *testing.T) {
 	tests := []struct {
-		name               string
-		title              string
-		description        string
-		expectedCategory   FindingCategory
+		name                string
+		title               string
+		description         string
+		expectedCategory    FindingCategory
 		expectedSubcategory string
 	}{
 		{
@@ -153,7 +152,7 @@ func TestHeuristicClassifier_Classify_PromptInjection(t *testing.T) {
 			title:               "Indirect Injection",
 			description:         "Indirect prompt manipulation via context",
 			expectedCategory:    CategoryPromptInjection,
-			expectedSubcategory: "prompt_injection",  // Heuristic doesn't distinguish indirect
+			expectedSubcategory: "prompt_injection", // Heuristic doesn't distinguish indirect
 		},
 	}
 
@@ -178,9 +177,9 @@ func TestHeuristicClassifier_Classify_PromptInjection(t *testing.T) {
 
 func TestHeuristicClassifier_Classify_DataExtraction(t *testing.T) {
 	tests := []struct {
-		name               string
-		title              string
-		description        string
+		name                string
+		title               string
+		description         string
 		expectedSubcategory string
 	}{
 		{
@@ -224,9 +223,9 @@ func TestHeuristicClassifier_Classify_DataExtraction(t *testing.T) {
 
 func TestHeuristicClassifier_Classify_InformationDisclosure(t *testing.T) {
 	tests := []struct {
-		name               string
-		title              string
-		description        string
+		name                string
+		title               string
+		description         string
 		expectedSubcategory string
 	}{
 		{

@@ -23,11 +23,11 @@ const (
 // builtinPrompts stores all built-in prompts
 var builtinPrompts = map[string]Prompt{
 	BuiltinSafetyID: {
-		ID:       BuiltinSafetyID,
-		Name:     "Safety Constraints",
+		ID:          BuiltinSafetyID,
+		Name:        "Safety Constraints",
 		Description: "Core safety constraints for ethical AI operations",
-		Position: PositionSystemPrefix,
-		Priority: 0, // Highest priority - always first
+		Position:    PositionSystemPrefix,
+		Priority:    0, // Highest priority - always first
 		Content: `You are an AI security assistant operating under strict ethical guidelines.
 
 SAFETY CONSTRAINTS:
@@ -47,11 +47,11 @@ Your primary responsibility is to help identify and remediate security issues wh
 	},
 
 	BuiltinOutputFormatID: {
-		ID:       BuiltinOutputFormatID,
-		Name:     "Output Format Guidelines",
+		ID:          BuiltinOutputFormatID,
+		Name:        "Output Format Guidelines",
 		Description: "Guidelines for structured and consistent output",
-		Position: PositionSystemSuffix,
-		Priority: 100,
+		Position:    PositionSystemSuffix,
+		Priority:    100,
 		Content: "OUTPUT FORMAT GUIDELINES:\n\n" +
 			"Structure your responses with:\n" +
 			"1. SUMMARY: Brief overview of findings or actions\n" +
@@ -78,11 +78,11 @@ Your primary responsibility is to help identify and remediate security issues wh
 	},
 
 	BuiltinPersonaProfessionalID: {
-		ID:       BuiltinPersonaProfessionalID,
-		Name:     "Professional Persona",
+		ID:          BuiltinPersonaProfessionalID,
+		Name:        "Professional Persona",
 		Description: "Professional, concise communication style",
-		Position: PositionSystem,
-		Priority: 50,
+		Position:    PositionSystem,
+		Priority:    50,
 		Content: `COMMUNICATION STYLE:
 
 Adopt a professional, business-focused communication style:
@@ -107,11 +107,11 @@ Avoid:
 	},
 
 	BuiltinPersonaTechnicalID: {
-		ID:       BuiltinPersonaTechnicalID,
-		Name:     "Technical Persona",
+		ID:          BuiltinPersonaTechnicalID,
+		Name:        "Technical Persona",
 		Description: "Detailed technical explanations with code examples",
-		Position: PositionSystem,
-		Priority: 50,
+		Position:    PositionSystem,
+		Priority:    50,
 		Content: `COMMUNICATION STYLE:
 
 Adopt a detailed, technical communication style:

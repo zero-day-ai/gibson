@@ -18,12 +18,12 @@ type FindingAnalytics struct {
 
 // FindingStats represents aggregated statistics for findings
 type FindingStats struct {
-	Total              int                              `json:"total"`
-	BySeverity         map[agent.FindingSeverity]int    `json:"by_severity"`
-	ByCategory         map[FindingCategory]int          `json:"by_category"`
-	ByStatus           map[FindingStatus]int            `json:"by_status"`
-	AverageRiskScore   float64                          `json:"average_risk_score"`
-	TopMitreTechniques []TechniqueCount                 `json:"top_mitre_techniques"`
+	Total              int                           `json:"total"`
+	BySeverity         map[agent.FindingSeverity]int `json:"by_severity"`
+	ByCategory         map[FindingCategory]int       `json:"by_category"`
+	ByStatus           map[FindingStatus]int         `json:"by_status"`
+	AverageRiskScore   float64                       `json:"average_risk_score"`
+	TopMitreTechniques []TechniqueCount              `json:"top_mitre_techniques"`
 }
 
 // TechniqueCount represents a MITRE technique with its occurrence count
@@ -396,7 +396,7 @@ func (a *FindingAnalytics) GetRemediationProgress(ctx context.Context, missionID
 			resolved += count
 		case StatusOpen, StatusConfirmed:
 			open += count
-		// StatusFalsePositive not counted in either
+			// StatusFalsePositive not counted in either
 		}
 	}
 

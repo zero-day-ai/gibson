@@ -7,21 +7,21 @@ import (
 
 // GuardrailInput represents input to be checked by a guardrail
 type GuardrailInput struct {
-	Content        string                `json:"content"`
-	ToolName       string                `json:"tool_name,omitempty"`
-	ToolInput      map[string]any        `json:"tool_input,omitempty"`
-	AgentName      string                `json:"agent_name,omitempty"`
+	Content        string                  `json:"content"`
+	ToolName       string                  `json:"tool_name,omitempty"`
+	ToolInput      map[string]any          `json:"tool_input,omitempty"`
+	AgentName      string                  `json:"agent_name,omitempty"`
 	MissionContext *harness.MissionContext `json:"mission_context,omitempty"`
 	TargetInfo     *harness.TargetInfo     `json:"target_info,omitempty"`
-	Metadata       map[string]any        `json:"metadata,omitempty"`
+	Metadata       map[string]any          `json:"metadata,omitempty"`
 }
 
 // GuardrailOutput represents output to be checked by a guardrail
 type GuardrailOutput struct {
-	Content    string            `json:"content"`
-	ToolOutput map[string]any    `json:"tool_output,omitempty"`
-	Findings   []agent.Finding   `json:"findings,omitempty"`
-	Metadata   map[string]any    `json:"metadata,omitempty"`
+	Content    string          `json:"content"`
+	ToolOutput map[string]any  `json:"tool_output,omitempty"`
+	Findings   []agent.Finding `json:"findings,omitempty"`
+	Metadata   map[string]any  `json:"metadata,omitempty"`
 }
 
 // GuardrailAction defines the action taken by a guardrail

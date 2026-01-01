@@ -128,12 +128,13 @@ func TestModeFromKey(t *testing.T) {
 		currentMode AppMode
 		expected    AppMode
 	}{
-		{"1", ModeConsole, ModeDashboard},
-		{"2", ModeDashboard, ModeConsole},
-		{"3", ModeDashboard, ModeMission},
-		{"4", ModeDashboard, ModeFindings},
-		{"5", ModeDashboard, ModeDashboard}, // Invalid key, returns current
-		{"x", ModeFindings, ModeFindings},   // Invalid key, returns current
+		{"f1", ModeConsole, ModeDashboard},
+		{"f2", ModeDashboard, ModeConsole},
+		{"f3", ModeDashboard, ModeMission},
+		{"f4", ModeDashboard, ModeFindings},
+		{"f5", ModeDashboard, ModeDashboard}, // Invalid key, returns current
+		{"1", ModeDashboard, ModeDashboard},  // Plain number, returns current
+		{"x", ModeFindings, ModeFindings},    // Invalid key, returns current
 	}
 
 	for _, tt := range tests {

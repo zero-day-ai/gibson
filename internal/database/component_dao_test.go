@@ -77,9 +77,8 @@ func TestComponentDAO_Create(t *testing.T) {
 	if retrieved.Source != component.ComponentSourceExternal {
 		t.Errorf("expected Source external, got %s", retrieved.Source)
 	}
-	if retrieved.Status != component.ComponentStatusAvailable {
-		t.Errorf("expected Status available, got %s", retrieved.Status)
-	}
+	// Note: Status, PID, Port are no longer stored in database (migration 10)
+	// They are tracked via LocalTracker instead
 	if retrieved.Manifest == nil {
 		t.Fatal("expected Manifest to be set")
 	}
@@ -467,112 +466,9 @@ func TestComponentDAO_ListAll(t *testing.T) {
 	}
 }
 
-// TestComponentDAO_ListByStatus tests filtering components by status
-func TestComponentDAO_ListByStatus(t *testing.T) {
-	db, cleanup := setupTestDB(t)
-	defer cleanup()
-
-	// Apply migrations
-	migrator := NewMigrator(db)
-	if err := migrator.Migrate(context.Background()); err != nil {
-		t.Fatalf("failed to migrate: %v", err)
-	}
-
-	ctx := context.Background()
-	dao := NewComponentDAO(db)
-
-	// Create components with different statuses
-	components := []*component.Component{
-		{
-			Kind:     component.ComponentKindAgent,
-			Name:     "agent-available",
-			Version:  "1.0.0",
-			RepoPath: "/path/to/agent-available",
-			BinPath:  "/path/to/bin/agent-available",
-			Source:   component.ComponentSourceExternal,
-			Status:   component.ComponentStatusAvailable,
-		},
-		{
-			Kind:     component.ComponentKindAgent,
-			Name:     "agent-running",
-			Version:  "1.0.0",
-			RepoPath: "/path/to/agent-running",
-			BinPath:  "/path/to/bin/agent-running",
-			Source:   component.ComponentSourceExternal,
-			Status:   component.ComponentStatusRunning,
-			PID:      1234,
-			Port:     50051,
-		},
-		{
-			Kind:     component.ComponentKindAgent,
-			Name:     "agent-stopped",
-			Version:  "1.0.0",
-			RepoPath: "/path/to/agent-stopped",
-			BinPath:  "/path/to/bin/agent-stopped",
-			Source:   component.ComponentSourceExternal,
-			Status:   component.ComponentStatusStopped,
-		},
-		{
-			Kind:     component.ComponentKindTool,
-			Name:     "tool-running",
-			Version:  "1.0.0",
-			RepoPath: "/path/to/tool-running",
-			BinPath:  "/path/to/bin/tool-running",
-			Source:   component.ComponentSourceExternal,
-			Status:   component.ComponentStatusRunning,
-			PID:      5678,
-			Port:     50052,
-		},
-	}
-
-	for _, comp := range components {
-		if err := dao.Create(ctx, comp); err != nil {
-			t.Fatalf("Create failed: %v", err)
-		}
-	}
-
-	// List running agents
-	runningAgents, err := dao.ListByStatus(ctx, component.ComponentKindAgent, component.ComponentStatusRunning)
-	if err != nil {
-		t.Fatalf("ListByStatus failed: %v", err)
-	}
-
-	if len(runningAgents) != 1 {
-		t.Fatalf("expected 1 running agent, got %d", len(runningAgents))
-	}
-	if runningAgents[0].Name != "agent-running" {
-		t.Errorf("expected 'agent-running', got %s", runningAgents[0].Name)
-	}
-	if runningAgents[0].PID != 1234 {
-		t.Errorf("expected PID 1234, got %d", runningAgents[0].PID)
-	}
-	if runningAgents[0].Port != 50051 {
-		t.Errorf("expected Port 50051, got %d", runningAgents[0].Port)
-	}
-
-	// List available agents
-	availableAgents, err := dao.ListByStatus(ctx, component.ComponentKindAgent, component.ComponentStatusAvailable)
-	if err != nil {
-		t.Fatalf("ListByStatus failed: %v", err)
-	}
-
-	if len(availableAgents) != 1 {
-		t.Fatalf("expected 1 available agent, got %d", len(availableAgents))
-	}
-	if availableAgents[0].Name != "agent-available" {
-		t.Errorf("expected 'agent-available', got %s", availableAgents[0].Name)
-	}
-
-	// List stopped agents
-	stoppedAgents, err := dao.ListByStatus(ctx, component.ComponentKindAgent, component.ComponentStatusStopped)
-	if err != nil {
-		t.Fatalf("ListByStatus failed: %v", err)
-	}
-
-	if len(stoppedAgents) != 1 {
-		t.Fatalf("expected 1 stopped agent, got %d", len(stoppedAgents))
-	}
-}
+// TestComponentDAO_ListByStatus is removed - status is no longer stored in database
+// Runtime state is tracked via LocalTracker (filesystem-based) starting from migration 10
+// This test is disabled as ListByStatus method has been removed from ComponentDAO interface
 
 // TestComponentDAO_Update tests updating a component's metadata
 func TestComponentDAO_Update(t *testing.T) {
@@ -629,9 +525,7 @@ func TestComponentDAO_Update(t *testing.T) {
 	if updated.BinPath != "/new/path/to/bin" {
 		t.Errorf("expected BinPath '/new/path/to/bin', got %s", updated.BinPath)
 	}
-	if updated.Status != component.ComponentStatusStopped {
-		t.Errorf("expected Status stopped, got %s", updated.Status)
-	}
+	// Note: Status is no longer stored in database (migration 10)
 }
 
 // TestComponentDAO_Update_NotFound tests updating non-existent component
@@ -667,6 +561,7 @@ func TestComponentDAO_Update_NotFound(t *testing.T) {
 }
 
 // TestComponentDAO_UpdateStatus tests updating component status with pid and port
+// NOTE: UpdateStatus is now a no-op since runtime state is tracked via LocalTracker (migration 10)
 func TestComponentDAO_UpdateStatus(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -688,64 +583,34 @@ func TestComponentDAO_UpdateStatus(t *testing.T) {
 		RepoPath: "/path/to/repo",
 		BinPath:  "/path/to/bin",
 		Source:   component.ComponentSourceExternal,
-		Status:   component.ComponentStatusAvailable,
 	}
 
 	if err := dao.Create(ctx, comp); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	// Update status to running
+	// UpdateStatus should not return error (it's a no-op for backward compatibility)
 	err := dao.UpdateStatus(ctx, comp.ID, component.ComponentStatusRunning, 1234, 50051)
 	if err != nil {
 		t.Fatalf("UpdateStatus failed: %v", err)
 	}
 
-	// Verify status update
+	// Verify that status was NOT persisted to database (it's a no-op)
+	// The database should still have empty Status, PID, Port fields
 	updated, err := dao.GetByID(ctx, comp.ID)
 	if err != nil {
 		t.Fatalf("GetByID failed: %v", err)
 	}
 
-	if updated.Status != component.ComponentStatusRunning {
-		t.Errorf("expected Status running, got %s", updated.Status)
+	// Runtime state should NOT be in database anymore
+	if updated.Status != "" {
+		t.Errorf("expected empty Status (not persisted), got %s", updated.Status)
 	}
-	if updated.PID != 1234 {
-		t.Errorf("expected PID 1234, got %d", updated.PID)
+	if updated.PID != 0 {
+		t.Errorf("expected PID 0 (not persisted), got %d", updated.PID)
 	}
-	if updated.Port != 50051 {
-		t.Errorf("expected Port 50051, got %d", updated.Port)
-	}
-	if updated.StartedAt == nil {
-		t.Error("expected StartedAt to be set")
-	}
-	if updated.StoppedAt != nil {
-		t.Error("expected StoppedAt to be nil")
-	}
-
-	// Update status to stopped
-	err = dao.UpdateStatus(ctx, comp.ID, component.ComponentStatusStopped, 0, 0)
-	if err != nil {
-		t.Fatalf("UpdateStatus failed: %v", err)
-	}
-
-	// Verify status update
-	stopped, err := dao.GetByID(ctx, comp.ID)
-	if err != nil {
-		t.Fatalf("GetByID failed: %v", err)
-	}
-
-	if stopped.Status != component.ComponentStatusStopped {
-		t.Errorf("expected Status stopped, got %s", stopped.Status)
-	}
-	if stopped.PID != 0 {
-		t.Errorf("expected PID 0, got %d", stopped.PID)
-	}
-	if stopped.Port != 0 {
-		t.Errorf("expected Port 0, got %d", stopped.Port)
-	}
-	if stopped.StoppedAt == nil {
-		t.Error("expected StoppedAt to be set")
+	if updated.Port != 0 {
+		t.Errorf("expected Port 0 (not persisted), got %d", updated.Port)
 	}
 }
 
@@ -763,10 +628,10 @@ func TestComponentDAO_UpdateStatus_NotFound(t *testing.T) {
 	ctx := context.Background()
 	dao := NewComponentDAO(db)
 
-	// Try to update status of non-existent component
+	// UpdateStatus is a no-op, so it should not return error even for non-existent component
 	err := dao.UpdateStatus(ctx, 99999, component.ComponentStatusRunning, 1234, 50051)
-	if err == nil {
-		t.Fatal("expected error updating status of non-existent component")
+	if err != nil {
+		t.Fatalf("UpdateStatus should not fail (it's a no-op), but got error: %v", err)
 	}
 }
 

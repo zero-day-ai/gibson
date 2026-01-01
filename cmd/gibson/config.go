@@ -342,14 +342,14 @@ func setFieldValue(field reflect.Value, value string) error {
 func snakeToTitle(s string) string {
 	// Handle special cases for abbreviations
 	specialCases := map[string]string{
-		"llm":     "LLM",
-		"db":      "DB",
-		"ssl":     "SSL",
-		"wal":     "WAL",
-		"api":     "API",
-		"url":     "URL",
-		"id":      "ID",
-		"uuid":    "UUID",
+		"llm":  "LLM",
+		"db":   "DB",
+		"ssl":  "SSL",
+		"wal":  "WAL",
+		"api":  "API",
+		"url":  "URL",
+		"id":   "ID",
+		"uuid": "UUID",
 	}
 
 	// Check if the entire string is a special case

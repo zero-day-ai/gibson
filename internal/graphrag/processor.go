@@ -294,19 +294,6 @@ func (p *DefaultQueryProcessor) filterByNodeType(results []GraphRAGResult, nodeT
 	return filtered
 }
 
-// ProcessorMetrics tracks query processing performance metrics.
-// Useful for monitoring and optimization.
-type ProcessorMetrics struct {
-	TotalQueries      int64   // Total queries processed
-	EmbeddingTime     float64 // Average embedding generation time (ms)
-	VectorSearchTime  float64 // Average vector search time (ms)
-	GraphTraversalTime float64 // Average graph traversal time (ms)
-	MergeRerankTime   float64 // Average merge/rerank time (ms)
-	TotalQueryTime    float64 // Average total query time (ms)
-	VectorOnlyQueries int64   // Queries that used vector-only (no graph)
-	FailedQueries     int64   // Queries that failed
-}
-
 // QueryPipelineOptions contains advanced options for query processing.
 // Allows fine-tuning of the pipeline behavior per-query.
 type QueryPipelineOptions struct {

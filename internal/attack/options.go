@@ -14,23 +14,23 @@ import (
 // execution constraints, and output formatting.
 type AttackOptions struct {
 	// Target configuration
-	TargetURL      string               // Direct URL to attack (e.g., "https://api.example.com")
-	TargetName     string               // Saved target lookup name (alternative to URL)
-	TargetType     types.TargetType     // Type of target (llm_chat, llm_api, rag, etc.)
-	TargetProvider string               // Provider name (openai, anthropic, etc.)
-	TargetHeaders  map[string]string    // Custom HTTP headers for requests
-	Credential     string               // Credential ID or name for authentication
+	TargetURL      string            // Direct URL to attack (e.g., "https://api.example.com")
+	TargetName     string            // Saved target lookup name (alternative to URL)
+	TargetType     types.TargetType  // Type of target (llm_chat, llm_api, rag, etc.)
+	TargetProvider string            // Provider name (openai, anthropic, etc.)
+	TargetHeaders  map[string]string // Custom HTTP headers for requests
+	Credential     string            // Credential ID or name for authentication
 
 	// Agent configuration
-	AgentName      string        // Required: Agent to execute (e.g., "prompt-injection")
-	Goal           string        // Optional goal/objective for the agent
-	MaxTurns       int           // Maximum agent turns (0 = use agent default)
-	Timeout        time.Duration // Attack timeout (0 = no timeout)
+	AgentName string        // Required: Agent to execute (e.g., "prompt-injection")
+	Goal      string        // Optional goal/objective for the agent
+	MaxTurns  int           // Maximum agent turns (0 = use agent default)
+	Timeout   time.Duration // Attack timeout (0 = no timeout)
 
 	// Payload filtering
-	PayloadIDs     []string // Filter to specific payload IDs
+	PayloadIDs      []string // Filter to specific payload IDs
 	PayloadCategory string   // Filter by payload category (e.g., "injection")
-	Techniques     []string // Filter by MITRE technique IDs (e.g., ["T1059"])
+	Techniques      []string // Filter by MITRE technique IDs (e.g., ["T1059"])
 
 	// Execution constraints
 	MaxFindings       int    // Stop after N findings (0 = no limit)
@@ -43,14 +43,14 @@ type AttackOptions struct {
 	ProxyURL        string // HTTP/HTTPS proxy URL
 
 	// Persistence options
-	Persist       bool // Always persist mission and findings
-	NoPersist     bool // Never persist, even with findings (overrides auto-persist)
+	Persist   bool // Always persist mission and findings
+	NoPersist bool // Never persist, even with findings (overrides auto-persist)
 
 	// Output options
-	OutputFormat  string // Output format: text, json, sarif
-	Verbose       bool   // Enable verbose output
-	Quiet         bool   // Suppress non-essential output
-	DryRun        bool   // Validate configuration without executing
+	OutputFormat string // Output format: text, json, sarif
+	Verbose      bool   // Enable verbose output
+	Quiet        bool   // Suppress non-essential output
+	DryRun       bool   // Validate configuration without executing
 }
 
 // AttackOption is a functional option for configuring AttackOptions.
@@ -64,10 +64,10 @@ func NewAttackOptions() *AttackOptions {
 		Techniques:      []string{},
 		FollowRedirects: true,
 		OutputFormat:    "text",
-		MaxTurns:        0,    // Use agent default
-		Timeout:         0,    // No timeout
-		MaxFindings:     0,    // No limit
-		RateLimit:       0,    // No limit
+		MaxTurns:        0, // Use agent default
+		Timeout:         0, // No timeout
+		MaxFindings:     0, // No limit
+		RateLimit:       0, // No limit
 	}
 }
 

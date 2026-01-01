@@ -376,13 +376,13 @@ func TestChainProgress(t *testing.T) {
 		progress.Start()
 
 		result := StageResult{
-			StageID:         types.NewID(),
-			StageName:       "Test Stage",
-			Success:         true,
-			FindingCreated:  true,
-			Duration:        100 * time.Millisecond,
-			TokensUsed:      50,
-			Cost:            0.001,
+			StageID:        types.NewID(),
+			StageName:      "Test Stage",
+			Success:        true,
+			FindingCreated: true,
+			Duration:       100 * time.Millisecond,
+			TokensUsed:     50,
+			Cost:           0.001,
 		}
 
 		progress.AddStageResult(result)
@@ -465,13 +465,13 @@ func TestChainResult(t *testing.T) {
 
 		// Add successful stage
 		successResult := StageResult{
-			StageID:         types.NewID(),
-			StageName:       "Success Stage",
-			Success:         true,
-			FindingCreated:  true,
-			Duration:        100 * time.Millisecond,
-			TokensUsed:      50,
-			Cost:            0.001,
+			StageID:        types.NewID(),
+			StageName:      "Success Stage",
+			Success:        true,
+			FindingCreated: true,
+			Duration:       100 * time.Millisecond,
+			TokensUsed:     50,
+			Cost:           0.001,
 		}
 		result.AddStageResult(successResult)
 
@@ -482,13 +482,13 @@ func TestChainResult(t *testing.T) {
 
 		// Add failed stage
 		failResult := StageResult{
-			StageID:         types.NewID(),
-			StageName:       "Fail Stage",
-			Success:         false,
-			FindingCreated:  false,
-			Duration:        50 * time.Millisecond,
-			TokensUsed:      25,
-			Cost:            0.0005,
+			StageID:        types.NewID(),
+			StageName:      "Fail Stage",
+			Success:        false,
+			FindingCreated: false,
+			Duration:       50 * time.Millisecond,
+			TokensUsed:     25,
+			Cost:           0.0005,
 		}
 		result.AddStageResult(failResult)
 

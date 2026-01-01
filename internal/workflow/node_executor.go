@@ -155,7 +155,7 @@ func (we *WorkflowExecutor) executeAgentNode(
 		StartedAt:   startTime,
 		CompletedAt: time.Now(),
 		Metadata: map[string]any{
-			"agent_name":   node.AgentName,
+			"agent_name":    node.AgentName,
 			"agent_metrics": agentResult.Metrics,
 		},
 	}
@@ -326,8 +326,8 @@ func (we *WorkflowExecutor) executeConditionNode(
 	}
 
 	return &NodeResult{
-		NodeID:      node.ID,
-		Status:      NodeStatusCompleted,
+		NodeID: node.ID,
+		Status: NodeStatusCompleted,
 		Output: map[string]any{
 			"condition_result": result,
 			"next_nodes":       nextNodes,
@@ -417,8 +417,8 @@ func (we *WorkflowExecutor) executeParallelNode(
 	}
 
 	return &NodeResult{
-		NodeID:      node.ID,
-		Status:      status,
+		NodeID: node.ID,
+		Status: status,
 		Output: map[string]any{
 			"sub_results": subResults,
 		},

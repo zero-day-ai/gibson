@@ -305,7 +305,7 @@ content: "No ID"
 
 	// Load prompts - should return valid ones and first error
 	prompts, err := LoadPromptsFromDirectory(tmpDir)
-	require.Error(t, err) // Should have error from invalid file
+	require.Error(t, err)      // Should have error from invalid file
 	require.Len(t, prompts, 1) // Should still load valid prompt
 
 	assert.Equal(t, "valid-prompt", prompts[0].ID)

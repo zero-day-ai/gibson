@@ -13,6 +13,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
 	initpkg "github.com/zero-day-ai/gibson/internal/init"
+	"github.com/zero-day-ai/gibson/internal/mission"
 )
 
 // setupIntegrationTest creates a complete test environment with temp home directory
@@ -207,8 +208,8 @@ func TestWorkflow_MissionFindingExport(t *testing.T) {
 
 	// Step 1: Create test mission in database
 	t.Run("create test mission", func(t *testing.T) {
-		missionDAO := database.NewMissionDAO(db)
-		require.NotNil(t, missionDAO, "Mission DAO should be created")
+		missionStore := mission.NewDBMissionStore(db)
+		require.NotNil(t, missionStore, "Mission store should be created")
 
 		// Verify missions table exists
 		var tableExists bool

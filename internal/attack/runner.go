@@ -2,6 +2,7 @@ package attack
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -190,6 +191,12 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 
 	r.logger.Debug("Ephemeral mission created", "mission_id", missionObj.ID)
 
+	// Save ephemeral mission to database so the orchestrator can update it
+	if err := r.missionStore.Save(ctx, missionObj); err != nil {
+		r.logger.Error("Failed to save ephemeral mission", "error", err)
+		return result.WithError(fmt.Errorf("mission save failed: %w", err)), nil
+	}
+
 	// Step 5: Execute mission through orchestrator
 	// Create a cancellable context with timeout if specified
 	execCtx := ctx
@@ -276,17 +283,25 @@ func (r *DefaultAttackRunner) createEphemeralMission(
 	missionID := types.NewID()
 	workflowObj.ID = types.NewID()
 
+	// Serialize workflow to JSON for storage
+	workflowJSON, err := json.Marshal(workflowObj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize workflow: %w", err)
+	}
+
 	// Create mission with constraints from options
+	// Include mission ID suffix to ensure uniqueness (name is UNIQUE in DB)
 	missionObj := &mission.Mission{
-		ID:          missionID,
-		Name:        fmt.Sprintf("Attack: %s on %s", opts.AgentName, targetConfig.URL),
-		Description: fmt.Sprintf("Ephemeral attack mission executing %s agent", opts.AgentName),
-		Status:      mission.MissionStatusPending,
-		TargetID:    types.NewID(), // Ephemeral target ID
-		WorkflowID:  workflowObj.ID,
-		Constraints: r.buildConstraints(opts),
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:           missionID,
+		Name:         fmt.Sprintf("Attack: %s on %s [%s]", opts.AgentName, targetConfig.URL, missionID.String()[:8]),
+		Description:  fmt.Sprintf("Ephemeral attack mission executing %s agent", opts.AgentName),
+		Status:       mission.MissionStatusPending,
+		TargetID:     types.NewID(), // Ephemeral target ID
+		WorkflowID:   workflowObj.ID,
+		WorkflowJSON: string(workflowJSON),
+		Constraints:  r.buildConstraints(opts),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 
 	return missionObj, nil

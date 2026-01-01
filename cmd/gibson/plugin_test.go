@@ -815,7 +815,7 @@ func TestPluginQuery_ComplexParams(t *testing.T) {
 			"status": "active",
 			"age":    map[string]any{"gt": 18},
 		},
-		"sort": []string{"name", "date"},
+		"sort":  []string{"name", "date"},
 		"limit": 10,
 	}
 	expectedResult := map[string]any{"results": []any{}}
@@ -1071,12 +1071,12 @@ func TestPluginQuery_TableDriven(t *testing.T) {
 			expectedError:  errors.New("method not found"),
 		},
 		{
-			name:       "plugin not running",
-			pluginName: "database",
-			method:     "GetData",
-			params:     map[string]any{},
-			methods:    []plugin.MethodDescriptor{},
-			isRunning:  false,
+			name:           "plugin not running",
+			pluginName:     "database",
+			method:         "GetData",
+			params:         map[string]any{},
+			methods:        []plugin.MethodDescriptor{},
+			isRunning:      false,
 			expectedResult: nil,
 			expectedError:  errors.New("plugin not running"),
 		},

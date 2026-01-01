@@ -48,11 +48,11 @@ type BuiltInLoader interface {
 
 // builtInLoader is the default implementation of BuiltInLoader
 type builtInLoader struct {
-	payloads      []Payload
-	categories    map[PayloadCategory]bool
-	loaded        bool
-	loadErrors    []error // Track non-fatal errors during loading
-	skippedCount  int     // Count of skipped payloads due to validation errors
+	payloads     []Payload
+	categories   map[PayloadCategory]bool
+	loaded       bool
+	loadErrors   []error // Track non-fatal errors during loading
+	skippedCount int     // Count of skipped payloads due to validation errors
 }
 
 // NewBuiltInLoader creates a new built-in payload loader

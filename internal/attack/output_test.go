@@ -54,12 +54,12 @@ func TestNewOutputHandler(t *testing.T) {
 
 func TestTextOutputHandler_OnStart(t *testing.T) {
 	tests := []struct {
-		name           string
-		opts           *AttackOptions
-		verbose        bool
-		quiet          bool
+		name             string
+		opts             *AttackOptions
+		verbose          bool
+		quiet            bool
 		expectedContains []string
-		notExpected    []string
+		notExpected      []string
 	}{
 		{
 			name: "normal mode with URL",

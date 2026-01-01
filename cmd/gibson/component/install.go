@@ -125,7 +125,7 @@ func runInstall(cmd *cobra.Command, args []string, cfg Config, flags *InstallFla
 	}
 
 	cmd.Printf("%s '%s' installed successfully (v%s) in %v\n",
-		strings.Title(cfg.DisplayName),
+		titleCaser.String(cfg.DisplayName),
 		result.Component.Name,
 		result.Component.Version,
 		result.Duration)

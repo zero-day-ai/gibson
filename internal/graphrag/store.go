@@ -106,9 +106,9 @@ type GraphRAGStore interface {
 // GraphRecord represents a unified input for storing graph data.
 // Combines a node with optional relationships to be created atomically.
 type GraphRecord struct {
-	Node          GraphNode       // The graph node to store
-	Relationships []Relationship  // Optional relationships to create
-	EmbedContent  string          // Content to embed (if Node.Embedding is empty)
+	Node          GraphNode      // The graph node to store
+	Relationships []Relationship // Optional relationships to create
+	EmbedContent  string         // Content to embed (if Node.Embedding is empty)
 }
 
 // NewGraphRecord creates a new GraphRecord with the given node.

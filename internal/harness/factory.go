@@ -198,3 +198,28 @@ func (f *DefaultHarnessFactory) Config() HarnessConfig {
 
 // Ensure DefaultHarnessFactory implements HarnessFactoryInterface
 var _ HarnessFactoryInterface = (*DefaultHarnessFactory)(nil)
+
+// ────────────────────────────────────────────────────────────────────────────
+// Type Aliases for Spec Compatibility
+// ────────────────────────────────────────────────────────────────────────────
+
+// HarnessFactoryConfig is an alias for HarnessConfig for spec compatibility.
+// This provides the naming convention used in the attack-orchestration-integration spec.
+type HarnessFactoryConfig = HarnessConfig
+
+// NewDefaultHarnessFactory is an alias for NewHarnessFactory for spec compatibility.
+// This provides the naming convention used in the attack-orchestration-integration spec.
+//
+// The factory validates the configuration and applies defaults before storing it.
+// This ensures that all harnesses created by this factory have consistent,
+// valid configuration.
+//
+// Parameters:
+//   - config: Harness configuration with registries and optional dependencies
+//
+// Returns:
+//   - *DefaultHarnessFactory: Ready-to-use factory instance
+//   - error: Non-nil if config validation fails
+func NewDefaultHarnessFactory(config HarnessFactoryConfig) (*DefaultHarnessFactory, error) {
+	return NewHarnessFactory(config)
+}

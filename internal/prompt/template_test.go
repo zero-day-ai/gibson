@@ -61,9 +61,9 @@ func TestRenderContext_GetAndSet(t *testing.T) {
 			wantFound: true,
 		},
 		{
-			name:      "get whole category",
-			path:      "agent",
-			setValue:  nil,
+			name:     "get whole category",
+			path:     "agent",
+			setValue: nil,
 			setup: func(ctx *RenderContext) {
 				ctx.Agent["name"] = "Gibson"
 			},
@@ -167,9 +167,9 @@ func TestTemplateRenderer_Render_SimpleVariable(t *testing.T) {
 	ctx.Variables["name"] = "Gibson"
 
 	prompt := &Prompt{
-		ID:      "test-prompt",
-		Name:    "Test Prompt",
-		Content: "Hello, {{.Variables.name}}!",
+		ID:       "test-prompt",
+		Name:     "Test Prompt",
+		Content:  "Hello, {{.Variables.name}}!",
 		Position: PositionSystem,
 		Variables: []VariableDef{
 			{

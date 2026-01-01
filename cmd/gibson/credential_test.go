@@ -128,11 +128,11 @@ func TestCredentialList(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		name           string
-		args           []string
-		wantErr        bool
-		checkOutput    func(t *testing.T, output string)
-		checkSecrets   bool
+		name         string
+		args         []string
+		wantErr      bool
+		checkOutput  func(t *testing.T, output string)
+		checkSecrets bool
 	}{
 		{
 			name:    "list all credentials (text format)",

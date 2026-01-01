@@ -886,9 +886,9 @@ func TestBuild_ErrorAccumulation(t *testing.T) {
 		wb.AddAgentNode("dup", "agent", nil) // Error 5: duplicate
 
 		// Add edges with invalid nodes
-		wb.AddEdge("", "node1")                         // Error 6: empty from
-		wb.AddEdge("node1", "")                         // Error 7: empty to
-		wb.AddConditionalEdge("node1", "node2", "")     // Error 8: empty condition
+		wb.AddEdge("", "node1")                     // Error 6: empty from
+		wb.AddEdge("node1", "")                     // Error 7: empty to
+		wb.AddConditionalEdge("node1", "node2", "") // Error 8: empty condition
 
 		// Try to set dependencies on non-existent node
 		wb.WithDependency("nonexistent", "node1") // Error 9

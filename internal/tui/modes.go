@@ -12,8 +12,6 @@ const (
 	ModeMission
 	// ModeFindings is the findings/vulnerabilities view
 	ModeFindings
-	// ModeAgentFocus is the agent observation and steering view
-	ModeAgentFocus
 )
 
 // String returns the string representation of the AppMode
@@ -27,27 +25,23 @@ func (m AppMode) String() string {
 		return "Mission"
 	case ModeFindings:
 		return "Findings"
-	case ModeAgentFocus:
-		return "Agent Focus"
 	default:
 		return "Unknown"
 	}
 }
 
-// ModeFromKey returns the AppMode corresponding to a key press (1-5)
+// ModeFromKey returns the AppMode corresponding to a key press (F1 through F4)
 // Returns the current mode if the key is not recognized
 func ModeFromKey(key string, currentMode AppMode) AppMode {
 	switch key {
-	case "1":
+	case "f1":
 		return ModeDashboard
-	case "2":
+	case "f2":
 		return ModeConsole
-	case "3":
+	case "f3":
 		return ModeMission
-	case "4":
+	case "f4":
 		return ModeFindings
-	case "5":
-		return ModeAgentFocus
 	default:
 		return currentMode
 	}

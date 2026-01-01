@@ -443,7 +443,7 @@ func TestConcurrentAccess(t *testing.T) {
 					ID:       fmt.Sprintf("writer-%d-%d", id, j),
 					Position: PositionSystem,
 					Content:  fmt.Sprintf("Content from writer %d op %d", id, j),
-					Priority: id * numOperations + j,
+					Priority: id*numOperations + j,
 				}
 				registry.Register(prompt)
 			}

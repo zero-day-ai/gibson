@@ -142,9 +142,9 @@ func ExampleWorkflowBuilder_dependencies() {
 func ExampleWorkflowBuilder_errorHandling() {
 	// Create an invalid workflow to demonstrate error handling
 	_, err := NewWorkflow("invalid-workflow").
-		AddAgentNode("", "agent1", nil).         // Error: empty ID
-		AddToolNode("tool1", "", nil).           // Error: empty tool name
-		AddEdge("node1", "nonexistent").         // Error: references non-existent node
+		AddAgentNode("", "agent1", nil). // Error: empty ID
+		AddToolNode("tool1", "", nil).   // Error: empty tool name
+		AddEdge("node1", "nonexistent"). // Error: references non-existent node
 		Build()
 
 	if err != nil {

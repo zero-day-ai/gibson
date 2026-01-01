@@ -9,11 +9,11 @@ import (
 
 // MemoryItem represents a stored memory entry with metadata
 type MemoryItem struct {
-	Key       string            `json:"key"`
-	Value     any               `json:"value"`
-	Metadata  map[string]any    `json:"metadata,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	Key       string         `json:"key"`
+	Value     any            `json:"value"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // MemoryResult represents a search result with relevance score

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/zero-day-ai/gibson/internal/component"
 )
 
 // DefaultConfig returns a Config with sensible default values.
@@ -46,6 +48,15 @@ func DefaultConfig() *Config {
 		Metrics: MetricsConfig{
 			Enabled: false,
 			Port:    9090,
+		},
+		RemoteAgents:  make(map[string]component.RemoteComponentConfig),
+		RemoteTools:   make(map[string]component.RemoteComponentConfig),
+		RemotePlugins: make(map[string]component.RemoteComponentConfig),
+		Registration: RegistrationConfig{
+			Enabled:          false,
+			Port:             50100,
+			AuthToken:        "",
+			HeartbeatTimeout: 30 * time.Second,
 		},
 	}
 }

@@ -28,10 +28,10 @@ type IndicatorMatcher interface {
 
 // MatchResult represents the result of matching indicators
 type MatchResult struct {
-	Success         bool     // Overall success
-	ConfidenceScore float64  // 0.0 - 1.0
-	MatchedIndicators []string // Names/descriptions of matched indicators
-	Details         map[string]interface{} // Additional match details
+	Success           bool                   // Overall success
+	ConfidenceScore   float64                // 0.0 - 1.0
+	MatchedIndicators []string               // Names/descriptions of matched indicators
+	Details           map[string]interface{} // Additional match details
 }
 
 // indicatorMatcher implements IndicatorMatcher

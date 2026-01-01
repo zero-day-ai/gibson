@@ -93,9 +93,9 @@ func TestAllCategories(t *testing.T) {
 // TestParameterType_String tests ParameterType.String()
 func TestParameterType_String(t *testing.T) {
 	tests := []struct {
-		name     string
+		name      string
 		paramType ParameterType
-		expected string
+		expected  string
 	}{
 		{"string", ParameterTypeString, "string"},
 		{"int", ParameterTypeInt, "int"},

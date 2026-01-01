@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -85,6 +86,134 @@ func ParseRuntimeType(s string) (RuntimeType, error) {
 	return r, nil
 }
 
+// HealthCheckProtocol represents the protocol used for health checks.
+type HealthCheckProtocol string
+
+const (
+	// HealthCheckProtocolHTTP uses HTTP GET requests for health checks
+	HealthCheckProtocolHTTP HealthCheckProtocol = "http"
+
+	// HealthCheckProtocolGRPC uses gRPC health checking protocol (grpc_health_v1)
+	HealthCheckProtocolGRPC HealthCheckProtocol = "grpc"
+
+	// HealthCheckProtocolAuto automatically detects the protocol (tries gRPC first, then HTTP)
+	HealthCheckProtocolAuto HealthCheckProtocol = "auto"
+)
+
+// String returns the string representation of the HealthCheckProtocol.
+func (p HealthCheckProtocol) String() string {
+	return string(p)
+}
+
+// IsValid checks if the HealthCheckProtocol is a valid enum value.
+func (p HealthCheckProtocol) IsValid() bool {
+	switch p {
+	case HealthCheckProtocolHTTP, HealthCheckProtocolGRPC, HealthCheckProtocolAuto, "":
+		return true
+	default:
+		return false
+	}
+}
+
+// AllHealthCheckProtocols returns a slice containing all valid HealthCheckProtocol values.
+func AllHealthCheckProtocols() []HealthCheckProtocol {
+	return []HealthCheckProtocol{
+		HealthCheckProtocolHTTP,
+		HealthCheckProtocolGRPC,
+		HealthCheckProtocolAuto,
+	}
+}
+
+// HealthCheckConfig configures health check behavior for a component.
+// This allows components to specify how Gibson should verify their health
+// during startup and ongoing monitoring.
+type HealthCheckConfig struct {
+	// Protocol specifies the health check protocol: "http", "grpc", or "auto" (default).
+	// When set to "auto", Gibson will try gRPC first, then fall back to HTTP.
+	Protocol HealthCheckProtocol `json:"protocol,omitempty" yaml:"protocol,omitempty"`
+
+	// Interval between health checks during monitoring.
+	// Default: 10 seconds
+	Interval time.Duration `json:"interval,omitempty" yaml:"interval,omitempty"`
+
+	// Timeout for individual health check requests.
+	// Default: 5 seconds
+	Timeout time.Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+
+	// Endpoint path for HTTP health checks.
+	// Default: "/health"
+	Endpoint string `json:"endpoint,omitempty" yaml:"endpoint,omitempty"`
+
+	// ServiceName for gRPC health checks.
+	// Default: "" (empty string checks overall server health)
+	ServiceName string `json:"service_name,omitempty" yaml:"service_name,omitempty"`
+}
+
+// GetProtocol returns the health check protocol, defaulting to "auto" if not set.
+func (h *HealthCheckConfig) GetProtocol() HealthCheckProtocol {
+	if h == nil || h.Protocol == "" {
+		return HealthCheckProtocolAuto
+	}
+	return h.Protocol
+}
+
+// GetInterval returns the health check interval, defaulting to 10 seconds if not set.
+func (h *HealthCheckConfig) GetInterval() time.Duration {
+	if h == nil || h.Interval == 0 {
+		return 10 * time.Second
+	}
+	return h.Interval
+}
+
+// GetTimeout returns the health check timeout, defaulting to 5 seconds if not set.
+func (h *HealthCheckConfig) GetTimeout() time.Duration {
+	if h == nil || h.Timeout == 0 {
+		return 5 * time.Second
+	}
+	return h.Timeout
+}
+
+// GetEndpoint returns the HTTP health check endpoint, defaulting to "/health" if not set.
+func (h *HealthCheckConfig) GetEndpoint() string {
+	if h == nil || h.Endpoint == "" {
+		return "/health"
+	}
+	return h.Endpoint
+}
+
+// GetServiceName returns the gRPC service name for health checks.
+// Empty string means check overall server health.
+func (h *HealthCheckConfig) GetServiceName() string {
+	if h == nil {
+		return ""
+	}
+	return h.ServiceName
+}
+
+// Validate validates the HealthCheckConfig fields.
+func (h *HealthCheckConfig) Validate() error {
+	if h == nil {
+		return nil
+	}
+
+	// Validate protocol
+	if !h.Protocol.IsValid() {
+		return fmt.Errorf("invalid health check protocol: %s (must be 'http', 'grpc', or 'auto')", h.Protocol)
+	}
+
+	// Validate interval (must be positive if set)
+	if h.Interval < 0 {
+		return fmt.Errorf("health check interval must be positive, got %v", h.Interval)
+	}
+
+	// Validate timeout (must be positive if set)
+	if h.Timeout < 0 {
+		return fmt.Errorf("health check timeout must be positive, got %v", h.Timeout)
+	}
+
+	return nil
+}
+
 // ContentEntry represents a component or manifest included in a repository.
 // Used by repository manifests to declare their contents.
 type ContentEntry struct {
@@ -114,26 +243,27 @@ type Manifest struct {
 // BuildConfig contains build configuration for the component.
 // Used for components that need to be compiled or packaged before running.
 type BuildConfig struct {
-	Command   string            `json:"command,omitempty" yaml:"command,omitempty"`       // Build command (e.g., "go build")
-	Artifacts []string          `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`   // Build output paths
-	Env       map[string]string `json:"env,omitempty" yaml:"env,omitempty"`               // Environment variables for build
-	WorkDir   string            `json:"workdir,omitempty" yaml:"workdir,omitempty"`       // Working directory for build
-	Context   string            `json:"context,omitempty" yaml:"context,omitempty"`       // Build context path
-	Dockerfile string           `json:"dockerfile,omitempty" yaml:"dockerfile,omitempty"` // Dockerfile path for Docker builds
+	Command    string            `json:"command,omitempty" yaml:"command,omitempty"`       // Build command (e.g., "go build")
+	Artifacts  []string          `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`   // Build output paths
+	Env        map[string]string `json:"env,omitempty" yaml:"env,omitempty"`               // Environment variables for build
+	WorkDir    string            `json:"workdir,omitempty" yaml:"workdir,omitempty"`       // Working directory for build
+	Context    string            `json:"context,omitempty" yaml:"context,omitempty"`       // Build context path
+	Dockerfile string            `json:"dockerfile,omitempty" yaml:"dockerfile,omitempty"` // Dockerfile path for Docker builds
 }
 
 // RuntimeConfig contains runtime configuration for the component.
 // Defines how the component should be executed.
 type RuntimeConfig struct {
-	Type       RuntimeType       `json:"type" yaml:"type"`                                 // Runtime type (go, python, docker, etc.)
-	Entrypoint string            `json:"entrypoint" yaml:"entrypoint"`                     // Executable path or command
-	Args       []string          `json:"args,omitempty" yaml:"args,omitempty"`             // Command-line arguments
-	Env        map[string]string `json:"env,omitempty" yaml:"env,omitempty"`               // Environment variables
-	WorkDir    string            `json:"workdir,omitempty" yaml:"workdir,omitempty"`       // Working directory
-	Port       int               `json:"port,omitempty" yaml:"port,omitempty"`             // Network port for HTTP/gRPC
-	HealthURL  string            `json:"health_url,omitempty" yaml:"health_url,omitempty"` // Health check endpoint
-	Image      string            `json:"image,omitempty" yaml:"image,omitempty"`           // Docker image for container runtime
-	Volumes    []string          `json:"volumes,omitempty" yaml:"volumes,omitempty"`       // Volume mounts for Docker
+	Type        RuntimeType        `json:"type" yaml:"type"`                                     // Runtime type (go, python, docker, etc.)
+	Entrypoint  string             `json:"entrypoint" yaml:"entrypoint"`                         // Executable path or command
+	Args        []string           `json:"args,omitempty" yaml:"args,omitempty"`                 // Command-line arguments
+	Env         map[string]string  `json:"env,omitempty" yaml:"env,omitempty"`                   // Environment variables
+	WorkDir     string             `json:"workdir,omitempty" yaml:"workdir,omitempty"`           // Working directory
+	Port        int                `json:"port,omitempty" yaml:"port,omitempty"`                 // Network port for HTTP/gRPC
+	HealthURL   string             `json:"health_url,omitempty" yaml:"health_url,omitempty"`     // Health check endpoint (deprecated: use HealthCheck.Endpoint)
+	HealthCheck *HealthCheckConfig `json:"health_check,omitempty" yaml:"health_check,omitempty"` // Health check configuration
+	Image       string             `json:"image,omitempty" yaml:"image,omitempty"`               // Docker image for container runtime
+	Volumes     []string           `json:"volumes,omitempty" yaml:"volumes,omitempty"`           // Volume mounts for Docker
 }
 
 // ComponentDependencies defines dependencies required by the component.
@@ -270,6 +400,13 @@ func (r *RuntimeConfig) Validate() error {
 	if r.Type == RuntimeTypeDocker {
 		if r.Image == "" {
 			return fmt.Errorf("docker image is required for docker runtime")
+		}
+	}
+
+	// Validate health check config if present
+	if r.HealthCheck != nil {
+		if err := r.HealthCheck.Validate(); err != nil {
+			return fmt.Errorf("health check config validation failed: %w", err)
 		}
 	}
 
@@ -421,6 +558,16 @@ func (r *RuntimeConfig) IsNetworkBased() bool {
 // IsContainerBased returns true if the runtime type uses containers.
 func (r *RuntimeConfig) IsContainerBased() bool {
 	return r.Type == RuntimeTypeDocker
+}
+
+// GetHealthCheckConfig returns the health check configuration.
+// Returns a default config if none is specified.
+func (r *RuntimeConfig) GetHealthCheckConfig() *HealthCheckConfig {
+	if r.HealthCheck != nil {
+		return r.HealthCheck
+	}
+	// Return default config
+	return &HealthCheckConfig{}
 }
 
 // GetComponents returns the list of component dependencies.

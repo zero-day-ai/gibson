@@ -450,3 +450,25 @@ func TestComponentError_MethodChaining(t *testing.T) {
 	assert.Equal(t, "/test/path", err.Context["path"])
 	assert.Equal(t, "1.0.0", err.Context["version"])
 }
+
+// TestNewLogWriteError tests the NewLogWriteError function
+func TestNewLogWriteError(t *testing.T) {
+	cause := errors.New("disk full")
+	err := NewLogWriteError("test-agent", cause)
+	assert.NotNil(t, err)
+	assert.Equal(t, ErrCodeLogWriteFailed, err.Code)
+	assert.Equal(t, "test-agent", err.Component)
+	assert.Equal(t, cause, err.Cause)
+	assert.True(t, err.Retryable)
+}
+
+// TestNewLogRotationError tests the NewLogRotationError function
+func TestNewLogRotationError(t *testing.T) {
+	cause := errors.New("file locked")
+	err := NewLogRotationError("test-tool", cause)
+	assert.NotNil(t, err)
+	assert.Equal(t, ErrCodeLogRotationFailed, err.Code)
+	assert.Equal(t, "test-tool", err.Component)
+	assert.Equal(t, cause, err.Cause)
+	assert.True(t, err.Retryable)
+}

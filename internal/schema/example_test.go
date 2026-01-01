@@ -51,9 +51,9 @@ func ExampleValidator() {
 
 	// Invalid data
 	invalidData := map[string]any{
-		"username": "ab",              // Too short
-		"email":    "not-an-email",    // Invalid format
-		"age":      200,               // Above maximum
+		"username": "ab",           // Too short
+		"email":    "not-an-email", // Invalid format
+		"age":      200,            // Above maximum
 	}
 
 	errors = validator.Validate(userSchema, invalidData)
@@ -78,7 +78,7 @@ func ExampleNewArraySchema() {
 	postSchema := schema.NewObjectSchema(map[string]schema.SchemaField{
 		"title": schema.NewStringField("Post title"),
 		"tags": {
-			Type:  "array",
+			Type: "array",
 			Items: &schema.SchemaField{
 				Type:      "string",
 				MinLength: intPtr(1),

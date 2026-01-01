@@ -52,11 +52,11 @@ func (vr *VectorRecord) Dimensions() int {
 // It supports both text-based queries (which will be embedded) and
 // pre-computed embedding queries.
 type VectorQuery struct {
-	Text      string            `json:"text,omitempty"`      // Text to embed and search
-	Embedding []float64         `json:"embedding,omitempty"` // Pre-computed embedding
-	TopK      int               `json:"top_k"`               // Number of results to return
-	Filters   map[string]any    `json:"filters,omitempty"`   // Metadata filters
-	MinScore  float64           `json:"min_score,omitempty"` // Minimum similarity threshold (0-1)
+	Text      string         `json:"text,omitempty"`      // Text to embed and search
+	Embedding []float64      `json:"embedding,omitempty"` // Pre-computed embedding
+	TopK      int            `json:"top_k"`               // Number of results to return
+	Filters   map[string]any `json:"filters,omitempty"`   // Metadata filters
+	MinScore  float64        `json:"min_score,omitempty"` // Minimum similarity threshold (0-1)
 }
 
 // NewVectorQueryFromText creates a new VectorQuery from text.

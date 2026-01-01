@@ -140,11 +140,11 @@ func TestEmbeddedVectorStore_Search_Filters(t *testing.T) {
 
 	// Store records with metadata
 	records := []VectorRecord{
-		*NewVectorRecord("test-1", "finding 1", []float64{1.0, 0.0, 0.0}, 
+		*NewVectorRecord("test-1", "finding 1", []float64{1.0, 0.0, 0.0},
 			map[string]any{"type": "finding", "severity": "high"}),
-		*NewVectorRecord("test-2", "finding 2", []float64{0.9, 0.1, 0.0}, 
+		*NewVectorRecord("test-2", "finding 2", []float64{0.9, 0.1, 0.0},
 			map[string]any{"type": "finding", "severity": "low"}),
-		*NewVectorRecord("test-3", "pattern 1", []float64{0.8, 0.2, 0.0}, 
+		*NewVectorRecord("test-3", "pattern 1", []float64{0.8, 0.2, 0.0},
 			map[string]any{"type": "pattern"}),
 	}
 	err := store.StoreBatch(ctx, records)
@@ -213,7 +213,7 @@ func TestCosineSimilarity(t *testing.T) {
 func TestCosineSimilarity_DifferentDimensions(t *testing.T) {
 	a := []float64{1.0, 0.0}
 	b := []float64{1.0, 0.0, 0.0}
-	
+
 	result := cosineSimilarity(a, b)
 	assert.Equal(t, 0.0, result)
 }
@@ -273,7 +273,7 @@ func TestEmbeddedVectorStore_ConcurrentAccess(t *testing.T) {
 
 	// Run concurrent stores and searches
 	done := make(chan bool)
-	
+
 	// Writer goroutine
 	go func() {
 		for i := 0; i < 100; i++ {

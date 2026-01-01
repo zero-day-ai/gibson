@@ -83,19 +83,199 @@ func (r *CommandRegistry) Complete(prefix string) []string {
 // Command handlers are initially nil and should be set by the executor.
 func RegisterDefaultCommands(registry *CommandRegistry) {
 	commands := []*SlashCommand{
+		// Agent commands (full CLI parity)
 		{
-			Name:        "agents",
-			Aliases:     []string{"agent"},
-			Description: "List and manage agents",
-			Usage:       "/agents [list|focus|mode|interrupt|status] [name] [args]",
+			Name:        "agent",
+			Aliases:     []string{"agents"},
+			Description: "Manage agents",
+			Usage:       "/agent [start|stop|install|uninstall|logs|list|show|build|update] [name] [args]",
 			Handler:     nil,
 		},
 		{
-			Name:        "missions",
-			Description: "List and manage missions",
-			Usage:       "/missions [list|create|start|stop|delete] [args]",
+			Name:        "agent-start",
+			Description: "Start an agent",
+			Usage:       "/agent-start <name> [--target <url>] [--mode <mode>]",
 			Handler:     nil,
 		},
+		{
+			Name:        "agent-execute",
+			Aliases:     []string{"agent-exec", "agent-run"},
+			Description: "Execute a task on a running agent with streaming output",
+			Usage:       "/agent-execute <name> <goal>",
+			Handler:     nil,
+		},
+		{
+			Name:        "agent-stop",
+			Description: "Stop a running agent",
+			Usage:       "/agent-stop <name>",
+			Handler:     nil,
+		},
+		{
+			Name:        "agent-install",
+			Description: "Install agent from source",
+			Usage:       "/agent-install <source> [--branch <branch>] [--tag <tag>] [--force]",
+			Handler:     nil,
+		},
+		{
+			Name:        "agent-uninstall",
+			Description: "Uninstall an agent",
+			Usage:       "/agent-uninstall <name> [--force]",
+			Handler:     nil,
+		},
+		{
+			Name:        "agent-logs",
+			Description: "Show agent logs",
+			Usage:       "/agent-logs <name> [--follow] [--lines <n>]",
+			Handler:     nil,
+		},
+
+		// Tool commands (full CLI parity)
+		{
+			Name:        "tool",
+			Aliases:     []string{"tools"},
+			Description: "Manage tools",
+			Usage:       "/tool [start|stop|install|uninstall|logs|list|show|build|update|invoke|test] [name] [args]",
+			Handler:     nil,
+		},
+		{
+			Name:        "tool-start",
+			Description: "Start a tool server",
+			Usage:       "/tool-start <name>",
+			Handler:     nil,
+		},
+		{
+			Name:        "tool-stop",
+			Description: "Stop a tool server",
+			Usage:       "/tool-stop <name>",
+			Handler:     nil,
+		},
+		{
+			Name:        "tool-install",
+			Description: "Install tool from source",
+			Usage:       "/tool-install <source> [--branch <branch>] [--tag <tag>] [--force]",
+			Handler:     nil,
+		},
+		{
+			Name:        "tool-uninstall",
+			Description: "Uninstall a tool",
+			Usage:       "/tool-uninstall <name> [--force]",
+			Handler:     nil,
+		},
+		{
+			Name:        "tool-logs",
+			Description: "Show tool logs",
+			Usage:       "/tool-logs <name> [--follow] [--lines <n>]",
+			Handler:     nil,
+		},
+
+		// Plugin commands (full CLI parity)
+		{
+			Name:        "plugin",
+			Aliases:     []string{"plugins"},
+			Description: "Manage plugins",
+			Usage:       "/plugin [start|stop|install|uninstall|list|show|build|update|query] [name] [args]",
+			Handler:     nil,
+		},
+		{
+			Name:        "plugin-start",
+			Description: "Start a plugin",
+			Usage:       "/plugin-start <name>",
+			Handler:     nil,
+		},
+		{
+			Name:        "plugin-stop",
+			Description: "Stop a plugin",
+			Usage:       "/plugin-stop <name>",
+			Handler:     nil,
+		},
+		{
+			Name:        "plugin-install",
+			Description: "Install plugin from source",
+			Usage:       "/plugin-install <source> [--branch <branch>] [--tag <tag>] [--force]",
+			Handler:     nil,
+		},
+		{
+			Name:        "plugin-uninstall",
+			Description: "Uninstall a plugin",
+			Usage:       "/plugin-uninstall <name> [--force]",
+			Handler:     nil,
+		},
+
+		// Attack command (quick single-agent attack)
+		{
+			Name:        "attack",
+			Description: "Launch a quick single-agent attack",
+			Usage:       "/attack <agent> --target <url> [--mode <mode>] [--goal <goal>] [--timeout <duration>]",
+			Handler:     nil,
+		},
+
+		// Mission commands (full CLI parity)
+		{
+			Name:        "mission",
+			Aliases:     []string{"missions"},
+			Description: "Manage missions",
+			Usage:       "/mission [start|stop|create|delete|list|show|resume] [name] [args]",
+			Handler:     nil,
+		},
+		{
+			Name:        "mission-start",
+			Aliases:     []string{"mission-run"},
+			Description: "Start a mission",
+			Usage:       "/mission-start <name> [-f <workflow-file>]",
+			Handler:     nil,
+		},
+		{
+			Name:        "mission-stop",
+			Description: "Stop a running mission",
+			Usage:       "/mission-stop <name>",
+			Handler:     nil,
+		},
+		{
+			Name:        "mission-create",
+			Description: "Create a new mission",
+			Usage:       "/mission-create <name> [-f <workflow-file>] [--description <desc>]",
+			Handler:     nil,
+		},
+		{
+			Name:        "mission-delete",
+			Description: "Delete a mission",
+			Usage:       "/mission-delete <name> [--force]",
+			Handler:     nil,
+		},
+
+		// Steering commands (agent interaction in TUI)
+		{
+			Name:        "focus",
+			Description: "Focus on a specific agent",
+			Usage:       "/focus <agent-name>",
+			Handler:     nil,
+		},
+		{
+			Name:        "interrupt",
+			Description: "Interrupt the focused agent",
+			Usage:       "/interrupt",
+			Handler:     nil,
+		},
+		{
+			Name:        "mode",
+			Description: "Set agent execution mode",
+			Usage:       "/mode <autonomous|interactive>",
+			Handler:     nil,
+		},
+		{
+			Name:        "pause",
+			Description: "Pause the focused agent",
+			Usage:       "/pause",
+			Handler:     nil,
+		},
+		{
+			Name:        "resume",
+			Description: "Resume paused agent with optional guidance",
+			Usage:       "/resume [message]",
+			Handler:     nil,
+		},
+
+		// Legacy/existing commands (retain for compatibility)
 		{
 			Name:        "credentials",
 			Description: "List and manage credentials",
@@ -112,18 +292,6 @@ func RegisterDefaultCommands(registry *CommandRegistry) {
 			Name:        "targets",
 			Description: "List and manage targets",
 			Usage:       "/targets [list|add|remove] [args]",
-			Handler:     nil,
-		},
-		{
-			Name:        "tools",
-			Description: "List available tools",
-			Usage:       "/tools [list|info] [name]",
-			Handler:     nil,
-		},
-		{
-			Name:        "plugins",
-			Description: "List available plugins",
-			Usage:       "/plugins [list|info] [name]",
 			Handler:     nil,
 		},
 		{

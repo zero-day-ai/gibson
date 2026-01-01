@@ -116,11 +116,11 @@ func TestFullInitialization(t *testing.T) {
 			assert.Equal(t, 1, count, "table %s should exist", table)
 		}
 
-		// Verify migration was recorded (we have 2 migrations now: initial_schema and mission_memory)
+		// Verify migration was recorded (we have 9 migrations now)
 		var migrationVersion int
 		err = db.Conn().QueryRow("SELECT MAX(version) FROM migrations").Scan(&migrationVersion)
 		require.NoError(t, err, "should query migration version")
-		assert.Equal(t, 2, migrationVersion, "migration version should be 2")
+		assert.Equal(t, 9, migrationVersion, "migration version should be 9")
 
 		t.Logf("Database verified: WAL=%s, migration_version=%d", journalMode, migrationVersion)
 	})

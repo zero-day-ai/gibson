@@ -14,17 +14,17 @@ import (
 
 // mockGraphRAGStore is a mock implementation of graphrag.GraphRAGStore for testing.
 type mockGraphRAGStore struct {
-	mu                  sync.Mutex
-	storedFindings      []graphrag.FindingNode
-	storedRecords       []graphrag.GraphRecord
-	storeError          error
-	storeFindingError   error
-	similarFindings     []graphrag.FindingNode
-	findSimilarError    error
-	storeFindingCalls   int
-	findSimilarCalls    int
-	storeDelay          time.Duration
-	healthStatus        types.HealthStatus
+	mu                sync.Mutex
+	storedFindings    []graphrag.FindingNode
+	storedRecords     []graphrag.GraphRecord
+	storeError        error
+	storeFindingError error
+	similarFindings   []graphrag.FindingNode
+	findSimilarError  error
+	storeFindingCalls int
+	findSimilarCalls  int
+	storeDelay        time.Duration
+	healthStatus      types.HealthStatus
 }
 
 func newMockGraphRAGStore() *mockGraphRAGStore {

@@ -354,7 +354,7 @@ func TestAgentUninstall_Success(t *testing.T) {
 	mockInstaller.On("Uninstall", mock.Anything, component.ComponentKindAgent, agentName).Return(&component.UninstallResult{
 		Name:     agentName,
 		Kind:     component.ComponentKindAgent,
-		Path:     agent.Path,
+		Path:     agent.RepoPath,
 		Duration: time.Second,
 	}, nil)
 
@@ -384,7 +384,7 @@ func TestAgentUninstall_StopsRunningAgent(t *testing.T) {
 	mockInstaller.On("Uninstall", mock.Anything, component.ComponentKindAgent, agentName).Return(&component.UninstallResult{
 		Name:       agentName,
 		Kind:       component.ComponentKindAgent,
-		Path:       agent.Path,
+		Path:       agent.RepoPath,
 		Duration:   time.Second,
 		WasStopped: true,
 		WasRunning: true,

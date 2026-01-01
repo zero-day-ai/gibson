@@ -388,10 +388,10 @@ func TestCollectSystemStatus(t *testing.T) {
 
 func TestDetermineOverallHealth(t *testing.T) {
 	tests := []struct {
-		name           string
-		status         SystemStatus
-		expectedState  types.HealthState
-		expectedInMsg  string
+		name          string
+		status        SystemStatus
+		expectedState types.HealthState
+		expectedInMsg string
 	}{
 		{
 			name: "healthy - database and provider ok",

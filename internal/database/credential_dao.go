@@ -92,8 +92,8 @@ func (dao *CredentialDAO) Get(ctx context.Context, id types.ID) (*types.Credenti
 	cred := &types.Credential{}
 	var (
 		idStr, name, typeStr, provider, statusStr, description string
-		encryptedValue, encryptionIV, keyDerivationSalt       []byte
-		tagsJSON, rotationJSON, usageJSON                     string
+		encryptedValue, encryptionIV, keyDerivationSalt        []byte
+		tagsJSON, rotationJSON, usageJSON                      string
 		createdAt, updatedAt                                   time.Time
 		lastUsed                                               sql.NullTime
 	)
@@ -184,8 +184,8 @@ func (dao *CredentialDAO) GetByName(ctx context.Context, name string) (*types.Cr
 		idStr, credName, typeStr, provider, statusStr, description string
 		encryptedValue, encryptionIV, keyDerivationSalt            []byte
 		tagsJSON, rotationJSON, usageJSON                          string
-		createdAt, updatedAt                                        time.Time
-		lastUsed                                                    sql.NullTime
+		createdAt, updatedAt                                       time.Time
+		lastUsed                                                   sql.NullTime
 	)
 
 	err := dao.db.QueryRowContext(ctx, query, name).Scan(
@@ -322,8 +322,8 @@ func (dao *CredentialDAO) List(ctx context.Context, filter *types.CredentialFilt
 	for rows.Next() {
 		var (
 			idStr, name, typeStr, provider, statusStr, description string
-			encryptedValue, encryptionIV, keyDerivationSalt       []byte
-			tagsJSON, rotationJSON, usageJSON                     string
+			encryptedValue, encryptionIV, keyDerivationSalt        []byte
+			tagsJSON, rotationJSON, usageJSON                      string
 			createdAt, updatedAt                                   time.Time
 			lastUsed                                               sql.NullTime
 		)
@@ -373,20 +373,20 @@ func (dao *CredentialDAO) List(ctx context.Context, filter *types.CredentialFilt
 		}
 
 		cred := &types.Credential{
-			ID:                 parsedID,
-			Name:               name,
-			Type:               credType,
-			Provider:           provider,
-			Status:             status,
-			Description:        description,
-			EncryptedValue:     encryptedValue,
-			EncryptionIV:       encryptionIV,
-			KeyDerivationSalt:  keyDerivationSalt,
-			Tags:               tags,
-			Rotation:           rotation,
-			Usage:              usage,
-			CreatedAt:          createdAt,
-			UpdatedAt:          updatedAt,
+			ID:                parsedID,
+			Name:              name,
+			Type:              credType,
+			Provider:          provider,
+			Status:            status,
+			Description:       description,
+			EncryptedValue:    encryptedValue,
+			EncryptionIV:      encryptionIV,
+			KeyDerivationSalt: keyDerivationSalt,
+			Tags:              tags,
+			Rotation:          rotation,
+			Usage:             usage,
+			CreatedAt:         createdAt,
+			UpdatedAt:         updatedAt,
 		}
 		if lastUsed.Valid {
 			cred.LastUsed = &lastUsed.Time
@@ -540,12 +540,4 @@ func nullableTime(t *time.Time) sql.NullTime {
 		return sql.NullTime{Valid: false}
 	}
 	return sql.NullTime{Time: *t, Valid: true}
-}
-
-// credNullableID converts an ID pointer to sql.NullString
-func credNullableID(id *types.ID) sql.NullString {
-	if id == nil {
-		return sql.NullString{Valid: false}
-	}
-	return sql.NullString{String: id.String(), Valid: true}
 }

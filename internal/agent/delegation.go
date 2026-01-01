@@ -9,9 +9,9 @@ import (
 // DelegationHarness implements AgentHarness for delegated agent execution.
 // This is used internally by the registry when executing delegated tasks.
 type DelegationHarness struct {
-	registry AgentRegistry
-	logger   Logger
-	toolExec ToolExecutor
+	registry   AgentRegistry
+	logger     Logger
+	toolExec   ToolExecutor
 	pluginExec PluginExecutor
 }
 
@@ -33,9 +33,9 @@ type PluginExecutor interface {
 // NewDelegationHarness creates a new delegation harness
 func NewDelegationHarness(registry AgentRegistry) *DelegationHarness {
 	return &DelegationHarness{
-		registry: registry,
-		logger:   &defaultLogger{},
-		toolExec: &noopToolExecutor{},
+		registry:   registry,
+		logger:     &defaultLogger{},
+		toolExec:   &noopToolExecutor{},
 		pluginExec: &noopPluginExecutor{},
 	}
 }
@@ -99,9 +99,9 @@ func (h *DelegationHarness) QueryPlugin(ctx context.Context, plugin, method stri
 // DelegateToAgent delegates a task to another agent
 func (h *DelegationHarness) DelegateToAgent(ctx context.Context, agentName string, task Task) (Result, error) {
 	h.Log("info", "delegating to agent", map[string]any{
-		"agent":       agentName,
-		"task":        task.ID.String(),
-		"task_name":   task.Name,
+		"agent":     agentName,
+		"task":      task.ID.String(),
+		"task_name": task.Name,
 	})
 
 	startTime := time.Now()

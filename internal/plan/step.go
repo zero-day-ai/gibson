@@ -25,8 +25,8 @@ type ExecutionStep struct {
 	PluginParams map[string]any `json:"plugin_params,omitempty"`
 
 	// Agent step fields
-	AgentName string       `json:"agent_name,omitempty"`
-	AgentTask *agent.Task  `json:"agent_task,omitempty"`
+	AgentName string      `json:"agent_name,omitempty"`
+	AgentTask *agent.Task `json:"agent_task,omitempty"`
 
 	// Condition step fields
 	Condition *StepCondition `json:"condition,omitempty"`

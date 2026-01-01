@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/zero-day-ai/gibson/internal/component"
 )
@@ -27,13 +26,11 @@ type ComponentDAO interface {
 	// ListAll returns all components grouped by kind
 	ListAll(ctx context.Context) (map[component.ComponentKind][]*component.Component, error)
 
-	// ListByStatus returns components filtered by status
-	ListByStatus(ctx context.Context, kind component.ComponentKind, status component.ComponentStatus) ([]*component.Component, error)
-
 	// Update updates a component's metadata
 	Update(ctx context.Context, comp *component.Component) error
 
-	// UpdateStatus updates status, pid, port, and timestamps
+	// UpdateStatus is deprecated and does nothing - runtime state is tracked via LocalTracker
+	// This method is kept for backward compatibility and will be removed when StatusUpdater interface is removed
 	UpdateStatus(ctx context.Context, id int64, status component.ComponentStatus, pid, port int) error
 
 	// Delete removes a component by kind and name
@@ -64,9 +61,9 @@ func (d *componentDAO) Create(ctx context.Context, comp *component.Component) er
 
 	query := `
 		INSERT INTO components (
-			kind, name, version, repo_path, bin_path, source, status, manifest,
-			pid, port, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			kind, name, version, repo_path, bin_path, source, manifest,
+			created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`
 
 	result, err := d.db.conn.ExecContext(
@@ -77,10 +74,7 @@ func (d *componentDAO) Create(ctx context.Context, comp *component.Component) er
 		comp.RepoPath,
 		comp.BinPath,
 		comp.Source,
-		comp.Status,
 		string(manifestJSON),
-		comp.PID,
-		comp.Port,
 	)
 
 	if err != nil {
@@ -101,15 +95,14 @@ func (d *componentDAO) Create(ctx context.Context, comp *component.Component) er
 func (d *componentDAO) GetByID(ctx context.Context, id int64) (*component.Component, error) {
 	query := `
 		SELECT
-			id, kind, name, version, repo_path, bin_path, source, status, manifest,
-			pid, port, created_at, updated_at, started_at, stopped_at
+			id, kind, name, version, repo_path, bin_path, source, manifest,
+			created_at, updated_at
 		FROM components
 		WHERE id = ?
 	`
 
 	var comp component.Component
 	var manifestJSON sql.NullString
-	var startedAt, stoppedAt sql.NullTime
 
 	err := d.db.conn.QueryRowContext(ctx, query, id).Scan(
 		&comp.ID,
@@ -119,14 +112,9 @@ func (d *componentDAO) GetByID(ctx context.Context, id int64) (*component.Compon
 		&comp.RepoPath,
 		&comp.BinPath,
 		&comp.Source,
-		&comp.Status,
 		&manifestJSON,
-		&comp.PID,
-		&comp.Port,
 		&comp.CreatedAt,
 		&comp.UpdatedAt,
-		&startedAt,
-		&stoppedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -143,14 +131,6 @@ func (d *componentDAO) GetByID(ctx context.Context, id int64) (*component.Compon
 			return nil, fmt.Errorf("failed to unmarshal manifest: %w", err)
 		}
 		comp.Manifest = &manifest
-	}
-
-	// Handle nullable timestamps
-	if startedAt.Valid {
-		comp.StartedAt = &startedAt.Time
-	}
-	if stoppedAt.Valid {
-		comp.StoppedAt = &stoppedAt.Time
 	}
 
 	return &comp, nil
@@ -160,15 +140,14 @@ func (d *componentDAO) GetByID(ctx context.Context, id int64) (*component.Compon
 func (d *componentDAO) GetByName(ctx context.Context, kind component.ComponentKind, name string) (*component.Component, error) {
 	query := `
 		SELECT
-			id, kind, name, version, repo_path, bin_path, source, status, manifest,
-			pid, port, created_at, updated_at, started_at, stopped_at
+			id, kind, name, version, repo_path, bin_path, source, manifest,
+			created_at, updated_at
 		FROM components
 		WHERE kind = ? AND name = ?
 	`
 
 	var comp component.Component
 	var manifestJSON sql.NullString
-	var startedAt, stoppedAt sql.NullTime
 
 	err := d.db.conn.QueryRowContext(ctx, query, kind, name).Scan(
 		&comp.ID,
@@ -178,14 +157,9 @@ func (d *componentDAO) GetByName(ctx context.Context, kind component.ComponentKi
 		&comp.RepoPath,
 		&comp.BinPath,
 		&comp.Source,
-		&comp.Status,
 		&manifestJSON,
-		&comp.PID,
-		&comp.Port,
 		&comp.CreatedAt,
 		&comp.UpdatedAt,
-		&startedAt,
-		&stoppedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -204,14 +178,6 @@ func (d *componentDAO) GetByName(ctx context.Context, kind component.ComponentKi
 		comp.Manifest = &manifest
 	}
 
-	// Handle nullable timestamps
-	if startedAt.Valid {
-		comp.StartedAt = &startedAt.Time
-	}
-	if stoppedAt.Valid {
-		comp.StoppedAt = &stoppedAt.Time
-	}
-
 	return &comp, nil
 }
 
@@ -219,8 +185,8 @@ func (d *componentDAO) GetByName(ctx context.Context, kind component.ComponentKi
 func (d *componentDAO) List(ctx context.Context, kind component.ComponentKind) ([]*component.Component, error) {
 	query := `
 		SELECT
-			id, kind, name, version, repo_path, bin_path, source, status, manifest,
-			pid, port, created_at, updated_at, started_at, stopped_at
+			id, kind, name, version, repo_path, bin_path, source, manifest,
+			created_at, updated_at
 		FROM components
 		WHERE kind = ?
 		ORDER BY name ASC
@@ -236,7 +202,6 @@ func (d *componentDAO) List(ctx context.Context, kind component.ComponentKind) (
 	for rows.Next() {
 		var comp component.Component
 		var manifestJSON sql.NullString
-		var startedAt, stoppedAt sql.NullTime
 
 		err := rows.Scan(
 			&comp.ID,
@@ -246,14 +211,9 @@ func (d *componentDAO) List(ctx context.Context, kind component.ComponentKind) (
 			&comp.RepoPath,
 			&comp.BinPath,
 			&comp.Source,
-			&comp.Status,
 			&manifestJSON,
-			&comp.PID,
-			&comp.Port,
 			&comp.CreatedAt,
 			&comp.UpdatedAt,
-			&startedAt,
-			&stoppedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan component: %w", err)
@@ -266,14 +226,6 @@ func (d *componentDAO) List(ctx context.Context, kind component.ComponentKind) (
 				return nil, fmt.Errorf("failed to unmarshal manifest: %w", err)
 			}
 			comp.Manifest = &manifest
-		}
-
-		// Handle nullable timestamps
-		if startedAt.Valid {
-			comp.StartedAt = &startedAt.Time
-		}
-		if stoppedAt.Valid {
-			comp.StoppedAt = &stoppedAt.Time
 		}
 
 		components = append(components, &comp)
@@ -290,8 +242,8 @@ func (d *componentDAO) List(ctx context.Context, kind component.ComponentKind) (
 func (d *componentDAO) ListAll(ctx context.Context) (map[component.ComponentKind][]*component.Component, error) {
 	query := `
 		SELECT
-			id, kind, name, version, repo_path, bin_path, source, status, manifest,
-			pid, port, created_at, updated_at, started_at, stopped_at
+			id, kind, name, version, repo_path, bin_path, source, manifest,
+			created_at, updated_at
 		FROM components
 		ORDER BY kind ASC, name ASC
 	`
@@ -307,7 +259,6 @@ func (d *componentDAO) ListAll(ctx context.Context) (map[component.ComponentKind
 	for rows.Next() {
 		var comp component.Component
 		var manifestJSON sql.NullString
-		var startedAt, stoppedAt sql.NullTime
 
 		err := rows.Scan(
 			&comp.ID,
@@ -317,14 +268,9 @@ func (d *componentDAO) ListAll(ctx context.Context) (map[component.ComponentKind
 			&comp.RepoPath,
 			&comp.BinPath,
 			&comp.Source,
-			&comp.Status,
 			&manifestJSON,
-			&comp.PID,
-			&comp.Port,
 			&comp.CreatedAt,
 			&comp.UpdatedAt,
-			&startedAt,
-			&stoppedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan component: %w", err)
@@ -337,14 +283,6 @@ func (d *componentDAO) ListAll(ctx context.Context) (map[component.ComponentKind
 				return nil, fmt.Errorf("failed to unmarshal manifest: %w", err)
 			}
 			comp.Manifest = &manifest
-		}
-
-		// Handle nullable timestamps
-		if startedAt.Valid {
-			comp.StartedAt = &startedAt.Time
-		}
-		if stoppedAt.Valid {
-			comp.StoppedAt = &stoppedAt.Time
 		}
 
 		result[comp.Kind] = append(result[comp.Kind], &comp)
@@ -355,77 +293,6 @@ func (d *componentDAO) ListAll(ctx context.Context) (map[component.ComponentKind
 	}
 
 	return result, nil
-}
-
-// ListByStatus returns components filtered by status
-func (d *componentDAO) ListByStatus(ctx context.Context, kind component.ComponentKind, status component.ComponentStatus) ([]*component.Component, error) {
-	query := `
-		SELECT
-			id, kind, name, version, repo_path, bin_path, source, status, manifest,
-			pid, port, created_at, updated_at, started_at, stopped_at
-		FROM components
-		WHERE kind = ? AND status = ?
-		ORDER BY name ASC
-	`
-
-	rows, err := d.db.conn.QueryContext(ctx, query, kind, status)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list components by status: %w", err)
-	}
-	defer rows.Close()
-
-	var components []*component.Component
-	for rows.Next() {
-		var comp component.Component
-		var manifestJSON sql.NullString
-		var startedAt, stoppedAt sql.NullTime
-
-		err := rows.Scan(
-			&comp.ID,
-			&comp.Kind,
-			&comp.Name,
-			&comp.Version,
-			&comp.RepoPath,
-			&comp.BinPath,
-			&comp.Source,
-			&comp.Status,
-			&manifestJSON,
-			&comp.PID,
-			&comp.Port,
-			&comp.CreatedAt,
-			&comp.UpdatedAt,
-			&startedAt,
-			&stoppedAt,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan component: %w", err)
-		}
-
-		// Unmarshal manifest if present
-		if manifestJSON.Valid && manifestJSON.String != "" {
-			var manifest component.Manifest
-			if err := json.Unmarshal([]byte(manifestJSON.String), &manifest); err != nil {
-				return nil, fmt.Errorf("failed to unmarshal manifest: %w", err)
-			}
-			comp.Manifest = &manifest
-		}
-
-		// Handle nullable timestamps
-		if startedAt.Valid {
-			comp.StartedAt = &startedAt.Time
-		}
-		if stoppedAt.Valid {
-			comp.StoppedAt = &stoppedAt.Time
-		}
-
-		components = append(components, &comp)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating components: %w", err)
-	}
-
-	return components, nil
 }
 
 // Update updates a component's metadata
@@ -443,9 +310,7 @@ func (d *componentDAO) Update(ctx context.Context, comp *component.Component) er
 	query := `
 		UPDATE components
 		SET name = ?, version = ?, repo_path = ?, bin_path = ?, source = ?,
-		    status = ?, manifest = ?, pid = ?, port = ?,
-		    updated_at = CURRENT_TIMESTAMP,
-		    started_at = ?, stopped_at = ?
+		    manifest = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`
 
@@ -456,12 +321,7 @@ func (d *componentDAO) Update(ctx context.Context, comp *component.Component) er
 		comp.RepoPath,
 		comp.BinPath,
 		comp.Source,
-		comp.Status,
 		string(manifestJSON),
-		comp.PID,
-		comp.Port,
-		comp.StartedAt,
-		comp.StoppedAt,
 		comp.ID,
 	)
 
@@ -481,55 +341,11 @@ func (d *componentDAO) Update(ctx context.Context, comp *component.Component) er
 	return nil
 }
 
-// UpdateStatus updates status, pid, port, and timestamps
+// UpdateStatus is deprecated and does nothing - runtime state is tracked via LocalTracker
+// This method is kept for backward compatibility and will be removed when StatusUpdater interface is removed
 func (d *componentDAO) UpdateStatus(ctx context.Context, id int64, status component.ComponentStatus, pid, port int) error {
-	now := time.Now()
-	var startedAt, stoppedAt interface{}
-
-	// Set started_at when transitioning to running
-	if status == component.ComponentStatusRunning {
-		startedAt = now
-		stoppedAt = nil
-	}
-
-	// Set stopped_at when transitioning to stopped
-	if status == component.ComponentStatusStopped {
-		startedAt = nil
-		stoppedAt = now
-	}
-
-	query := `
-		UPDATE components
-		SET status = ?, pid = ?, port = ?,
-		    updated_at = CURRENT_TIMESTAMP,
-		    started_at = COALESCE(?, started_at),
-		    stopped_at = COALESCE(?, stopped_at)
-		WHERE id = ?
-	`
-
-	result, err := d.db.conn.ExecContext(
-		ctx, query,
-		status,
-		pid,
-		port,
-		startedAt,
-		stoppedAt,
-		id,
-	)
-
-	if err != nil {
-		return fmt.Errorf("failed to update component status: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("component not found: %d", id)
-	}
-
+	// No-op: runtime state is no longer stored in the database
+	// This method will be removed in task 4.1 when StatusUpdater interface is removed
 	return nil
 }
 

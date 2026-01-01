@@ -32,9 +32,9 @@ func IsSlashCommand(input string) bool {
 //   - Second word becomes Subcommand (if it doesn't start with "-")
 //   - Remaining words are parsed as Args or Flags
 //   - Flags can be:
-//     - --key=value (combined form)
-//     - --key value (separated form, value consumed as flag value)
-//     - --key (boolean flag, value set to "true")
+//   - --key=value (combined form)
+//   - --key value (separated form, value consumed as flag value)
+//   - --key (boolean flag, value set to "true")
 //   - Quoted strings are treated as single arguments
 //   - Both single and double quotes are supported
 //

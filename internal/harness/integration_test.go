@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -145,9 +146,9 @@ func (t *CodeAnalysisTool) Execute(ctx context.Context, input map[string]any) (m
 	vulns := []map[string]any{}
 	if len(code) > 0 && (len(code) > 10 || code == "SELECT *") {
 		vulns = append(vulns, map[string]any{
-			"type": "sql_injection",
+			"type":     "sql_injection",
 			"severity": "high",
-			"line": 1,
+			"line":     1,
 		})
 	}
 
@@ -166,7 +167,7 @@ func (t *CodeAnalysisTool) Health(ctx context.Context) types.HealthStatus {
 
 // VulnDBPlugin simulates a vulnerability database for testing
 type VulnDBPlugin struct {
-	mu   sync.RWMutex
+	mu    sync.RWMutex
 	vulns map[string]any
 }
 
@@ -189,7 +190,7 @@ func (p *VulnDBPlugin) Initialize(ctx context.Context, cfg plugin.PluginConfig) 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.vulns["CVE-2024-0001"] = map[string]any{
-		"severity": "critical",
+		"severity":    "critical",
 		"description": "SQL Injection vulnerability",
 	}
 	return nil
@@ -453,10 +454,14 @@ func (a *ExploitAgent) Health(ctx context.Context) types.HealthStatus {
 // setupTestHarness creates a fully configured harness for integration testing
 func setupTestHarness(t *testing.T, mockResponses []string) (AgentHarness, *HarnessConfig, types.ID) {
 	// Create mock LLM provider
+	// Note: Register as "anthropic" since that's the default provider in slot definitions
 	mockProvider := providers.NewMockProvider(mockResponses)
 
-	// Create LLM registry and register provider
+	// Create LLM registry and register mock provider with "anthropic" name
+	// This allows tests to work with default slot configurations
 	llmRegistry := llm.NewLLMRegistry()
+
+	// Unregister any existing anthropic provider and register our mock
 	err := llmRegistry.RegisterProvider(mockProvider)
 	require.NoError(t, err)
 
@@ -484,9 +489,11 @@ func setupTestHarness(t *testing.T, mockResponses []string) (AgentHarness, *Harn
 	err = agentRegistry.RegisterInternal("exploit_agent", NewExploitAgent)
 	require.NoError(t, err)
 
-	// Create in-memory database for mission memory
-	db, err := database.Open(":memory:")
+	// Create temporary database file for mission memory (WAL mode requires file-based DB)
+	tmpDB := filepath.Join(t.TempDir(), "test.db")
+	db, err := database.Open(tmpDB)
 	require.NoError(t, err)
+	t.Cleanup(func() { db.Close() })
 
 	// Create memory manager
 	missionID := types.NewID()
@@ -698,7 +705,7 @@ func TestIntegration_ToolExecution(t *testing.T) {
 	t.Run("code analysis tool", func(t *testing.T) {
 		// Test code analysis tool with vulnerable code
 		input := map[string]any{
-			"code": "SELECT * FROM users WHERE id = " + "'" + "1" + "'",
+			"code":     "SELECT * FROM users WHERE id = " + "'" + "1" + "'",
 			"language": "sql",
 		}
 
@@ -1332,9 +1339,9 @@ func (p *toolCallingMockProvider) Complete(ctx context.Context, req llm.Completi
 			Content: "",
 			ToolCalls: []llm.ToolCall{
 				{
-					ID:   "call_123",
-					Type: "function",
-					Name: "get_weather",
+					ID:        "call_123",
+					Type:      "function",
+					Name:      "get_weather",
 					Arguments: `{"location":"San Francisco"}`,
 				},
 			},

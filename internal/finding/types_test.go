@@ -459,7 +459,7 @@ func TestMitreDatabase_FindForCategory(t *testing.T) {
 	db := NewMitreDatabase()
 
 	tests := []struct {
-		category         FindingCategory
+		category           FindingCategory
 		expectedTechniques []string
 	}{
 		{CategoryJailbreak, []string{"AML.T0015"}},

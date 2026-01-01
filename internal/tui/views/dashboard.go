@@ -13,6 +13,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/tui/components"
 )
 
@@ -37,7 +38,7 @@ type DashboardView struct {
 	findingStore finding.FindingStore
 
 	// Cached data
-	missions       []*database.Mission
+	missions       []*mission.Mission
 	components     map[component.ComponentKind][]*component.Component
 	recentFindings []finding.EnhancedFinding
 	lastRefresh    time.Time
@@ -83,7 +84,7 @@ func NewDashboardView(ctx context.Context, db *database.DB, dao database.Compone
 		db:             db,
 		componentDAO:   dao,
 		findingStore:   store,
-		missions:       []*database.Mission{},
+		missions:       []*mission.Mission{},
 		components:     make(map[component.ComponentKind][]*component.Component),
 		recentFindings: []finding.EnhancedFinding{},
 		ctx:            ctx,
@@ -205,8 +206,8 @@ func (d *DashboardView) cycleFocus() {
 func (d *DashboardView) refreshData() {
 	// Load missions from database
 	if d.db != nil {
-		missionDAO := database.NewMissionDAO(d.db)
-		missions, err := missionDAO.List(d.ctx, "")
+		missionStore := mission.NewDBMissionStore(d.db)
+		missions, err := missionStore.List(d.ctx, nil)
 		if err == nil {
 			d.missions = missions
 		}
@@ -257,15 +258,15 @@ func (d *DashboardView) renderMissionSummary() string {
 
 	// Count missions by status
 	var active, completed, failed, pending int
-	for _, mission := range d.missions {
-		switch mission.Status {
-		case database.MissionStatusRunning:
+	for _, m := range d.missions {
+		switch m.Status {
+		case mission.MissionStatusRunning:
 			active++
-		case database.MissionStatusCompleted:
+		case mission.MissionStatusCompleted:
 			completed++
-		case database.MissionStatusFailed:
+		case mission.MissionStatusFailed:
 			failed++
-		case database.MissionStatusPending:
+		case mission.MissionStatusPending:
 			pending++
 		}
 	}

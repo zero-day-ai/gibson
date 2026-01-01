@@ -60,13 +60,13 @@ func (s MissionStatus) CanTransitionTo(target MissionStatus) bool {
 		return target == MissionStatusRunning || target == MissionStatusCancelled
 	case MissionStatusRunning:
 		return target == MissionStatusPaused ||
-		       target == MissionStatusCompleted ||
-		       target == MissionStatusFailed ||
-		       target == MissionStatusCancelled
+			target == MissionStatusCompleted ||
+			target == MissionStatusFailed ||
+			target == MissionStatusCancelled
 	case MissionStatusPaused:
 		return target == MissionStatusRunning ||
-		       target == MissionStatusFailed ||
-		       target == MissionStatusCancelled
+			target == MissionStatusFailed ||
+			target == MissionStatusCancelled
 	default:
 		return false
 	}
@@ -94,11 +94,31 @@ type Mission struct {
 	// WorkflowID references the workflow being executed.
 	WorkflowID types.ID `json:"workflow_id"`
 
+	// WorkflowJSON contains the workflow definition in JSON/YAML format.
+	// This is optional - if not provided, the workflow must be loaded via WorkflowID.
+	WorkflowJSON string `json:"workflow_json,omitempty"`
+
 	// Constraints define execution boundaries for the mission.
 	Constraints *MissionConstraints `json:"constraints,omitempty"`
 
 	// Metrics tracks mission execution statistics.
 	Metrics *MissionMetrics `json:"metrics,omitempty"`
+
+	// Progress represents the mission completion progress from 0.0 to 1.0.
+	// This field is computed from Metrics and provides a normalized progress indicator.
+	Progress float64 `json:"progress"`
+
+	// FindingsCount is the number of findings discovered during mission execution.
+	// This provides quick access to finding count without loading full metrics.
+	FindingsCount int `json:"findings_count"`
+
+	// AgentAssignments maps workflow node IDs to assigned agent component names.
+	// This tracks which agents are assigned to execute which workflow nodes.
+	AgentAssignments map[string]string `json:"agent_assignments,omitempty"`
+
+	// Metadata provides generic key-value storage for mission-specific data.
+	// This can be used for custom fields, tags, or integration-specific information.
+	Metadata map[string]any `json:"metadata,omitempty"`
 
 	// Checkpoint stores state for resume capability.
 	Checkpoint *MissionCheckpoint `json:"checkpoint,omitempty"`

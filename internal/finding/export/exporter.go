@@ -68,14 +68,14 @@ type ExportOptions struct {
 // DefaultExportOptions returns ExportOptions with sensible defaults
 func DefaultExportOptions() ExportOptions {
 	return ExportOptions{
-		IncludeEvidence:  true,
-		MinSeverity:      nil,
-		DateFrom:         nil,
-		DateTo:           nil,
-		RedactSensitive:  false,
-		IncludeResolved:  false,
-		Categories:       nil,
-		MinConfidence:    nil,
+		IncludeEvidence: true,
+		MinSeverity:     nil,
+		DateFrom:        nil,
+		DateTo:          nil,
+		RedactSensitive: false,
+		IncludeResolved: false,
+		Categories:      nil,
+		MinConfidence:   nil,
 	}
 }
 

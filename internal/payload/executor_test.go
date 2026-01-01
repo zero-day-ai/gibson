@@ -93,9 +93,9 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 		}
 		payload.SuccessIndicators = []SuccessIndicator{
 			{
-				Type:    IndicatorContains,
-				Value:   "Simulated",
-				Weight:  1.0,
+				Type:   IndicatorContains,
+				Value:  "Simulated",
+				Weight: 1.0,
 			},
 		}
 		err := registry.Register(ctx, payload)
@@ -457,9 +457,9 @@ func TestPayloadExecutor_SuccessIndicators(t *testing.T) {
 		payload.Template = "Test"
 		payload.SuccessIndicators = []SuccessIndicator{
 			{
-				Type:    IndicatorContains,
-				Value: "Simulated response", // This will match our mock response
-				Weight:  1.0,
+				Type:   IndicatorContains,
+				Value:  "Simulated response", // This will match our mock response
+				Weight: 1.0,
 			},
 		}
 		err := registry.Register(ctx, payload)
@@ -486,9 +486,9 @@ func TestPayloadExecutor_SuccessIndicators(t *testing.T) {
 		payload.Template = "Test"
 		payload.SuccessIndicators = []SuccessIndicator{
 			{
-				Type:    IndicatorContains,
-				Value: "ThisWillNeverMatch",
-				Weight:  1.0,
+				Type:   IndicatorContains,
+				Value:  "ThisWillNeverMatch",
+				Weight: 1.0,
 			},
 		}
 		err := registry.Register(ctx, payload)
@@ -636,19 +636,19 @@ func TestExecutionStore_Integration(t *testing.T) {
 // Helper function to create a test payload for executor tests
 func createTestPayloadForExecutor(name string) *Payload {
 	return &Payload{
-		ID:          types.NewID(),
-		Name:        name,
-		Version:     "1.0.0",
-		Description: "Test payload for " + name,
-		Categories:  []PayloadCategory{CategoryJailbreak},
-		Template:    "Test template",
-		Parameters:  []ParameterDef{},
+		ID:                types.NewID(),
+		Name:              name,
+		Version:           "1.0.0",
+		Description:       "Test payload for " + name,
+		Categories:        []PayloadCategory{CategoryJailbreak},
+		Template:          "Test template",
+		Parameters:        []ParameterDef{},
 		SuccessIndicators: []SuccessIndicator{},
-		Severity:    agent.SeverityMedium,
-		TargetTypes: []string{string(types.TargetTypeLLMChat)},
-		Enabled:     true,
+		Severity:          agent.SeverityMedium,
+		TargetTypes:       []string{string(types.TargetTypeLLMChat)},
+		Enabled:           true,
 		Metadata: PayloadMetadata{
-			Author:  "test",
+			Author: "test",
 		},
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),

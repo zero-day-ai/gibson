@@ -439,9 +439,9 @@ func TestFindRelated(t *testing.T) {
 // TestExtractKeywords verifies keyword extraction
 func TestExtractKeywords(t *testing.T) {
 	tests := []struct {
-		name     string
-		finding  *EnhancedFinding
-		expected []string
+		name        string
+		finding     *EnhancedFinding
+		expected    []string
 		notExpected []string
 	}{
 		{

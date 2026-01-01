@@ -344,7 +344,8 @@ func TestComponent_Validate(t *testing.T) {
 				Kind:      ComponentKindAgent,
 				Name:      "test-agent",
 				Version:   "1.0.0",
-				Path:      "/path/to/agent",
+				RepoPath:  "/path/to/agent",
+				BinPath:   "/path/to/bin/agent",
 				Source:    ComponentSourceExternal,
 				Status:    ComponentStatusAvailable,
 				CreatedAt: now,
@@ -358,7 +359,7 @@ func TestComponent_Validate(t *testing.T) {
 				Kind:      ComponentKind("custom"),
 				Name:      "test",
 				Version:   "1.0.0",
-				Path:      "/path",
+				RepoPath:  "/path",
 				Source:    ComponentSourceExternal,
 				Status:    ComponentStatusAvailable,
 				CreatedAt: now,
@@ -369,36 +370,36 @@ func TestComponent_Validate(t *testing.T) {
 		{
 			name: "InvalidEmptyKind",
 			component: Component{
-				Kind:    ComponentKind(""),
-				Name:    "test",
-				Version: "1.0.0",
-				Path:    "/path",
-				Source:  ComponentSourceExternal,
-				Status:  ComponentStatusAvailable,
+				Kind:     ComponentKind(""),
+				Name:     "test",
+				Version:  "1.0.0",
+				RepoPath: "/path",
+				Source:   ComponentSourceExternal,
+				Status:   ComponentStatusAvailable,
 			},
 			expectErr: true,
 		},
 		{
 			name: "EmptyName",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "",
-				Version: "1.0.0",
-				Path:    "/path",
-				Source:  ComponentSourceExternal,
-				Status:  ComponentStatusAvailable,
+				Kind:     ComponentKindAgent,
+				Name:     "",
+				Version:  "1.0.0",
+				RepoPath: "/path",
+				Source:   ComponentSourceExternal,
+				Status:   ComponentStatusAvailable,
 			},
 			expectErr: true,
 		},
 		{
 			name: "EmptyVersion",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "test",
-				Version: "",
-				Path:    "/path",
-				Source:  ComponentSourceExternal,
-				Status:  ComponentStatusAvailable,
+				Kind:     ComponentKindAgent,
+				Name:     "test",
+				Version:  "",
+				RepoPath: "/path",
+				Source:   ComponentSourceExternal,
+				Status:   ComponentStatusAvailable,
 			},
 			expectErr: true,
 		},
@@ -408,7 +409,7 @@ func TestComponent_Validate(t *testing.T) {
 				Kind:    ComponentKindAgent,
 				Name:    "test",
 				Version: "1.0.0",
-				Path:    "",
+				// Both RepoPath and BinPath are empty - should fail validation
 				Source:  ComponentSourceExternal,
 				Status:  ComponentStatusAvailable,
 			},
@@ -417,76 +418,76 @@ func TestComponent_Validate(t *testing.T) {
 		{
 			name: "InvalidSource",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "test",
-				Version: "1.0.0",
-				Path:    "/path",
-				Source:  ComponentSource("invalid"),
-				Status:  ComponentStatusAvailable,
+				Kind:     ComponentKindAgent,
+				Name:     "test",
+				Version:  "1.0.0",
+				RepoPath: "/path",
+				Source:   ComponentSource("invalid"),
+				Status:   ComponentStatusAvailable,
 			},
 			expectErr: true,
 		},
 		{
 			name: "InvalidStatus",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "test",
-				Version: "1.0.0",
-				Path:    "/path",
-				Source:  ComponentSourceExternal,
-				Status:  ComponentStatus("invalid"),
+				Kind:     ComponentKindAgent,
+				Name:     "test",
+				Version:  "1.0.0",
+				RepoPath: "/path",
+				Source:   ComponentSourceExternal,
+				Status:   ComponentStatus("invalid"),
 			},
 			expectErr: true,
 		},
 		{
 			name: "RemoteComponentWithoutPort",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "test",
-				Version: "1.0.0",
-				Path:    "http://example.com",
-				Source:  ComponentSourceRemote,
-				Status:  ComponentStatusAvailable,
-				Port:    0,
+				Kind:     ComponentKindAgent,
+				Name:     "test",
+				Version:  "1.0.0",
+				BinPath:  "http://example.com",
+				Source:   ComponentSourceRemote,
+				Status:   ComponentStatusAvailable,
+				Port:     0,
 			},
 			expectErr: true,
 		},
 		{
 			name: "RemoteComponentWithValidPort",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "test",
-				Version: "1.0.0",
-				Path:    "http://example.com",
-				Source:  ComponentSourceRemote,
-				Status:  ComponentStatusAvailable,
-				Port:    8080,
+				Kind:     ComponentKindAgent,
+				Name:     "test",
+				Version:  "1.0.0",
+				BinPath:  "http://example.com",
+				Source:   ComponentSourceRemote,
+				Status:   ComponentStatusAvailable,
+				Port:     8080,
 			},
 			expectErr: false,
 		},
 		{
 			name: "RunningComponentWithoutPID",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "test",
-				Version: "1.0.0",
-				Path:    "/path",
-				Source:  ComponentSourceExternal,
-				Status:  ComponentStatusRunning,
-				PID:     0,
+				Kind:     ComponentKindAgent,
+				Name:     "test",
+				Version:  "1.0.0",
+				RepoPath: "/path",
+				Source:   ComponentSourceExternal,
+				Status:   ComponentStatusRunning,
+				PID:      0,
 			},
 			expectErr: true,
 		},
 		{
 			name: "RunningComponentWithoutStartedAt",
 			component: Component{
-				Kind:    ComponentKindAgent,
-				Name:    "test",
-				Version: "1.0.0",
-				Path:    "/path",
-				Source:  ComponentSourceExternal,
-				Status:  ComponentStatusRunning,
-				PID:     1234,
+				Kind:     ComponentKindAgent,
+				Name:     "test",
+				Version:  "1.0.0",
+				RepoPath: "/path",
+				Source:   ComponentSourceExternal,
+				Status:   ComponentStatusRunning,
+				PID:      1234,
 			},
 			expectErr: true,
 		},
@@ -496,7 +497,7 @@ func TestComponent_Validate(t *testing.T) {
 				Kind:      ComponentKindAgent,
 				Name:      "test",
 				Version:   "1.0.0",
-				Path:      "/path",
+				RepoPath:  "/path",
 				Source:    ComponentSourceExternal,
 				Status:    ComponentStatusRunning,
 				PID:       1234,
@@ -521,12 +522,12 @@ func TestComponent_Validate(t *testing.T) {
 // TestComponent_StatusChecks tests the status check methods for Component
 func TestComponent_StatusChecks(t *testing.T) {
 	tests := []struct {
-		name           string
-		status         ComponentStatus
-		expectRunning  bool
-		expectStopped  bool
+		name            string
+		status          ComponentStatus
+		expectRunning   bool
+		expectStopped   bool
 		expectAvailable bool
-		expectError    bool
+		expectError     bool
 	}{
 		{"Running", ComponentStatusRunning, true, false, false, false},
 		{"Stopped", ComponentStatusStopped, false, true, false, false},
@@ -623,7 +624,8 @@ func TestComponent_JSONMarshaling(t *testing.T) {
 		Kind:      ComponentKindAgent,
 		Name:      "test-agent",
 		Version:   "1.0.0",
-		Path:      "/path/to/agent",
+		RepoPath:  "/path/to/agent",
+		BinPath:   "/path/to/bin/agent",
 		Source:    ComponentSourceExternal,
 		Status:    ComponentStatusRunning,
 		Port:      8080,
@@ -644,7 +646,8 @@ func TestComponent_JSONMarshaling(t *testing.T) {
 	assert.Equal(t, original.Kind, unmarshaled.Kind)
 	assert.Equal(t, original.Name, unmarshaled.Name)
 	assert.Equal(t, original.Version, unmarshaled.Version)
-	assert.Equal(t, original.Path, unmarshaled.Path)
+	assert.Equal(t, original.RepoPath, unmarshaled.RepoPath)
+	assert.Equal(t, original.BinPath, unmarshaled.BinPath)
 	assert.Equal(t, original.Source, unmarshaled.Source)
 	assert.Equal(t, original.Status, unmarshaled.Status)
 	assert.Equal(t, original.Port, unmarshaled.Port)

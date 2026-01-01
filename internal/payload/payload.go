@@ -31,7 +31,7 @@ type Payload struct {
 	SuccessIndicators []SuccessIndicator `json:"success_indicators" yaml:"success_indicators"`
 
 	// Targeting
-	TargetTypes []string          `json:"target_types,omitempty" yaml:"target_types,omitempty"` // e.g., ["openai", "anthropic", "rag"]
+	TargetTypes []string              `json:"target_types,omitempty" yaml:"target_types,omitempty"` // e.g., ["openai", "anthropic", "rag"]
 	Severity    agent.FindingSeverity `json:"severity" yaml:"severity"`
 
 	// MITRE Mappings
@@ -51,15 +51,15 @@ type Payload struct {
 type PayloadCategory string
 
 const (
-	CategoryJailbreak            PayloadCategory = "jailbreak"
-	CategoryPromptInjection      PayloadCategory = "prompt_injection"
-	CategoryDataExtraction       PayloadCategory = "data_extraction"
-	CategoryDoS                  PayloadCategory = "dos"
-	CategoryModelManipulation    PayloadCategory = "model_manipulation"
-	CategoryPrivilegeEscalation  PayloadCategory = "privilege_escalation"
-	CategoryRAGPoisoning         PayloadCategory = "rag_poisoning"
+	CategoryJailbreak             PayloadCategory = "jailbreak"
+	CategoryPromptInjection       PayloadCategory = "prompt_injection"
+	CategoryDataExtraction        PayloadCategory = "data_extraction"
+	CategoryDoS                   PayloadCategory = "dos"
+	CategoryModelManipulation     PayloadCategory = "model_manipulation"
+	CategoryPrivilegeEscalation   PayloadCategory = "privilege_escalation"
+	CategoryRAGPoisoning          PayloadCategory = "rag_poisoning"
 	CategoryInformationDisclosure PayloadCategory = "information_disclosure"
-	CategoryEncodingBypass       PayloadCategory = "encoding_bypass"
+	CategoryEncodingBypass        PayloadCategory = "encoding_bypass"
 )
 
 // String returns the string representation of PayloadCategory
@@ -96,12 +96,12 @@ func AllCategories() []PayloadCategory {
 
 // ParameterDef defines a parameter that can be substituted in the payload template
 type ParameterDef struct {
-	Name        string          `json:"name" yaml:"name"`
-	Type        ParameterType   `json:"type" yaml:"type"`
-	Description string          `json:"description" yaml:"description"`
-	Required    bool            `json:"required" yaml:"required"`
-	Default     any             `json:"default,omitempty" yaml:"default,omitempty"`
-	Generator   *ParameterGenerator `json:"generator,omitempty" yaml:"generator,omitempty"`
+	Name        string               `json:"name" yaml:"name"`
+	Type        ParameterType        `json:"type" yaml:"type"`
+	Description string               `json:"description" yaml:"description"`
+	Required    bool                 `json:"required" yaml:"required"`
+	Default     any                  `json:"default,omitempty" yaml:"default,omitempty"`
+	Generator   *ParameterGenerator  `json:"generator,omitempty" yaml:"generator,omitempty"`
 	Validation  *ParameterValidation `json:"validation,omitempty" yaml:"validation,omitempty"`
 }
 
@@ -109,12 +109,12 @@ type ParameterDef struct {
 type ParameterType string
 
 const (
-	ParameterTypeString  ParameterType = "string"
-	ParameterTypeInt     ParameterType = "int"
-	ParameterTypeBool    ParameterType = "bool"
-	ParameterTypeFloat   ParameterType = "float"
-	ParameterTypeJSON    ParameterType = "json"
-	ParameterTypeList    ParameterType = "list"
+	ParameterTypeString ParameterType = "string"
+	ParameterTypeInt    ParameterType = "int"
+	ParameterTypeBool   ParameterType = "bool"
+	ParameterTypeFloat  ParameterType = "float"
+	ParameterTypeJSON   ParameterType = "json"
+	ParameterTypeList   ParameterType = "list"
 )
 
 // String returns the string representation of ParameterType
@@ -135,7 +135,7 @@ func (pt ParameterType) IsValid() bool {
 
 // ParameterGenerator defines how to automatically generate a parameter value
 type ParameterGenerator struct {
-	Type   GeneratorType      `json:"type" yaml:"type"`
+	Type   GeneratorType  `json:"type" yaml:"type"`
 	Config map[string]any `json:"config,omitempty" yaml:"config,omitempty"`
 }
 
@@ -143,11 +143,11 @@ type ParameterGenerator struct {
 type GeneratorType string
 
 const (
-	GeneratorRandom    GeneratorType = "random"      // Random value
-	GeneratorUUID      GeneratorType = "uuid"        // Generate UUID
-	GeneratorTimestamp GeneratorType = "timestamp"   // Current timestamp
-	GeneratorSequence  GeneratorType = "sequence"    // Sequential counter
-	GeneratorFromList  GeneratorType = "from_list"   // Pick from list
+	GeneratorRandom     GeneratorType = "random"     // Random value
+	GeneratorUUID       GeneratorType = "uuid"       // Generate UUID
+	GeneratorTimestamp  GeneratorType = "timestamp"  // Current timestamp
+	GeneratorSequence   GeneratorType = "sequence"   // Sequential counter
+	GeneratorFromList   GeneratorType = "from_list"  // Pick from list
 	GeneratorExpression GeneratorType = "expression" // Evaluate expression
 )
 
@@ -168,11 +168,11 @@ type ParameterValidation struct {
 
 // SuccessIndicator defines how to detect if a payload execution was successful
 type SuccessIndicator struct {
-	Type        IndicatorType  `json:"type" yaml:"type"`
-	Value       string         `json:"value" yaml:"value"`               // Pattern, substring, or value to match
-	Description string         `json:"description,omitempty" yaml:"description,omitempty"`
-	Weight      float64        `json:"weight,omitempty" yaml:"weight,omitempty"` // 0.0-1.0, for weighted scoring
-	Negate      bool           `json:"negate,omitempty" yaml:"negate,omitempty"` // True if absence indicates success
+	Type        IndicatorType `json:"type" yaml:"type"`
+	Value       string        `json:"value" yaml:"value"` // Pattern, substring, or value to match
+	Description string        `json:"description,omitempty" yaml:"description,omitempty"`
+	Weight      float64       `json:"weight,omitempty" yaml:"weight,omitempty"` // 0.0-1.0, for weighted scoring
+	Negate      bool          `json:"negate,omitempty" yaml:"negate,omitempty"` // True if absence indicates success
 }
 
 // IndicatorType represents the type of success indicator
@@ -207,27 +207,27 @@ func (it IndicatorType) IsValid() bool {
 // PayloadMetadata contains additional metadata about the payload
 type PayloadMetadata struct {
 	Author      string   `json:"author,omitempty" yaml:"author,omitempty"`
-	Source      string   `json:"source,omitempty" yaml:"source,omitempty"`       // URL or reference
+	Source      string   `json:"source,omitempty" yaml:"source,omitempty"`         // URL or reference
 	References  []string `json:"references,omitempty" yaml:"references,omitempty"` // Related URLs
 	Notes       string   `json:"notes,omitempty" yaml:"notes,omitempty"`
-	Examples    []string `json:"examples,omitempty" yaml:"examples,omitempty"` // Example executions
-	Difficulty  string   `json:"difficulty,omitempty" yaml:"difficulty,omitempty"` // easy, medium, hard
+	Examples    []string `json:"examples,omitempty" yaml:"examples,omitempty"`       // Example executions
+	Difficulty  string   `json:"difficulty,omitempty" yaml:"difficulty,omitempty"`   // easy, medium, hard
 	Reliability float64  `json:"reliability,omitempty" yaml:"reliability,omitempty"` // 0.0-1.0, expected success rate
 }
 
 // PayloadFilter defines filter criteria for querying payloads
 type PayloadFilter struct {
-	IDs             []types.ID               `json:"ids,omitempty"`
-	Categories      []PayloadCategory        `json:"categories,omitempty"`
-	Tags            []string                 `json:"tags,omitempty"`
-	TargetTypes     []string                 `json:"target_types,omitempty"`
-	Severities      []agent.FindingSeverity  `json:"severities,omitempty"`
-	MitreTechniques []string                 `json:"mitre_techniques,omitempty"`
-	BuiltIn         *bool                    `json:"built_in,omitempty"`
-	Enabled         *bool                    `json:"enabled,omitempty"`
-	SearchQuery     string                   `json:"search_query,omitempty"` // Full-text search
-	Limit           int                      `json:"limit,omitempty"`
-	Offset          int                      `json:"offset,omitempty"`
+	IDs             []types.ID              `json:"ids,omitempty"`
+	Categories      []PayloadCategory       `json:"categories,omitempty"`
+	Tags            []string                `json:"tags,omitempty"`
+	TargetTypes     []string                `json:"target_types,omitempty"`
+	Severities      []agent.FindingSeverity `json:"severities,omitempty"`
+	MitreTechniques []string                `json:"mitre_techniques,omitempty"`
+	BuiltIn         *bool                   `json:"built_in,omitempty"`
+	Enabled         *bool                   `json:"enabled,omitempty"`
+	SearchQuery     string                  `json:"search_query,omitempty"` // Full-text search
+	Limit           int                     `json:"limit,omitempty"`
+	Offset          int                     `json:"offset,omitempty"`
 }
 
 // NewPayload creates a new payload with the given name and template

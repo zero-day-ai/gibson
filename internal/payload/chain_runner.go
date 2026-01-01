@@ -288,7 +288,7 @@ func (cr *chainRunner) GetProgress(ctx context.Context, chainExecutionID types.I
 // executionPlan represents the execution plan for a chain
 type executionPlan struct {
 	stages     []*ChainStage
-	stageIndex map[string]int // Stage ID to index mapping
+	stageIndex map[string]int  // Stage ID to index mapping
 	levels     [][]*ChainStage // Stages grouped by dependency level (for parallel execution)
 }
 

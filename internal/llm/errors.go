@@ -11,17 +11,17 @@ import (
 // LLM error codes follow the Gibson error pattern
 const (
 	// Provider errors
-	ErrProviderNotFound           types.ErrorCode = "LLM_PROVIDER_NOT_FOUND"
-	ErrProviderInitFailed         types.ErrorCode = "LLM_PROVIDER_INIT_FAILED"
-	ErrProviderUnavailable        types.ErrorCode = "LLM_PROVIDER_UNAVAILABLE"
-	ErrProviderUnauthorized       types.ErrorCode = "LLM_PROVIDER_UNAUTHORIZED"
-	ErrProviderRateLimited        types.ErrorCode = "LLM_PROVIDER_RATE_LIMITED"
-	ErrProviderQuotaExceeded      types.ErrorCode = "LLM_PROVIDER_QUOTA_EXCEEDED"
-	ErrLLMProviderNotFound        types.ErrorCode = "LLM_PROVIDER_NOT_FOUND"        // Alias for compatibility
-	ErrLLMProviderInvalidInput    types.ErrorCode = "LLM_PROVIDER_INVALID_INPUT"
-	ErrLLMProviderAlreadyExists   types.ErrorCode = "LLM_PROVIDER_ALREADY_EXISTS"
-	ErrInvalidSlotConfig          types.ErrorCode = "LLM_INVALID_SLOT_CONFIG"
-	ErrNoMatchingProvider         types.ErrorCode = "LLM_NO_MATCHING_PROVIDER"
+	ErrProviderNotFound         types.ErrorCode = "LLM_PROVIDER_NOT_FOUND"
+	ErrProviderInitFailed       types.ErrorCode = "LLM_PROVIDER_INIT_FAILED"
+	ErrProviderUnavailable      types.ErrorCode = "LLM_PROVIDER_UNAVAILABLE"
+	ErrProviderUnauthorized     types.ErrorCode = "LLM_PROVIDER_UNAUTHORIZED"
+	ErrProviderRateLimited      types.ErrorCode = "LLM_PROVIDER_RATE_LIMITED"
+	ErrProviderQuotaExceeded    types.ErrorCode = "LLM_PROVIDER_QUOTA_EXCEEDED"
+	ErrLLMProviderNotFound      types.ErrorCode = "LLM_PROVIDER_NOT_FOUND" // Alias for compatibility
+	ErrLLMProviderInvalidInput  types.ErrorCode = "LLM_PROVIDER_INVALID_INPUT"
+	ErrLLMProviderAlreadyExists types.ErrorCode = "LLM_PROVIDER_ALREADY_EXISTS"
+	ErrInvalidSlotConfig        types.ErrorCode = "LLM_INVALID_SLOT_CONFIG"
+	ErrNoMatchingProvider       types.ErrorCode = "LLM_NO_MATCHING_PROVIDER"
 
 	// Model errors
 	ErrModelNotFound        types.ErrorCode = "LLM_MODEL_NOT_FOUND"

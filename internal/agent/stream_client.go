@@ -10,9 +10,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
+	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 )
 
 // StreamClient manages a bidirectional gRPC stream to a single agent.

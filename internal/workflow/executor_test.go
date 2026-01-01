@@ -22,16 +22,16 @@ import (
 
 func TestNewWorkflowExecutor(t *testing.T) {
 	tests := []struct {
-		name           string
-		opts           []ExecutorOption
+		name            string
+		opts            []ExecutorOption
 		wantMaxParallel int
 		wantLogger      bool
 		wantTracer      bool
 		wantGuardrails  bool
 	}{
 		{
-			name:           "default configuration",
-			opts:           nil,
+			name:            "default configuration",
+			opts:            nil,
 			wantMaxParallel: 10,
 			wantLogger:      true,
 			wantTracer:      false,

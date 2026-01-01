@@ -397,11 +397,11 @@ func TestComponentsConfig_ComponentsByKind(t *testing.T) {
 // TestLoadComponentsFromConfig tests the LoadComponentsFromConfig function.
 func TestLoadComponentsFromConfig(t *testing.T) {
 	tests := []struct {
-		name       string
-		yaml       string
-		wantErr    bool
-		errMsg     string
-		validate   func(t *testing.T, cfg *ComponentsConfig, logger *mockLogger)
+		name     string
+		yaml     string
+		wantErr  bool
+		errMsg   string
+		validate func(t *testing.T, cfg *ComponentsConfig, logger *mockLogger)
 	}{
 		{
 			name: "valid complete configuration",

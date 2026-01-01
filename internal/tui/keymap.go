@@ -14,11 +14,10 @@ type KeyMap struct {
 	Escape  key.Binding
 
 	// Navigation keys
-	ViewDashboard  key.Binding
-	ViewConsole    key.Binding
-	ViewMission    key.Binding
-	ViewFindings   key.Binding
-	ViewAgentFocus key.Binding
+	ViewDashboard key.Binding
+	ViewConsole   key.Binding
+	ViewMission   key.Binding
+	ViewFindings  key.Binding
 
 	// List navigation
 	Up       key.Binding
@@ -36,10 +35,6 @@ type KeyMap struct {
 	Approve key.Binding
 	Filter  key.Binding
 	Export  key.Binding
-
-	// Agent Focus mode keys
-	CycleAgent     key.Binding
-	InterruptAgent key.Binding
 }
 
 // DefaultKeyMap returns a KeyMap with default key bindings.
@@ -67,26 +62,22 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("esc", "cancel"),
 		),
 
-		// Navigation keys
+		// Navigation keys (function keys to avoid conflicts with text input)
 		ViewDashboard: key.NewBinding(
-			key.WithKeys("1"),
-			key.WithHelp("1", "dashboard view"),
+			key.WithKeys("f1"),
+			key.WithHelp("F1", "dashboard"),
 		),
 		ViewConsole: key.NewBinding(
-			key.WithKeys("2"),
-			key.WithHelp("2", "console view"),
+			key.WithKeys("f2"),
+			key.WithHelp("F2", "console"),
 		),
 		ViewMission: key.NewBinding(
-			key.WithKeys("3"),
-			key.WithHelp("3", "mission view"),
+			key.WithKeys("f3"),
+			key.WithHelp("F3", "mission"),
 		),
 		ViewFindings: key.NewBinding(
-			key.WithKeys("4"),
-			key.WithHelp("4", "findings view"),
-		),
-		ViewAgentFocus: key.NewBinding(
-			key.WithKeys("5"),
-			key.WithHelp("5", "agent focus view"),
+			key.WithKeys("f4"),
+			key.WithHelp("F4", "findings"),
 		),
 
 		// List navigation
@@ -144,16 +135,6 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("e"),
 			key.WithHelp("e", "export"),
 		),
-
-		// Agent Focus mode keys
-		CycleAgent: key.NewBinding(
-			key.WithKeys("tab"),
-			key.WithHelp("tab", "cycle agents"),
-		),
-		InterruptAgent: key.NewBinding(
-			key.WithKeys("ctrl+c"),
-			key.WithHelp("ctrl+c", "interrupt agent"),
-		),
 	}
 }
 
@@ -171,7 +152,6 @@ func (k KeyMap) HelpText() map[string][]key.Binding {
 			k.ViewConsole,
 			k.ViewMission,
 			k.ViewFindings,
-			k.ViewAgentFocus,
 		},
 		"Navigation": {
 			k.Up,
@@ -189,10 +169,6 @@ func (k KeyMap) HelpText() map[string][]key.Binding {
 			k.Approve,
 			k.Filter,
 			k.Export,
-		},
-		"Agent Focus": {
-			k.CycleAgent,
-			k.InterruptAgent,
 		},
 	}
 }

@@ -14,24 +14,24 @@ import (
 func DefaultFuncMap() template.FuncMap {
 	return template.FuncMap{
 		// String functions
-		"toUpper":     toUpper,
-		"toLower":     toLower,
-		"title":       title,
-		"trim":        trim,
-		"trimPrefix":  trimPrefix,
-		"trimSuffix":  trimSuffix,
-		"replace":     replace,
-		"contains":    contains,
-		"hasPrefix":   hasPrefix,
-		"hasSuffix":   hasSuffix,
-		"split":       split,
-		"join":        join,
+		"toUpper":    toUpper,
+		"toLower":    toLower,
+		"title":      title,
+		"trim":       trim,
+		"trimPrefix": trimPrefix,
+		"trimSuffix": trimSuffix,
+		"replace":    replace,
+		"contains":   contains,
+		"hasPrefix":  hasPrefix,
+		"hasSuffix":  hasSuffix,
+		"split":      split,
+		"join":       join,
 
 		// Utility functions
-		"default":   defaultFunc,
-		"required":  required,
-		"coalesce":  coalesce,
-		"ternary":   ternary,
+		"default":  defaultFunc,
+		"required": required,
+		"coalesce": coalesce,
+		"ternary":  ternary,
 
 		// Date/time functions
 		"now":        now,

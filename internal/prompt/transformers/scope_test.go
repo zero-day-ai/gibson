@@ -209,10 +209,10 @@ func TestScopeNarrower_Transform_CombinedFilters(t *testing.T) {
 	}
 
 	prompts := []prompt.Prompt{
-		{ID: "test1", Position: prompt.PositionSystem, Content: "Handle security"},    // Pass all
-		{ID: "test2", Position: prompt.PositionUser, Content: "Security check"},       // Excluded by ID
-		{ID: "test3", Position: prompt.PositionContext, Content: "Process data"},      // Fail keyword
-		{ID: "test4", Position: prompt.PositionTools, Content: "Security protocols"},  // Fail position
+		{ID: "test1", Position: prompt.PositionSystem, Content: "Handle security"},   // Pass all
+		{ID: "test2", Position: prompt.PositionUser, Content: "Security check"},      // Excluded by ID
+		{ID: "test3", Position: prompt.PositionContext, Content: "Process data"},     // Fail keyword
+		{ID: "test4", Position: prompt.PositionTools, Content: "Security protocols"}, // Fail position
 	}
 
 	result, err := narrower.Transform(ctx, prompts)

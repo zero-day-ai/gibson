@@ -345,10 +345,10 @@ func TestCompleterPartialMatch(t *testing.T) {
 		input string
 		want  int
 	}{
-		{input: "/con", want: 3}, // All three match
-		{input: "/conf", want: 3}, // conf, config, and configuration
-		{input: "/confi", want: 2}, // config and configuration
-		{input: "/config", want: 2}, // config and configuration
+		{input: "/con", want: 3},     // All three match
+		{input: "/conf", want: 3},    // conf, config, and configuration
+		{input: "/confi", want: 2},   // config and configuration
+		{input: "/config", want: 2},  // config and configuration
 		{input: "/configu", want: 1}, // only configuration
 	}
 

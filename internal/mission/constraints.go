@@ -205,13 +205,13 @@ func (c *DefaultConstraintChecker) checkSeverityThreshold(threshold agent.Findin
 // DefaultConstraints returns a reasonable set of default constraints.
 func DefaultConstraints() *MissionConstraints {
 	return &MissionConstraints{
-		MaxDuration:       24 * time.Hour,           // 24 hour max runtime
-		MaxFindings:       1000,                     // Max 1000 findings
-		SeverityThreshold: agent.SeverityCritical,   // Alert on critical findings
-		SeverityAction:    ConstraintActionPause,    // Pause for critical findings
-		RequireEvidence:   false,                    // Don't require evidence by default
-		MaxTokens:         10000000,                 // 10M tokens (generous default)
-		MaxCost:           100.0,                    // $100 max cost
+		MaxDuration:       24 * time.Hour,         // 24 hour max runtime
+		MaxFindings:       1000,                   // Max 1000 findings
+		SeverityThreshold: agent.SeverityCritical, // Alert on critical findings
+		SeverityAction:    ConstraintActionPause,  // Pause for critical findings
+		RequireEvidence:   false,                  // Don't require evidence by default
+		MaxTokens:         10000000,               // 10M tokens (generous default)
+		MaxCost:           100.0,                  // $100 max cost
 	}
 }
 

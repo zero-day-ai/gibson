@@ -9,11 +9,11 @@ import (
 
 func TestNewFormatter(t *testing.T) {
 	tests := []struct {
-		name           string
-		format         OutputFormat
-		expectedType   string
-		expectText     bool
-		expectJSON     bool
+		name         string
+		format       OutputFormat
+		expectedType string
+		expectText   bool
+		expectJSON   bool
 	}{
 		{
 			name:         "text format",

@@ -13,10 +13,10 @@ const (
 	ErrCodeGraphInvalidConfig types.ErrorCode = "GRAPH_INVALID_CONFIG"
 
 	// Query errors
-	ErrCodeGraphQueryFailed    types.ErrorCode = "GRAPH_QUERY_FAILED"
-	ErrCodeGraphQueryTimeout   types.ErrorCode = "GRAPH_QUERY_TIMEOUT"
-	ErrCodeGraphInvalidQuery   types.ErrorCode = "GRAPH_INVALID_QUERY"
-	ErrCodeGraphResultParsing  types.ErrorCode = "GRAPH_RESULT_PARSING"
+	ErrCodeGraphQueryFailed   types.ErrorCode = "GRAPH_QUERY_FAILED"
+	ErrCodeGraphQueryTimeout  types.ErrorCode = "GRAPH_QUERY_TIMEOUT"
+	ErrCodeGraphInvalidQuery  types.ErrorCode = "GRAPH_INVALID_QUERY"
+	ErrCodeGraphResultParsing types.ErrorCode = "GRAPH_RESULT_PARSING"
 
 	// Node errors
 	ErrCodeGraphNodeNotFound     types.ErrorCode = "GRAPH_NODE_NOT_FOUND"

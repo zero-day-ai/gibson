@@ -45,12 +45,12 @@ func NewMockTool(name string) *MockTool {
 	}
 }
 
-func (m *MockTool) Name() string                          { return m.name }
-func (m *MockTool) Description() string                   { return m.description }
-func (m *MockTool) Version() string                       { return m.version }
-func (m *MockTool) Tags() []string                        { return m.tags }
-func (m *MockTool) InputSchema() schema.JSONSchema        { return m.inputSchema }
-func (m *MockTool) OutputSchema() schema.JSONSchema       { return m.outputSchema }
+func (m *MockTool) Name() string                    { return m.name }
+func (m *MockTool) Description() string             { return m.description }
+func (m *MockTool) Version() string                 { return m.version }
+func (m *MockTool) Tags() []string                  { return m.tags }
+func (m *MockTool) InputSchema() schema.JSONSchema  { return m.inputSchema }
+func (m *MockTool) OutputSchema() schema.JSONSchema { return m.outputSchema }
 func (m *MockTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
 	return m.executeFn(ctx, input)
 }

@@ -38,8 +38,8 @@ func TestMissionAttributes(t *testing.T) {
 				"recon-agent",
 			).WithPhase("discovery"),
 			want: map[string]any{
-				GibsonMissionName:     "recon-mission",
-				GibsonAgentName:       "recon-agent",
+				GibsonMissionName:      "recon-mission",
+				GibsonAgentName:        "recon-agent",
 				"gibson.mission.phase": "discovery",
 			},
 		},
@@ -79,10 +79,10 @@ func TestMissionAttributes(t *testing.T) {
 
 func TestAgentAttributes(t *testing.T) {
 	tests := []struct {
-		name    string
+		name      string
 		agentName string
-		version string
-		want    map[string]any
+		version   string
+		want      map[string]any
 	}{
 		{
 			name:      "agent with version",
@@ -133,10 +133,10 @@ func TestFindingAttributes(t *testing.T) {
 				agent.SeverityCritical,
 			).WithCategory("injection").WithTarget(targetID),
 			want: map[string]any{
-				GibsonFindingSeverity:         "critical",
-				GibsonFindingCategory:         "injection",
-				"gibson.finding.target_id":    targetID.String(),
-				"gibson.finding.confidence":   1.0,
+				GibsonFindingSeverity:       "critical",
+				GibsonFindingCategory:       "injection",
+				"gibson.finding.target_id":  targetID.String(),
+				"gibson.finding.confidence": 1.0,
 			},
 		},
 		{
@@ -439,16 +439,16 @@ func TestMetricsAttributes(t *testing.T) {
 		{
 			name: "basic metrics",
 			metrics: agent.TaskMetrics{
-				LLMCalls:       5,
-				ToolCalls:      3,
-				PluginCalls:    2,
-				TokensUsed:     1000,
-				Cost:           0.05,
-				FindingsCount:  2,
-				Errors:         0,
-				Retries:        1,
-				SubTasks:       0,
-				Duration:       5 * time.Second,
+				LLMCalls:      5,
+				ToolCalls:     3,
+				PluginCalls:   2,
+				TokensUsed:    1000,
+				Cost:          0.05,
+				FindingsCount: 2,
+				Errors:        0,
+				Retries:       1,
+				SubTasks:      0,
+				Duration:      5 * time.Second,
 			},
 			want: map[string]any{
 				"gibson.metrics.llm_calls":      int64(5),

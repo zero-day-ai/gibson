@@ -91,7 +91,7 @@ func WithMitreDatabase(db *MitreDatabase) ClassifierOption {
 func applyOptions(opts ...ClassifierOption) *classifierConfig {
 	cfg := &classifierConfig{
 		confidenceThreshold: 0.7, // Default 70% confidence threshold
-		mitreDB:             nil,  // No MITRE DB by default
+		mitreDB:             nil, // No MITRE DB by default
 	}
 
 	for _, opt := range opts {

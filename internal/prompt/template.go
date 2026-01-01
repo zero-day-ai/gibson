@@ -47,9 +47,6 @@ func (c *RenderContext) Get(path string) (any, bool) {
 	}
 
 	parts := strings.Split(path, ".")
-	if len(parts) == 0 {
-		return nil, false
-	}
 
 	// Determine the root category
 	var root map[string]any
@@ -91,9 +88,6 @@ func (c *RenderContext) Set(path string, value any) {
 	}
 
 	parts := strings.Split(path, ".")
-	if len(parts) == 0 {
-		return
-	}
 
 	// Determine the root category
 	var root map[string]any

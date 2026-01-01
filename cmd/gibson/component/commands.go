@@ -1,6 +1,8 @@
 package component
 
 import (
+	"time"
+
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/internal/component"
 )
@@ -34,6 +36,20 @@ type UninstallFlags struct {
 	Force bool
 }
 
+// StatusFlags holds flags for status commands.
+type StatusFlags struct {
+	Watch      bool          // Enable continuous monitoring
+	Interval   time.Duration // Refresh interval for watch mode (default 2s, min 1s)
+	ErrorCount int           // Number of errors to display (default 5)
+	JSON       bool          // Output in JSON format
+}
+
+// ListFlags holds flags for list commands.
+type ListFlags struct {
+	Local  bool // Show only local components
+	Remote bool // Show only remote components
+}
+
 // ComponentCommands holds all the generated subcommands for a component type.
 type ComponentCommands struct {
 	List       *cobra.Command
@@ -45,6 +61,7 @@ type ComponentCommands struct {
 	Build      *cobra.Command
 	Start      *cobra.Command
 	Stop       *cobra.Command
+	Status     *cobra.Command
 }
 
 // RegisterCommands creates and registers all common subcommands to the parent command.
@@ -63,6 +80,7 @@ func RegisterCommands(parent *cobra.Command, cfg Config) *ComponentCommands {
 	parent.AddCommand(commands.Build)
 	parent.AddCommand(commands.Start)
 	parent.AddCommand(commands.Stop)
+	parent.AddCommand(commands.Status)
 
 	return commands
 }
@@ -74,10 +92,12 @@ func NewCommands(cfg Config) *ComponentCommands {
 	installFlags := &InstallFlags{}
 	updateFlags := &UpdateFlags{}
 	uninstallFlags := &UninstallFlags{}
+	statusFlags := &StatusFlags{}
+	listFlags := &ListFlags{}
 
 	// Create all commands
 	return &ComponentCommands{
-		List:       newListCommand(cfg),
+		List:       newListCommand(cfg, listFlags),
 		Install:    newInstallCommand(cfg, installFlags),
 		InstallAll: newInstallAllCommand(cfg, installFlags),
 		Uninstall:  newUninstallCommand(cfg, uninstallFlags),
@@ -86,5 +106,6 @@ func NewCommands(cfg Config) *ComponentCommands {
 		Build:      newBuildCommand(cfg),
 		Start:      newStartCommand(cfg),
 		Stop:       newStopCommand(cfg),
+		Status:     newStatusCommand(cfg, statusFlags),
 	}
 }

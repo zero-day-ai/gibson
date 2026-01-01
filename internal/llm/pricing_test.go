@@ -186,10 +186,10 @@ func TestPricingConfig_GetModelPricing(t *testing.T) {
 
 func TestModelPricing_CalculateCost(t *testing.T) {
 	tests := []struct {
-		name          string
-		pricing       ModelPricing
-		usage         TokenUsage
-		expectedCost  float64
+		name         string
+		pricing      ModelPricing
+		usage        TokenUsage
+		expectedCost float64
 	}{
 		{
 			name: "claude 3 opus - 1M input, 1M output",

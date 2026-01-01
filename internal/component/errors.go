@@ -33,6 +33,11 @@ const (
 	ErrCodeTimeout              ComponentErrorCode = "TIMEOUT"
 	ErrCodePermissionDenied     ComponentErrorCode = "PERMISSION_DENIED"
 	ErrCodeUnsupportedOperation ComponentErrorCode = "UNSUPPORTED_OPERATION"
+	ErrCodeHealthCheckFailed    ComponentErrorCode = "HEALTH_CHECK_FAILED"
+	ErrCodeProtocolDetectFailed ComponentErrorCode = "PROTOCOL_DETECT_FAILED"
+	ErrCodeInvalidProtocol      ComponentErrorCode = "INVALID_PROTOCOL"
+	ErrCodeLogWriteFailed       ComponentErrorCode = "LOG_WRITE_FAILED"
+	ErrCodeLogRotationFailed    ComponentErrorCode = "LOG_ROTATION_FAILED"
 )
 
 // ComponentError represents a structured error for component operations.
@@ -454,5 +459,79 @@ func NewUnsupportedOperationError(component string, operation string) *Component
 			"operation": operation,
 		},
 		Retryable: false,
+	}
+}
+
+// NewHealthCheckError creates a health check failure error with protocol context.
+// This is typically retryable as health check failures may be transient.
+func NewHealthCheckError(component string, protocol string, cause error) *ComponentError {
+	return &ComponentError{
+		Code:      ErrCodeHealthCheckFailed,
+		Message:   fmt.Sprintf("%s health check failed for component %s", protocol, component),
+		Cause:     cause,
+		Component: component,
+		Context: map[string]any{
+			"component": component,
+			"protocol":  protocol,
+		},
+		Retryable: true,
+	}
+}
+
+// NewProtocolDetectError creates a protocol detection failure error.
+// This is typically retryable as detection may succeed on retry.
+func NewProtocolDetectError(component string, cause error) *ComponentError {
+	return &ComponentError{
+		Code:      ErrCodeProtocolDetectFailed,
+		Message:   fmt.Sprintf("failed to detect health check protocol for component %s", component),
+		Cause:     cause,
+		Component: component,
+		Context: map[string]any{
+			"component": component,
+		},
+		Retryable: true,
+	}
+}
+
+// NewInvalidProtocolError creates an invalid protocol error.
+// This is non-retryable as the protocol configuration needs to be fixed.
+func NewInvalidProtocolError(protocol string) *ComponentError {
+	return &ComponentError{
+		Code:    ErrCodeInvalidProtocol,
+		Message: fmt.Sprintf("invalid health check protocol: %s (must be 'http', 'grpc', or 'auto')", protocol),
+		Context: map[string]any{
+			"protocol": protocol,
+		},
+		Retryable: false,
+	}
+}
+
+// NewLogWriteError creates an error for failed log write operations.
+// This may be retryable depending on the cause (e.g., disk space, permissions).
+func NewLogWriteError(componentName string, err error) *ComponentError {
+	return &ComponentError{
+		Code:      ErrCodeLogWriteFailed,
+		Message:   fmt.Sprintf("failed to write log for component: %s", componentName),
+		Cause:     err,
+		Component: componentName,
+		Context: map[string]any{
+			"component": componentName,
+		},
+		Retryable: true,
+	}
+}
+
+// NewLogRotationError creates an error for failed log rotation operations.
+// This may be retryable depending on the cause (e.g., disk space, file locks).
+func NewLogRotationError(componentName string, err error) *ComponentError {
+	return &ComponentError{
+		Code:      ErrCodeLogRotationFailed,
+		Message:   fmt.Sprintf("failed to rotate log for component: %s", componentName),
+		Cause:     err,
+		Component: componentName,
+		Context: map[string]any{
+			"component": componentName,
+		},
+		Retryable: true,
 	}
 }

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
+	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"google.golang.org/grpc/metadata"
 )
 

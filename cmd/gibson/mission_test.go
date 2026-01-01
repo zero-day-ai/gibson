@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
@@ -29,29 +30,35 @@ func TestMissionList(t *testing.T) {
 		{
 			name: "list all missions",
 			setupMissions: func(db *database.DB) error {
-				dao := database.NewMissionDAO(db)
-				missions := []*database.Mission{
+				store := mission.NewDBMissionStore(db)
+				missions := []*mission.Mission{
 					{
 						ID:            types.NewID(),
 						Name:          "test-mission-1",
 						Description:   "Test mission 1",
-						Status:        database.MissionStatusPending,
+						Status:        mission.MissionStatusPending,
+						TargetID:      types.NewID(),
 						WorkflowID:    types.NewID(),
 						Progress:      0.0,
 						FindingsCount: 0,
+						CreatedAt:     time.Now(),
+						UpdatedAt:     time.Now(),
 					},
 					{
 						ID:            types.NewID(),
 						Name:          "test-mission-2",
 						Description:   "Test mission 2",
-						Status:        database.MissionStatusRunning,
+						Status:        mission.MissionStatusRunning,
+						TargetID:      types.NewID(),
 						WorkflowID:    types.NewID(),
 						Progress:      0.5,
 						FindingsCount: 3,
+						CreatedAt:     time.Now(),
+						UpdatedAt:     time.Now(),
 					},
 				}
 				for _, m := range missions {
-					if err := dao.Create(context.Background(), m); err != nil {
+					if err := store.Save(context.Background(), m); err != nil {
 						return err
 					}
 				}
@@ -64,29 +71,35 @@ func TestMissionList(t *testing.T) {
 		{
 			name: "list missions with status filter",
 			setupMissions: func(db *database.DB) error {
-				dao := database.NewMissionDAO(db)
-				missions := []*database.Mission{
+				store := mission.NewDBMissionStore(db)
+				missions := []*mission.Mission{
 					{
 						ID:            types.NewID(),
 						Name:          "pending-mission",
 						Description:   "Pending mission",
-						Status:        database.MissionStatusPending,
+						Status:        mission.MissionStatusPending,
+						TargetID:      types.NewID(),
 						WorkflowID:    types.NewID(),
 						Progress:      0.0,
 						FindingsCount: 0,
+						CreatedAt:     time.Now(),
+						UpdatedAt:     time.Now(),
 					},
 					{
 						ID:            types.NewID(),
 						Name:          "running-mission",
 						Description:   "Running mission",
-						Status:        database.MissionStatusRunning,
+						Status:        mission.MissionStatusRunning,
+						TargetID:      types.NewID(),
 						WorkflowID:    types.NewID(),
 						Progress:      0.5,
 						FindingsCount: 2,
+						CreatedAt:     time.Now(),
+						UpdatedAt:     time.Now(),
 					},
 				}
 				for _, m := range missions {
-					if err := dao.Create(context.Background(), m); err != nil {
+					if err := store.Save(context.Background(), m); err != nil {
 						return err
 					}
 				}
@@ -180,12 +193,13 @@ func TestMissionShow(t *testing.T) {
 			name:        "show existing mission",
 			missionName: "test-mission",
 			setup: func(db *database.DB) error {
-				dao := database.NewMissionDAO(db)
-				mission := &database.Mission{
+				store := mission.NewDBMissionStore(db)
+				m := &mission.Mission{
 					ID:            types.NewID(),
 					Name:          "test-mission",
 					Description:   "Test mission description",
-					Status:        database.MissionStatusRunning,
+					Status:        mission.MissionStatusRunning,
+					TargetID:      types.NewID(),
 					WorkflowID:    types.NewID(),
 					Progress:      0.75,
 					FindingsCount: 5,
@@ -193,8 +207,10 @@ func TestMissionShow(t *testing.T) {
 						"node1": "agent-1",
 						"node2": "agent-2",
 					},
+					CreatedAt: time.Now(),
+					UpdatedAt: time.Now(),
 				}
-				return dao.Create(context.Background(), mission)
+				return store.Save(context.Background(), m)
 			},
 			wantError: false,
 			checkOutput: func(t *testing.T, output string) {
@@ -268,7 +284,7 @@ func TestMissionRun(t *testing.T) {
 		name         string
 		workflowYAML string
 		wantError    bool
-		checkMission func(*testing.T, *database.Mission)
+		checkMission func(*testing.T, *mission.Mission)
 	}{
 		{
 			name: "run valid workflow",
@@ -284,10 +300,10 @@ nodes:
       action: test
 `,
 			wantError: false,
-			checkMission: func(t *testing.T, m *database.Mission) {
+			checkMission: func(t *testing.T, m *mission.Mission) {
 				assert.Equal(t, "Test Workflow", m.Name)
 				assert.Equal(t, "A test workflow", m.Description)
-				assert.Equal(t, database.MissionStatusRunning, m.Status)
+				assert.Equal(t, mission.MissionStatusRunning, m.Status)
 				assert.NotNil(t, m.StartedAt)
 				assert.NotEmpty(t, m.WorkflowJSON)
 				// Verify workflow JSON can be unmarshaled
@@ -362,8 +378,8 @@ nodes
 
 				// Verify mission was created
 				if tt.checkMission != nil {
-					dao := database.NewMissionDAO(db)
-					missions, err := dao.List(context.Background(), "")
+					store := mission.NewDBMissionStore(db)
+					missions, err := store.List(context.Background(), mission.NewMissionFilter())
 					require.NoError(t, err)
 					require.Len(t, missions, 1)
 					tt.checkMission(t, missions[0])
@@ -377,28 +393,28 @@ func TestMissionResume(t *testing.T) {
 	tests := []struct {
 		name          string
 		missionName   string
-		missionStatus database.MissionStatus
+		missionStatus mission.MissionStatus
 		wantError     bool
 		errorContains string
 	}{
 		{
 			name:          "resume paused mission",
 			missionName:   "paused-mission",
-			missionStatus: database.MissionStatusCancelled,
+			missionStatus: mission.MissionStatusCancelled,
 			wantError:     true,
 			errorContains: "cannot resume",
 		},
 		{
 			name:          "resume completed mission",
 			missionName:   "completed-mission",
-			missionStatus: database.MissionStatusCompleted,
+			missionStatus: mission.MissionStatusCompleted,
 			wantError:     true,
 			errorContains: "cannot resume completed",
 		},
 		{
 			name:          "resume failed mission",
 			missionName:   "failed-mission",
-			missionStatus: database.MissionStatusFailed,
+			missionStatus: mission.MissionStatusFailed,
 			wantError:     true,
 			errorContains: "cannot resume failed",
 		},
@@ -425,17 +441,20 @@ func TestMissionResume(t *testing.T) {
 			require.NoError(t, migrator.Migrate(context.Background()))
 
 			// Create mission
-			dao := database.NewMissionDAO(db)
-			mission := &database.Mission{
+			store := mission.NewDBMissionStore(db)
+			m := &mission.Mission{
 				ID:            types.NewID(),
 				Name:          tt.missionName,
 				Description:   "Test mission",
 				Status:        tt.missionStatus,
+				TargetID:      types.NewID(),
 				WorkflowID:    types.NewID(),
 				Progress:      0.5,
 				FindingsCount: 0,
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
 			}
-			require.NoError(t, dao.Create(context.Background(), mission))
+			require.NoError(t, store.Save(context.Background(), m))
 
 			// Create command
 			cmd := missionResumeCmd
@@ -466,27 +485,27 @@ func TestMissionStop(t *testing.T) {
 	tests := []struct {
 		name          string
 		missionName   string
-		missionStatus database.MissionStatus
+		missionStatus mission.MissionStatus
 		wantError     bool
 		errorContains string
 	}{
 		{
 			name:          "stop running mission",
 			missionName:   "running-mission",
-			missionStatus: database.MissionStatusRunning,
+			missionStatus: mission.MissionStatusRunning,
 			wantError:     false,
 		},
 		{
 			name:          "stop pending mission",
 			missionName:   "pending-mission",
-			missionStatus: database.MissionStatusPending,
+			missionStatus: mission.MissionStatusPending,
 			wantError:     true,
 			errorContains: "not running",
 		},
 		{
 			name:          "stop completed mission",
 			missionName:   "completed-mission",
-			missionStatus: database.MissionStatusCompleted,
+			missionStatus: mission.MissionStatusCompleted,
 			wantError:     true,
 			errorContains: "not running",
 		},
@@ -513,19 +532,22 @@ func TestMissionStop(t *testing.T) {
 			require.NoError(t, migrator.Migrate(context.Background()))
 
 			// Create mission
-			dao := database.NewMissionDAO(db)
+			store := mission.NewDBMissionStore(db)
 			now := time.Now()
-			mission := &database.Mission{
+			m := &mission.Mission{
 				ID:            types.NewID(),
 				Name:          tt.missionName,
 				Description:   "Test mission",
 				Status:        tt.missionStatus,
+				TargetID:      types.NewID(),
 				WorkflowID:    types.NewID(),
 				Progress:      0.5,
 				FindingsCount: 0,
 				StartedAt:     &now,
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
 			}
-			require.NoError(t, dao.Create(context.Background(), mission))
+			require.NoError(t, store.Save(context.Background(), m))
 
 			// Create command
 			cmd := missionStopCmd
@@ -549,9 +571,9 @@ func TestMissionStop(t *testing.T) {
 				assert.NoError(t, err)
 
 				// Verify status was updated
-				updatedMission, err := dao.GetByName(context.Background(), tt.missionName)
+				updatedMission, err := store.GetByName(context.Background(), tt.missionName)
 				require.NoError(t, err)
-				assert.Equal(t, database.MissionStatusCancelled, updatedMission.Status)
+				assert.Equal(t, mission.MissionStatusCancelled, updatedMission.Status)
 			}
 		})
 	}
@@ -600,17 +622,20 @@ func TestMissionDelete(t *testing.T) {
 
 			// Create mission if it should exist
 			if tt.missionName == "test-mission" {
-				dao := database.NewMissionDAO(db)
-				mission := &database.Mission{
+				store := mission.NewDBMissionStore(db)
+				m := &mission.Mission{
 					ID:            types.NewID(),
 					Name:          tt.missionName,
 					Description:   "Test mission",
-					Status:        database.MissionStatusCompleted,
+					Status:        mission.MissionStatusCompleted,
+					TargetID:      types.NewID(),
 					WorkflowID:    types.NewID(),
 					Progress:      1.0,
 					FindingsCount: 0,
+					CreatedAt:     time.Now(),
+					UpdatedAt:     time.Now(),
 				}
-				require.NoError(t, dao.Create(context.Background(), mission))
+				require.NoError(t, store.Save(context.Background(), m))
 			}
 
 			// Create command
@@ -635,8 +660,8 @@ func TestMissionDelete(t *testing.T) {
 				assert.NoError(t, err)
 
 				// Verify mission was deleted
-				dao := database.NewMissionDAO(db)
-				_, err := dao.GetByName(context.Background(), tt.missionName)
+				store := mission.NewDBMissionStore(db)
+				_, err := store.GetByName(context.Background(), tt.missionName)
 				assert.Error(t, err)
 			}
 		})
@@ -645,16 +670,16 @@ func TestMissionDelete(t *testing.T) {
 
 func TestIsValidMissionStatus(t *testing.T) {
 	tests := []struct {
-		status database.MissionStatus
+		status mission.MissionStatus
 		valid  bool
 	}{
-		{database.MissionStatusPending, true},
-		{database.MissionStatusRunning, true},
-		{database.MissionStatusCompleted, true},
-		{database.MissionStatusFailed, true},
-		{database.MissionStatusCancelled, true},
-		{database.MissionStatus("invalid"), false},
-		{database.MissionStatus(""), false},
+		{mission.MissionStatusPending, true},
+		{mission.MissionStatusRunning, true},
+		{mission.MissionStatusCompleted, true},
+		{mission.MissionStatusFailed, true},
+		{mission.MissionStatusCancelled, true},
+		{mission.MissionStatus("invalid"), false},
+		{mission.MissionStatus(""), false},
 	}
 
 	for _, tt := range tests {

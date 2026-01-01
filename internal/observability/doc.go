@@ -39,7 +39,6 @@
 // Supported tracing providers:
 //
 //   - "otlp": OpenTelemetry Protocol (gRPC) - production standard
-//   - "jaeger": Jaeger native protocol - legacy support
 //   - "langfuse": Langfuse LLM observability platform - AI-specific features
 //   - "noop": No-op provider for testing - zero overhead
 //
@@ -171,7 +170,7 @@
 //
 //	type TracingConfig struct {
 //	    Enabled     bool    // Enable/disable tracing
-//	    Provider    string  // "otlp", "jaeger", "langfuse", "noop"
+//	    Provider    string  // "otlp", "langfuse", "noop"
 //	    Endpoint    string  // Exporter endpoint (e.g., "localhost:4317")
 //	    ServiceName string  // Service name in traces
 //	    SampleRate  float64 // Sampling rate (0.0-1.0)
@@ -414,7 +413,7 @@
 //   - Uses standard OpenTelemetry trace and metric APIs
 //   - Follows semantic convention specifications
 //   - Compatible with any OpenTelemetry backend
-//   - Supports standard exporters (OTLP, Jaeger, Prometheus)
+//   - Supports standard exporters (OTLP, Prometheus)
 //   - Enables vendor-neutral observability
 //
 // # See Also

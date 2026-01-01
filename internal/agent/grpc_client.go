@@ -8,10 +8,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
+	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 )
 
 // GRPCAgentClient implements ExternalAgentClient for gRPC-based agents.
@@ -135,6 +135,12 @@ func (c *GRPCAgentClient) Close() error {
 		return c.conn.Close()
 	}
 	return nil
+}
+
+// Connection returns the underlying gRPC connection.
+// This is useful for creating StreamClients directly.
+func (c *GRPCAgentClient) Connection() *grpc.ClientConn {
+	return c.conn
 }
 
 // StreamExecute starts a bidirectional streaming execution.

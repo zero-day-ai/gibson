@@ -19,6 +19,28 @@ const (
 	StyleInfo
 	// StyleCommand indicates command input or command-related output.
 	StyleCommand
+	// StyleAgentOutput indicates agent reasoning or output text.
+	StyleAgentOutput
+	// StyleToolCall indicates a tool invocation by an agent.
+	StyleToolCall
+	// StyleToolResult indicates the response from a tool execution.
+	StyleToolResult
+	// StyleFinding indicates a security finding or vulnerability discovered.
+	StyleFinding
+	// StyleFindingCritical indicates a critical severity finding.
+	StyleFindingCritical
+	// StyleFindingHigh indicates a high severity finding.
+	StyleFindingHigh
+	// StyleFindingMedium indicates a medium severity finding.
+	StyleFindingMedium
+	// StyleFindingLow indicates a low severity finding.
+	StyleFindingLow
+	// StyleStatus indicates an agent status change or state transition.
+	StyleStatus
+	// StyleSteeringAck indicates acknowledgment of user steering input.
+	StyleSteeringAck
+	// StyleUserSteering indicates a user's steering message.
+	StyleUserSteering
 )
 
 // String returns the string representation of an OutputStyle.
@@ -34,6 +56,58 @@ func (s OutputStyle) String() string {
 		return "info"
 	case StyleCommand:
 		return "command"
+	case StyleAgentOutput:
+		return "agent_output"
+	case StyleToolCall:
+		return "tool_call"
+	case StyleToolResult:
+		return "tool_result"
+	case StyleFinding:
+		return "finding"
+	case StyleFindingCritical:
+		return "finding_critical"
+	case StyleFindingHigh:
+		return "finding_high"
+	case StyleFindingMedium:
+		return "finding_medium"
+	case StyleFindingLow:
+		return "finding_low"
+	case StyleStatus:
+		return "status"
+	case StyleSteeringAck:
+		return "steering_ack"
+	case StyleUserSteering:
+		return "user_steering"
+	default:
+		return "unknown"
+	}
+}
+
+// OutputSource represents the origin of a console output line.
+type OutputSource int
+
+const (
+	// SourceCommand indicates output from a slash command execution.
+	SourceCommand OutputSource = iota
+	// SourceAgent indicates output from an agent stream event.
+	SourceAgent
+	// SourceSystem indicates a system message or notification.
+	SourceSystem
+	// SourceUser indicates a user steering message.
+	SourceUser
+)
+
+// String returns the string representation of an OutputSource.
+func (s OutputSource) String() string {
+	switch s {
+	case SourceCommand:
+		return "command"
+	case SourceAgent:
+		return "agent"
+	case SourceSystem:
+		return "system"
+	case SourceUser:
+		return "user"
 	default:
 		return "unknown"
 	}
@@ -47,6 +121,10 @@ type OutputLine struct {
 	Style OutputStyle
 	// Timestamp records when this line was created.
 	Timestamp time.Time
+	// Source indicates the origin of this output line.
+	Source OutputSource
+	// AgentName identifies which agent produced this output (if applicable).
+	AgentName string
 }
 
 // ConsoleOutput represents a collection of output lines with pagination support.

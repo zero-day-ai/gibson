@@ -91,8 +91,8 @@ type ReproStep struct {
 
 // SimpleMitreMapping is a simplified MITRE mapping for JSON storage
 type SimpleMitreMapping struct {
-	TechniqueID   string `json:"technique_id"`   // e.g., "T1566", "AML.T0043"
-	TechniqueName string `json:"technique_name"` // Human-readable name
+	TechniqueID   string `json:"technique_id"`     // e.g., "T1566", "AML.T0043"
+	TechniqueName string `json:"technique_name"`   // Human-readable name
 	Tactic        string `json:"tactic,omitempty"` // e.g., "Initial Access"
 }
 

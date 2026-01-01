@@ -146,27 +146,27 @@ const (
 
 // ResultError contains error information from a failed task
 type ResultError struct {
-	Message    string            `json:"message"`
-	Code       string            `json:"code"`
-	Details    map[string]any    `json:"details,omitempty"`
-	StackTrace string            `json:"stack_trace,omitempty"`
-	Recoverable bool             `json:"recoverable"`
+	Message     string         `json:"message"`
+	Code        string         `json:"code"`
+	Details     map[string]any `json:"details,omitempty"`
+	StackTrace  string         `json:"stack_trace,omitempty"`
+	Recoverable bool           `json:"recoverable"`
 }
 
 // Finding represents a security finding discovered during task execution
 type Finding struct {
-	ID          types.ID       `json:"id"`
-	Title       string         `json:"title"`
-	Description string         `json:"description"`
+	ID          types.ID        `json:"id"`
+	Title       string          `json:"title"`
+	Description string          `json:"description"`
 	Severity    FindingSeverity `json:"severity"`
-	Confidence  float64        `json:"confidence"` // 0.0 - 1.0
-	Category    string         `json:"category"`
-	TargetID    *types.ID      `json:"target_id,omitempty"`
-	Evidence    []Evidence     `json:"evidence,omitempty"`
-	CVSS        *CVSSScore     `json:"cvss,omitempty"`
-	CWE         []string       `json:"cwe,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
+	Confidence  float64         `json:"confidence"` // 0.0 - 1.0
+	Category    string          `json:"category"`
+	TargetID    *types.ID       `json:"target_id,omitempty"`
+	Evidence    []Evidence      `json:"evidence,omitempty"`
+	CVSS        *CVSSScore      `json:"cvss,omitempty"`
+	CWE         []string        `json:"cwe,omitempty"`
+	Metadata    map[string]any  `json:"metadata,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 // FindingSeverity represents the severity level of a finding
@@ -197,17 +197,17 @@ type CVSSScore struct {
 
 // TaskMetrics contains execution metrics for a task
 type TaskMetrics struct {
-	Duration        time.Duration  `json:"duration"`
-	LLMCalls        int            `json:"llm_calls"`
-	ToolCalls       int            `json:"tool_calls"`
-	PluginCalls     int            `json:"plugin_calls"`
-	TokensUsed      int            `json:"tokens_used"`
-	Cost            float64        `json:"cost"` // USD
-	FindingsCount   int            `json:"findings_count"`
-	Errors          int            `json:"errors"`
-	Retries         int            `json:"retries"`
-	SubTasks        int            `json:"sub_tasks"`
-	CustomMetrics   map[string]any `json:"custom_metrics,omitempty"`
+	Duration      time.Duration  `json:"duration"`
+	LLMCalls      int            `json:"llm_calls"`
+	ToolCalls     int            `json:"tool_calls"`
+	PluginCalls   int            `json:"plugin_calls"`
+	TokensUsed    int            `json:"tokens_used"`
+	Cost          float64        `json:"cost"` // USD
+	FindingsCount int            `json:"findings_count"`
+	Errors        int            `json:"errors"`
+	Retries       int            `json:"retries"`
+	SubTasks      int            `json:"sub_tasks"`
+	CustomMetrics map[string]any `json:"custom_metrics,omitempty"`
 }
 
 // NewFinding creates a new finding

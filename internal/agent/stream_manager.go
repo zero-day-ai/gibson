@@ -31,8 +31,8 @@ import (
 // all spans created by this StreamManager will be automatically exported to Langfuse.
 // The session ID is set as a span attribute, which Langfuse uses for grouping.
 type StreamManager struct {
-	clients     map[string]*StreamClient                       // agentName -> client
-	subscribers map[string][]chan *database.StreamEvent        // agentName -> subscriber channels
+	clients     map[string]*StreamClient                // agentName -> client
+	subscribers map[string][]chan *database.StreamEvent // agentName -> subscriber channels
 	sessionDAO  database.SessionDAO
 	tracer      trace.Tracer
 	mu          sync.RWMutex

@@ -9,6 +9,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/plan"
 	"github.com/zero-day-ai/gibson/internal/tui/components"
 	"github.com/zero-day-ai/gibson/internal/tui/styles"
@@ -28,11 +29,10 @@ type App struct {
 	height int
 
 	// Views
-	dashboardView  *views.DashboardView
-	missionView    *views.MissionView
-	findingsView   *views.FindingsView
-	consoleView    *views.ConsoleView
-	agentFocusView *views.AgentFocusView
+	dashboardView *views.DashboardView
+	missionView   *views.MissionView
+	findingsView  *views.FindingsView
+	consoleView   *views.ConsoleView
 
 	// Components
 	header         *components.Header
@@ -48,7 +48,7 @@ type App struct {
 
 	// Dependencies (stored for view initialization)
 	db            *database.DB
-	missionDAO    database.MissionDAO
+	missionStore  mission.MissionStore
 	componentDAO  database.ComponentDAO
 	findingStore  finding.FindingStore
 	agentRegistry agent.AgentRegistry
@@ -61,7 +61,7 @@ type App struct {
 // AppConfig contains configuration options for creating a new App.
 type AppConfig struct {
 	DB            *database.DB
-	MissionDAO    database.MissionDAO
+	MissionStore  mission.MissionStore
 	ComponentDAO  database.ComponentDAO
 	FindingStore  finding.FindingStore
 	AgentRegistry agent.AgentRegistry
@@ -83,7 +83,7 @@ func NewApp(ctx context.Context, config AppConfig) *App {
 		showHelp:      false,
 		ready:         false,
 		db:            config.DB,
-		missionDAO:    config.MissionDAO,
+		missionStore:  config.MissionStore,
 		componentDAO:  config.ComponentDAO,
 		findingStore:  config.FindingStore,
 		agentRegistry: config.AgentRegistry,
@@ -99,7 +99,7 @@ func NewApp(ctx context.Context, config AppConfig) *App {
 	app.statusBar = components.NewStatusBar(app.width)
 	app.statusBar.SetMode(app.mode.String())
 	app.statusBar.SetMessage("Welcome to Gibson TUI")
-	app.statusBar.SetKeyHints("? help | 1-5 views | q quit")
+	app.statusBar.SetKeyHints("? help | 1-4 views | q quit")
 
 	// Initialize help overlay
 	app.helpOverlay = components.NewHelpOverlay(keyMap.HelpText())
@@ -122,8 +122,8 @@ func (a *App) initViews() {
 	)
 
 	// Mission view
-	if a.missionDAO != nil {
-		a.missionView = views.NewMissionView(a.ctx, a.missionDAO)
+	if a.missionStore != nil {
+		a.missionView = views.NewMissionView(a.ctx, a.missionStore)
 	}
 
 	// Findings view
@@ -133,20 +133,13 @@ func (a *App) initViews() {
 
 	// Console view
 	a.consoleView = views.NewConsoleView(a.ctx, views.ConsoleConfig{
-		DB:           a.db,
-		ComponentDAO: a.componentDAO,
-		FindingStore: a.findingStore,
+		DB:            a.db,
+		ComponentDAO:  a.componentDAO,
+		FindingStore:  a.findingStore,
 		StreamManager: a.streamManager,
-		HomeDir:      "", // Can be set from config later
-		ConfigFile:   "", // Can be set from config later
+		HomeDir:       "", // Can be set from config later
+		ConfigFile:    "", // Can be set from config later
 	})
-
-	// Agent Focus view
-	if a.streamManager != nil {
-		a.agentFocusView = views.NewAgentFocusView(a.ctx, views.AgentFocusConfig{
-			StreamManager: a.streamManager,
-		})
-	}
 }
 
 // Init initializes all child views and returns the initial command.
@@ -165,9 +158,6 @@ func (a *App) Init() tea.Cmd {
 	}
 	if a.consoleView != nil {
 		cmds = append(cmds, a.consoleView.Init())
-	}
-	if a.agentFocusView != nil {
-		cmds = append(cmds, a.agentFocusView.Init())
 	}
 
 	// Start periodic tick for updates
@@ -267,12 +257,6 @@ func (a *App) View() string {
 		} else {
 			viewContent = a.renderPlaceholder("Console")
 		}
-	case ModeAgentFocus:
-		if a.agentFocusView != nil {
-			viewContent = a.agentFocusView.View()
-		} else {
-			viewContent = a.renderPlaceholder("Agent Focus")
-		}
 	}
 
 	// Render status bar
@@ -345,9 +329,6 @@ func (a *App) handleWindowResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	if a.consoleView != nil {
 		a.consoleView.SetSize(a.width, viewHeight)
 	}
-	if a.agentFocusView != nil {
-		a.agentFocusView.SetSize(a.width, viewHeight)
-	}
 
 	// Propagate resize to active view
 	var cmd tea.Cmd
@@ -367,10 +348,6 @@ func (a *App) handleWindowResize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
 	case ModeConsole:
 		if a.consoleView != nil {
 			_, cmd = a.consoleView.Update(msg)
-		}
-	case ModeAgentFocus:
-		if a.agentFocusView != nil {
-			_, cmd = a.agentFocusView.Update(msg)
 		}
 	}
 
@@ -415,10 +392,6 @@ func (a *App) handleGlobalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 	case key.Matches(msg, a.keyMap.ViewConsole):
 		cmd, _ := a.setMode(ModeConsole)
-		return cmd, true
-
-	case key.Matches(msg, a.keyMap.ViewAgentFocus):
-		cmd, _ := a.setMode(ModeAgentFocus)
 		return cmd, true
 	}
 
@@ -552,14 +525,6 @@ func (a *App) routeToActiveView(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			cmd = c
 		}
-	case ModeAgentFocus:
-		if a.agentFocusView != nil {
-			newView, c := a.agentFocusView.Update(msg)
-			if afv, ok := newView.(*views.AgentFocusView); ok {
-				a.agentFocusView = afv
-			}
-			cmd = c
-		}
 	}
 
 	return a, cmd
@@ -577,11 +542,6 @@ func (a *App) setMode(mode AppMode) (tea.Cmd, bool) {
 		a.consoleView.Blur()
 	}
 
-	// Blur agent focus when switching away
-	if a.mode == ModeAgentFocus && a.agentFocusView != nil {
-		a.agentFocusView.Blur()
-	}
-
 	a.mode = mode
 	a.statusBar.SetMode(mode.String())
 	a.statusBar.SetMessage("Switched to " + mode.String() + " view")
@@ -589,11 +549,6 @@ func (a *App) setMode(mode AppMode) (tea.Cmd, bool) {
 	// Focus console input when switching to console view
 	if mode == ModeConsole && a.consoleView != nil {
 		return a.consoleView.Focus(), true
-	}
-
-	// Focus agent focus when switching to it
-	if mode == ModeAgentFocus && a.agentFocusView != nil {
-		return a.agentFocusView.Focus(), true
 	}
 
 	return nil, true
@@ -638,6 +593,18 @@ func (a *App) SetStatusMessage(message string) {
 // SetStatusError sets an error message in the status bar.
 func (a *App) SetStatusError(message string) {
 	a.statusBar.SetError(message)
+}
+
+// SetProgram sets the Bubble Tea program reference for the executor.
+// This enables agent event streaming to the console view.
+// Call this after creating the tea.Program but before running it.
+func (a *App) SetProgram(p *tea.Program) {
+	if a.consoleView != nil {
+		executor := a.consoleView.GetExecutor()
+		if executor != nil {
+			executor.SetProgram(p)
+		}
+	}
 }
 
 // ShowApprovalDialog displays an approval dialog for the given plan.

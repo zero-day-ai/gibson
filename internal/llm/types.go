@@ -53,11 +53,11 @@ func (r *Role) UnmarshalJSON(data []byte) error {
 
 // Message represents a single message in a conversation with an LLM.
 type Message struct {
-	Role       Role       `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	Name       string     `json:"name,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role       Role           `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	ToolCalls  []ToolCall     `json:"tool_calls,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
 	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 

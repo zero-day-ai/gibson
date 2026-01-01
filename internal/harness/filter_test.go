@@ -168,11 +168,11 @@ func TestFindingFilter_Matches_Severity(t *testing.T) {
 
 func TestFindingFilter_Matches_Confidence(t *testing.T) {
 	tests := []struct {
-		name               string
-		minConfidence      *float64
-		maxConfidence      *float64
-		findingConfidence  float64
-		expected           bool
+		name              string
+		minConfidence     *float64
+		maxConfidence     *float64
+		findingConfidence float64
+		expected          bool
 	}{
 		{
 			name:              "within range",
@@ -228,10 +228,10 @@ func TestFindingFilter_Matches_Confidence(t *testing.T) {
 
 func TestFindingFilter_Matches_Category(t *testing.T) {
 	tests := []struct {
-		name             string
-		filterCategory   string
-		findingCategory  string
-		expected         bool
+		name            string
+		filterCategory  string
+		findingCategory string
+		expected        bool
 	}{
 		{
 			name:            "exact match",

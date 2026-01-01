@@ -12,11 +12,11 @@ import (
 
 // mockProvider implements the LLMProvider interface for testing
 type mockProvider struct {
-	name       string
-	models     []ModelInfo
-	healthy    bool
-	callCount  int
-	mu         sync.Mutex
+	name      string
+	models    []ModelInfo
+	healthy   bool
+	callCount int
+	mu        sync.Mutex
 }
 
 func newMockProvider(name string, healthy bool) *mockProvider {
@@ -308,16 +308,16 @@ func TestListProviders(t *testing.T) {
 
 func TestHealth(t *testing.T) {
 	tests := []struct {
-		name           string
-		providers      []LLMProvider
-		expectedState  types.HealthState
-		expectedInMsg  string
+		name          string
+		providers     []LLMProvider
+		expectedState types.HealthState
+		expectedInMsg string
 	}{
 		{
-			name:           "no providers",
-			providers:      []LLMProvider{},
-			expectedState:  types.HealthStateUnhealthy,
-			expectedInMsg:  "no providers",
+			name:          "no providers",
+			providers:     []LLMProvider{},
+			expectedState: types.HealthStateUnhealthy,
+			expectedInMsg: "no providers",
 		},
 		{
 			name: "all healthy",
@@ -326,8 +326,8 @@ func TestHealth(t *testing.T) {
 				newMockProvider("provider2", true),
 				newMockProvider("provider3", true),
 			},
-			expectedState:  types.HealthStateHealthy,
-			expectedInMsg:  "all 3 providers healthy",
+			expectedState: types.HealthStateHealthy,
+			expectedInMsg: "all 3 providers healthy",
 		},
 		{
 			name: "all unhealthy",
@@ -335,8 +335,8 @@ func TestHealth(t *testing.T) {
 				newMockProvider("provider1", false),
 				newMockProvider("provider2", false),
 			},
-			expectedState:  types.HealthStateUnhealthy,
-			expectedInMsg:  "all 2 providers unhealthy",
+			expectedState: types.HealthStateUnhealthy,
+			expectedInMsg: "all 2 providers unhealthy",
 		},
 		{
 			name: "mixed health",
@@ -345,8 +345,8 @@ func TestHealth(t *testing.T) {
 				newMockProvider("provider2", false),
 				newMockProvider("provider3", true),
 			},
-			expectedState:  types.HealthStateDegraded,
-			expectedInMsg:  "2/3 providers healthy",
+			expectedState: types.HealthStateDegraded,
+			expectedInMsg: "2/3 providers healthy",
 		},
 	}
 

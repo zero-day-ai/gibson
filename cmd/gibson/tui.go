@@ -12,6 +12,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/tui"
 	"go.opentelemetry.io/otel"
 	"golang.org/x/term"
@@ -91,6 +92,9 @@ func launchTUI(ctx context.Context) error {
 		tea.WithContext(ctx),      // Pass context for cancellation
 	)
 
+	// Wire the program to the executor for agent event streaming
+	app.SetProgram(p)
+
 	// Run the program
 	_, err = p.Run()
 	if err != nil {
@@ -154,7 +158,7 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 		} else {
 			cleanupFuncs = append(cleanupFuncs, func() { _ = db.Close() })
 			appConfig.DB = db
-			appConfig.MissionDAO = database.NewMissionDAO(db)
+			appConfig.MissionStore = mission.NewDBMissionStore(db)
 		}
 	}
 

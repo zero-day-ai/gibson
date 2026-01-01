@@ -10,14 +10,14 @@ import (
 
 // ContentPattern defines a pattern to match and action to take
 type ContentPattern struct {
-	Pattern string                  // Regex pattern to match
+	Pattern string                    // Regex pattern to match
 	Action  guardrail.GuardrailAction // Action when matched (block, redact, warn)
-	Replace string                  // Replacement text for redact action
+	Replace string                    // Replacement text for redact action
 }
 
 // ContentFilterConfig configures the content filter guardrail
 type ContentFilterConfig struct {
-	Patterns      []ContentPattern        // Patterns to check
+	Patterns      []ContentPattern          // Patterns to check
 	DefaultAction guardrail.GuardrailAction // Default action if no action specified
 }
 

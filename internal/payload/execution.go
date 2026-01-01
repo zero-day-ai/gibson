@@ -49,19 +49,19 @@ type Execution struct {
 	InstantiatedText string                 `json:"instantiated_text"` // Final payload text after parameter substitution
 
 	// Response data
-	Response       string  `json:"response,omitempty"`
-	ResponseTime   int64   `json:"response_time_ms"` // milliseconds
-	TokensUsed     int     `json:"tokens_used"`
-	Cost           float64 `json:"cost"` // USD
+	Response     string  `json:"response,omitempty"`
+	ResponseTime int64   `json:"response_time_ms"` // milliseconds
+	TokensUsed   int     `json:"tokens_used"`
+	Cost         float64 `json:"cost"` // USD
 
 	// Success evaluation
-	Success          bool                   `json:"success"`
-	IndicatorsMatched []string              `json:"indicators_matched,omitempty"` // Which indicators triggered
-	ConfidenceScore  float64               `json:"confidence_score"`             // 0.0 - 1.0
-	MatchDetails     map[string]interface{} `json:"match_details,omitempty"`      // Details about indicator matches
+	Success           bool                   `json:"success"`
+	IndicatorsMatched []string               `json:"indicators_matched,omitempty"` // Which indicators triggered
+	ConfidenceScore   float64                `json:"confidence_score"`             // 0.0 - 1.0
+	MatchDetails      map[string]interface{} `json:"match_details,omitempty"`      // Details about indicator matches
 
 	// Finding attribution
-	FindingID      *types.ID `json:"finding_id,omitempty"`       // Created finding if successful
+	FindingID      *types.ID `json:"finding_id,omitempty"` // Created finding if successful
 	FindingCreated bool      `json:"finding_created"`
 
 	// Error information
@@ -74,7 +74,7 @@ type Execution struct {
 	TargetModel    string           `json:"target_model,omitempty"`
 
 	// Timestamps
-	CreatedAt   time.Time `json:"created_at"`
+	CreatedAt   time.Time  `json:"created_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 
@@ -87,18 +87,18 @@ type Execution struct {
 func NewExecution(payloadID, targetID, agentID types.ID) *Execution {
 	now := time.Now()
 	return &Execution{
-		ID:               types.NewID(),
-		PayloadID:        payloadID,
-		TargetID:         targetID,
-		AgentID:          agentID,
-		Status:           ExecutionStatusPending,
-		Parameters:       make(map[string]interface{}),
+		ID:                types.NewID(),
+		PayloadID:         payloadID,
+		TargetID:          targetID,
+		AgentID:           agentID,
+		Status:            ExecutionStatusPending,
+		Parameters:        make(map[string]interface{}),
 		IndicatorsMatched: []string{},
-		MatchDetails:     make(map[string]interface{}),
-		ErrorDetails:     make(map[string]interface{}),
-		Metadata:         make(map[string]interface{}),
-		Tags:             []string{},
-		CreatedAt:        now,
+		MatchDetails:      make(map[string]interface{}),
+		ErrorDetails:      make(map[string]interface{}),
+		Metadata:          make(map[string]interface{}),
+		Tags:              []string{},
+		CreatedAt:         now,
 	}
 }
 
@@ -162,8 +162,8 @@ type ExecutionRequest struct {
 	AgentID    types.ID               `json:"agent_id"`
 	MissionID  *types.ID              `json:"mission_id,omitempty"`
 	Parameters map[string]interface{} `json:"parameters,omitempty"`
-	Timeout    time.Duration          `json:"timeout,omitempty"`    // Execution timeout
-	DryRun     bool                   `json:"dry_run"`              // Don't execute, just validate
+	Timeout    time.Duration          `json:"timeout,omitempty"` // Execution timeout
+	DryRun     bool                   `json:"dry_run"`           // Don't execute, just validate
 	Tags       []string               `json:"tags,omitempty"`
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
@@ -227,13 +227,13 @@ type ExecutionResult struct {
 	ConfidenceScore float64 `json:"confidence_score"` // 0.0 - 1.0
 
 	// Response data
-	Response       string                 `json:"response,omitempty"`
-	ResponseTime   time.Duration          `json:"response_time"`
-	InstantiatedText string               `json:"instantiated_text"`
+	Response         string        `json:"response,omitempty"`
+	ResponseTime     time.Duration `json:"response_time"`
+	InstantiatedText string        `json:"instantiated_text"`
 
 	// Indicators
-	IndicatorsMatched []string              `json:"indicators_matched,omitempty"`
-	MatchDetails     map[string]interface{} `json:"match_details,omitempty"`
+	IndicatorsMatched []string               `json:"indicators_matched,omitempty"`
+	MatchDetails      map[string]interface{} `json:"match_details,omitempty"`
 
 	// Finding
 	Finding        *agent.Finding `json:"finding,omitempty"`
@@ -249,8 +249,8 @@ type ExecutionResult struct {
 	ErrorDetails map[string]interface{} `json:"error_details,omitempty"`
 
 	// Timing
-	StartedAt   time.Time  `json:"started_at"`
-	CompletedAt time.Time  `json:"completed_at"`
+	StartedAt   time.Time     `json:"started_at"`
+	CompletedAt time.Time     `json:"completed_at"`
 	Duration    time.Duration `json:"duration"`
 }
 
@@ -261,10 +261,10 @@ func NewExecutionResult(executionID types.ID) *ExecutionResult {
 		ExecutionID:       executionID,
 		Status:            ExecutionStatusCompleted,
 		IndicatorsMatched: []string{},
-		MatchDetails:     make(map[string]interface{}),
-		ErrorDetails:     make(map[string]interface{}),
-		StartedAt:        now,
-		CompletedAt:      now,
+		MatchDetails:      make(map[string]interface{}),
+		ErrorDetails:      make(map[string]interface{}),
+		StartedAt:         now,
+		CompletedAt:       now,
 	}
 }
 
@@ -294,14 +294,14 @@ func (r *ExecutionResult) WithError(err error) *ExecutionResult {
 
 // DryRunResult represents the result of a dry run (validation without execution)
 type DryRunResult struct {
-	Valid              bool                   `json:"valid"`
-	InstantiatedText   string                 `json:"instantiated_text"`
-	ParameterErrors    map[string]string      `json:"parameter_errors,omitempty"`
-	ValidationErrors   []string               `json:"validation_errors,omitempty"`
-	EstimatedTokens    int                    `json:"estimated_tokens"`
-	EstimatedCost      float64                `json:"estimated_cost"`
-	Warnings           []string               `json:"warnings,omitempty"`
-	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+	Valid            bool                   `json:"valid"`
+	InstantiatedText string                 `json:"instantiated_text"`
+	ParameterErrors  map[string]string      `json:"parameter_errors,omitempty"`
+	ValidationErrors []string               `json:"validation_errors,omitempty"`
+	EstimatedTokens  int                    `json:"estimated_tokens"`
+	EstimatedCost    float64                `json:"estimated_cost"`
+	Warnings         []string               `json:"warnings,omitempty"`
+	Metadata         map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // NewDryRunResult creates a new dry run result
@@ -372,26 +372,26 @@ type ChainExecutionRequest struct {
 	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 
 	// Execution control
-	StopOnFailure    bool `json:"stop_on_failure"`     // Stop entire chain on any stage failure
-	ContinueOnError  bool `json:"continue_on_error"`   // Continue to next stage on error
-	MaxRetries       int  `json:"max_retries"`         // Max retries per stage
-	ParallelStages   bool `json:"parallel_stages"`     // Allow parallel stage execution
+	StopOnFailure   bool `json:"stop_on_failure"`   // Stop entire chain on any stage failure
+	ContinueOnError bool `json:"continue_on_error"` // Continue to next stage on error
+	MaxRetries      int  `json:"max_retries"`       // Max retries per stage
+	ParallelStages  bool `json:"parallel_stages"`   // Allow parallel stage execution
 }
 
 // NewChainExecutionRequest creates a new chain execution request
 func NewChainExecutionRequest(chainID, targetID, agentID types.ID) *ChainExecutionRequest {
 	return &ChainExecutionRequest{
-		ChainID:          chainID,
-		TargetID:         targetID,
-		AgentID:          agentID,
-		Parameters:       make(map[string]interface{}),
-		Timeout:          5 * time.Minute, // Default 5 minute timeout for chains
-		Tags:             []string{},
-		Metadata:         make(map[string]interface{}),
-		StopOnFailure:    true,
-		ContinueOnError:  false,
-		MaxRetries:       0,
-		ParallelStages:   false,
+		ChainID:         chainID,
+		TargetID:        targetID,
+		AgentID:         agentID,
+		Parameters:      make(map[string]interface{}),
+		Timeout:         5 * time.Minute, // Default 5 minute timeout for chains
+		Tags:            []string{},
+		Metadata:        make(map[string]interface{}),
+		StopOnFailure:   true,
+		ContinueOnError: false,
+		MaxRetries:      0,
+		ParallelStages:  false,
 	}
 }
 
@@ -402,22 +402,22 @@ type ChainProgress struct {
 	Status           ChainExecutionStatus `json:"status"`
 
 	// Progress tracking
-	TotalStages      int            `json:"total_stages"`
-	CompletedStages  int            `json:"completed_stages"`
-	CurrentStageIndex int           `json:"current_stage_index,omitempty"`
-	CurrentStageID   *types.ID      `json:"current_stage_id,omitempty"`
+	TotalStages       int       `json:"total_stages"`
+	CompletedStages   int       `json:"completed_stages"`
+	CurrentStageIndex int       `json:"current_stage_index,omitempty"`
+	CurrentStageID    *types.ID `json:"current_stage_id,omitempty"`
 
 	// Stage results
 	StageResults []StageResult `json:"stage_results"`
 
 	// Aggregated metrics
-	TotalExecutions    int           `json:"total_executions"`
-	SuccessfulAttacks  int           `json:"successful_attacks"`
-	FailedExecutions   int           `json:"failed_executions"`
-	TotalFindings      int           `json:"total_findings"`
-	TotalDuration      time.Duration `json:"total_duration"`
-	TotalTokensUsed    int           `json:"total_tokens_used"`
-	TotalCost          float64       `json:"total_cost"`
+	TotalExecutions   int           `json:"total_executions"`
+	SuccessfulAttacks int           `json:"successful_attacks"`
+	FailedExecutions  int           `json:"failed_executions"`
+	TotalFindings     int           `json:"total_findings"`
+	TotalDuration     time.Duration `json:"total_duration"`
+	TotalTokensUsed   int           `json:"total_tokens_used"`
+	TotalCost         float64       `json:"total_cost"`
 
 	// Error tracking
 	ErrorMessage string                 `json:"error_message,omitempty"`
@@ -525,12 +525,12 @@ func (p *ChainProgress) PercentComplete() float64 {
 
 // StageResult represents the result of a single stage in a chain
 type StageResult struct {
-	StageID      types.ID        `json:"stage_id"`
-	StageName    string          `json:"stage_name"`
-	StageIndex   int             `json:"stage_index"`
-	PayloadID    types.ID        `json:"payload_id"`
-	ExecutionID  types.ID        `json:"execution_id"`
-	Status       ExecutionStatus `json:"status"`
+	StageID     types.ID        `json:"stage_id"`
+	StageName   string          `json:"stage_name"`
+	StageIndex  int             `json:"stage_index"`
+	PayloadID   types.ID        `json:"payload_id"`
+	ExecutionID types.ID        `json:"execution_id"`
+	Status      ExecutionStatus `json:"status"`
 
 	// Outcome
 	Success         bool    `json:"success"`
@@ -541,9 +541,9 @@ type StageResult struct {
 	FindingCreated bool      `json:"finding_created"`
 
 	// Response data
-	Response         string                 `json:"response,omitempty"`
-	InstantiatedText string                 `json:"instantiated_text"`
-	IndicatorsMatched []string              `json:"indicators_matched,omitempty"`
+	Response          string   `json:"response,omitempty"`
+	InstantiatedText  string   `json:"instantiated_text"`
+	IndicatorsMatched []string `json:"indicators_matched,omitempty"`
 
 	// Metrics
 	Duration   time.Duration `json:"duration"`
@@ -587,13 +587,13 @@ type ChainResult struct {
 	Status           ChainExecutionStatus `json:"status"`
 
 	// Outcome
-	Success        bool          `json:"success"`        // True if all stages successful
+	Success        bool          `json:"success"` // True if all stages successful
 	StagesExecuted int           `json:"stages_executed"`
 	StageResults   []StageResult `json:"stage_results"`
 
 	// Aggregated findings
-	Findings       []*agent.Finding `json:"findings,omitempty"`
-	TotalFindings  int              `json:"total_findings"`
+	Findings      []*agent.Finding `json:"findings,omitempty"`
+	TotalFindings int              `json:"total_findings"`
 
 	// Aggregated metrics
 	SuccessfulStages int           `json:"successful_stages"`

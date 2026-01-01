@@ -61,9 +61,9 @@ func TestRequestAttributes(t *testing.T) {
 			},
 			provider: "openai",
 			want: map[string]any{
-				GenAISystem:      "openai",
+				GenAISystem:       "openai",
 				GenAIRequestModel: "gpt-3.5-turbo",
-				GenAIRequestTopP: 0.95,
+				GenAIRequestTopP:  0.95,
 			},
 		},
 		{

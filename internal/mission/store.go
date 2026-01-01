@@ -20,11 +20,20 @@ type MissionStore interface {
 	// Get retrieves a mission by ID
 	Get(ctx context.Context, id types.ID) (*Mission, error)
 
+	// GetByName retrieves a mission by name
+	GetByName(ctx context.Context, name string) (*Mission, error)
+
 	// List retrieves missions with optional filtering
 	List(ctx context.Context, filter *MissionFilter) ([]*Mission, error)
 
 	// Update modifies an existing mission
 	Update(ctx context.Context, mission *Mission) error
+
+	// UpdateStatus updates only the status field of a mission
+	UpdateStatus(ctx context.Context, id types.ID, status MissionStatus) error
+
+	// UpdateProgress updates only the progress field of a mission
+	UpdateProgress(ctx context.Context, id types.ID, progress float64) error
 
 	// Delete soft-deletes a mission (only terminal states)
 	Delete(ctx context.Context, id types.ID) error
@@ -145,12 +154,23 @@ func (s *DBMissionStore) Save(ctx context.Context, mission *Mission) error {
 		return fmt.Errorf("failed to marshal checkpoint: %w", err)
 	}
 
+	agentAssignmentsJSON, err := s.marshalAgentAssignments(mission.AgentAssignments)
+	if err != nil {
+		return fmt.Errorf("failed to marshal agent assignments: %w", err)
+	}
+
+	metadataJSON, err := s.marshalMetadata(mission.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
 	query := `
 		INSERT INTO missions (
-			id, name, description, status, target_id, workflow_id,
+			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
 			created_at, started_at, completed_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err = s.db.ExecContext(ctx, query,
@@ -160,10 +180,15 @@ func (s *DBMissionStore) Save(ctx context.Context, mission *Mission) error {
 		string(mission.Status),
 		mission.TargetID.String(),
 		mission.WorkflowID.String(),
+		mission.WorkflowJSON,
 		constraintsJSON,
 		metricsJSON,
 		checkpointJSON,
 		mission.Error,
+		mission.Progress,
+		mission.FindingsCount,
+		agentAssignmentsJSON,
+		metadataJSON,
 		mission.CreatedAt,
 		timePtr(mission.StartedAt),
 		timePtr(mission.CompletedAt),
@@ -181,8 +206,9 @@ func (s *DBMissionStore) Save(ctx context.Context, mission *Mission) error {
 func (s *DBMissionStore) Get(ctx context.Context, id types.ID) (*Mission, error) {
 	query := `
 		SELECT
-			id, name, description, status, target_id, workflow_id,
+			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE id = ?
@@ -195,6 +221,30 @@ func (s *DBMissionStore) Get(ctx context.Context, id types.ID) (*Mission, error)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mission: %w", err)
+	}
+
+	return mission, nil
+}
+
+// GetByName retrieves a mission by name.
+func (s *DBMissionStore) GetByName(ctx context.Context, name string) (*Mission, error) {
+	query := `
+		SELECT
+			id, name, description, status, target_id, workflow_id, workflow_json,
+			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
+			created_at, started_at, completed_at, updated_at
+		FROM missions
+		WHERE name = ?
+	`
+
+	row := s.db.QueryRowContext(ctx, query, name)
+	mission, err := s.scanMission(row)
+	if err == sql.ErrNoRows {
+		return nil, NewNotFoundError(name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mission by name: %w", err)
 	}
 
 	return mission, nil
@@ -249,8 +299,9 @@ func (s *DBMissionStore) List(ctx context.Context, filter *MissionFilter) ([]*Mi
 	// Build query
 	query := `
 		SELECT
-			id, name, description, status, target_id, workflow_id,
+			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 	`
@@ -300,6 +351,16 @@ func (s *DBMissionStore) Update(ctx context.Context, mission *Mission) error {
 		return fmt.Errorf("failed to marshal checkpoint: %w", err)
 	}
 
+	agentAssignmentsJSON, err := s.marshalAgentAssignments(mission.AgentAssignments)
+	if err != nil {
+		return fmt.Errorf("failed to marshal agent assignments: %w", err)
+	}
+
+	metadataJSON, err := s.marshalMetadata(mission.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
 	query := `
 		UPDATE missions SET
 			name = ?,
@@ -307,10 +368,15 @@ func (s *DBMissionStore) Update(ctx context.Context, mission *Mission) error {
 			status = ?,
 			target_id = ?,
 			workflow_id = ?,
+			workflow_json = ?,
 			constraints = ?,
 			metrics = ?,
 			checkpoint = ?,
 			error = ?,
+			progress = ?,
+			findings_count = ?,
+			agent_assignments = ?,
+			metadata = ?,
 			started_at = ?,
 			completed_at = ?,
 			updated_at = ?
@@ -323,10 +389,15 @@ func (s *DBMissionStore) Update(ctx context.Context, mission *Mission) error {
 		string(mission.Status),
 		mission.TargetID.String(),
 		mission.WorkflowID.String(),
+		mission.WorkflowJSON,
 		constraintsJSON,
 		metricsJSON,
 		checkpointJSON,
 		mission.Error,
+		mission.Progress,
+		mission.FindingsCount,
+		agentAssignmentsJSON,
+		metadataJSON,
 		timePtr(mission.StartedAt),
 		timePtr(mission.CompletedAt),
 		mission.UpdatedAt,
@@ -344,6 +415,51 @@ func (s *DBMissionStore) Update(ctx context.Context, mission *Mission) error {
 
 	if rowsAffected == 0 {
 		return NewNotFoundError(mission.ID.String())
+	}
+
+	return nil
+}
+
+// UpdateStatus updates only the status field of a mission.
+func (s *DBMissionStore) UpdateStatus(ctx context.Context, id types.ID, status MissionStatus) error {
+	query := "UPDATE missions SET status = ?, updated_at = ? WHERE id = ?"
+	result, err := s.db.ExecContext(ctx, query, string(status), time.Now(), id.String())
+	if err != nil {
+		return fmt.Errorf("failed to update mission status: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return NewNotFoundError(id.String())
+	}
+
+	return nil
+}
+
+// UpdateProgress updates only the progress field of a mission.
+func (s *DBMissionStore) UpdateProgress(ctx context.Context, id types.ID, progress float64) error {
+	// Validate progress is in valid range (0.0 to 1.0)
+	if progress < 0.0 || progress > 1.0 {
+		return fmt.Errorf("progress must be between 0.0 and 1.0, got %f", progress)
+	}
+
+	query := "UPDATE missions SET progress = ?, updated_at = ? WHERE id = ?"
+	result, err := s.db.ExecContext(ctx, query, progress, time.Now(), id.String())
+	if err != nil {
+		return fmt.Errorf("failed to update mission progress: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return NewNotFoundError(id.String())
 	}
 
 	return nil
@@ -391,8 +507,9 @@ func (s *DBMissionStore) GetByTarget(ctx context.Context, targetID types.ID) ([]
 func (s *DBMissionStore) GetActive(ctx context.Context) ([]*Mission, error) {
 	query := `
 		SELECT
-			id, name, description, status, target_id, workflow_id,
+			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE status IN (?, ?)
@@ -495,16 +612,19 @@ func (s *DBMissionStore) scanMission(scanner interface {
 }) (*Mission, error) {
 	var m Mission
 	var (
-		idStr          string
-		statusStr      string
-		targetIDStr    string
-		workflowIDStr  string
-		constraintsStr sql.NullString
-		metricsStr     sql.NullString
-		checkpointStr  sql.NullString
-		errorStr       sql.NullString
-		startedAt      sql.NullTime
-		completedAt    sql.NullTime
+		idStr                 string
+		statusStr             string
+		targetIDStr           string
+		workflowIDStr         string
+		workflowJSON          sql.NullString
+		constraintsStr        sql.NullString
+		metricsStr            sql.NullString
+		checkpointStr         sql.NullString
+		errorStr              sql.NullString
+		agentAssignmentsStr   sql.NullString
+		metadataStr           sql.NullString
+		startedAt             sql.NullTime
+		completedAt           sql.NullTime
 	)
 
 	err := scanner.Scan(
@@ -514,10 +634,15 @@ func (s *DBMissionStore) scanMission(scanner interface {
 		&statusStr,
 		&targetIDStr,
 		&workflowIDStr,
+		&workflowJSON,
 		&constraintsStr,
 		&metricsStr,
 		&checkpointStr,
 		&errorStr,
+		&m.Progress,
+		&m.FindingsCount,
+		&agentAssignmentsStr,
+		&metadataStr,
 		&m.CreatedAt,
 		&startedAt,
 		&completedAt,
@@ -547,6 +672,10 @@ func (s *DBMissionStore) scanMission(scanner interface {
 	m.Status = MissionStatus(statusStr)
 
 	// Parse nullable fields
+	if workflowJSON.Valid {
+		m.WorkflowJSON = workflowJSON.String
+	}
+
 	if errorStr.Valid {
 		m.Error = errorStr.String
 	}
@@ -575,6 +704,18 @@ func (s *DBMissionStore) scanMission(scanner interface {
 	if checkpointStr.Valid && checkpointStr.String != "" {
 		if err := json.Unmarshal([]byte(checkpointStr.String), &m.Checkpoint); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal checkpoint: %w", err)
+		}
+	}
+
+	if agentAssignmentsStr.Valid && agentAssignmentsStr.String != "" {
+		if err := json.Unmarshal([]byte(agentAssignmentsStr.String), &m.AgentAssignments); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal agent assignments: %w", err)
+		}
+	}
+
+	if metadataStr.Valid && metadataStr.String != "" {
+		if err := json.Unmarshal([]byte(metadataStr.String), &m.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
 		}
 	}
 
@@ -630,6 +771,30 @@ func (s *DBMissionStore) marshalCheckpoint(checkpoint *MissionCheckpoint) (strin
 		return "", nil
 	}
 	data, err := json.Marshal(checkpoint)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// marshalAgentAssignments marshals agent assignments to JSON.
+func (s *DBMissionStore) marshalAgentAssignments(assignments map[string]string) (string, error) {
+	if assignments == nil || len(assignments) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(assignments)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// marshalMetadata marshals metadata to JSON.
+func (s *DBMissionStore) marshalMetadata(metadata map[string]any) (string, error) {
+	if metadata == nil || len(metadata) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(metadata)
 	if err != nil {
 		return "", err
 	}

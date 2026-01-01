@@ -83,8 +83,12 @@ func runToolTest(cmd *cobra.Command, args []string) error {
 	builder := build.NewDefaultBuildExecutor()
 
 	// Prepare test configuration
+	workDir := toolComp.RepoPath
+	if workDir == "" {
+		return fmt.Errorf("tool '%s' has no repository path configured", toolName)
+	}
 	testConfig := build.BuildConfig{
-		WorkDir: toolComp.Path,
+		WorkDir: workDir,
 		Command: "make",
 		Args:    []string{"test"},
 		Env:     make(map[string]string),

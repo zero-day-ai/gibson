@@ -25,10 +25,10 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name           string
-		config         ToolRestrictionConfig
-		input          guardrail.GuardrailInput
-		expectAllowed  bool
+		name                 string
+		config               ToolRestrictionConfig
+		input                guardrail.GuardrailInput
+		expectAllowed        bool
 		expectReasonContains string
 	}{
 		{
@@ -39,7 +39,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "bash",
 			},
-			expectAllowed: true,
+			expectAllowed:        true,
 			expectReasonContains: "",
 		},
 		{
@@ -50,7 +50,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "curl",
 			},
-			expectAllowed: false,
+			expectAllowed:        false,
 			expectReasonContains: "not in allowed list",
 		},
 		{
@@ -62,7 +62,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "curl",
 			},
-			expectAllowed: false,
+			expectAllowed:        false,
 			expectReasonContains: "is blocked",
 		},
 		{
@@ -74,7 +74,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "anything",
 			},
-			expectAllowed: true,
+			expectAllowed:        true,
 			expectReasonContains: "",
 		},
 		{
@@ -86,7 +86,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "dangerous",
 			},
-			expectAllowed: false,
+			expectAllowed:        false,
 			expectReasonContains: "is blocked",
 		},
 		{
@@ -97,7 +97,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "BASH",
 			},
-			expectAllowed: true,
+			expectAllowed:        true,
 			expectReasonContains: "",
 		},
 		{
@@ -108,7 +108,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "bash",
 			},
-			expectAllowed: true,
+			expectAllowed:        true,
 			expectReasonContains: "",
 		},
 		{
@@ -119,7 +119,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "",
 			},
-			expectAllowed: true,
+			expectAllowed:        true,
 			expectReasonContains: "",
 		},
 		{
@@ -133,7 +133,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 					"tags": []string{"safe", "experimental"},
 				},
 			},
-			expectAllowed: true,
+			expectAllowed:        true,
 			expectReasonContains: "",
 		},
 		{
@@ -148,7 +148,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 					"tags": []string{"safe", "dangerous"},
 				},
 			},
-			expectAllowed: false,
+			expectAllowed:        false,
 			expectReasonContains: "blocked tag",
 		},
 		{
@@ -162,7 +162,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 					"tags": []string{"experimental", "beta"},
 				},
 			},
-			expectAllowed: false,
+			expectAllowed:        false,
 			expectReasonContains: "does not have any allowed tags",
 		},
 		{
@@ -174,7 +174,7 @@ func TestToolRestriction_CheckInput(t *testing.T) {
 			input: guardrail.GuardrailInput{
 				ToolName: "anytool",
 			},
-			expectAllowed: true,
+			expectAllowed:        true,
 			expectReasonContains: "",
 		},
 	}

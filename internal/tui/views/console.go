@@ -47,10 +47,11 @@ type ConsoleView struct {
 	theme  *styles.Theme   // Color scheme and styling
 
 	// Console functionality
-	history   *console.History         // Command history for up/down navigation
-	executor  *console.Executor        // Executes parsed slash commands
-	completer *console.Completer       // Provides tab completion suggestions
-	registry  *console.CommandRegistry // Registry of available slash commands
+	history       *console.History         // Command history for up/down navigation
+	executor      *console.Executor        // Executes parsed slash commands
+	completer     *console.Completer       // Provides tab completion suggestions
+	registry      *console.CommandRegistry // Registry of available slash commands
+	eventRenderer *console.EventRenderer   // Renders agent stream events to styled output
 
 	// Output buffer - ring buffer to limit memory usage
 	outputLines []console.OutputLine // Stores output lines with styling
@@ -137,6 +138,7 @@ func NewConsoleView(ctx context.Context, config ConsoleConfig) *ConsoleView {
 		executor:          executor,
 		completer:         completer,
 		registry:          registry,
+		eventRenderer:     console.NewEventRenderer(""),
 		outputLines:       make([]console.OutputLine, 0, DefaultMaxLines),
 		maxLines:          DefaultMaxLines,
 		showSuggestions:   false,
@@ -185,6 +187,12 @@ func (c *ConsoleView) Blur() {
 	c.input.Blur()
 }
 
+// GetExecutor returns the command executor for this console view.
+// This is used to wire the tea.Program for event streaming.
+func (c *ConsoleView) GetExecutor() *console.Executor {
+	return c.executor
+}
+
 // Update handles messages and updates the console view state.
 // It processes keyboard input, window resize events, and forwards updates to child components.
 func (c *ConsoleView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -197,9 +205,41 @@ func (c *ConsoleView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		c.updateSizes()
 		return c, nil
 
+	case console.AgentEventMsg:
+		// Handle agent stream events - render and display in console
+		if c.eventRenderer != nil && msg.Event != nil {
+			// Update renderer with current agent name
+			c.eventRenderer.SetAgentName(msg.AgentName)
+			// Render the event to styled output lines
+			lines := c.eventRenderer.RenderEvent(msg.Event)
+			for _, line := range lines {
+				c.appendOutput(line)
+			}
+		}
+		return c, nil
+
+	case console.AgentDisconnectedMsg:
+		// Handle agent disconnection - display notification
+		c.appendOutput(console.OutputLine{
+			Text:      fmt.Sprintf("[%s] Agent disconnected: %s", msg.AgentName, msg.Reason),
+			Style:     console.StyleError,
+			Timestamp: time.Now(),
+			Source:    console.SourceSystem,
+			AgentName: msg.AgentName,
+		})
+		return c, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "enter":
+			// If suggestions are visible, accept the selected suggestion
+			if c.showSuggestions && len(c.suggestions) > 0 {
+				c.input.SetValue(c.suggestions[c.suggestionIndex].Text + " ")
+				c.input.CursorEnd()
+				c.lastInput = c.input.Value()
+				c.showSuggestions = false
+				return c, nil
+			}
 			// Execute command
 			cmd := c.input.Value()
 			if cmd != "" {
@@ -213,6 +253,14 @@ func (c *ConsoleView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return c, nil
 
 		case "up":
+			// If suggestions are visible, navigate up in the suggestion list
+			if c.showSuggestions && len(c.suggestions) > 0 {
+				c.suggestionIndex--
+				if c.suggestionIndex < 0 {
+					c.suggestionIndex = len(c.suggestions) - 1 // Wrap to bottom
+				}
+				return c, nil
+			}
 			// Navigate history backward
 			if cmd, ok := c.history.Previous(); ok {
 				c.input.SetValue(cmd)
@@ -224,6 +272,11 @@ func (c *ConsoleView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return c, nil
 
 		case "down":
+			// If suggestions are visible, navigate down in the suggestion list
+			if c.showSuggestions && len(c.suggestions) > 0 {
+				c.suggestionIndex = (c.suggestionIndex + 1) % len(c.suggestions) // Wrap to top
+				return c, nil
+			}
 			// Navigate history forward
 			if cmd, ok := c.history.Next(); ok {
 				c.input.SetValue(cmd)
@@ -543,6 +596,7 @@ func (c *ConsoleView) updateSuggestions() {
 }
 
 // renderSuggestions renders the suggestion popup box above the input line.
+// The view scrolls to keep the selected suggestion visible.
 func (c *ConsoleView) renderSuggestions() string {
 	if len(c.suggestions) == 0 {
 		return ""
@@ -551,7 +605,28 @@ func (c *ConsoleView) renderSuggestions() string {
 	var lines []string
 	maxToShow := min(len(c.suggestions), 6) // Show max 6 suggestions
 
-	for i := 0; i < maxToShow; i++ {
+	// Calculate the visible window to keep selected item in view
+	startIdx := 0
+	if len(c.suggestions) > maxToShow {
+		// Center the selection in the visible window when possible
+		startIdx = c.suggestionIndex - maxToShow/2
+		if startIdx < 0 {
+			startIdx = 0
+		}
+		if startIdx+maxToShow > len(c.suggestions) {
+			startIdx = len(c.suggestions) - maxToShow
+		}
+	}
+	endIdx := min(startIdx+maxToShow, len(c.suggestions))
+
+	// Show scroll indicator at top if there are items above
+	if startIdx > 0 {
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(c.theme.Muted).
+			Render(fmt.Sprintf("  ↑ %d more above", startIdx)))
+	}
+
+	for i := startIdx; i < endIdx; i++ {
 		suggestion := c.suggestions[i]
 		line := fmt.Sprintf("  %s", suggestion.Text)
 		if suggestion.Description != "" {
@@ -573,10 +648,11 @@ func (c *ConsoleView) renderSuggestions() string {
 		lines = append(lines, line)
 	}
 
-	if len(c.suggestions) > maxToShow {
+	// Show scroll indicator at bottom if there are items below
+	if endIdx < len(c.suggestions) {
 		lines = append(lines, lipgloss.NewStyle().
 			Foreground(c.theme.Muted).
-			Render(fmt.Sprintf("  ... and %d more (press tab to cycle)", len(c.suggestions)-maxToShow)))
+			Render(fmt.Sprintf("  ↓ %d more below", len(c.suggestions)-endIdx)))
 	}
 
 	content := strings.Join(lines, "\n")
@@ -626,6 +702,67 @@ func (c *ConsoleView) styleOutputLine(line console.OutputLine) string {
 	case console.StyleInfo:
 		style = lipgloss.NewStyle().
 			Foreground(c.theme.Warning)
+
+	// Agent streaming event styles
+	case console.StyleAgentOutput:
+		// Cyan/teal for LLM output - distinct from command output
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00CED1")) // Dark cyan
+
+	case console.StyleToolCall:
+		// Dim/muted gray for tool invocations
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#888888")).
+			Italic(true)
+
+	case console.StyleToolResult:
+		// Normal white for tool results
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#CCCCCC"))
+
+	case console.StyleFinding:
+		// Generic finding - yellow/warning
+		style = lipgloss.NewStyle().
+			Foreground(c.theme.Warning).
+			Bold(true)
+
+	case console.StyleFindingCritical:
+		// Critical findings - red bold with background
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF0000")).
+			Bold(true)
+
+	case console.StyleFindingHigh:
+		// High findings - orange/red
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FF6600")).
+			Bold(true)
+
+	case console.StyleFindingMedium:
+		// Medium findings - yellow
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFCC00"))
+
+	case console.StyleFindingLow:
+		// Low findings - blue
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#3399FF"))
+
+	case console.StyleStatus:
+		// Status changes - purple/magenta
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#CC66FF"))
+
+	case console.StyleSteeringAck:
+		// Steering acknowledgments - green
+		style = lipgloss.NewStyle().
+			Foreground(c.theme.Success)
+
+	case console.StyleUserSteering:
+		// User steering messages - bright cyan
+		style = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00FFFF")).
+			Bold(true)
 
 	case console.StyleNormal:
 		fallthrough

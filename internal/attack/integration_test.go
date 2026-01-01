@@ -309,13 +309,13 @@ func TestIntegration_OutputFormats(t *testing.T) {
 
 			// Simulate output flow
 			opts := &AttackOptions{
-				TargetURL:  "https://example.com/api",
-				AgentName:  "test-agent",
-				Goal:       "Test security",
-				MaxTurns:   5,
-				Timeout:    30 * time.Second,
-				Verbose:    tt.verbose,
-				Quiet:      tt.quiet,
+				TargetURL: "https://example.com/api",
+				AgentName: "test-agent",
+				Goal:      "Test security",
+				MaxTurns:  5,
+				Timeout:   30 * time.Second,
+				Verbose:   tt.verbose,
+				Quiet:     tt.quiet,
 			}
 
 			handler.OnStart(opts)
@@ -500,7 +500,7 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 	defer server.Close()
 
 	runner := NewAttackRunner(
-		newMockIntegrationOrchestratorWithDelay(2 * time.Second),
+		newMockIntegrationOrchestratorWithDelay(2*time.Second),
 		newMockIntegrationAgentRegistry(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
@@ -535,7 +535,7 @@ func TestIntegration_Timeout(t *testing.T) {
 	defer server.Close()
 
 	runner := NewAttackRunner(
-		newMockIntegrationOrchestratorWithDelay(3 * time.Second),
+		newMockIntegrationOrchestratorWithDelay(3*time.Second),
 		newMockIntegrationAgentRegistry(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
@@ -580,4 +580,190 @@ func TestIntegration_DryRun(t *testing.T) {
 	assert.Equal(t, AttackStatusSuccess, result.Status)
 	assert.False(t, serverCalled, "Server should not be called in dry-run mode")
 	assert.Equal(t, 0, result.TurnsUsed)
+}
+
+// TestIntegration_FindingsPersistence tests that findings are correctly persisted or not based on flags.
+func TestIntegration_FindingsPersistence(t *testing.T) {
+	// Set up mock HTTP server
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status": "ok"}`))
+	}))
+	defer targetServer.Close()
+
+	tests := []struct {
+		name              string
+		persistFlag       bool
+		noPersistFlag     bool
+		hasFindings       bool
+		expectPersisted   bool
+		expectMissionSave bool
+		expectFindingSave bool
+	}{
+		{
+			name:              "no flags with findings should auto-persist",
+			persistFlag:       false,
+			noPersistFlag:     false,
+			hasFindings:       true,
+			expectPersisted:   true,
+			expectMissionSave: true,
+			expectFindingSave: true,
+		},
+		{
+			name:              "no flags without findings should not persist",
+			persistFlag:       false,
+			noPersistFlag:     false,
+			hasFindings:       false,
+			expectPersisted:   false,
+			expectMissionSave: false,
+			expectFindingSave: false,
+		},
+		{
+			name:              "persist flag with findings should persist",
+			persistFlag:       true,
+			noPersistFlag:     false,
+			hasFindings:       true,
+			expectPersisted:   true,
+			expectMissionSave: true,
+			expectFindingSave: true,
+		},
+		{
+			name:              "persist flag without findings should persist mission only",
+			persistFlag:       true,
+			noPersistFlag:     false,
+			hasFindings:       false,
+			expectPersisted:   true,
+			expectMissionSave: true,
+			expectFindingSave: false,
+		},
+		{
+			name:              "no-persist flag with findings should not persist",
+			persistFlag:       false,
+			noPersistFlag:     true,
+			hasFindings:       true,
+			expectPersisted:   false,
+			expectMissionSave: false,
+			expectFindingSave: false,
+		},
+		{
+			name:              "no-persist flag without findings should not persist",
+			persistFlag:       false,
+			noPersistFlag:     true,
+			hasFindings:       false,
+			expectPersisted:   false,
+			expectMissionSave: false,
+			expectFindingSave: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fresh stores for each test
+			missionStore := newMockIntegrationMissionStore()
+			findingStore := newMockIntegrationFindingStore()
+			orchestrator := newMockIntegrationOrchestrator(tt.hasFindings)
+
+			runner := NewAttackRunner(
+				orchestrator,
+				newMockIntegrationAgentRegistry(),
+				newMockIntegrationPayloadRegistry(),
+				missionStore,
+				findingStore,
+			)
+
+			opts := NewAttackOptions()
+			opts.TargetURL = targetServer.URL
+			opts.AgentName = "test-agent"
+			opts.Persist = tt.persistFlag
+			opts.NoPersist = tt.noPersistFlag
+
+			result, err := runner.Run(context.Background(), opts)
+			require.NoError(t, err)
+			assert.NotNil(t, result)
+
+			// Verify persistence behavior
+			assert.Equal(t, tt.expectPersisted, result.Persisted, "Persisted flag mismatch")
+
+			if tt.expectPersisted {
+				assert.NotNil(t, result.MissionID, "Mission ID should be set when persisted")
+			} else {
+				assert.Nil(t, result.MissionID, "Mission ID should be nil when not persisted")
+			}
+
+			// Verify mission was saved to store
+			if tt.expectMissionSave {
+				assert.Equal(t, 1, missionStore.saveCount, "Mission should be saved exactly once")
+			} else {
+				assert.Equal(t, 0, missionStore.saveCount, "Mission should not be saved")
+			}
+
+			// Verify findings were saved to store
+			if tt.expectFindingSave {
+				assert.Greater(t, findingStore.storeCount, 0, "Findings should be saved")
+			} else {
+				assert.Equal(t, 0, findingStore.storeCount, "Findings should not be saved")
+			}
+		})
+	}
+}
+
+// TestIntegration_AttackDuration tests that attack duration is tracked correctly.
+func TestIntegration_AttackDuration(t *testing.T) {
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer targetServer.Close()
+
+	runner := NewAttackRunner(
+		newMockIntegrationOrchestratorWithDelay(100*time.Millisecond),
+		newMockIntegrationAgentRegistry(),
+		newMockIntegrationPayloadRegistry(),
+		newMockIntegrationMissionStore(),
+		newMockIntegrationFindingStore(),
+	)
+
+	opts := NewAttackOptions()
+	opts.TargetURL = targetServer.URL
+	opts.AgentName = "test-agent"
+
+	result, err := runner.Run(context.Background(), opts)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Greater(t, result.Duration, 100*time.Millisecond, "Duration should include orchestrator delay")
+}
+
+// TestIntegration_AttackMetrics tests that attack metrics are properly collected.
+func TestIntegration_AttackMetrics(t *testing.T) {
+	targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer targetServer.Close()
+
+	orchestrator := newMockIntegrationOrchestrator(true)
+	runner := NewAttackRunner(
+		orchestrator,
+		newMockIntegrationAgentRegistry(),
+		newMockIntegrationPayloadRegistry(),
+		newMockIntegrationMissionStore(),
+		newMockIntegrationFindingStore(),
+	)
+
+	opts := NewAttackOptions()
+	opts.TargetURL = targetServer.URL
+	opts.AgentName = "test-agent"
+
+	result, err := runner.Run(context.Background(), opts)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Verify metrics are populated
+	assert.GreaterOrEqual(t, result.TurnsUsed, 0, "Turns used should be tracked")
+	assert.GreaterOrEqual(t, result.TokensUsed, int64(0), "Tokens used should be tracked")
+	assert.Greater(t, result.Duration, time.Duration(0), "Duration should be positive")
+
+	// Verify findings are counted
+	if result.HasFindings() {
+		assert.Greater(t, result.FindingCount(), 0, "Finding count should match findings")
+	}
 }

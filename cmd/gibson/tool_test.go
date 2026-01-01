@@ -19,22 +19,22 @@ import (
 
 // Mock Tool implementation for testing
 type mockTool struct {
-	name        string
-	description string
-	version     string
-	tags        []string
-	inputSchema schema.JSONSchema
+	name         string
+	description  string
+	version      string
+	tags         []string
+	inputSchema  schema.JSONSchema
 	outputSchema schema.JSONSchema
-	executeFunc func(ctx context.Context, input map[string]any) (map[string]any, error)
-	healthFunc  func(ctx context.Context) types.HealthStatus
+	executeFunc  func(ctx context.Context, input map[string]any) (map[string]any, error)
+	healthFunc   func(ctx context.Context) types.HealthStatus
 }
 
-func (m *mockTool) Name() string                                  { return m.name }
-func (m *mockTool) Description() string                           { return m.description }
-func (m *mockTool) Version() string                               { return m.version }
-func (m *mockTool) Tags() []string                                { return m.tags }
-func (m *mockTool) InputSchema() schema.JSONSchema                { return m.inputSchema }
-func (m *mockTool) OutputSchema() schema.JSONSchema               { return m.outputSchema }
+func (m *mockTool) Name() string                    { return m.name }
+func (m *mockTool) Description() string             { return m.description }
+func (m *mockTool) Version() string                 { return m.version }
+func (m *mockTool) Tags() []string                  { return m.tags }
+func (m *mockTool) InputSchema() schema.JSONSchema  { return m.inputSchema }
+func (m *mockTool) OutputSchema() schema.JSONSchema { return m.outputSchema }
 
 func (m *mockTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
 	if m.executeFunc != nil {
@@ -298,13 +298,13 @@ func TestToolInvoke(t *testing.T) {
 	defer cleanup()
 
 	tests := []struct {
-		name         string
-		args         []string
-		input        string
-		setupTool    func(*tool.DefaultToolRegistry) error
-		wantErr      bool
-		errContains  string
-		wantContain  []string
+		name        string
+		args        []string
+		input       string
+		setupTool   func(*tool.DefaultToolRegistry) error
+		wantErr     bool
+		errContains string
+		wantContain []string
 	}{
 		{
 			name:  "valid JSON input",

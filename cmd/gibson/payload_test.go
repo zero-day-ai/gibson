@@ -394,7 +394,7 @@ func TestValidatePayload(t *testing.T) {
 		{
 			name: "missing name",
 			payload: &payload.Payload{
-				Template: "test",
+				Template:   "test",
 				Categories: []payload.PayloadCategory{payload.CategoryJailbreak},
 				SuccessIndicators: []payload.SuccessIndicator{
 					{Type: payload.IndicatorTypeContains, Value: "test"},

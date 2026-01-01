@@ -71,10 +71,10 @@ func TestPlanStatus_IsTerminal(t *testing.T) {
 // TestPlanStatus_CanTransitionTo_ValidTransitions tests valid state transitions
 func TestPlanStatus_CanTransitionTo_ValidTransitions(t *testing.T) {
 	tests := []struct {
-		name   string
-		from   PlanStatus
-		to     PlanStatus
-		canDo  bool
+		name  string
+		from  PlanStatus
+		to    PlanStatus
+		canDo bool
 	}{
 		// Valid transitions from draft
 		{
@@ -574,23 +574,23 @@ func TestExecutionPlan_JSONRoundTrip(t *testing.T) {
 		{
 			name: "minimal plan",
 			plan: ExecutionPlan{
-				ID:         types.NewID(),
-				MissionID:  types.NewID(),
-				AgentName:  "test-agent",
-				Status:     PlanStatusDraft,
-				Steps:      []ExecutionStep{},
-				CreatedAt:  now,
-				UpdatedAt:  now,
+				ID:        types.NewID(),
+				MissionID: types.NewID(),
+				AgentName: "test-agent",
+				Status:    PlanStatusDraft,
+				Steps:     []ExecutionStep{},
+				CreatedAt: now,
+				UpdatedAt: now,
 			},
 		},
 		{
 			name: "plan with all fields",
 			plan: ExecutionPlan{
-				ID:         types.NewID(),
-				MissionID:  types.NewID(),
-				AgentName:  "full-agent",
-				Status:     PlanStatusCompleted,
-				Steps:      []ExecutionStep{},
+				ID:        types.NewID(),
+				MissionID: types.NewID(),
+				AgentName: "full-agent",
+				Status:    PlanStatusCompleted,
+				Steps:     []ExecutionStep{},
 				RiskSummary: &PlanRiskSummary{
 					OverallLevel:     RiskLevelMedium,
 					HighRiskSteps:    1,
@@ -755,8 +755,8 @@ func TestStepResult_JSONRoundTrip(t *testing.T) {
 		{
 			name: "successful result",
 			result: StepResult{
-				StepID:   types.NewID(),
-				Status:   StepStatusCompleted,
+				StepID: types.NewID(),
+				Status: StepStatusCompleted,
 				Output: map[string]any{
 					"open_ports": []int{22, 80, 443},
 					"success":    true,

@@ -926,7 +926,7 @@ func TestStepTimeout(t *testing.T) {
 
 	// Set very short timeout
 	executor := NewPlanExecutor(
-		WithStepTimeout(1 * time.Millisecond),
+		WithStepTimeout(1*time.Millisecond),
 		WithExecutorLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))),
 	)
 

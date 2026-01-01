@@ -7,21 +7,21 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
-	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// MockMissionDAO is a simple mock for testing
-type MockMissionDAO struct {
-	missions []*database.Mission
+// MockMissionStore is a simple mock for testing
+type MockMissionStore struct {
+	missions []*mission.Mission
 	err      error
 }
 
-func (m *MockMissionDAO) Create(ctx context.Context, mission *database.Mission) error {
+func (m *MockMissionStore) Save(ctx context.Context, mission *mission.Mission) error {
 	return m.err
 }
 
-func (m *MockMissionDAO) GetByID(ctx context.Context, id types.ID) (*database.Mission, error) {
+func (m *MockMissionStore) Get(ctx context.Context, id types.ID) (*mission.Mission, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -31,7 +31,7 @@ func (m *MockMissionDAO) GetByID(ctx context.Context, id types.ID) (*database.Mi
 	return nil, nil
 }
 
-func (m *MockMissionDAO) GetByName(ctx context.Context, name string) (*database.Mission, error) {
+func (m *MockMissionStore) GetByName(ctx context.Context, name string) (*mission.Mission, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -41,30 +41,49 @@ func (m *MockMissionDAO) GetByName(ctx context.Context, name string) (*database.
 	return nil, nil
 }
 
-func (m *MockMissionDAO) List(ctx context.Context, status database.MissionStatus) ([]*database.Mission, error) {
+func (m *MockMissionStore) List(ctx context.Context, filter *mission.MissionFilter) ([]*mission.Mission, error) {
 	return m.missions, m.err
 }
 
-func (m *MockMissionDAO) Update(ctx context.Context, mission *database.Mission) error {
+func (m *MockMissionStore) Update(ctx context.Context, mission *mission.Mission) error {
 	return m.err
 }
 
-func (m *MockMissionDAO) UpdateStatus(ctx context.Context, id types.ID, status database.MissionStatus) error {
+func (m *MockMissionStore) UpdateStatus(ctx context.Context, id types.ID, status mission.MissionStatus) error {
 	return m.err
 }
 
-func (m *MockMissionDAO) Delete(ctx context.Context, id types.ID) error {
+func (m *MockMissionStore) UpdateProgress(ctx context.Context, id types.ID, progress float64) error {
 	return m.err
 }
 
-func (m *MockMissionDAO) UpdateProgress(ctx context.Context, id types.ID, progress float64) error {
+func (m *MockMissionStore) Delete(ctx context.Context, id types.ID) error {
 	return m.err
+}
+
+func (m *MockMissionStore) GetByTarget(ctx context.Context, targetID types.ID) ([]*mission.Mission, error) {
+	return m.missions, m.err
+}
+
+func (m *MockMissionStore) GetActive(ctx context.Context) ([]*mission.Mission, error) {
+	return m.missions, m.err
+}
+
+func (m *MockMissionStore) SaveCheckpoint(ctx context.Context, missionID types.ID, checkpoint *mission.MissionCheckpoint) error {
+	return m.err
+}
+
+func (m *MockMissionStore) Count(ctx context.Context, filter *mission.MissionFilter) (int, error) {
+	if m.err != nil {
+		return 0, m.err
+	}
+	return len(m.missions), nil
 }
 
 func TestNewMissionView(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{}
-	view := NewMissionView(ctx, mockDAO)
+	mockStore := &MockMissionStore{}
+	view := NewMissionView(ctx, mockStore)
 
 	assert.NotNil(t, view)
 	assert.NotNil(t, view.theme)
@@ -75,12 +94,12 @@ func TestNewMissionView(t *testing.T) {
 
 func TestMissionView_Init(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{
-		missions: []*database.Mission{
-			{ID: "1", Name: "Test Mission", Status: database.MissionStatusRunning},
+	mockStore := &MockMissionStore{
+		missions: []*mission.Mission{
+			{ID: "1", Name: "Test Mission", Status: mission.MissionStatusRunning},
 		},
 	}
-	view := NewMissionView(ctx, mockDAO)
+	view := NewMissionView(ctx, mockStore)
 
 	cmd := view.Init()
 
@@ -90,8 +109,8 @@ func TestMissionView_Init(t *testing.T) {
 
 func TestMissionView_Update_WindowSize(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{}
-	view := NewMissionView(ctx, mockDAO)
+	mockStore := &MockMissionStore{}
+	view := NewMissionView(ctx, mockStore)
 
 	msg := tea.WindowSizeMsg{Width: 150, Height: 50}
 	_, _ = view.Update(msg)
@@ -102,8 +121,8 @@ func TestMissionView_Update_WindowSize(t *testing.T) {
 
 func TestMissionView_Update_ToggleDetails(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{}
-	view := NewMissionView(ctx, mockDAO)
+	mockStore := &MockMissionStore{}
+	view := NewMissionView(ctx, mockStore)
 	view.width = 100
 	view.height = 30
 
@@ -123,8 +142,8 @@ func TestMissionView_Update_ToggleDetails(t *testing.T) {
 
 func TestMissionView_View_Empty(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{}
-	view := NewMissionView(ctx, mockDAO)
+	mockStore := &MockMissionStore{}
+	view := NewMissionView(ctx, mockStore)
 
 	// Before setting size
 	output := view.View()
@@ -139,8 +158,8 @@ func TestMissionView_View_Empty(t *testing.T) {
 
 func TestMissionView_RenderProgressBar(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{}
-	view := NewMissionView(ctx, mockDAO)
+	mockStore := &MockMissionStore{}
+	view := NewMissionView(ctx, mockStore)
 
 	tests := []struct {
 		progress float64
@@ -163,8 +182,8 @@ func TestMissionView_RenderProgressBar(t *testing.T) {
 
 func TestMissionView_RenderStatusBar(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{}
-	view := NewMissionView(ctx, mockDAO)
+	mockStore := &MockMissionStore{}
+	view := NewMissionView(ctx, mockStore)
 	view.width = 100
 
 	output := view.renderStatusBar()
@@ -176,8 +195,8 @@ func TestMissionView_RenderStatusBar(t *testing.T) {
 
 func TestMissionView_RenderStatusBar_WithError(t *testing.T) {
 	ctx := context.Background()
-	mockDAO := &MockMissionDAO{}
-	view := NewMissionView(ctx, mockDAO)
+	mockStore := &MockMissionStore{}
+	view := NewMissionView(ctx, mockStore)
 	view.width = 100
 	view.err = assert.AnError
 
@@ -192,7 +211,7 @@ func TestMissionSummary_Interfaces(t *testing.T) {
 	summary := MissionSummary{
 		ID:           "test-id",
 		Name:         "Test Mission",
-		Status:       database.MissionStatusRunning,
+		Status:       mission.MissionStatusRunning,
 		Progress:     0.5,
 		FindingCount: 10,
 		StartedAt:    &now,
@@ -220,10 +239,10 @@ func TestMissionsLoadedMsg(t *testing.T) {
 }
 
 func TestMissionDetailsLoadedMsg(t *testing.T) {
-	mission := &database.Mission{ID: "1", Name: "Test"}
-	msg := missionDetailsLoadedMsg{mission: mission, workflow: nil}
+	m := &mission.Mission{ID: "1", Name: "Test"}
+	msg := missionDetailsLoadedMsg{mission: m, workflow: nil}
 
-	assert.Equal(t, mission, msg.mission)
+	assert.Equal(t, m, msg.mission)
 	assert.Nil(t, msg.workflow)
 }
 

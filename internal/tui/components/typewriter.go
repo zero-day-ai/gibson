@@ -17,12 +17,12 @@ type cursorBlinkMsg struct{}
 // TypeWriter is a BubbleTea-compatible component that animates text appearing
 // character-by-character with a blinking cursor, similar to old terminal typing effects.
 type TypeWriter struct {
-	fullText     string          // the complete text to display
-	visibleChars int             // number of characters currently visible
-	cursor       bool            // cursor visibility state for blinking
-	speed        time.Duration   // time between character reveals (default 50ms)
-	done         bool            // whether animation is complete
-	theme        *styles.Theme   // for styling
+	fullText     string        // the complete text to display
+	visibleChars int           // number of characters currently visible
+	cursor       bool          // cursor visibility state for blinking
+	speed        time.Duration // time between character reveals (default 50ms)
+	done         bool          // whether animation is complete
+	theme        *styles.Theme // for styling
 }
 
 // NewTypeWriter creates a new TypeWriter component with default 50ms typing speed.

@@ -60,7 +60,7 @@ func TestMissionMemory_Store(t *testing.T) {
 			"tags": []string{"developer", "tester"},
 		}
 		metadata := map[string]any{
-			"source": "test",
+			"source":   "test",
 			"priority": 1,
 		}
 
@@ -110,12 +110,12 @@ func TestMissionMemory_Retrieve(t *testing.T) {
 		item, err := mem.Retrieve(ctx, "retrieve-key")
 		require.NoError(t, err)
 		assert.Equal(t, "retrieve-key", item.Key)
-		
+
 		// Value is unmarshaled as map[string]interface{}
 		valueMap, ok := item.Value.(map[string]any)
 		require.True(t, ok, "value should be a map")
 		assert.Equal(t, "test", valueMap["data"])
-		
+
 		// Check metadata
 		assert.Equal(t, "important", item.Metadata["tag"])
 	})
@@ -296,7 +296,7 @@ func TestMissionMemory_History(t *testing.T) {
 
 		// Verify ordering (most recent first)
 		for i := 0; i < len(items)-1; i++ {
-			assert.True(t, items[i].CreatedAt.After(items[i+1].CreatedAt) || 
+			assert.True(t, items[i].CreatedAt.After(items[i+1].CreatedAt) ||
 				items[i].CreatedAt.Equal(items[i+1].CreatedAt),
 				"history should be ordered by created_at DESC")
 		}
@@ -416,7 +416,7 @@ func TestMissionMemory_Cache(t *testing.T) {
 	defer cleanup()
 
 	missionID := types.NewID()
-	
+
 	// Create memory with small cache size
 	mem := NewMissionMemory(db, missionID, 2)
 

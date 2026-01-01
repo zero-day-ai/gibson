@@ -41,13 +41,13 @@ func newMockAgent(name string) *mockAgent {
 	}
 }
 
-func (m *mockAgent) Name() string                                  { return m.name }
-func (m *mockAgent) Version() string                               { return m.version }
-func (m *mockAgent) Description() string                           { return m.description }
-func (m *mockAgent) Capabilities() []string                        { return m.capabilities }
-func (m *mockAgent) TargetTypes() []component.TargetType           { return m.targetTypes }
-func (m *mockAgent) TechniqueTypes() []component.TechniqueType     { return m.techniqueTypes }
-func (m *mockAgent) LLMSlots() []SlotDefinition                    { return m.slots }
+func (m *mockAgent) Name() string                              { return m.name }
+func (m *mockAgent) Version() string                           { return m.version }
+func (m *mockAgent) Description() string                       { return m.description }
+func (m *mockAgent) Capabilities() []string                    { return m.capabilities }
+func (m *mockAgent) TargetTypes() []component.TargetType       { return m.targetTypes }
+func (m *mockAgent) TechniqueTypes() []component.TechniqueType { return m.techniqueTypes }
+func (m *mockAgent) LLMSlots() []SlotDefinition                { return m.slots }
 
 func (m *mockAgent) Execute(ctx context.Context, task Task, harness AgentHarness) (Result, error) {
 	if m.executeFunc != nil {
@@ -121,7 +121,7 @@ func TestSlotDefinition(t *testing.T) {
 		}
 		merged = slot.MergeConfig(override)
 		assert.Equal(t, "anthropic", merged.Provider) // From default
-		assert.Equal(t, "gpt-4-turbo", merged.Model)   // From override
+		assert.Equal(t, "gpt-4-turbo", merged.Model)  // From override
 	})
 }
 
@@ -783,19 +783,21 @@ func TestAgentRegistry_Additional(t *testing.T) {
 }
 
 type mockExternalAgent struct {
-	name     string
-	healthy  bool
+	name    string
+	healthy bool
 }
 
-func (m *mockExternalAgent) Name() string                                     { return m.name }
-func (m *mockExternalAgent) Version() string                                  { return "1.0.0" }
-func (m *mockExternalAgent) Description() string                              { return "External agent" }
-func (m *mockExternalAgent) Capabilities() []string                           { return []string{} }
-func (m *mockExternalAgent) TargetTypes() []component.TargetType              { return []component.TargetType{} }
-func (m *mockExternalAgent) TechniqueTypes() []component.TechniqueType        { return []component.TechniqueType{} }
-func (m *mockExternalAgent) LLMSlots() []SlotDefinition                       { return []SlotDefinition{} }
+func (m *mockExternalAgent) Name() string                        { return m.name }
+func (m *mockExternalAgent) Version() string                     { return "1.0.0" }
+func (m *mockExternalAgent) Description() string                 { return "External agent" }
+func (m *mockExternalAgent) Capabilities() []string              { return []string{} }
+func (m *mockExternalAgent) TargetTypes() []component.TargetType { return []component.TargetType{} }
+func (m *mockExternalAgent) TechniqueTypes() []component.TechniqueType {
+	return []component.TechniqueType{}
+}
+func (m *mockExternalAgent) LLMSlots() []SlotDefinition                            { return []SlotDefinition{} }
 func (m *mockExternalAgent) Initialize(ctx context.Context, cfg AgentConfig) error { return nil }
-func (m *mockExternalAgent) Shutdown(ctx context.Context) error               { return nil }
+func (m *mockExternalAgent) Shutdown(ctx context.Context) error                    { return nil }
 func (m *mockExternalAgent) Health(ctx context.Context) types.HealthStatus {
 	if m.healthy {
 		return types.Healthy("Mock external agent is healthy")

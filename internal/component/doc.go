@@ -163,6 +163,95 @@
 //   - Stopped (ComponentStatusStopped): Previously running, now stopped
 //   - Error (ComponentStatusError): Encountered error, health check failing
 //
+// # Logging Subsystem
+//
+// The component package provides a comprehensive logging system that captures
+// stdout and stderr from running components to persistent log files with automatic
+// rotation to prevent disk exhaustion.
+//
+// ## LogWriter Interface
+//
+// LogWriter provides the core abstraction for capturing component output:
+//
+//	type LogWriter interface {
+//	    CreateWriter(componentName string, stream string) (io.WriteCloser, error)
+//	    Close(componentName string) error
+//	}
+//
+// The LogWriter creates separate writers for stdout and stderr streams, automatically
+// prefixing each line with timestamps and stream markers for easy parsing and debugging.
+//
+// ## DefaultLogWriter Implementation
+//
+// DefaultLogWriter is the standard implementation that writes logs to the filesystem:
+//
+//   - Log Location: ~/.gibson/logs/<component-name>.log (configurable)
+//   - Thread Safety: Safe for concurrent writes from multiple streams
+//   - Automatic Rotation: Integrates with LogRotator to prevent disk exhaustion
+//   - Buffering: Uses 64KB buffers for efficient I/O
+//
+// ## Log Format
+//
+// All log entries follow a standardized format for easy parsing:
+//
+//	2025-01-01T12:00:00-06:00 [STDOUT] message here
+//	2025-01-01T12:00:01-06:00 [STDERR] error message
+//	2025-01-01T12:00:02-06:00 [SYSTEM] component started
+//
+// Format components:
+//   - Timestamp: RFC3339 format with timezone (2006-01-02T15:04:05Z07:00)
+//   - Stream Marker: [STDOUT], [STDERR], or [SYSTEM] for system messages
+//   - Message: The actual log message (preserves original formatting)
+//
+// This format enables:
+//   - Chronological sorting across streams
+//   - Stream filtering (stdout vs stderr)
+//   - Automated parsing by log analysis tools
+//   - Human-readable debugging output
+//
+// ## LogRotator Interface
+//
+// LogRotator defines the strategy for rotating log files:
+//
+//	type LogRotator interface {
+//	    ShouldRotate(path string) (bool, error)
+//	    Rotate(path string) (*os.File, error)
+//	}
+//
+// The rotator prevents log files from consuming excessive disk space by:
+//  1. Monitoring file sizes (checks every 1MB of writes)
+//  2. Rotating files when they exceed the threshold
+//  3. Maintaining a configurable number of backup files
+//
+// ## DefaultLogRotator Implementation
+//
+// DefaultLogRotator implements size-based rotation with these defaults:
+//
+//   - Max Size: 10MB per log file (DefaultLogMaxSize)
+//   - Max Backups: 5 old versions retained (DefaultLogMaxBackups)
+//   - File Naming: .log, .log.1, .log.2, .log.3, .log.4, .log.5
+//   - Thread Safety: Rotation operations are synchronized
+//
+// Rotation process:
+//  1. Delete oldest backup (.log.5)
+//  2. Shift existing backups (.log.1 → .log.2, .log.2 → .log.3, etc.)
+//  3. Rename current .log to .log.1
+//  4. Create new empty .log file
+//
+// The rotation is atomic where possible and handles missing files gracefully.
+//
+// ## Log Parser
+//
+// The package includes ParseRecentErrors() for extracting error information:
+//
+//   - Supported Formats: JSON and key=value log formats
+//   - Error Levels: Filters for ERROR and FATAL entries
+//   - Sorting: Returns newest errors first
+//   - Resilience: Skips malformed lines without failing
+//
+// This enables the health monitoring system to detect component failures and
+// provide diagnostic information to operators.
+//
 // # Configuration Options
 //
 // The ComponentConfig type (defined in manifest) supports various runtime options:
@@ -360,6 +449,122 @@
 //	            fmt.Printf("  Artifact: %s\n", artifact)
 //	        }
 //	    }
+//	}
+//
+// ## Using the Logging Subsystem
+//
+// Capture component output to persistent log files with rotation:
+//
+//	import (
+//	    "os/exec"
+//	    "path/filepath"
+//	)
+//
+//	func captureComponentLogs() {
+//	    // Create log writer with default rotation (10MB max, 5 backups)
+//	    logDir := filepath.Join(os.Getenv("HOME"), ".gibson", "logs")
+//	    rotator := component.NewDefaultLogRotator(0, 0) // Use defaults
+//	    logWriter, err := component.NewDefaultLogWriter(logDir, rotator)
+//	    if err != nil {
+//	        log.Fatalf("Failed to create log writer: %v", err)
+//	    }
+//
+//	    componentName := "scanner"
+//
+//	    // Create writers for stdout and stderr
+//	    stdoutWriter, err := logWriter.CreateWriter(componentName, "stdout")
+//	    if err != nil {
+//	        log.Fatalf("Failed to create stdout writer: %v", err)
+//	    }
+//	    defer stdoutWriter.Close()
+//
+//	    stderrWriter, err := logWriter.CreateWriter(componentName, "stderr")
+//	    if err != nil {
+//	        log.Fatalf("Failed to create stderr writer: %v", err)
+//	    }
+//	    defer stderrWriter.Close()
+//
+//	    // Start component process with log capture
+//	    cmd := exec.Command("./bin/scanner", "--verbose")
+//	    cmd.Stdout = stdoutWriter
+//	    cmd.Stderr = stderrWriter
+//
+//	    if err := cmd.Start(); err != nil {
+//	        log.Fatalf("Failed to start component: %v", err)
+//	    }
+//
+//	    // Component output is now being captured to:
+//	    // ~/.gibson/logs/scanner.log
+//	    // with automatic rotation when file exceeds 10MB
+//
+//	    // Wait for component to complete
+//	    if err := cmd.Wait(); err != nil {
+//	        log.Printf("Component exited with error: %v", err)
+//	    }
+//
+//	    // Clean up writers
+//	    if err := logWriter.Close(componentName); err != nil {
+//	        log.Printf("Warning: failed to close log writers: %v", err)
+//	    }
+//	}
+//
+// ## Parsing Component Logs
+//
+// Extract recent errors from component logs for debugging:
+//
+//	func checkComponentErrors() {
+//	    logPath := filepath.Join(os.Getenv("HOME"), ".gibson", "logs", "scanner.log")
+//
+//	    // Get the 10 most recent errors
+//	    errors, err := component.ParseRecentErrors(logPath, 10)
+//	    if err != nil {
+//	        log.Fatalf("Failed to parse errors: %v", err)
+//	    }
+//
+//	    if len(errors) == 0 {
+//	        fmt.Println("No errors found in logs")
+//	        return
+//	    }
+//
+//	    // Display errors (sorted newest first)
+//	    fmt.Printf("Found %d recent errors:\n", len(errors))
+//	    for i, logErr := range errors {
+//	        fmt.Printf("[%d] %s [%s] %s\n",
+//	            i+1,
+//	            logErr.Timestamp.Format("2006-01-02 15:04:05"),
+//	            logErr.Level,
+//	            logErr.Message)
+//	    }
+//	}
+//
+// ## Custom Log Rotation Configuration
+//
+// Configure custom rotation thresholds:
+//
+//	func customLogRotation() {
+//	    // Rotate at 50MB, keep 10 backups
+//	    maxSize := int64(50 * 1024 * 1024)  // 50MB
+//	    maxBackups := 10
+//	    rotator := component.NewDefaultLogRotator(maxSize, maxBackups)
+//
+//	    logDir := "/var/log/gibson"
+//	    logWriter, err := component.NewDefaultLogWriter(logDir, rotator)
+//	    if err != nil {
+//	        log.Fatalf("Failed to create log writer: %v", err)
+//	    }
+//
+//	    // Use the custom-configured writer
+//	    writer, err := logWriter.CreateWriter("my-component", "stdout")
+//	    if err != nil {
+//	        log.Fatalf("Failed to create writer: %v", err)
+//	    }
+//	    defer writer.Close()
+//
+//	    // Logs will now rotate at 50MB and keep 10 backups:
+//	    // /var/log/gibson/my-component.log
+//	    // /var/log/gibson/my-component.log.1
+//	    // /var/log/gibson/my-component.log.2
+//	    // ... up to .log.10
 //	}
 //
 // ## Handling Errors

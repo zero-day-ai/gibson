@@ -155,32 +155,32 @@ func TestCalculateCost(t *testing.T) {
 			name:         "OpenAI GPT-4",
 			provider:     "openai",
 			model:        "gpt-4",
-			inputTokens:  1000000, // 1M tokens
-			outputTokens: 500000,  // 500K tokens
+			inputTokens:  1000000,       // 1M tokens
+			outputTokens: 500000,        // 500K tokens
 			expectedCost: 30.00 + 30.00, // 1M * $30/1M + 0.5M * $60/1M
 		},
 		{
 			name:         "Anthropic Claude 3 Opus",
 			provider:     "anthropic",
 			model:        "claude-3-opus",
-			inputTokens:  1000000, // 1M tokens
-			outputTokens: 1000000, // 1M tokens
+			inputTokens:  1000000,       // 1M tokens
+			outputTokens: 1000000,       // 1M tokens
 			expectedCost: 15.00 + 75.00, // 1M * $15/1M + 1M * $75/1M
 		},
 		{
 			name:         "Anthropic Claude 3 Haiku",
 			provider:     "anthropic",
 			model:        "claude-3-haiku",
-			inputTokens:  10000000, // 10M tokens
-			outputTokens: 5000000,  // 5M tokens
+			inputTokens:  10000000,    // 10M tokens
+			outputTokens: 5000000,     // 5M tokens
 			expectedCost: 2.50 + 6.25, // 10M * $0.25/1M + 5M * $1.25/1M
 		},
 		{
 			name:         "Google Gemini 1.5 Flash",
 			provider:     "google",
 			model:        "gemini-1.5-flash",
-			inputTokens:  1000000, // 1M tokens
-			outputTokens: 1000000, // 1M tokens
+			inputTokens:  1000000,     // 1M tokens
+			outputTokens: 1000000,     // 1M tokens
 			expectedCost: 0.35 + 1.05, // 1M * $0.35/1M + 1M * $1.05/1M
 		},
 		{
@@ -203,8 +203,8 @@ func TestCalculateCost(t *testing.T) {
 			name:         "Small token counts",
 			provider:     "openai",
 			model:        "gpt-3.5-turbo",
-			inputTokens:  1000,  // 1K tokens
-			outputTokens: 2000,  // 2K tokens
+			inputTokens:  1000,           // 1K tokens
+			outputTokens: 2000,           // 2K tokens
 			expectedCost: 0.0005 + 0.003, // 0.001M * $0.50/1M + 0.002M * $1.50/1M
 		},
 	}

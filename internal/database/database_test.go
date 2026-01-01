@@ -245,8 +245,8 @@ func TestMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("expected version 2, got %d", version)
+	if version != 11 {
+		t.Errorf("expected version 11, got %d", version)
 	}
 
 	// Verify tables were created
@@ -283,13 +283,13 @@ func TestMigrateIdempotent(t *testing.T) {
 		t.Fatalf("second migrate failed: %v", err)
 	}
 
-	// Version should still be 2 (we have 2 migrations now)
+	// Version should still be 11 (we have 11 migrations now)
 	version, err := migrator.CurrentVersion(ctx)
 	if err != nil {
 		t.Fatalf("failed to get version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("expected version 2, got %d", version)
+	if version != 11 {
+		t.Errorf("expected version 11, got %d", version)
 	}
 }
 
@@ -717,11 +717,11 @@ func TestGetAppliedMigrations(t *testing.T) {
 		t.Fatalf("failed to get applied migrations: %v", err)
 	}
 
-	if len(migrations) != 2 {
-		t.Errorf("expected 2 applied migrations, got %d", len(migrations))
+	if len(migrations) != 11 {
+		t.Errorf("expected 11 applied migrations, got %d", len(migrations))
 	}
 
-	if len(migrations) >= 2 {
+	if len(migrations) >= 11 {
 		// Check first migration
 		if migrations[0].Version != 1 {
 			t.Errorf("expected version 1, got %d", migrations[0].Version)
@@ -729,12 +729,12 @@ func TestGetAppliedMigrations(t *testing.T) {
 		if migrations[0].Name != "initial_schema" {
 			t.Errorf("expected name 'initial_schema', got %s", migrations[0].Name)
 		}
-		// Check second migration
-		if migrations[1].Version != 2 {
-			t.Errorf("expected version 2, got %d", migrations[1].Version)
+		// Check last migration
+		if migrations[10].Version != 11 {
+			t.Errorf("expected version 11, got %d", migrations[10].Version)
 		}
-		if migrations[1].Name != "mission_memory" {
-			t.Errorf("expected name 'mission_memory', got %s", migrations[1].Name)
+		if migrations[10].Name != "mission_consolidation_columns" {
+			t.Errorf("expected name 'mission_consolidation_columns', got %s", migrations[10].Name)
 		}
 	}
 }

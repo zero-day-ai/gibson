@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -239,16 +240,16 @@ func CompleteMissionNames(cmd *cobra.Command, args []string, toComplete string) 
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	missionDAO := database.NewMissionDAO(ctx.DB)
+	missionStore := mission.NewDBMissionStore(ctx.DB)
 	// List all missions (empty status filter)
-	missions, err := missionDAO.List(context.Background(), "")
+	missions, err := missionStore.List(context.Background(), mission.NewMissionFilter())
 	if err != nil {
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
 	names := make([]string, 0, len(missions))
-	for _, mission := range missions {
-		names = append(names, mission.Name)
+	for _, m := range missions {
+		names = append(names, m.Name)
 	}
 
 	return names, cobra.ShellCompDirectiveNoFileComp
@@ -263,16 +264,16 @@ func CompleteMissionIDs(cmd *cobra.Command, args []string, toComplete string) ([
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	missionDAO := database.NewMissionDAO(ctx.DB)
+	missionStore := mission.NewDBMissionStore(ctx.DB)
 	// List all missions (empty status filter)
-	missions, err := missionDAO.List(context.Background(), "")
+	missions, err := missionStore.List(context.Background(), mission.NewMissionFilter())
 	if err != nil {
 		return []string{}, cobra.ShellCompDirectiveNoFileComp
 	}
 
 	ids := make([]string, 0, len(missions))
-	for _, mission := range missions {
-		ids = append(ids, mission.ID.String())
+	for _, m := range missions {
+		ids = append(ids, m.ID.String())
 	}
 
 	return ids, cobra.ShellCompDirectiveNoFileComp
@@ -341,11 +342,11 @@ func CompleteCredentialType(cmd *cobra.Command, args []string, toComplete string
 // CompleteMissionStatus returns completion suggestions for mission status values
 func CompleteMissionStatus(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	statuses := []string{
-		string(database.MissionStatusPending),
-		string(database.MissionStatusRunning),
-		string(database.MissionStatusCompleted),
-		string(database.MissionStatusFailed),
-		string(database.MissionStatusCancelled),
+		string(mission.MissionStatusPending),
+		string(mission.MissionStatusRunning),
+		string(mission.MissionStatusCompleted),
+		string(mission.MissionStatusFailed),
+		string(mission.MissionStatusCancelled),
 	}
 	return statuses, cobra.ShellCompDirectiveNoFileComp
 }

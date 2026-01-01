@@ -40,22 +40,22 @@ type PayloadStats struct {
 	PayloadName string   `json:"payload_name"`
 
 	// Execution counts
-	TotalExecutions    int `json:"total_executions"`
-	SuccessfulAttacks  int `json:"successful_attacks"`
-	FailedExecutions   int `json:"failed_executions"`
-	TimeoutCount       int `json:"timeout_count"`
+	TotalExecutions   int `json:"total_executions"`
+	SuccessfulAttacks int `json:"successful_attacks"`
+	FailedExecutions  int `json:"failed_executions"`
+	TimeoutCount      int `json:"timeout_count"`
 
 	// Success metrics
-	SuccessRate       float64 `json:"success_rate"`        // 0.0 - 1.0
-	ConfidenceLevel   float64 `json:"confidence_level"`    // Statistical confidence based on sample size
-	AverageConfidence float64 `json:"average_confidence"`  // Average confidence score of successful attacks
+	SuccessRate       float64 `json:"success_rate"`       // 0.0 - 1.0
+	ConfidenceLevel   float64 `json:"confidence_level"`   // Statistical confidence based on sample size
+	AverageConfidence float64 `json:"average_confidence"` // Average confidence score of successful attacks
 
 	// Performance metrics
-	AverageDuration     time.Duration `json:"average_duration"`
-	MedianDuration      time.Duration `json:"median_duration"`
-	AverageTokensUsed   float64       `json:"average_tokens_used"`
-	AverageCost         float64       `json:"average_cost"`
-	TotalCost           float64       `json:"total_cost"`
+	AverageDuration   time.Duration `json:"average_duration"`
+	MedianDuration    time.Duration `json:"median_duration"`
+	AverageTokensUsed float64       `json:"average_tokens_used"`
+	AverageCost       float64       `json:"average_cost"`
+	TotalCost         float64       `json:"total_cost"`
 
 	// Finding metrics
 	FindingsCreated     int     `json:"findings_created"`
@@ -65,8 +65,8 @@ type PayloadStats struct {
 	TargetTypeBreakdown map[types.TargetType]*TargetTypeBreakdown `json:"target_type_breakdown"`
 
 	// Temporal data
-	FirstExecution time.Time `json:"first_execution"`
-	LastExecution  time.Time `json:"last_execution"`
+	FirstExecution time.Time  `json:"first_execution"`
+	LastExecution  time.Time  `json:"last_execution"`
 	LastSuccess    *time.Time `json:"last_success,omitempty"`
 
 	// Trend data (last 30 days)
@@ -142,23 +142,23 @@ type CategoryBreakdown struct {
 
 // RecommendationFilter defines filters for payload recommendations
 type RecommendationFilter struct {
-	TargetType       *types.TargetType  `json:"target_type,omitempty"`
-	Category         *PayloadCategory   `json:"category,omitempty"`
-	MinSuccessRate   float64            `json:"min_success_rate"`   // Minimum success rate (0.0 - 1.0)
-	MinExecutions    int                `json:"min_executions"`     // Minimum execution count for confidence
-	Severity         *agent.FindingSeverity `json:"severity,omitempty"`
-	MaxDuration      *time.Duration     `json:"max_duration,omitempty"`
-	MaxCost          *float64           `json:"max_cost,omitempty"`
-	Limit            int                `json:"limit"` // Maximum number of recommendations
+	TargetType     *types.TargetType      `json:"target_type,omitempty"`
+	Category       *PayloadCategory       `json:"category,omitempty"`
+	MinSuccessRate float64                `json:"min_success_rate"` // Minimum success rate (0.0 - 1.0)
+	MinExecutions  int                    `json:"min_executions"`   // Minimum execution count for confidence
+	Severity       *agent.FindingSeverity `json:"severity,omitempty"`
+	MaxDuration    *time.Duration         `json:"max_duration,omitempty"`
+	MaxCost        *float64               `json:"max_cost,omitempty"`
+	Limit          int                    `json:"limit"` // Maximum number of recommendations
 }
 
 // PayloadRecommendation represents a recommended payload with context
 type PayloadRecommendation struct {
-	Payload     *Payload      `json:"payload"`
-	Stats       *PayloadStats `json:"stats"`
-	Score       float64       `json:"score"`        // Recommendation score (0.0 - 1.0)
-	Reason      string        `json:"reason"`       // Why this payload is recommended
-	Confidence  float64       `json:"confidence"`   // Confidence in the recommendation
+	Payload    *Payload      `json:"payload"`
+	Stats      *PayloadStats `json:"stats"`
+	Score      float64       `json:"score"`      // Recommendation score (0.0 - 1.0)
+	Reason     string        `json:"reason"`     // Why this payload is recommended
+	Confidence float64       `json:"confidence"` // Confidence in the recommendation
 }
 
 // ExportFormat defines the format for exporting statistics

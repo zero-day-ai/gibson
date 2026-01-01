@@ -25,7 +25,7 @@ func TestMockEmbedder_Deterministic(t *testing.T) {
 	// Should be identical
 	require.Equal(t, len(embedding1), len(embedding2))
 	for i := range embedding1 {
-		assert.Equal(t, embedding1[i], embedding2[i], 
+		assert.Equal(t, embedding1[i], embedding2[i],
 			"embedding values should be deterministic at index %d", i)
 	}
 }
@@ -118,7 +118,7 @@ func TestMockEmbedder_EmbedBatch(t *testing.T) {
 	for i, text := range texts {
 		individual, err := embedder.Embed(ctx, text)
 		require.NoError(t, err)
-		
+
 		for j := range individual {
 			assert.Equal(t, individual[j], embeddings[i][j],
 				"batch embedding %d should match individual embedding at index %d", i, j)
@@ -251,7 +251,7 @@ func TestMockEmbedder_VectorNormalization(t *testing.T) {
 	for _, val := range embedding {
 		sumSquares += val * val
 	}
-	
+
 	// The mock embedder normalizes vectors, so the L2 norm should be approximately 1.0
 	assert.InDelta(t, 1.0, sumSquares, 0.001, "embedding should be normalized to unit length")
 }

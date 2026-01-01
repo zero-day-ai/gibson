@@ -17,11 +17,11 @@ import (
 
 func TestEffectivenessTracker_GetPayloadStats(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupPayload   func(*testing.T, PayloadStore) types.ID
+		name            string
+		setupPayload    func(*testing.T, PayloadStore) types.ID
 		setupExecutions func(*testing.T, ExecutionStore, types.ID)
-		wantStats      func(*testing.T, *PayloadStats)
-		wantErr        bool
+		wantStats       func(*testing.T, *PayloadStats)
+		wantErr         bool
 	}{
 		{
 			name: "no executions",
@@ -229,11 +229,11 @@ func TestEffectivenessTracker_GetPayloadStats(t *testing.T) {
 
 func TestEffectivenessTracker_GetCategoryStats(t *testing.T) {
 	tests := []struct {
-		name        string
-		category    PayloadCategory
-		setupData   func(*testing.T, PayloadStore, ExecutionStore)
-		wantStats   func(*testing.T, *CategoryStats)
-		wantErr     bool
+		name      string
+		category  PayloadCategory
+		setupData func(*testing.T, PayloadStore, ExecutionStore)
+		wantStats func(*testing.T, *CategoryStats)
+		wantErr   bool
 	}{
 		{
 			name:     "empty category",
@@ -272,9 +272,9 @@ func TestEffectivenessTracker_GetCategoryStats(t *testing.T) {
 			wantStats: func(t *testing.T, stats *CategoryStats) {
 				assert.Equal(t, CategoryJailbreak, stats.Category)
 				assert.Equal(t, 2, stats.TotalPayloads)
-				assert.Equal(t, 6, stats.TotalExecutions)      // 2 payloads * 3 execs
-				assert.Equal(t, 4, stats.SuccessfulAttacks)    // 2 payloads * 2 success
-				assert.Equal(t, 2, stats.FailedExecutions)     // 2 payloads * 1 fail
+				assert.Equal(t, 6, stats.TotalExecutions)   // 2 payloads * 3 execs
+				assert.Equal(t, 4, stats.SuccessfulAttacks) // 2 payloads * 2 success
+				assert.Equal(t, 2, stats.FailedExecutions)  // 2 payloads * 1 fail
 				assert.InDelta(t, 0.667, stats.SuccessRate, 0.01)
 				assert.Equal(t, 4, stats.FindingsCreated)
 				assert.Equal(t, 1.0, stats.FindingRate)
@@ -623,11 +623,11 @@ func TestEffectivenessTracker_GetRecommendations(t *testing.T) {
 
 func TestEffectivenessTracker_ExportStats(t *testing.T) {
 	tests := []struct {
-		name       string
-		format     ExportFormat
-		setupData  func(*testing.T, PayloadStore, ExecutionStore)
-		validate   func(*testing.T, []byte)
-		wantErr    bool
+		name      string
+		format    ExportFormat
+		setupData func(*testing.T, PayloadStore, ExecutionStore)
+		validate  func(*testing.T, []byte)
+		wantErr   bool
 	}{
 		{
 			name:   "export JSON format",
@@ -871,9 +871,9 @@ func TestCalculateRecommendationScore(t *testing.T) {
 
 func TestGenerateRecommendationReason(t *testing.T) {
 	tests := []struct {
-		name          string
-		stats         *PayloadStats
-		wantContains  []string
+		name         string
+		stats        *PayloadStats
+		wantContains []string
 	}{
 		{
 			name: "high success rate",

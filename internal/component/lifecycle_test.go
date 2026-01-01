@@ -3,7 +3,10 @@ package component
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // mockHealthMonitor is a mock implementation of HealthMonitor for testing.
@@ -58,6 +62,8 @@ func (m *mockHealthMonitor) GetHealth(componentName string) HealthStatus {
 
 func (m *mockHealthMonitor) RegisterComponent(name string, healthEndpoint string) {}
 
+func (m *mockHealthMonitor) RegisterComponentWithChecker(name string, checker HealthChecker) {}
+
 func (m *mockHealthMonitor) UnregisterComponent(name string) {}
 
 func (m *mockHealthMonitor) setCheckError(err error) {
@@ -89,7 +95,8 @@ func (m *mockStatusUpdater) UpdateStatus(ctx context.Context, id int64, status C
 func TestNewLifecycleManager(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	assert.NotNil(t, manager)
 	assert.Equal(t, DefaultStartupTimeout, manager.startupTimeout)
@@ -111,6 +118,8 @@ func TestNewLifecycleManagerWithTimeouts(t *testing.T) {
 	manager := NewLifecycleManagerWithTimeouts(
 		healthMonitor,
 		dao,
+		nil, // logWriter
+		nil, // localTracker
 		startupTimeout,
 		shutdownTimeout,
 		portStart,
@@ -128,7 +137,8 @@ func TestNewLifecycleManagerWithTimeouts(t *testing.T) {
 func TestFindAvailablePort(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	port, err := manager.findAvailablePort()
 	require.NoError(t, err)
@@ -143,7 +153,8 @@ func TestFindAvailablePort(t *testing.T) {
 func TestIsPortAvailable(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	// Find an available port
 	port, err := manager.findAvailablePort()
@@ -165,7 +176,8 @@ func TestIsPortAvailable(t *testing.T) {
 func TestStartComponent_NilComponent(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	port, err := manager.StartComponent(ctx, nil)
@@ -178,7 +190,8 @@ func TestStartComponent_NilComponent(t *testing.T) {
 func TestStartComponent_NoManifest(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	comp := &Component{
@@ -198,7 +211,8 @@ func TestStartComponent_NoManifest(t *testing.T) {
 func TestStartComponent_AlreadyRunning(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	// Create a long-running process
@@ -234,7 +248,8 @@ func TestStartComponent_AlreadyRunning(t *testing.T) {
 func TestStopComponent_NilComponent(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	err := manager.StopComponent(ctx, nil)
@@ -246,7 +261,8 @@ func TestStopComponent_NilComponent(t *testing.T) {
 func TestStopComponent_NotRunning(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	comp := &Component{
@@ -265,7 +281,8 @@ func TestStopComponent_NotRunning(t *testing.T) {
 func TestStopComponent_GracefulShutdown(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	// Create a process that will shutdown gracefully
@@ -301,6 +318,8 @@ func TestStopComponent_ForceKill(t *testing.T) {
 	manager := NewLifecycleManagerWithTimeouts(
 		healthMonitor,
 		dao,
+		nil, // logWriter
+		nil, // localTracker
 		5*time.Second,
 		500*time.Millisecond, // Short timeout
 		50000,
@@ -338,7 +357,8 @@ func TestStopComponent_ForceKill(t *testing.T) {
 func TestGetStatus(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	tests := []struct {
@@ -393,7 +413,8 @@ func TestGetStatus(t *testing.T) {
 func TestGetStatus_RunningProcess(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	cmd := exec.Command("sleep", "5")
@@ -431,7 +452,8 @@ func TestGetStatus_RunningProcess(t *testing.T) {
 func TestGetStatus_DeadProcess(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 	ctx := context.Background()
 
 	cmd := exec.Command("sleep", "0.1")
@@ -461,7 +483,8 @@ func TestGetStatus_DeadProcess(t *testing.T) {
 func TestIsProcessAlive(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	// Test with running process
 	cmd := exec.Command("sleep", "5")
@@ -479,7 +502,8 @@ func TestIsProcessAlive(t *testing.T) {
 func TestBuildHealthEndpoint(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	tests := []struct {
 		name        string
@@ -534,11 +558,195 @@ func TestBuildHealthEndpoint(t *testing.T) {
 	}
 }
 
+// TestLifecycleWithGRPCHealthCheck tests lifecycle with gRPC health check config.
+func TestLifecycleWithGRPCHealthCheck(t *testing.T) {
+	// Start a gRPC server with health checking
+	server, lis, addr, _ := startGRPCHealthServer(t, grpc_health_v1.HealthCheckResponse_SERVING)
+	defer server.Stop()
+	defer lis.Close()
+
+	// Parse host and port
+	host, portStr, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	var grpcPort int
+	_, err = fmt.Sscanf(portStr, "%d", &grpcPort)
+	require.NoError(t, err)
+
+	// Create component with gRPC health check config
+	comp := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "grpc-test-agent",
+		Version: "1.0.0",
+		Status:  ComponentStatusAvailable,
+		BinPath: createTestHealthServer(t),
+		Manifest: &Manifest{
+			Name:    "grpc-test-agent",
+			Version: "1.0.0",
+			Runtime: &RuntimeConfig{
+				Type:       RuntimeTypeBinary,
+				Entrypoint: "test-server",
+				HealthCheck: &HealthCheckConfig{
+					Protocol: HealthCheckProtocolGRPC,
+				},
+			},
+		},
+	}
+
+	// Verify ProtocolAwareHealthChecker can be created with gRPC config
+	checker := NewProtocolAwareHealthChecker(host, grpcPort, comp.Manifest.Runtime.HealthCheck)
+	defer checker.Close()
+
+	// Before check, protocol should be auto (not yet detected)
+	assert.Equal(t, HealthCheckProtocolAuto, checker.Protocol())
+
+	// Perform health check against the gRPC server
+	ctx := context.Background()
+	err = checker.Check(ctx)
+	assert.NoError(t, err)
+
+	// After successful check, should have detected gRPC
+	assert.Equal(t, HealthCheckProtocolGRPC, checker.Protocol())
+	assert.Equal(t, HealthCheckProtocolGRPC, checker.DetectedProtocol())
+}
+
+// TestLifecycleWithHTTPHealthCheck tests lifecycle with HTTP health check config.
+func TestLifecycleWithHTTPHealthCheck(t *testing.T) {
+	// Create HTTP server
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer httpServer.Close()
+
+	// Parse host and port
+	host, portStr, err := net.SplitHostPort(httpServer.Listener.Addr().String())
+	require.NoError(t, err)
+	var httpPort int
+	_, err = fmt.Sscanf(portStr, "%d", &httpPort)
+	require.NoError(t, err)
+
+	// Create component with HTTP health check config
+	comp := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "http-test-agent",
+		Version: "1.0.0",
+		Status:  ComponentStatusAvailable,
+		BinPath: createTestHealthServer(t),
+		Manifest: &Manifest{
+			Name:    "http-test-agent",
+			Version: "1.0.0",
+			Runtime: &RuntimeConfig{
+				Type:       RuntimeTypeBinary,
+				Entrypoint: "test-server",
+				HealthCheck: &HealthCheckConfig{
+					Protocol: HealthCheckProtocolHTTP,
+					Endpoint: "/health",
+				},
+			},
+		},
+	}
+
+	// Verify ProtocolAwareHealthChecker can be created with HTTP config
+	checker := NewProtocolAwareHealthChecker(host, httpPort, comp.Manifest.Runtime.HealthCheck)
+	defer checker.Close()
+
+	// Before check, protocol should be auto (not yet detected)
+	assert.Equal(t, HealthCheckProtocolAuto, checker.Protocol())
+
+	// Perform health check
+	ctx := context.Background()
+	err = checker.Check(ctx)
+	assert.NoError(t, err)
+
+	// After successful check, should have detected HTTP
+	assert.Equal(t, HealthCheckProtocolHTTP, checker.Protocol())
+	assert.Equal(t, HealthCheckProtocolHTTP, checker.DetectedProtocol())
+}
+
+// TestLifecycleWithAutoDetectHealthCheck tests lifecycle with auto-detect config.
+func TestLifecycleWithAutoDetectHealthCheck(t *testing.T) {
+	// Start a gRPC server
+	server, lis, addr, _ := startGRPCHealthServer(t, grpc_health_v1.HealthCheckResponse_SERVING)
+	defer server.Stop()
+	defer lis.Close()
+
+	// Parse host and port
+	host, portStr, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	var grpcPort int
+	_, err = fmt.Sscanf(portStr, "%d", &grpcPort)
+	require.NoError(t, err)
+
+	// Create component with auto-detect health check config
+	comp := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "auto-test-agent",
+		Version: "1.0.0",
+		Status:  ComponentStatusAvailable,
+		BinPath: createTestHealthServer(t),
+		Manifest: &Manifest{
+			Name:    "auto-test-agent",
+			Version: "1.0.0",
+			Runtime: &RuntimeConfig{
+				Type:       RuntimeTypeBinary,
+				Entrypoint: "test-server",
+				HealthCheck: &HealthCheckConfig{
+					Protocol: HealthCheckProtocolAuto,
+				},
+			},
+		},
+	}
+
+	// Verify ProtocolAwareHealthChecker can be created with auto config
+	checker := NewProtocolAwareHealthChecker(host, grpcPort, comp.Manifest.Runtime.HealthCheck)
+	defer checker.Close()
+
+	// Before check, protocol should be auto
+	assert.Equal(t, HealthCheckProtocolAuto, checker.Protocol())
+
+	// Perform health check - should detect gRPC
+	ctx := context.Background()
+	err = checker.Check(ctx)
+	assert.NoError(t, err)
+
+	// After check, should have detected gRPC
+	assert.Equal(t, HealthCheckProtocolGRPC, checker.Protocol())
+	assert.Equal(t, HealthCheckProtocolGRPC, checker.DetectedProtocol())
+}
+
+// TestLifecycleWithNilHealthCheckConfig tests lifecycle with nil health check config (defaults to auto).
+func TestLifecycleWithNilHealthCheckConfig(t *testing.T) {
+	// Create component without health check config (nil)
+	comp := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "nil-config-agent",
+		Version: "1.0.0",
+		Status:  ComponentStatusAvailable,
+		BinPath: createTestHealthServer(t),
+		Manifest: &Manifest{
+			Name:    "nil-config-agent",
+			Version: "1.0.0",
+			Runtime: &RuntimeConfig{
+				Type:        RuntimeTypeBinary,
+				Entrypoint:  "test-server",
+				HealthCheck: nil, // Explicit nil
+			},
+		},
+	}
+
+	// Verify ProtocolAwareHealthChecker can be created with nil config
+	checker := NewProtocolAwareHealthChecker("localhost", 50000, comp.Manifest.Runtime.HealthCheck)
+	defer checker.Close()
+
+	// Should default to auto-detect
+	assert.Equal(t, HealthCheckProtocolAuto, checker.Protocol())
+}
+
 // TestConcurrentOperations tests concurrent lifecycle operations.
 func TestConcurrentOperations(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	var wg sync.WaitGroup
 	iterations := 10
@@ -568,7 +776,8 @@ func TestConcurrentOperations(t *testing.T) {
 func TestKillProcess(t *testing.T) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	// Test killing nil process
 	err := manager.killProcess(nil)
@@ -612,7 +821,8 @@ sleep 10
 func BenchmarkFindAvailablePort(b *testing.B) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -627,7 +837,8 @@ func BenchmarkFindAvailablePort(b *testing.B) {
 func BenchmarkIsPortAvailable(b *testing.B) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -639,7 +850,8 @@ func BenchmarkIsPortAvailable(b *testing.B) {
 func BenchmarkIsProcessAlive(b *testing.B) {
 	healthMonitor := newMockHealthMonitor()
 	dao := &mockStatusUpdater{}
-	manager := NewLifecycleManager(healthMonitor, dao)
+	localTracker := NewDefaultLocalTracker()
+	manager := NewLifecycleManager(healthMonitor, dao, nil, localTracker)
 
 	cmd := exec.Command("sleep", "60")
 	err := cmd.Start()
@@ -652,4 +864,384 @@ func BenchmarkIsProcessAlive(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_ = manager.isProcessAlive(cmd.Process.Pid)
 	}
+}
+
+// LogWriter Integration Tests
+
+// mockLogWriter is a mock implementation of LogWriter for failure testing.
+type mockLogWriter struct {
+	mu          sync.Mutex
+	createErr   error
+	closeErr    error
+	writers     map[string][]io.WriteCloser
+	createCalls int
+	closeCalls  int
+}
+
+func newMockLogWriter() *mockLogWriter {
+	return &mockLogWriter{
+		writers: make(map[string][]io.WriteCloser),
+	}
+}
+
+func (m *mockLogWriter) CreateWriter(componentName string, stream string) (io.WriteCloser, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.createCalls++
+
+	if m.createErr != nil {
+		return nil, m.createErr
+	}
+
+	// Return a no-op writer
+	writer := &noopWriter{}
+	m.writers[componentName] = append(m.writers[componentName], writer)
+	return writer, nil
+}
+
+func (m *mockLogWriter) Close(componentName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.closeCalls++
+
+	if m.closeErr != nil {
+		return m.closeErr
+	}
+
+	delete(m.writers, componentName)
+	return nil
+}
+
+func (m *mockLogWriter) getCreateCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createCalls
+}
+
+func (m *mockLogWriter) getCloseCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closeCalls
+}
+
+func (m *mockLogWriter) setCreateError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.createErr = err
+}
+
+func (m *mockLogWriter) setCloseError(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closeErr = err
+}
+
+// noopWriter is a no-op implementation of io.WriteCloser
+type noopWriter struct{}
+
+func (w *noopWriter) Write(p []byte) (n int, err error) {
+	return len(p), nil
+}
+
+func (w *noopWriter) Close() error {
+	return nil
+}
+
+// TestStartComponent_CapturesOutput verifies that output is captured to log files.
+func TestStartComponent_CapturesOutput(t *testing.T) {
+	// Create temporary log directory
+	tempDir := t.TempDir()
+
+	// Create DefaultLogWriter
+	logWriter, err := NewDefaultLogWriter(tempDir, nil)
+	require.NoError(t, err)
+
+	healthMonitor := newMockHealthMonitor()
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManagerWithTimeouts(
+		healthMonitor,
+		dao,
+		logWriter,
+		nil, // localTracker
+		2*time.Second, // Short timeout so test runs faster
+		5*time.Second,
+		50000,
+		51000,
+	)
+
+	ctx := context.Background()
+
+	// Create a test script that outputs text and stays running a bit
+	testScript := createTestOutputScript(t, "Hello from stdout", "Error from stderr")
+
+	comp := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "output-test-agent",
+		Version: "1.0.0",
+		Status:  ComponentStatusAvailable,
+		BinPath: testScript,
+		Manifest: &Manifest{
+			Name:    "output-test-agent",
+			Version: "1.0.0",
+			Runtime: &RuntimeConfig{
+				Type:       RuntimeTypeBinary,
+				Entrypoint: testScript,
+			},
+		},
+	}
+
+	// Start the component (will fail health check but logs should be written)
+	_, startErr := manager.StartComponent(ctx, comp)
+	// Expected to fail health check, but we don't care - we just want logs
+
+	// Close log writers explicitly to flush
+	if err := logWriter.Close(comp.Name); err != nil {
+		t.Logf("warning: failed to close log writer: %v", err)
+	}
+
+	// Give a moment for file system
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify log file exists
+	logPath := filepath.Join(tempDir, "output-test-agent.log")
+	logData, err := os.ReadFile(logPath)
+	require.NoError(t, err, "log file should exist")
+
+	// Verify output contains stdout and stderr
+	logContent := string(logData)
+	assert.Contains(t, logContent, "Hello from stdout", "stdout should be captured")
+	assert.Contains(t, logContent, "Error from stderr", "stderr should be captured")
+	assert.Contains(t, logContent, "[STDOUT]", "stdout marker should be present")
+	assert.Contains(t, logContent, "[STDERR]", "stderr marker should be present")
+
+	// Verify we got an error (since health check will fail)
+	assert.Error(t, startErr)
+}
+
+// TestStartComponent_LogFailureDoesNotBlock verifies that logging failures don't block component startup.
+func TestStartComponent_LogFailureDoesNotBlock(t *testing.T) {
+	// Create a mock LogWriter that always fails
+	logWriter := newMockLogWriter()
+	logWriter.setCreateError(fmt.Errorf("simulated log writer failure"))
+
+	healthMonitor := newMockHealthMonitor()
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManagerWithTimeouts(
+		healthMonitor,
+		dao,
+		logWriter,
+		nil, // localTracker
+		2*time.Second,
+		5*time.Second,
+		50000,
+		51000,
+	)
+
+	ctx := context.Background()
+
+	// Create a simple script that just sleeps (will fail health check but process will start)
+	testScript := createTestOutputScript(t, "test", "test")
+
+	comp := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "log-failure-test",
+		Version: "1.0.0",
+		Status:  ComponentStatusAvailable,
+		BinPath: testScript,
+		Manifest: &Manifest{
+			Name:    "log-failure-test",
+			Version: "1.0.0",
+			Runtime: &RuntimeConfig{
+				Type:       RuntimeTypeBinary,
+				Entrypoint: testScript,
+			},
+		},
+	}
+
+	// Start the component - process should start despite log writer failure
+	// (health check will fail but that's separate from process startup)
+	_, err := manager.StartComponent(ctx, comp)
+
+	// Verify process started (even though health check failed)
+	// The key point is that PID was assigned, meaning process started
+	assert.Greater(t, comp.PID, 0, "process should have started (PID assigned)")
+
+	// Verify CreateWriter was called (failed, but attempted)
+	assert.Greater(t, logWriter.getCreateCalls(), 0, "CreateWriter should have been called")
+
+	// Clean up - kill the process directly since it's not "running" in component status
+	if comp.PID > 0 {
+		proc, _ := os.FindProcess(comp.PID)
+		if proc != nil {
+			_ = proc.Kill()
+		}
+	}
+
+	// The test verifies that even though logging failed, the process was started
+	// (we got a PID). This proves logging failures don't block component startup.
+	_ = err // Health check failure is expected and not relevant to this test
+}
+
+// TestStopComponent_FlushesLogs verifies that logs are flushed when component stops.
+func TestStopComponent_FlushesLogs(t *testing.T) {
+	// Create temporary log directory
+	tempDir := t.TempDir()
+
+	// Create DefaultLogWriter
+	logWriter, err := NewDefaultLogWriter(tempDir, nil)
+	require.NoError(t, err)
+
+	healthMonitor := newMockHealthMonitor()
+	dao := &mockStatusUpdater{}
+	manager := NewLifecycleManagerWithTimeouts(
+		healthMonitor,
+		dao,
+		logWriter,
+		nil, // localTracker
+		1*time.Second, // Very short timeout
+		5*time.Second,
+		50000,
+		51000,
+	)
+
+	// Create a long-running process that outputs continuously
+	cmd := exec.Command("bash", "-c", `
+counter=0
+while [ $counter -lt 50 ]; do
+  echo "Output line $counter"
+  counter=$((counter+1))
+  sleep 0.1
+done
+`)
+
+	// Set up log writers manually to capture output
+	stdoutWriter, err := logWriter.CreateWriter("flush-test-agent", "stdout")
+	require.NoError(t, err)
+	stderrWriter, err := logWriter.CreateWriter("flush-test-agent", "stderr")
+	require.NoError(t, err)
+
+	cmd.Stdout = stdoutWriter
+	cmd.Stderr = stderrWriter
+
+	// Start the process
+	err = cmd.Start()
+	require.NoError(t, err)
+
+	// Create component manually with running process
+	comp := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "flush-test-agent",
+		Version: "1.0.0",
+		Status:  ComponentStatusRunning,
+		PID:     cmd.Process.Pid,
+		Port:    50000,
+	}
+
+	// Store process reference
+	manager.mu.Lock()
+	manager.processes[comp.Name] = cmd.Process
+	manager.mu.Unlock()
+
+	// Wait for some output to be generated
+	time.Sleep(500 * time.Millisecond)
+
+	// Stop the component - this should flush logs
+	ctx := context.Background()
+	err = manager.StopComponent(ctx, comp)
+	assert.NoError(t, err)
+
+	// Give file system a moment
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify log file exists and has content
+	logPath := filepath.Join(tempDir, "flush-test-agent.log")
+	logData, err := os.ReadFile(logPath)
+	require.NoError(t, err, "log file should exist")
+
+	// Verify we captured output
+	assert.NotEmpty(t, logData, "log file should contain data")
+
+	logContent := string(logData)
+	assert.Contains(t, logContent, "line", "should contain output lines")
+	assert.Contains(t, logContent, "[STDOUT]", "should have stdout marker")
+}
+
+// createTestOutputScript creates a script that outputs to stdout and stderr then runs for a bit.
+func createTestOutputScript(t *testing.T, stdoutMsg, stderrMsg string) string {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "output-test.sh")
+
+	// Immediately output and flush, then sleep to allow health check attempts
+	script := fmt.Sprintf(`#!/bin/bash
+echo "%s"
+echo "%s" >&2
+# Sleep long enough for health checks to attempt
+sleep 3
+`, stdoutMsg, stderrMsg)
+
+	err := os.WriteFile(scriptPath, []byte(script), 0755)
+	require.NoError(t, err)
+
+	return scriptPath
+}
+
+// createTestHealthyScript creates a script that starts a simple HTTP server.
+func createTestHealthyScript(t *testing.T) string {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "healthy-test.sh")
+
+	script := `#!/bin/bash
+# Parse port from arguments
+PORT=50000
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --port)
+      PORT="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+
+# Start simple HTTP server that responds to health checks
+while true; do
+  echo -e "HTTP/1.1 200 OK\r\n\r\nOK" | nc -l -p $PORT -q 1
+done
+`
+
+	err := os.WriteFile(scriptPath, []byte(script), 0755)
+	require.NoError(t, err)
+
+	return scriptPath
+}
+
+// createTestContinuousOutputScript creates a script that continuously outputs text.
+func createTestContinuousOutputScript(t *testing.T) string {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	scriptPath := filepath.Join(tmpDir, "continuous-test.sh")
+
+	// Run long enough that the test can capture and stop it
+	script := `#!/bin/bash
+counter=0
+while [ $counter -lt 50 ]; do
+  echo "Output line $counter"
+  counter=$((counter+1))
+  sleep 0.1
+done
+`
+
+	err := os.WriteFile(scriptPath, []byte(script), 0755)
+	require.NoError(t, err)
+
+	return scriptPath
 }

@@ -452,7 +452,6 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 		Kind:      kind,
 		Name:      manifest.Name,
 		Version:   version,
-		Path:      componentSourceDir, // Deprecated field, kept for backward compatibility
 		RepoPath:  componentSourceDir, // Path to source in _repos/
 		BinPath:   binPath,            // Path to binary in bin/
 		Source:    ComponentSourceExternal,
@@ -493,7 +492,6 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	}
 
 	result.Component = component
-	result.Path = componentSourceDir
 	result.Duration = time.Since(start)
 	result.Installed = true
 
@@ -664,7 +662,7 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 			} else {
 				// Record as failure if manifest doesn't exist
 				result.Failed = append(result.Failed, InstallFailure{
-					Path:  entry.Path,
+					Path: entry.Path,
 					Error: WrapComponentError(ErrCodeManifestNotFound, "component manifest not found", err).
 						WithContext("path", entry.Path),
 				})
@@ -789,9 +787,8 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 			Kind:      kind,
 			Name:      compManifest.Name,
 			Version:   version,
-			RepoPath:  componentDir,                // Path to component in _repos/{repo-name}/{component-subdir}
-			BinPath:   binPath,                     // Path to binary in bin/{artifact-name}
-			Path:      componentDir,                // Deprecated: kept for backward compatibility
+			RepoPath:  componentDir, // Path to component in _repos/{repo-name}/{component-subdir}
+			BinPath:   binPath,      // Path to binary in bin/{artifact-name}
 			Source:    ComponentSourceExternal,
 			Status:    ComponentStatusAvailable,
 			Manifest:  compManifest,
@@ -821,8 +818,8 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 					_ = os.Remove(binPath)
 				}
 				result.Failed = append(result.Failed, InstallFailure{
-					Path:  relPath,
-					Name:  compManifest.Name,
+					Path: relPath,
+					Name: compManifest.Name,
 					Error: WrapComponentError(ErrCodeLoadFailed, "failed to register component", err).
 						WithComponent(compManifest.Name),
 				})
@@ -981,9 +978,8 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 		Kind:      kind,
 		Name:      manifest.Name,
 		Version:   version,
-		RepoPath:  repoDir,            // Path to component in _repos/{repo-name}
-		BinPath:   binPath,            // Path to binary in bin/{artifact-name}
-		Path:      repoDir,            // Deprecated: kept for backward compatibility
+		RepoPath:  repoDir, // Path to component in _repos/{repo-name}
+		BinPath:   binPath, // Path to binary in bin/{artifact-name}
 		Source:    ComponentSourceExternal,
 		Status:    ComponentStatusAvailable,
 		Manifest:  manifest,
@@ -1098,7 +1094,6 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 
 	// Get component path
 	componentDir := filepath.Join(i.homeDir, kind.String()+"s", name)
-	result.Path = componentDir
 
 	// Verify component exists
 	if _, err := os.Stat(componentDir); os.IsNotExist(err) {
@@ -1168,12 +1163,22 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 
 	// Step 4: Rebuild component (unless SkipBuild is set)
 	var buildOutput string
+	var binPath string
 	if !opts.SkipBuild && manifest.Build != nil {
 		buildResult, err := i.buildComponent(ctx, componentDir, manifest)
 		if err != nil {
 			return result, err
 		}
 		buildOutput = buildResult.Stdout + "\n" + buildResult.Stderr
+
+		// Copy artifacts to bin directory after successful build
+		if len(manifest.Build.Artifacts) > 0 {
+			binPath, err = i.copyArtifactsToBin(kind, manifest.Build.Artifacts, componentDir)
+			if err != nil {
+				return result, WrapComponentError(ErrCodeLoadFailed, "failed to copy artifacts", err).
+					WithComponent(name)
+			}
+		}
 	}
 	result.BuildOutput = buildOutput
 
@@ -1183,7 +1188,8 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 			Kind:      kind,
 			Name:      name,
 			Version:   newVersion,
-			Path:      componentDir,
+			RepoPath:  componentDir,
+			BinPath:   binPath,
 			Source:    ComponentSourceExternal,
 			Status:    ComponentStatusAvailable,
 			Manifest:  manifest,
@@ -1254,7 +1260,7 @@ func (i *DefaultInstaller) UpdateAll(ctx context.Context, kind ComponentKind, op
 			// Continue with other components even if one fails
 			result = &UpdateResult{
 				Component: comp,
-				Path:      comp.Path,
+				Path:      comp.RepoPath,
 				Updated:   false,
 			}
 		}
@@ -1313,12 +1319,9 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 			result.WasStopped = false
 			span.SetAttributes(attribute.Bool("gibson.component.was_running", true))
 		}
-
-		result.Path = comp.RepoPath
 	} else {
 		// Fallback to legacy path if no DAO
 		componentDir := filepath.Join(i.homeDir, kind.String()+"s", name)
-		result.Path = componentDir
 
 		// Verify component exists
 		if _, err := os.Stat(componentDir); os.IsNotExist(err) {
@@ -1655,11 +1658,21 @@ func (i *DefaultInstaller) scanComponents(kind ComponentKind) ([]*Component, err
 			version = gitVersion
 		}
 
+		// Calculate BinPath based on artifacts
+		var binPath string
+		if manifest.Build != nil && len(manifest.Build.Artifacts) > 0 {
+			// Use the first artifact as the primary binary
+			primaryArtifact := manifest.Build.Artifacts[0]
+			binDir := filepath.Join(i.homeDir, "bin")
+			binPath = filepath.Join(binDir, primaryArtifact)
+		}
+
 		component := &Component{
 			Kind:      kind,
 			Name:      entry.Name(),
 			Version:   version,
-			Path:      componentDir,
+			RepoPath:  componentDir,
+			BinPath:   binPath,
 			Source:    ComponentSourceExternal,
 			Status:    ComponentStatusAvailable,
 			Manifest:  manifest,

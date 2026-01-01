@@ -171,14 +171,14 @@ func (r *mockIntegrationPayloadRegistry) Get(ctx context.Context, id types.ID) (
 		return p, nil
 	}
 	return &payload.Payload{
-		ID:          id,
-		Name:        "test-payload",
-		Template:    "test template content",
-		Categories:  []payload.PayloadCategory{payload.CategoryJailbreak},
-		Enabled:     true,
-		Severity:    agent.SeverityMedium,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		ID:         id,
+		Name:       "test-payload",
+		Template:   "test template content",
+		Categories: []payload.PayloadCategory{payload.CategoryJailbreak},
+		Enabled:    true,
+		Severity:   agent.SeverityMedium,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
 	}, nil
 }
 
@@ -187,14 +187,14 @@ func (r *mockIntegrationPayloadRegistry) List(ctx context.Context, filter *paylo
 	defer r.mu.Unlock()
 	return []*payload.Payload{
 		{
-			ID:          types.NewID(),
-			Name:        "test-payload",
-			Template:    "test template content",
-			Categories:  []payload.PayloadCategory{payload.CategoryJailbreak},
-			Enabled:     true,
-			Severity:    agent.SeverityMedium,
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			ID:         types.NewID(),
+			Name:       "test-payload",
+			Template:   "test template content",
+			Categories: []payload.PayloadCategory{payload.CategoryJailbreak},
+			Enabled:    true,
+			Severity:   agent.SeverityMedium,
+			CreatedAt:  time.Now(),
+			UpdatedAt:  time.Now(),
 		},
 	}, nil
 }

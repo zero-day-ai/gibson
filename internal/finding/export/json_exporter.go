@@ -53,20 +53,20 @@ func (e *JSONExporter) Export(ctx context.Context, findings []*finding.EnhancedF
 	// Build output structure
 	output := struct {
 		Findings []*finding.EnhancedFinding `json:"findings"`
-		Metadata ExportMetadata              `json:"metadata"`
+		Metadata ExportMetadata             `json:"metadata"`
 	}{
 		Findings: filtered,
 		Metadata: ExportMetadata{
 			TotalCount:    len(findings),
 			ExportedCount: len(filtered),
 			FiltersApplied: FiltersApplied{
-				MinSeverity:      opts.MinSeverity,
-				DateFrom:         opts.DateFrom,
-				DateTo:           opts.DateTo,
-				Categories:       opts.Categories,
-				IncludeResolved:  opts.IncludeResolved,
-				IncludeEvidence:  opts.IncludeEvidence,
-				RedactSensitive:  opts.RedactSensitive,
+				MinSeverity:     opts.MinSeverity,
+				DateFrom:        opts.DateFrom,
+				DateTo:          opts.DateTo,
+				Categories:      opts.Categories,
+				IncludeResolved: opts.IncludeResolved,
+				IncludeEvidence: opts.IncludeEvidence,
+				RedactSensitive: opts.RedactSensitive,
 			},
 		},
 	}
@@ -103,13 +103,13 @@ type ExportMetadata struct {
 
 // FiltersApplied describes which filters were applied during export
 type FiltersApplied struct {
-	MinSeverity      interface{} `json:"min_severity,omitempty"`
-	DateFrom         interface{} `json:"date_from,omitempty"`
-	DateTo           interface{} `json:"date_to,omitempty"`
-	Categories       []string    `json:"categories,omitempty"`
-	IncludeResolved  bool        `json:"include_resolved"`
-	IncludeEvidence  bool        `json:"include_evidence"`
-	RedactSensitive  bool        `json:"redact_sensitive"`
+	MinSeverity     interface{} `json:"min_severity,omitempty"`
+	DateFrom        interface{} `json:"date_from,omitempty"`
+	DateTo          interface{} `json:"date_to,omitempty"`
+	Categories      []string    `json:"categories,omitempty"`
+	IncludeResolved bool        `json:"include_resolved"`
+	IncludeEvidence bool        `json:"include_evidence"`
+	RedactSensitive bool        `json:"redact_sensitive"`
 }
 
 // copyFindings creates a deep copy of findings to avoid modifying originals

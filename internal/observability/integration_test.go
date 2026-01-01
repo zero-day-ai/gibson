@@ -184,8 +184,8 @@ func TestIntegration_MetricsCollection(t *testing.T) {
 		"anthropic",
 		"claude-3-opus",
 		"success",
-		1000, // input tokens
-		500,  // output tokens
+		1000,  // input tokens
+		500,   // output tokens
 		150.5, // latency
 		0.015, // cost
 	)
@@ -618,9 +618,9 @@ func (m *mockAgentHarness) TokenUsage() *llm.TokenTracker {
 
 type mockMetricsRecorder struct{}
 
-func (m *mockMetricsRecorder) RecordCounter(name string, value int64, labels map[string]string)                              {}
-func (m *mockMetricsRecorder) RecordGauge(name string, value float64, labels map[string]string)                             {}
-func (m *mockMetricsRecorder) RecordHistogram(name string, value float64, labels map[string]string)                         {}
+func (m *mockMetricsRecorder) RecordCounter(name string, value int64, labels map[string]string)     {}
+func (m *mockMetricsRecorder) RecordGauge(name string, value float64, labels map[string]string)     {}
+func (m *mockMetricsRecorder) RecordHistogram(name string, value float64, labels map[string]string) {}
 func (m *mockMetricsRecorder) RecordLLMCompletion(slot, provider, model, status string, inputTokens, outputTokens int, latencyMs, cost float64) {
 }
 func (m *mockMetricsRecorder) RecordToolCall(tool, status string, durationMs float64) {}

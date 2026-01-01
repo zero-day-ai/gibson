@@ -407,11 +407,6 @@ func TestGuardrailType_Constants(t *testing.T) {
 			guardrailType: GuardrailTypePII,
 			expected:      "pii",
 		},
-		{
-			name:          "compliance type",
-			guardrailType: GuardrailTypeCompliance,
-			expected:      "compliance",
-		},
 	}
 
 	for _, tt := range tests {

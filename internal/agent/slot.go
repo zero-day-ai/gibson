@@ -14,10 +14,10 @@ type SlotDefinition struct {
 // SlotConfig defines LLM configuration for a slot.
 // This specifies which model to use and how to configure it.
 type SlotConfig struct {
-	Provider    string  `json:"provider"`     // e.g., "anthropic", "openai", "local"
-	Model       string  `json:"model"`        // e.g., "claude-3-opus", "gpt-4"
-	Temperature float64 `json:"temperature"`  // 0.0 - 1.0
-	MaxTokens   int     `json:"max_tokens"`   // Maximum tokens to generate
+	Provider    string  `json:"provider"`    // e.g., "anthropic", "openai", "local"
+	Model       string  `json:"model"`       // e.g., "claude-3-opus", "gpt-4"
+	Temperature float64 `json:"temperature"` // 0.0 - 1.0
+	MaxTokens   int     `json:"max_tokens"`  // Maximum tokens to generate
 }
 
 // SlotConstraints defines requirements for a slot.
@@ -29,10 +29,10 @@ type SlotConstraints struct {
 
 // Feature constants define capabilities that LLMs may support
 const (
-	FeatureToolUse   = "tool_use"   // Function/tool calling
-	FeatureVision    = "vision"     // Image understanding
-	FeatureStreaming = "streaming"  // Streaming responses
-	FeatureJSONMode  = "json_mode"  // Structured JSON output
+	FeatureToolUse   = "tool_use"  // Function/tool calling
+	FeatureVision    = "vision"    // Image understanding
+	FeatureStreaming = "streaming" // Streaming responses
+	FeatureJSONMode  = "json_mode" // Structured JSON output
 )
 
 // NewSlotDefinition creates a new slot definition with basic properties
