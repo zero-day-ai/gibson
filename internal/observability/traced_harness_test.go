@@ -877,7 +877,7 @@ func TestTracedAgentHarness_PromptCapture(t *testing.T) {
 		assert.True(t, hasPrompt, "span should have prompt attribute when capture is enabled")
 	})
 
-	t.Run("prompt capture disabled by default", func(t *testing.T) {
+	t.Run("prompt capture can be disabled", func(t *testing.T) {
 		// Setup
 		mock := &MockAgentHarness{}
 		exporter := tracetest.NewInMemoryExporter()
@@ -887,7 +887,7 @@ func TestTracedAgentHarness_PromptCapture(t *testing.T) {
 		traced := NewTracedAgentHarness(
 			mock,
 			WithTracer(tracer),
-			// No WithPromptCapture - default is false
+			WithPromptCapture(false), // Explicitly disable prompt capture
 		)
 
 		ctx := context.Background()

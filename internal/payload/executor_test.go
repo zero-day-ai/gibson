@@ -631,17 +631,19 @@ func TestExecutionStore_Integration(t *testing.T) {
 // Helper function to create a test payload for executor tests
 func createTestPayloadForExecutor(name string) *Payload {
 	return &Payload{
-		ID:                types.NewID(),
-		Name:              name,
-		Version:           "1.0.0",
-		Description:       "Test payload for " + name,
-		Categories:        []PayloadCategory{CategoryJailbreak},
-		Template:          "Test template",
-		Parameters:        []ParameterDef{},
-		SuccessIndicators: []SuccessIndicator{},
-		Severity:          agent.SeverityMedium,
-		TargetTypes:       []string{string(types.TargetTypeLLMChat)},
-		Enabled:           true,
+		ID:          types.NewID(),
+		Name:        name,
+		Version:     "1.0.0",
+		Description: "Test payload for " + name,
+		Categories:  []PayloadCategory{CategoryJailbreak},
+		Template:    "Test template",
+		Parameters:  []ParameterDef{},
+		SuccessIndicators: []SuccessIndicator{
+			{Type: IndicatorContains, Value: "test", Weight: 1.0},
+		},
+		Severity:    agent.SeverityMedium,
+		TargetTypes: []string{string(types.TargetTypeLLMChat)},
+		Enabled:     true,
 		Metadata: PayloadMetadata{
 			Author: "test",
 		},

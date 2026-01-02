@@ -100,13 +100,16 @@ func InitTracing(ctx context.Context, cfg TracingConfig, langfuse *LangfuseConfi
 			serviceName = defaultServiceName
 		}
 
-		res, err := resource.Merge(
-			resource.Default(),
-			resource.NewWithAttributes(
-				semconv.SchemaURL,
+		// Use resource.New to avoid schema URL conflicts when merging
+		// resource.Default() and custom attributes with different schema versions
+		res, err := resource.New(
+			ctx,
+			resource.WithAttributes(
 				semconv.ServiceName(serviceName),
 				semconv.ServiceVersion(defaultVersion),
 			),
+			resource.WithFromEnv(),      // Include environment variables
+			resource.WithTelemetrySDK(), // Include SDK info
 		)
 		if err != nil {
 			return nil, WrapObservabilityError(ErrExporterConnection, "failed to create resource", err)

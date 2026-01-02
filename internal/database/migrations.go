@@ -106,14 +106,10 @@ func getMigrations() []migration {
 			up:      getMissionWorkflowJSONSchema(),
 			down:    getDownMigration9(),
 		},
+		// Migration 10 (remove_component_runtime_columns) was removed - it broke
+		// the component system by removing status/pid/port columns that the code requires.
 		{
 			version: 10,
-			name:    "remove_component_runtime_columns",
-			up:      getRemoveComponentRuntimeColumnsSchema(),
-			down:    getDownMigration10(),
-		},
-		{
-			version: 11,
 			name:    "mission_consolidation_columns",
 			up:      getMissionConsolidationColumnsSchema(),
 			down:    getDownMigration11(),

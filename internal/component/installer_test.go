@@ -797,3 +797,94 @@ runtime:
 	mockBuilder.AssertExpectations(t)
 	mockDAO.AssertExpectations(t)
 }
+
+// TestInstallRepository_SkipsExistingComponent tests that already-installed components are skipped correctly.
+// This test verifies the idempotency fix where:
+// - A component already exists in the database with a valid binary file
+// - The component should be skipped with SkipReasonAlreadyInstalled
+// - The component should NOT be in Failed or Successful lists
+func TestInstallRepository_SkipsExistingComponent(t *testing.T) {
+	installer, mockGit, _, mockDAO, tmpDir := setupTestInstaller(t)
+
+	// Create temporary directory structure for a mono-repo
+	repoDir := t.TempDir()
+
+	// Create root repository manifest that declares a single agent in a subdirectory
+	rootManifestContent := `kind: repository
+name: test-repo
+version: 1.0.0
+contents:
+  - path: test-agent
+    kind: agent
+`
+	err := os.WriteFile(filepath.Join(repoDir, ManifestFileName), []byte(rootManifestContent), 0644)
+	require.NoError(t, err)
+
+	// Create test-agent subdirectory with its component.yaml
+	agentDir := filepath.Join(repoDir, "test-agent")
+	err = os.MkdirAll(agentDir, 0755)
+	require.NoError(t, err)
+
+	componentManifestContent := `kind: agent
+name: test-agent
+version: 1.0.0
+description: Test agent
+runtime:
+  type: go
+  entrypoint: ./test-agent
+`
+	err = os.WriteFile(filepath.Join(agentDir, ManifestFileName), []byte(componentManifestContent), 0644)
+	require.NoError(t, err)
+
+	// Create a mock binary file in the final destination (where installed components live)
+	// This simulates an already-installed component
+	existingBinDir := filepath.Join(tmpDir, "agents", "bin")
+	err = os.MkdirAll(existingBinDir, 0755)
+	require.NoError(t, err)
+	existingBinPath := filepath.Join(existingBinDir, "test-agent")
+	err = os.WriteFile(existingBinPath, []byte("existing binary"), 0755)
+	require.NoError(t, err)
+
+	// Setup mocks
+	repoURL := "file://" + repoDir
+
+	// Mock git.Clone to copy our temp structure to the installer's repo directory
+	mockGit.On("Clone", repoURL, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		destDir := args.Get(1).(string)
+		// Copy the test directory structure to destination
+		err := copyDir(repoDir, destDir)
+		require.NoError(t, err)
+	}).Return(nil)
+
+	// Mock DAO to return existing component with valid BinPath pointing to existing file
+	existingComponent := &Component{
+		Kind:    ComponentKindAgent,
+		Name:    "test-agent",
+		Version: "test-commit-abc",
+		BinPath: existingBinPath, // Points to the existing binary we created
+		Status:  ComponentStatusAvailable,
+	}
+	mockDAO.On("GetByName", mock.Anything, ComponentKindAgent, "test-agent").Return(existingComponent, nil)
+
+	// Execute InstallAll - this will call installRepository internally
+	opts := InstallOptions{}
+	result, err := installer.InstallAll(context.Background(), repoURL, ComponentKindAgent, opts)
+
+	// Assert
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Verify component was skipped, not installed or failed
+	assert.Len(t, result.Skipped, 1, "should have 1 skipped component")
+	assert.Len(t, result.Failed, 0, "should have 0 failed components")
+	assert.Len(t, result.Successful, 0, "should have 0 successful installations")
+
+	// Verify skip details
+	skipped := result.Skipped[0]
+	assert.Equal(t, "test-agent", skipped.Name)
+	assert.Equal(t, SkipReasonAlreadyInstalled, skipped.Reason)
+
+	// Verify mocks - note that for a skipped component, Create should NOT be called
+	mockGit.AssertExpectations(t)
+	mockDAO.AssertExpectations(t)
+}

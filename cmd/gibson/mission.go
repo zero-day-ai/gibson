@@ -76,6 +76,14 @@ var (
 	missionForceDelete  bool
 )
 
+// getHomeDirFromFlags returns the Gibson home directory from flags or environment
+func getHomeDirFromFlags(flags *GlobalFlags) (string, error) {
+	if flags != nil && flags.HomeDir != "" {
+		return flags.HomeDir, nil
+	}
+	return getGibsonHome()
+}
+
 func init() {
 	// Add subcommands
 	missionCmd.AddCommand(missionListCmd)
@@ -107,7 +115,7 @@ func runMissionList(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}
@@ -158,7 +166,7 @@ func runMissionList(cmd *cobra.Command, args []string) error {
 
 	// Text format
 	if len(missions) == 0 {
-		fmt.Println("No missions found")
+		fmt.Fprintln(cmd.OutOrStdout(), "No missions found")
 		return nil
 	}
 
@@ -194,7 +202,7 @@ func runMissionShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}
@@ -228,7 +236,7 @@ func runMissionShow(cmd *cobra.Command, args []string) error {
 	}
 
 	// Text format - detailed view
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	defer tw.Flush()
 
 	fmt.Fprintf(tw, "NAME:\t%s\n", m.Name)
@@ -283,7 +291,7 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}
@@ -386,7 +394,7 @@ func runMissionResume(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}
@@ -454,7 +462,7 @@ func runMissionStop(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}
@@ -534,7 +542,7 @@ func runMissionDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}

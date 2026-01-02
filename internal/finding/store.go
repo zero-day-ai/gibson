@@ -265,7 +265,7 @@ func (s *DBFindingStore) Get(ctx context.Context, id types.ID) (*EnhancedFinding
 			mission_id, agent_name, delegated_from, category, subcategory,
 			confidence, risk_score, mitre_attack, mitre_atlas, references_json,
 			repro_steps, related_ids, occurrence_count, cvss_vector, cvss_score,
-			cwe_ids, created_at, updated_at
+			cwe_ids, target_id, created_at, updated_at
 		FROM findings
 		WHERE id = ?
 	`
@@ -359,8 +359,15 @@ func (s *DBFindingStore) GetWithFilter(ctx context.Context, missionID types.ID, 
 		args = append(args, *filter.MaxCVSS)
 	}
 
-	// Build query
-	query := "SELECT * FROM findings WHERE " + strings.Join(conditions, " AND ") + " ORDER BY created_at DESC"
+	// Build query with explicit column list matching scan order
+	columns := `
+		id, title, description, severity, status, remediation,
+		mission_id, agent_name, delegated_from, category, subcategory,
+		confidence, risk_score, mitre_attack, mitre_atlas, references_json,
+		repro_steps, related_ids, occurrence_count, cvss_vector, cvss_score,
+		cwe_ids, target_id, created_at, updated_at
+	`
+	query := "SELECT " + columns + " FROM findings WHERE " + strings.Join(conditions, " AND ") + " ORDER BY created_at DESC"
 
 	rows, err := conn.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -399,7 +406,7 @@ func (s *DBFindingStore) ListWithPagination(ctx context.Context, missionID types
 			mission_id, agent_name, delegated_from, category, subcategory,
 			confidence, risk_score, mitre_attack, mitre_atlas, references_json,
 			repro_steps, related_ids, occurrence_count, cvss_vector, cvss_score,
-			cwe_ids, created_at, updated_at
+			cwe_ids, target_id, created_at, updated_at
 		FROM findings
 		WHERE mission_id = ? AND status != 'deleted'
 		ORDER BY created_at DESC
@@ -419,18 +426,22 @@ func (s *DBFindingStore) ListWithPagination(ctx context.Context, missionID types
 func (s *DBFindingStore) List(ctx context.Context, missionID types.ID, filter *FindingFilter) ([]EnhancedFinding, error) {
 	query := `
 		SELECT
-			id, mission_id, agent_name, delegated_from,
-			title, description, severity, confidence, category, subcategory,
-			status, risk_score, remediation, references,
-			target_id, evidence, cvss, cwe, metadata,
-			mitre_attack, mitre_atlas, repro_steps,
-			related_ids, occurrence_count,
-			created_at, updated_at
-		FROM enhanced_findings
-		WHERE mission_id = ?
+			id, title, description, severity, status, remediation,
+			mission_id, agent_name, delegated_from, category, subcategory,
+			confidence, risk_score, mitre_attack, mitre_atlas, references_json,
+			repro_steps, related_ids, occurrence_count, cvss_vector, cvss_score,
+			cwe_ids, target_id, created_at, updated_at
+		FROM findings
+		WHERE 1=1
 	`
 
-	args := []interface{}{missionID.String()}
+	args := []interface{}{}
+
+	// Add mission ID filter if provided
+	if missionID.String() != "" {
+		query += " AND mission_id = ?"
+		args = append(args, missionID.String())
+	}
 
 	// Apply filters
 	if filter != nil {
@@ -646,9 +657,18 @@ func (s *DBFindingStore) Search(ctx context.Context, query string, limit int) ([
 
 	conn := s.db.Conn()
 
+	// Column list matching scan order
+	columns := `
+		id, title, description, severity, status, remediation,
+		mission_id, agent_name, delegated_from, category, subcategory,
+		confidence, risk_score, mitre_attack, mitre_atlas, references_json,
+		repro_steps, related_ids, occurrence_count, cvss_vector, cvss_score,
+		cwe_ids, target_id, created_at, updated_at
+	`
+
 	// Try FTS5 virtual table first
 	ftsQuery := `
-		SELECT f.* FROM findings f
+		SELECT ` + columns + ` FROM findings f
 		INNER JOIN findings_fts fts ON f.rowid = fts.rowid
 		WHERE findings_fts MATCH ?
 		AND f.status != 'deleted'
@@ -660,7 +680,7 @@ func (s *DBFindingStore) Search(ctx context.Context, query string, limit int) ([
 	if err != nil {
 		// Fallback to simple LIKE search if FTS5 not available
 		fallbackQuery := `
-			SELECT * FROM findings
+			SELECT ` + columns + ` FROM findings
 			WHERE (title LIKE ? OR description LIKE ? OR remediation LIKE ?)
 			AND status != 'deleted'
 			ORDER BY created_at DESC
@@ -746,6 +766,7 @@ func (s *DBFindingStore) scanFinding(scanner interface {
 		reproStepsJSON  string
 		relatedIDsJSON  string
 		cweJSON         string
+		targetIDStr     sql.NullString
 	)
 
 	err := scanner.Scan(
@@ -771,6 +792,7 @@ func (s *DBFindingStore) scanFinding(scanner interface {
 		&cvssVector,
 		&cvssScore,
 		&cweJSON,
+		&targetIDStr,
 		&f.CreatedAt,
 		&f.UpdatedAt,
 	)
@@ -805,6 +827,14 @@ func (s *DBFindingStore) scanFinding(scanner interface {
 
 	if remediation.Valid {
 		f.Remediation = remediation.String
+	}
+
+	// Handle target ID
+	if targetIDStr.Valid && targetIDStr.String != "" {
+		targetID, err := types.ParseID(targetIDStr.String)
+		if err == nil {
+			f.Finding.TargetID = &targetID
+		}
 	}
 
 	// Handle CVSS score

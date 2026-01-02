@@ -8,15 +8,35 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/crypto"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
+
+// testMutex ensures credential tests run sequentially to avoid etcd port conflicts
+var testMutex sync.Mutex
+
+// portCounter is used to allocate unique ports for tests
+var portCounter int = 30000
+
+// getTestPorts returns two sequential available TCP ports for etcd (client and peer)
+// Uses a counter starting at 30000 and increments by 10 each time to avoid conflicts
+// NOTE: Caller must hold testMutex
+func getTestPorts(t *testing.T) (int, int) {
+	clientPort := portCounter
+	peerPort := portCounter + 1
+	portCounter += 10 // Leave gaps to avoid race conditions
+
+	return clientPort, peerPort
+}
 
 // setupCredentialTest creates a test environment with database and config
 func setupCredentialTest(t *testing.T) (string, *database.DB, func()) {
@@ -37,6 +57,9 @@ func setupCredentialTest(t *testing.T) (string, *database.DB, func()) {
 	configPath := filepath.Join(tmpDir, "config.yaml")
 	cfg := config.DefaultConfig()
 	cfg.Database.Path = dbPath
+
+	// Get free port for etcd to avoid conflicts between tests
+	clientPort, _ := getTestPorts(t)
 
 	// Write minimal config YAML
 	configContent := fmt.Sprintf(`core:
@@ -59,7 +82,13 @@ security:
 logging:
   level: info
   format: json
-`, tmpDir, tmpDir, tmpDir, dbPath)
+registry:
+  type: embedded
+  data_dir: %s/etcd-data
+  listen_address: 127.0.0.1:%d
+  namespace: gibson-test
+  ttl: 30s
+`, tmpDir, tmpDir, tmpDir, dbPath, tmpDir, clientPort)
 
 	err = os.WriteFile(configPath, []byte(configContent), 0644)
 	require.NoError(t, err)
@@ -76,6 +105,16 @@ logging:
 	os.Setenv("GIBSON_HOME", tmpDir)
 
 	cleanup := func() {
+		// Shutdown global registry if it was started
+		if globalRegistryManager != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			globalRegistryManager.Stop(ctx)
+			cancel()
+			globalRegistryManager = nil
+			// Wait for ports to be fully released
+			time.Sleep(200 * time.Millisecond)
+		}
+
 		db.Close()
 		os.RemoveAll(tmpDir)
 		if oldHome != "" {
@@ -90,6 +129,9 @@ logging:
 
 // TestCredentialList tests the credential list command
 func TestCredentialList(t *testing.T) {
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
 	tmpDir, db, cleanup := setupCredentialTest(t)
 	defer cleanup()
 
@@ -189,6 +231,11 @@ func TestCredentialList(t *testing.T) {
 			// Execute command
 			err := cmd.Execute()
 
+			// Handle error the same way main.go does
+			if err != nil {
+				internal.HandleError(cmd, err)
+			}
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -208,14 +255,21 @@ func TestCredentialList(t *testing.T) {
 				assert.NotContains(t, output, "secret-api-key-2", "Plaintext secret leaked in output!")
 			}
 
-			// Reset command for next test
+			// Reset command and flags for next test
 			cmd.SetArgs(nil)
+			// Reset the output flag to default (text)
+			if f := cmd.Flag("output"); f != nil {
+				f.Value.Set("text")
+			}
 		})
 	}
 }
 
 // TestCredentialAdd tests the credential add command
 func TestCredentialAdd(t *testing.T) {
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
 	tmpDir, _, cleanup := setupCredentialTest(t)
 	defer cleanup()
 
@@ -300,6 +354,19 @@ func TestCredentialAdd(t *testing.T) {
 			// Execute command
 			err := cmd.Execute()
 
+			// Shutdown registry if it was started
+			if globalRegistryManager != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				globalRegistryManager.Stop(ctx)
+				cancel()
+				globalRegistryManager = nil
+			}
+
+			// Handle error the same way main.go does
+			if err != nil {
+				internal.HandleError(cmd, err)
+			}
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -320,14 +387,21 @@ func TestCredentialAdd(t *testing.T) {
 				}
 			}
 
-			// Reset command for next test
+			// Reset command and flags for next test
 			cmd.SetArgs(nil)
+			// Reset the output flag to default (text)
+			if f := cmd.Flag("output"); f != nil {
+				f.Value.Set("text")
+			}
 		})
 	}
 }
 
 // TestCredentialShow tests the credential show command
 func TestCredentialShow(t *testing.T) {
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
 	tmpDir, db, cleanup := setupCredentialTest(t)
 	defer cleanup()
 
@@ -427,6 +501,19 @@ func TestCredentialShow(t *testing.T) {
 			// Execute command
 			err := cmd.Execute()
 
+			// Shutdown registry if it was started
+			if globalRegistryManager != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				globalRegistryManager.Stop(ctx)
+				cancel()
+				globalRegistryManager = nil
+			}
+
+			// Handle error the same way main.go does
+			if err != nil {
+				internal.HandleError(cmd, err)
+			}
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -449,14 +536,21 @@ func TestCredentialShow(t *testing.T) {
 				assert.NotContains(t, strings.ToLower(output), "key_derivation_salt")
 			}
 
-			// Reset command for next test
+			// Reset command and flags for next test
 			cmd.SetArgs(nil)
+			// Reset the output flag to default (text)
+			if f := cmd.Flag("output"); f != nil {
+				f.Value.Set("text")
+			}
 		})
 	}
 }
 
 // TestCredentialDelete tests the credential delete command
 func TestCredentialDelete(t *testing.T) {
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
 	tmpDir, db, cleanup := setupCredentialTest(t)
 	defer cleanup()
 
@@ -498,7 +592,9 @@ func TestCredentialDelete(t *testing.T) {
 				// Verify credential is deleted
 				_, err := dao.GetByName(ctx, "delete-test-key")
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "not found")
+				if err != nil {
+					assert.Contains(t, err.Error(), "not found")
+				}
 			},
 		},
 		{
@@ -527,6 +623,19 @@ func TestCredentialDelete(t *testing.T) {
 			// Execute command
 			err := cmd.Execute()
 
+			// Shutdown registry if it was started
+			if globalRegistryManager != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				globalRegistryManager.Stop(ctx)
+				cancel()
+				globalRegistryManager = nil
+			}
+
+			// Handle error the same way main.go does
+			if err != nil {
+				internal.HandleError(cmd, err)
+			}
+
 			if tt.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -540,8 +649,12 @@ func TestCredentialDelete(t *testing.T) {
 				tt.checkOutput(t, output)
 			}
 
-			// Reset command for next test
+			// Reset command and flags for next test
 			cmd.SetArgs(nil)
+			// Reset the output flag to default (text)
+			if f := cmd.Flag("output"); f != nil {
+				f.Value.Set("text")
+			}
 		})
 	}
 }

@@ -113,6 +113,35 @@ func createTestPayloadForExecution(t *testing.T, ctx context.Context, store Payl
 	return payload.ID
 }
 
+// createTestFindingForExecution creates a minimal finding record for testing
+func createTestFindingForExecution(t *testing.T, ctx context.Context, db *database.DB) types.ID {
+	t.Helper()
+
+	findingID := types.NewID()
+	query := `
+		INSERT INTO findings (
+			id, title, description, severity, confidence, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+
+	now := time.Now()
+
+	_, err := db.ExecContext(ctx, query,
+		findingID.String(),
+		"Test Finding",
+		"Test finding for execution tests",
+		"high",
+		1.0,
+		now,
+		now,
+	)
+	if err != nil {
+		t.Fatalf("failed to create test finding: %v", err)
+	}
+
+	return findingID
+}
+
 // createTestExecution creates a test execution with default values
 func createTestExecution(payloadID, targetID types.ID) *Execution {
 	now := time.Now()
@@ -208,7 +237,7 @@ func TestExecutionStore_Save_WithFinding(t *testing.T) {
 	ctx := context.Background()
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
 	targetID := createTestTargetForExecution(t, ctx, db)
-	findingID := types.NewID()
+	findingID := createTestFindingForExecution(t, ctx, db)
 
 	execution := createTestExecution(payloadID, targetID)
 	execution.FindingID = &findingID
@@ -277,10 +306,15 @@ func TestExecutionStore_List(t *testing.T) {
 	exec2 := createTestExecution(payload2, target2)
 	exec2.Success = false
 	exec2.Status = ExecutionStatusFailed
+	exec2.TargetType = types.TargetTypeRAG       // Different type
+	exec2.TargetProvider = types.ProviderAnthropic  // Different provider
+	exec2.ConfidenceScore = 0.5
 
 	exec3 := createTestExecution(payload1, target1)
 	exec3.Success = true
 	exec3.Status = ExecutionStatusCompleted
+	exec3.TargetType = types.TargetTypeAgent     // Different type
+	exec3.TargetProvider = types.ProviderGoogle  // Different provider
 	exec3.ConfidenceScore = 0.7
 
 	require.NoError(t, store.Save(ctx, exec1))
@@ -446,6 +480,7 @@ func TestExecutionStore_List_TimeFilters(t *testing.T) {
 
 	now := time.Now()
 	past := now.Add(-1 * time.Hour)
+	middle := now.Add(-30 * time.Minute)
 	future := now.Add(1 * time.Hour)
 
 	payloadID := createTestPayloadForExecution(t, ctx, payloadStore)
@@ -455,7 +490,7 @@ func TestExecutionStore_List_TimeFilters(t *testing.T) {
 	exec1.CreatedAt = past
 
 	exec2 := createTestExecution(payloadID, targetID)
-	exec2.CreatedAt = now
+	exec2.CreatedAt = middle
 
 	exec3 := createTestExecution(payloadID, targetID)
 	exec3.CreatedAt = now.Add(30 * time.Minute)

@@ -46,19 +46,19 @@ func TestApp_ModeSwitching(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		key      string
+		keyType  tea.KeyType
 		expected AppMode
 	}{
-		{"switch to dashboard", "1", ModeDashboard},
-		{"switch to console", "2", ModeConsole},
-		{"switch to mission", "3", ModeMission},
-		{"switch to findings", "4", ModeFindings},
-		{"back to dashboard", "1", ModeDashboard},
+		{"switch to dashboard", tea.KeyF1, ModeDashboard},
+		{"switch to console", tea.KeyF2, ModeConsole},
+		{"switch to mission", tea.KeyF3, ModeMission},
+		{"switch to findings", tea.KeyF4, ModeFindings},
+		{"back to dashboard", tea.KeyF1, ModeDashboard},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.key)}
+			msg := tea.KeyMsg{Type: tt.keyType}
 			_, _ = app.Update(msg)
 			assert.Equal(t, tt.expected, app.mode)
 		})

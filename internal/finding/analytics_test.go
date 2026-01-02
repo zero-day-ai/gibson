@@ -55,14 +55,14 @@ func setupTestAnalytics(t *testing.T) (*FindingAnalytics, *DBFindingStore, types
 }
 
 // createTestFinding creates a test finding with specified attributes
-func createTestFinding(severity agent.FindingSeverity, category FindingCategory, status FindingStatus, riskScore float64) EnhancedFinding {
+func createTestFinding(missionID types.ID, severity agent.FindingSeverity, category FindingCategory, status FindingStatus, riskScore float64) EnhancedFinding {
 	baseFinding := agent.NewFinding(
 		"Test Finding",
 		"Test Description",
 		severity,
 	)
 
-	finding := NewEnhancedFinding(baseFinding, types.NewID(), "test-agent")
+	finding := NewEnhancedFinding(baseFinding, missionID, "test-agent")
 	finding.Category = string(category)
 	finding.Status = status
 	finding.RiskScore = riskScore
@@ -110,11 +110,11 @@ func TestGetStatistics_WithFindings(t *testing.T) {
 
 	// Create test findings with various attributes
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.5),
-		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.5),
-		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusConfirmed, 7.0),
-		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusResolved, 4.5),
-		createTestFinding(agent.SeverityLow, CategoryInformationDisclosure, StatusFalsePositive, 2.0),
+		createTestFinding(missionID, agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.5),
+		createTestFinding(missionID, agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.5),
+		createTestFinding(missionID, agent.SeverityHigh, CategoryPromptInjection, StatusConfirmed, 7.0),
+		createTestFinding(missionID, agent.SeverityMedium, CategoryDataExtraction, StatusResolved, 4.5),
+		createTestFinding(missionID, agent.SeverityLow, CategoryInformationDisclosure, StatusFalsePositive, 2.0),
 	}
 
 	// Store findings
@@ -154,8 +154,10 @@ func TestGetStatistics_WithFindings(t *testing.T) {
 
 	// Verify MITRE techniques
 	assert.Greater(t, len(stats.TopMitreTechniques), 0)
-	assert.Equal(t, "T1059", stats.TopMitreTechniques[0].TechniqueID)
-	assert.Equal(t, 5, stats.TopMitreTechniques[0].Count) // All findings have this technique
+	if len(stats.TopMitreTechniques) > 0 {
+		assert.Equal(t, "T1059", stats.TopMitreTechniques[0].TechniqueID)
+		assert.Equal(t, 5, stats.TopMitreTechniques[0].Count) // All findings have this technique
+	}
 }
 
 func TestGetStatistics_TopMitreTechniques(t *testing.T) {
@@ -164,7 +166,7 @@ func TestGetStatistics_TopMitreTechniques(t *testing.T) {
 
 	// Create findings with different MITRE techniques
 	for i := 0; i < 15; i++ {
-		finding := createTestFinding(agent.SeverityHigh, CategoryJailbreak, StatusOpen, 7.0)
+		finding := createTestFinding(missionID, agent.SeverityHigh, CategoryJailbreak, StatusOpen, 7.0)
 
 		// Add multiple different techniques to test top 10 limit
 		finding.MitreAttack = []SimpleMitreMapping{
@@ -226,9 +228,9 @@ func TestGetTrends_WithFindings(t *testing.T) {
 	// Create findings at different times
 	now := time.Now()
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.0),
-		createTestFinding(agent.SeverityMedium, CategoryPromptInjection, StatusOpen, 5.0),
-		createTestFinding(agent.SeverityLow, CategoryDataExtraction, StatusOpen, 2.0),
+		createTestFinding(missionID, agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.0),
+		createTestFinding(missionID, agent.SeverityMedium, CategoryPromptInjection, StatusOpen, 5.0),
+		createTestFinding(missionID, agent.SeverityLow, CategoryDataExtraction, StatusOpen, 2.0),
 	}
 
 	// Set different creation times
@@ -270,10 +272,10 @@ func TestGetRiskScore_WithFindings(t *testing.T) {
 	// Create findings with known severities
 	// Critical = 10, High = 7, Medium = 4, Low = 1
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),        // weight: 10
-		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.0),      // weight: 7
-		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),     // weight: 4
-		createTestFinding(agent.SeverityLow, CategoryInformationDisclosure, StatusOpen, 1.0), // weight: 1
+		createTestFinding(missionID, agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),        // weight: 10
+		createTestFinding(missionID, agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.0),      // weight: 7
+		createTestFinding(missionID, agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),     // weight: 4
+		createTestFinding(missionID, agent.SeverityLow, CategoryInformationDisclosure, StatusOpen, 1.0), // weight: 1
 	}
 
 	for _, f := range findings {
@@ -294,9 +296,9 @@ func TestGetRiskScore_ExcludesResolved(t *testing.T) {
 
 	// Create findings with some resolved
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),       // weight: 10
-		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusResolved, 7.0), // excluded
-		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),    // weight: 4
+		createTestFinding(missionID, agent.SeverityCritical, CategoryJailbreak, StatusOpen, 9.0),       // weight: 10
+		createTestFinding(missionID, agent.SeverityHigh, CategoryPromptInjection, StatusResolved, 7.0), // excluded
+		createTestFinding(missionID, agent.SeverityMedium, CategoryDataExtraction, StatusOpen, 4.0),    // weight: 4
 	}
 
 	for _, f := range findings {
@@ -325,11 +327,12 @@ func TestGetTopVulnerabilities_WithFindings(t *testing.T) {
 	ctx := context.Background()
 
 	// Create findings with different category/subcategory combinations
+	// Note: GetTopVulnerabilities doesn't filter by mission, so we use dummy IDs
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.0),
-		createTestFinding(agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.5),
-		createTestFinding(agent.SeverityMedium, CategoryPromptInjection, StatusOpen, 5.0),
-		createTestFinding(agent.SeverityLow, CategoryDataExtraction, StatusOpen, 2.0),
+		createTestFinding(types.NewID(), agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.0),
+		createTestFinding(types.NewID(), agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.5),
+		createTestFinding(types.NewID(), agent.SeverityMedium, CategoryPromptInjection, StatusOpen, 5.0),
+		createTestFinding(types.NewID(), agent.SeverityLow, CategoryDataExtraction, StatusOpen, 2.0),
 	}
 
 	// Set subcategories
@@ -369,6 +372,7 @@ func TestGetTopVulnerabilities_Limit(t *testing.T) {
 
 	for i := 0; i < 20; i++ {
 		finding := createTestFinding(
+			types.NewID(),
 			agent.SeverityMedium,
 			categories[i%len(categories)],
 			StatusOpen,
@@ -403,12 +407,12 @@ func TestGetRemediationProgress_WithFindings(t *testing.T) {
 
 	// Create findings with different statuses
 	findings := []EnhancedFinding{
-		createTestFinding(agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.0),
-		createTestFinding(agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.0),
-		createTestFinding(agent.SeverityMedium, CategoryDataExtraction, StatusConfirmed, 5.0),
-		createTestFinding(agent.SeverityMedium, CategoryInformationDisclosure, StatusResolved, 4.0),
-		createTestFinding(agent.SeverityLow, CategoryJailbreak, StatusResolved, 2.0),
-		createTestFinding(agent.SeverityLow, CategoryPromptInjection, StatusFalsePositive, 1.0),
+		createTestFinding(missionID, agent.SeverityHigh, CategoryJailbreak, StatusOpen, 8.0),
+		createTestFinding(missionID, agent.SeverityHigh, CategoryPromptInjection, StatusOpen, 7.0),
+		createTestFinding(missionID, agent.SeverityMedium, CategoryDataExtraction, StatusConfirmed, 5.0),
+		createTestFinding(missionID, agent.SeverityMedium, CategoryInformationDisclosure, StatusResolved, 4.0),
+		createTestFinding(missionID, agent.SeverityLow, CategoryJailbreak, StatusResolved, 2.0),
+		createTestFinding(missionID, agent.SeverityLow, CategoryPromptInjection, StatusFalsePositive, 1.0),
 	}
 
 	for _, f := range findings {

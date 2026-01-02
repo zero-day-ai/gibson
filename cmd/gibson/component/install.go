@@ -184,8 +184,8 @@ func runInstallAll(cmd *cobra.Command, args []string, cfg Config, flags *Install
 	// Print summary
 	cmd.Printf("\nInstallation complete in %v\n", result.Duration)
 	cmd.Printf("Components found: %d\n", result.ComponentsFound)
-	cmd.Printf("Successfully installed: %d\n", len(result.Successful))
-	cmd.Printf("Failed: %d\n", len(result.Failed))
+	cmd.Printf("Successfully installed: %d, Skipped: %d, Failed: %d\n",
+		len(result.Successful), len(result.Skipped), len(result.Failed))
 
 	// List successful installations
 	if len(result.Successful) > 0 {
@@ -225,6 +225,14 @@ func runInstallAll(cmd *cobra.Command, args []string, cfg Config, flags *Install
 					}
 				}
 			}
+		}
+	}
+
+	// List skipped components
+	if len(result.Skipped) > 0 {
+		cmd.Printf("\nSkipped (already installed):\n")
+		for _, s := range result.Skipped {
+			cmd.Printf("  - %s (%s)\n", s.Name, s.Reason)
 		}
 	}
 

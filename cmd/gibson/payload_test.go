@@ -30,6 +30,10 @@ func TestPayloadList(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	// Initialize schema
+	err = db.InitSchema()
+	require.NoError(t, err)
+
 	// Create test payload
 	store := payload.NewPayloadStore(db)
 	testPayload := createTestPayload(t)
@@ -64,6 +68,9 @@ func TestPayloadListJSON(t *testing.T) {
 	db, err := database.Open(filepath.Join(tempDir, "gibson.db"))
 	require.NoError(t, err)
 	defer db.Close()
+
+	err = db.InitSchema()
+	require.NoError(t, err)
 
 	store := payload.NewPayloadStore(db)
 	testPayload := createTestPayload(t)
@@ -103,6 +110,9 @@ func TestPayloadListWithFilter(t *testing.T) {
 	db, err := database.Open(filepath.Join(tempDir, "gibson.db"))
 	require.NoError(t, err)
 	defer db.Close()
+
+	err = db.InitSchema()
+	require.NoError(t, err)
 
 	store := payload.NewPayloadStore(db)
 
@@ -147,6 +157,9 @@ func TestPayloadShow(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	err = db.InitSchema()
+	require.NoError(t, err)
+
 	store := payload.NewPayloadStore(db)
 	testPayload := createTestPayload(t)
 	require.NoError(t, store.Save(context.Background(), testPayload))
@@ -175,6 +188,9 @@ func TestPayloadShowJSON(t *testing.T) {
 	db, err := database.Open(filepath.Join(tempDir, "gibson.db"))
 	require.NoError(t, err)
 	defer db.Close()
+
+	err = db.InitSchema()
+	require.NoError(t, err)
 
 	store := payload.NewPayloadStore(db)
 	testPayload := createTestPayload(t)
@@ -208,6 +224,9 @@ func TestPayloadCreate(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	err = db.InitSchema()
+	require.NoError(t, err)
+
 	// Create test payload file
 	testPayload := createTestPayload(t)
 	testPayload.ID = "" // Clear ID so it gets generated
@@ -240,6 +259,9 @@ func TestPayloadImport(t *testing.T) {
 	db, err := database.Open(filepath.Join(tempDir, "gibson.db"))
 	require.NoError(t, err)
 	defer db.Close()
+
+	err = db.InitSchema()
+	require.NoError(t, err)
 
 	// Create test payloads array
 	payloads := []*payload.Payload{
@@ -280,6 +302,9 @@ func TestPayloadExport(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
+	err = db.InitSchema()
+	require.NoError(t, err)
+
 	store := payload.NewPayloadStore(db)
 	testPayload := createTestPayload(t)
 	require.NoError(t, store.Save(context.Background(), testPayload))
@@ -318,6 +343,9 @@ func TestPayloadSearch(t *testing.T) {
 	db, err := database.Open(filepath.Join(tempDir, "gibson.db"))
 	require.NoError(t, err)
 	defer db.Close()
+
+	err = db.InitSchema()
+	require.NoError(t, err)
 
 	store := payload.NewPayloadStore(db)
 
@@ -359,6 +387,9 @@ func TestPayloadStats(t *testing.T) {
 	db, err := database.Open(filepath.Join(tempDir, "gibson.db"))
 	require.NoError(t, err)
 	defer db.Close()
+
+	err = db.InitSchema()
+	require.NoError(t, err)
 
 	store := payload.NewPayloadStore(db)
 	testPayload := createTestPayload(t)

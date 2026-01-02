@@ -198,6 +198,9 @@ type InstallAllResult struct {
 	// Failed contains information about components that failed to install
 	Failed []InstallFailure
 
+	// Skipped contains components that were skipped (already installed)
+	Skipped []SkippedComponent
+
 	// Duration is the total time for the operation
 	Duration time.Duration
 
@@ -215,6 +218,23 @@ type InstallFailure struct {
 
 	// Error is the error that occurred
 	Error error
+}
+
+const (
+	// SkipReasonAlreadyInstalled indicates a component was skipped because it's already installed
+	SkipReasonAlreadyInstalled = "already installed"
+)
+
+// SkippedComponent contains information about a component that was skipped during installation
+type SkippedComponent struct {
+	// Path is the subdirectory path where the component was found
+	Path string
+
+	// Name is the component name
+	Name string
+
+	// Reason is the reason why the component was skipped
+	Reason string
 }
 
 // ComponentDAO defines the database interface for component persistence operations.
@@ -788,11 +808,11 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 					}
 					// Cleanup succeeded - proceed with installation (don't add to Failed, don't continue)
 				} else {
-					// Valid existing component - fail with "already exists" error
-					result.Failed = append(result.Failed, InstallFailure{
-						Path:  relPath,
-						Name:  compManifest.Name,
-						Error: NewComponentExistsError(compManifest.Name),
+					// Valid existing component - skip it
+					result.Skipped = append(result.Skipped, SkippedComponent{
+						Path:   relPath,
+						Name:   compManifest.Name,
+						Reason: SkipReasonAlreadyInstalled,
 					})
 					continue
 				}
@@ -1031,6 +1051,54 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 	if err != nil {
 		// Use manifest version as fallback
 		version = manifest.Version
+	}
+
+	// Check if component already exists (idempotency check)
+	// This prevents unnecessary artifact copying and rollback operations
+	if !opts.Force && i.dao != nil {
+		if existing, err := i.dao.GetByName(ctx, kind, manifest.Name); err == nil && existing != nil {
+			// Check if this is an orphaned component (DB entry exists but binary is missing)
+			if i.isOrphanedComponent(existing) {
+				// Clean up the orphaned entry and proceed with installation
+				if cleanupErr := i.cleanupOrphanedComponent(ctx, kind, manifest.Name, existing); cleanupErr != nil {
+					// Cleanup failed - return error result
+					span.RecordError(cleanupErr)
+					span.SetStatus(codes.Error, cleanupErr.Error())
+					span.SetAttributes(ErrorAttributes(cleanupErr, "cleanup_orphaned")...)
+					result.Failed = append(result.Failed, InstallFailure{
+						Path:  repoDir,
+						Name:  manifest.Name,
+						Error: cleanupErr,
+					})
+					result.ComponentsFound = 1
+					result.Duration = time.Since(start)
+					return result, cleanupErr
+				}
+				// Cleanup succeeded - proceed with installation
+			} else {
+				// Valid existing component - skip installation and return it
+				result.Successful = append(result.Successful, InstallResult{
+					Component:   existing,
+					Path:        repoDir,
+					Duration:    time.Since(start),
+					BuildOutput: "",
+					Installed:   false, // Not newly installed
+					Updated:     false,
+				})
+				result.ComponentsFound = 1
+				result.Duration = time.Since(start)
+				span.SetStatus(codes.Ok, "component already installed, skipped")
+				span.SetAttributes(
+					ComponentAttributes(existing)...,
+				)
+				return result, nil
+			}
+		}
+	}
+
+	// If Force is set and component exists, delete it first
+	if opts.Force && i.dao != nil {
+		_ = i.dao.Delete(ctx, kind, manifest.Name)
 	}
 
 	// Determine the source directory for artifacts

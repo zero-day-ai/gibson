@@ -356,6 +356,9 @@ func runCredentialShow(cmd *cobra.Command, args []string) error {
 	dao := database.NewCredentialDAO(db)
 	cred, err := dao.GetByName(ctx, credName)
 	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return internal.NewCLIError(internal.ExitNotFound, fmt.Sprintf("credential not found: %s", credName))
+		}
 		return internal.WrapError(internal.ExitDatabaseError, "failed to get credential", err)
 	}
 
@@ -600,6 +603,9 @@ func runCredentialDelete(cmd *cobra.Command, args []string) error {
 	// Delete credential
 	dao := database.NewCredentialDAO(db)
 	if err := dao.DeleteByName(ctx, credName); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return internal.NewCLIError(internal.ExitNotFound, fmt.Sprintf("credential not found: %s", credName))
+		}
 		return internal.WrapError(internal.ExitDatabaseError, "failed to delete credential", err)
 	}
 

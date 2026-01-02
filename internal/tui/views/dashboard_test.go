@@ -140,8 +140,9 @@ func TestDashboardView_RenderAgentStatus(t *testing.T) {
 
 	content := view.renderAgentStatus()
 
-	// Without registry, should show "No agents registered"
-	assert.Contains(t, content, "No agents registered")
+	// Without registry manager, should show registry unavailable message
+	assert.Contains(t, content, "Registry unavailable")
+	assert.Contains(t, content, "No legacy data available")
 }
 
 func TestDashboardView_RenderRecentFindings(t *testing.T) {
@@ -160,9 +161,11 @@ func TestDashboardView_RenderSystemMetrics(t *testing.T) {
 
 	content := view.renderSystemMetrics()
 
+	// Should show registry status (even if not available)
+	assert.Contains(t, content, "Registry:")
 	assert.Contains(t, content, "Database")
 	assert.Contains(t, content, "Components")
-	assert.Contains(t, content, "LLM Service")
+	assert.Contains(t, content, "Last refresh")
 }
 
 // Helper function tests

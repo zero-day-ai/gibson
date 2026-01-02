@@ -22,6 +22,8 @@ const (
 	ExitTimeout = 3
 	// ExitCancelled indicates the operation was cancelled
 	ExitCancelled = 4
+	// ExitNotFound indicates a resource was not found
+	ExitNotFound = 5
 	// ExitConfigError indicates a configuration error
 	ExitConfigError = 10
 	// ExitComponentError indicates a component error

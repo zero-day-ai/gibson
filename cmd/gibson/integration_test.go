@@ -68,7 +68,7 @@ func TestWorkflow_InitConfigAgent(t *testing.T) {
 		assert.DirExists(t, homeDir, "Home directory should exist")
 		assert.FileExists(t, filepath.Join(homeDir, "config.yaml"), "Config file should exist")
 		assert.FileExists(t, filepath.Join(homeDir, "gibson.db"), "Database should exist")
-		assert.FileExists(t, filepath.Join(homeDir, "encryption.key"), "Encryption key should exist")
+		assert.FileExists(t, filepath.Join(homeDir, "master.key"), "Encryption key should exist")
 	})
 
 	// Step 2: gibson config show
@@ -472,7 +472,6 @@ func TestWorkflow_CLICommands(t *testing.T) {
 			"finding",
 			"attack",
 			"status",
-			"console",
 		}
 
 		registeredCommands := make(map[string]bool)

@@ -423,18 +423,39 @@ func TestCompleterWithDefaultCommands(t *testing.T) {
 		t.Error("no commands returned for default registry")
 	}
 
-	// Test specific completions
+	// Test specific completions - expecting "/agent" primary name, not the plural alias
 	agentCompletions := completer.Complete("/ag")
-	if len(agentCompletions) != 1 || agentCompletions[0] != "/agents" {
-		t.Errorf("Complete('/ag') = %v, want ['/agents']", agentCompletions)
+	if len(agentCompletions) < 1 {
+		t.Errorf("Complete('/ag') = %v, want at least one result", agentCompletions)
+	}
+	// Verify /agent is in the completions
+	found := false
+	for _, cmd := range agentCompletions {
+		if cmd == "/agent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Complete('/ag') = %v, want to contain '/agent'", agentCompletions)
 	}
 
 	// Test that descriptions are present
-	suggestions := completer.GetSuggestions("/agents")
-	if len(suggestions) != 1 {
-		t.Fatalf("GetSuggestions('/agents') returned %d suggestions, want 1", len(suggestions))
+	suggestions := completer.GetSuggestions("/agent")
+	if len(suggestions) < 1 {
+		t.Fatalf("GetSuggestions('/agent') returned %d suggestions, want at least 1", len(suggestions))
 	}
-	if suggestions[0].Description == "" {
+	// Find the "/agent" command suggestion
+	var agentSuggestion *Suggestion
+	for i := range suggestions {
+		if suggestions[i].Text == "/agent" {
+			agentSuggestion = &suggestions[i]
+			break
+		}
+	}
+	if agentSuggestion == nil {
+		t.Error("agent command not found in suggestions")
+	} else if agentSuggestion.Description == "" {
 		t.Error("agent command has empty description")
 	}
 }

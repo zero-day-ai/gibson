@@ -80,8 +80,8 @@ func TestKeyMatches(t *testing.T) {
 		{"quit with ctrl+c", km.Quit, "ctrl+c", true},
 		{"quit with wrong key", km.Quit, "x", false},
 		{"help with ?", km.Help, "?", true},
-		{"view dashboard with 1", km.ViewDashboard, "1", true},
-		{"view console with 2", km.ViewConsole, "2", true},
+		{"view dashboard with f1", km.ViewDashboard, "f1", true},
+		{"view console with f2", km.ViewConsole, "f2", true},
 		{"up with k", km.Up, "k", true},
 		{"down with j", km.Down, "j", true},
 	}

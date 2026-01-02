@@ -92,8 +92,14 @@ func init() {
 func runFindingList(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
+	// Parse global flags
+	flags, err := ParseGlobalFlags(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to parse flags: %w", err)
+	}
+
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}
@@ -192,8 +198,14 @@ func runFindingShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid finding ID: %w", err)
 	}
 
+	// Parse global flags
+	flags, err := ParseGlobalFlags(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to parse flags: %w", err)
+	}
+
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}
@@ -225,8 +237,14 @@ func runFindingShow(cmd *cobra.Command, args []string) error {
 func runFindingExport(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
+	// Parse global flags
+	flags, err := ParseGlobalFlags(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to parse flags: %w", err)
+	}
+
 	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	homeDir, err := getHomeDirFromFlags(flags)
 	if err != nil {
 		return fmt.Errorf("failed to get Gibson home: %w", err)
 	}

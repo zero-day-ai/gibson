@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -97,9 +98,16 @@ func NewEmbeddedRegistry(cfg registry.Config) (*EmbeddedRegistry, error) {
 		port = cfg.ListenAddress[idx+1:]
 	}
 
+	// Calculate peer port (client port + 1)
+	clientPort := 2379
+	if p, err := strconv.Atoi(port); err == nil {
+		clientPort = p
+	}
+	peerPort := clientPort + 1
+
 	// Configure client and peer URLs
-	clientURLStr := fmt.Sprintf("http://%s:%s", host, port)
-	peerURLStr := fmt.Sprintf("http://%s:%s", host, "2380") // peer port is +1
+	clientURLStr := fmt.Sprintf("http://%s:%d", host, clientPort)
+	peerURLStr := fmt.Sprintf("http://%s:%d", host, peerPort)
 
 	clientURL, err := url.Parse(clientURLStr)
 	if err != nil {

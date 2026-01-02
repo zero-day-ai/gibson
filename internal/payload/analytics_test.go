@@ -648,7 +648,8 @@ func TestEffectivenessTracker_ExportStats(t *testing.T) {
 				err := json.Unmarshal(data, &stats)
 				require.NoError(t, err)
 				assert.Len(t, stats, 1)
-				assert.Equal(t, "test", stats[0].PayloadName)
+				// Payload name has unique suffix added by helper
+				assert.Contains(t, stats[0].PayloadName, "test-")
 				assert.Equal(t, 1, stats[0].TotalExecutions)
 			},
 		},
@@ -676,8 +677,8 @@ func TestEffectivenessTracker_ExportStats(t *testing.T) {
 				assert.Equal(t, "Payload ID", records[0][0])
 				assert.Equal(t, "Payload Name", records[0][1])
 
-				// Check data
-				assert.Equal(t, "test", records[1][1])
+				// Check data - payload name has unique suffix added by helper
+				assert.Contains(t, records[1][1], "test-")
 			},
 		},
 		{

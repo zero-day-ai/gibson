@@ -346,17 +346,19 @@ func TestPayloadRegistry_Search(t *testing.T) {
 
 	// Register payloads with distinct descriptions
 	payload1 := createTestPayload("search-1")
-	payload1.Description = "This is a jailbreak payload for testing"
+	payload1.Description = "This is a special unicorn payload for testing"
+	payload1.Tags = []string{"test", "unicorn"}  // Override default tags
 	err := registry.Register(ctx, payload1)
 	require.NoError(t, err)
 
 	payload2 := createTestPayload("search-2")
 	payload2.Description = "This is a prompt injection attack"
+	payload2.Tags = []string{"test", "injection"}  // Override default tags
 	err = registry.Register(ctx, payload2)
 	require.NoError(t, err)
 
 	t.Run("search by keyword", func(t *testing.T) {
-		results, err := registry.Search(ctx, "jailbreak", nil)
+		results, err := registry.Search(ctx, "unicorn", nil)
 		require.NoError(t, err)
 		assert.Len(t, results, 1)
 		assert.Equal(t, "search-1", results[0].Name)

@@ -1,0 +1,14 @@
+{
+  "filePath": ".spec-workflow/specs/tui-complete-implementation/tasks.md",
+  "currentVersion": 1,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2026-01-02T14:24:21.344Z",
+      "trigger": "initial",
+      "approvalId": "approval_1767363861342_1au6ykm85",
+      "approvalTitle": "TUI Complete Implementation - Tasks"
+    }
+  ]
+}

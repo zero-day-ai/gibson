@@ -561,7 +561,6 @@ func TestComponentDAO_Update_NotFound(t *testing.T) {
 }
 
 // TestComponentDAO_UpdateStatus tests updating component status with pid and port
-// NOTE: UpdateStatus is now a no-op since runtime state is tracked via process checking (migration 10)
 func TestComponentDAO_UpdateStatus(t *testing.T) {
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
@@ -589,28 +588,30 @@ func TestComponentDAO_UpdateStatus(t *testing.T) {
 		t.Fatalf("Create failed: %v", err)
 	}
 
-	// UpdateStatus should not return error (it's a no-op for backward compatibility)
+	// UpdateStatus should persist runtime state to database
 	err := dao.UpdateStatus(ctx, comp.ID, component.ComponentStatusRunning, 1234, 50051)
 	if err != nil {
 		t.Fatalf("UpdateStatus failed: %v", err)
 	}
 
-	// Verify that status was NOT persisted to database (it's a no-op)
-	// The database should still have empty Status, PID, Port fields
+	// Verify that status was persisted to database
 	updated, err := dao.GetByID(ctx, comp.ID)
 	if err != nil {
 		t.Fatalf("GetByID failed: %v", err)
 	}
 
-	// Runtime state should NOT be in database anymore
-	if updated.Status != "" {
-		t.Errorf("expected empty Status (not persisted), got %s", updated.Status)
+	// Runtime state should be in database
+	if updated.Status != component.ComponentStatusRunning {
+		t.Errorf("expected Status running, got %s", updated.Status)
 	}
-	if updated.PID != 0 {
-		t.Errorf("expected PID 0 (not persisted), got %d", updated.PID)
+	if updated.PID != 1234 {
+		t.Errorf("expected PID 1234, got %d", updated.PID)
 	}
-	if updated.Port != 0 {
-		t.Errorf("expected Port 0 (not persisted), got %d", updated.Port)
+	if updated.Port != 50051 {
+		t.Errorf("expected Port 50051, got %d", updated.Port)
+	}
+	if updated.StartedAt == nil {
+		t.Error("expected StartedAt to be set")
 	}
 }
 
@@ -628,10 +629,10 @@ func TestComponentDAO_UpdateStatus_NotFound(t *testing.T) {
 	ctx := context.Background()
 	dao := NewComponentDAO(db)
 
-	// UpdateStatus is a no-op, so it should not return error even for non-existent component
+	// UpdateStatus on non-existent ID - SQL UPDATE on non-existent row is not an error
 	err := dao.UpdateStatus(ctx, 99999, component.ComponentStatusRunning, 1234, 50051)
 	if err != nil {
-		t.Fatalf("UpdateStatus should not fail (it's a no-op), but got error: %v", err)
+		t.Fatalf("UpdateStatus should not fail for non-existent ID: %v", err)
 	}
 }
 
