@@ -8,6 +8,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/component"
+	"github.com/zero-day-ai/gibson/internal/registry"
 )
 
 // AgentSelector selects and validates agents for attacks.
@@ -34,15 +35,15 @@ type AgentInfo struct {
 	IsExternal     bool                      `json:"is_external"`
 }
 
-// DefaultAgentSelector implements AgentSelector using the agent registry.
+// DefaultAgentSelector implements AgentSelector using the component discovery interface.
 type DefaultAgentSelector struct {
-	registry agent.AgentRegistry
+	discovery registry.ComponentDiscovery
 }
 
-// NewAgentSelector creates a new agent selector backed by the given registry.
-func NewAgentSelector(registry agent.AgentRegistry) *DefaultAgentSelector {
+// NewAgentSelector creates a new agent selector backed by the given component discovery.
+func NewAgentSelector(discovery registry.ComponentDiscovery) *DefaultAgentSelector {
 	return &DefaultAgentSelector{
-		registry: registry,
+		discovery: discovery,
 	}
 }
 
@@ -61,18 +62,23 @@ func (s *DefaultAgentSelector) Select(ctx context.Context, agentName string) (ag
 		return nil, NewAgentRequiredError(availableAgents)
 	}
 
-	// Create agent configuration
-	cfg := agent.NewAgentConfig(agentName)
-
-	// Attempt to create the agent
-	agentInstance, err := s.registry.Create(agentName, cfg)
+	// Discover the agent via registry adapter
+	agentInstance, err := s.discovery.DiscoverAgent(ctx, agentName)
 	if err != nil {
-		// Get available agents for helpful error message
-		availableAgents, listErr := s.getAvailableAgentNames(ctx)
-		if listErr != nil {
-			// Fallback to basic error if we can't list agents
-			return nil, NewAgentNotFoundError(agentName, []string{})
+		// Check if this is a registry.AgentNotFoundError
+		var notFoundErr *registry.AgentNotFoundError
+		if asErr, ok := err.(*registry.AgentNotFoundError); ok {
+			notFoundErr = asErr
 		}
+
+		// Get available agents for helpful error message
+		var availableAgents []string
+		if notFoundErr != nil && len(notFoundErr.Available) > 0 {
+			availableAgents = notFoundErr.Available
+		} else {
+			availableAgents, _ = s.getAvailableAgentNames(ctx)
+		}
+
 		return nil, NewAgentNotFoundError(agentName, availableAgents)
 	}
 
@@ -81,19 +87,35 @@ func (s *DefaultAgentSelector) Select(ctx context.Context, agentName string) (ag
 
 // ListAvailable returns information about all registered agents.
 func (s *DefaultAgentSelector) ListAvailable(ctx context.Context) ([]AgentInfo, error) {
-	descriptors := s.registry.List()
+	// Get agent information from the discovery interface
+	registryInfos, err := s.discovery.ListAgents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list agents: %w", err)
+	}
 
-	// Convert agent descriptors to AgentInfo
-	infos := make([]AgentInfo, 0, len(descriptors))
-	for _, desc := range descriptors {
+	// Convert registry.AgentInfo to attack.AgentInfo
+	infos := make([]AgentInfo, 0, len(registryInfos))
+	for _, regInfo := range registryInfos {
+		// Convert string slices to typed slices
+		targetTypes := make([]component.TargetType, 0, len(regInfo.TargetTypes))
+		for _, tt := range regInfo.TargetTypes {
+			targetTypes = append(targetTypes, component.TargetType(tt))
+		}
+
+		techniqueTypes := make([]component.TechniqueType, 0, len(regInfo.TechniqueTypes))
+		for _, tt := range regInfo.TechniqueTypes {
+			techniqueTypes = append(techniqueTypes, component.TechniqueType(tt))
+		}
+
 		info := AgentInfo{
-			Name:           desc.Name,
-			Description:    desc.Description,
-			Capabilities:   desc.Capabilities,
-			TargetTypes:    desc.TargetTypes,
-			TechniqueTypes: desc.TechniqueTypes,
-			Version:        desc.Version,
-			IsExternal:     desc.IsExternal,
+			Name:           regInfo.Name,
+			Description:    regInfo.Description,
+			Capabilities:   regInfo.Capabilities,
+			TargetTypes:    targetTypes,
+			TechniqueTypes: techniqueTypes,
+			Version:        regInfo.Version,
+			// IsExternal is true if there are multiple instances or remote endpoints
+			IsExternal: regInfo.Instances > 0,
 		}
 		infos = append(infos, info)
 	}

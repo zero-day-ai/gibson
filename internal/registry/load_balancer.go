@@ -56,8 +56,8 @@ type LoadBalancer struct {
 	rrCounters map[string]*uint64
 
 	// State for least-connection strategy (future use)
-	connMutex      sync.RWMutex
-	connCounts     map[string]int // endpoint -> connection count
+	connMutex  sync.RWMutex
+	connCounts map[string]int // endpoint -> connection count
 }
 
 // NewLoadBalancer creates a load balancer wrapping a registry.

@@ -3,10 +3,10 @@ package harness
 import (
 	"log/slog"
 
-	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
@@ -26,7 +26,6 @@ import (
 //   - LLMRegistry: Uses empty registry if nil (no providers available)
 //   - ToolRegistry: Uses empty registry if nil (no tools available)
 //   - PluginRegistry: Uses empty registry if nil (no plugins available)
-//   - AgentRegistry: Uses empty registry if nil (no sub-agents available)
 //   - MemoryManager: Uses in-memory implementation if nil
 //   - Tracer: Uses no-op tracer if nil
 //   - Logger: Uses default slog logger if nil
@@ -54,10 +53,11 @@ type HarnessConfig struct {
 	// Optional: defaults to empty registry (no plugins available).
 	PluginRegistry plugin.PluginRegistry
 
-	// AgentRegistry provides access to registered agents.
-	// Used for sub-agent delegation operations (DelegateToAgent, ListAgents).
-	// Optional: defaults to empty registry (no sub-agents available).
-	AgentRegistry agent.AgentRegistry
+	// RegistryAdapter provides unified component discovery via etcd registry.
+	// This is the preferred method for discovering and connecting to agents, tools, and plugins.
+	// When set, this is used for agent delegation operations (DelegateToAgent, ListAgents).
+	// Optional: if nil, agent delegation will not be available.
+	RegistryAdapter registry.ComponentDiscovery
 
 	// MemoryManager provides memory store creation and lifecycle management.
 	// Used for accessing working, mission, and long-term memory tiers.
@@ -126,7 +126,6 @@ func (c *HarnessConfig) Validate() error {
 //   - LLMRegistry: NewLLMRegistry() (empty registry)
 //   - ToolRegistry: NewToolRegistry() (empty registry)
 //   - PluginRegistry: NewPluginRegistry() (empty registry)
-//   - AgentRegistry: NewAgentRegistry() (empty registry)
 //   - Tracer: trace.NewNoopTracerProvider().Tracer("gibson.harness")
 //   - Logger: slog.Default()
 //   - FindingStore: NewInMemoryFindingStore()
@@ -136,6 +135,7 @@ func (c *HarnessConfig) Validate() error {
 //
 // Note: MemoryManager is not defaulted as it requires mission-specific configuration.
 // Note: SlotManager is not defaulted as it is a required field.
+// Note: RegistryAdapter is not defaulted as it requires etcd configuration (if nil, agent delegation will not be available).
 func (c *HarnessConfig) ApplyDefaults() {
 	if c.LLMRegistry == nil {
 		c.LLMRegistry = llm.NewLLMRegistry()
@@ -147,10 +147,6 @@ func (c *HarnessConfig) ApplyDefaults() {
 
 	if c.PluginRegistry == nil {
 		c.PluginRegistry = plugin.NewPluginRegistry()
-	}
-
-	if c.AgentRegistry == nil {
-		c.AgentRegistry = agent.NewAgentRegistry()
 	}
 
 	if c.Tracer == nil {

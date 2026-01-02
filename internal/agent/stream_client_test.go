@@ -71,7 +71,10 @@ func (m *mockStream) RecvMsg(msg any) error {
 	if err != nil {
 		return err
 	}
-	*msg.(*proto.AgentMessage) = *received
+	// Avoid copying lock values by manually copying fields
+	target := msg.(*proto.AgentMessage)
+	target.Payload = received.Payload
+	target.TraceId = received.TraceId
 	return nil
 }
 

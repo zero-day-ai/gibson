@@ -136,7 +136,7 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		llmRegistry:         f.config.LLMRegistry,
 		toolRegistry:        f.config.ToolRegistry,
 		pluginRegistry:      f.config.PluginRegistry,
-		agentRegistry:       f.config.AgentRegistry,
+		registryAdapter:     f.config.RegistryAdapter,
 		memoryStore:         f.config.MemoryManager,
 		findingStore:        f.config.FindingStore,
 		factory:             selfFactory,

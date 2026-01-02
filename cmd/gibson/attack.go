@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
-	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/attack"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
@@ -23,6 +23,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
@@ -192,7 +193,7 @@ func runAttackCommand(cmd *cobra.Command, args []string) error {
 	outputHandler := attack.NewOutputHandler(opts.OutputFormat, cmd.OutOrStdout(), opts.Verbose, opts.Quiet)
 
 	// Create attack runner with dependencies
-	runner, err := createAttackRunner()
+	runner, err := createAttackRunner(ctx)
 	if err != nil {
 		return internal.WrapError(attack.ExitError, "failed to create attack runner", err)
 	}
@@ -289,7 +290,7 @@ func buildAttackOptions(targetURL string) (*attack.AttackOptions, error) {
 }
 
 // createAttackRunner creates an AttackRunner with all dependencies (Task 4.1, 4.2)
-func createAttackRunner() (attack.AttackRunner, error) {
+func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
 	if err != nil {
@@ -307,16 +308,19 @@ func createAttackRunner() (attack.AttackRunner, error) {
 	missionStore := mission.NewDBMissionStore(db)
 	findingStore := finding.NewDBFindingStore(db)
 
-	// Step 2: Create registries
-	agentRegistry := agent.NewGRPCAgentRegistry()
+	// Step 2: Get registry manager from context and create adapter
+	regManager := component.GetRegistryManager(ctx)
+	if regManager == nil {
+		return nil, fmt.Errorf("registry not available (run 'gibson init' first)")
+	}
+
+	// Create registry adapter for component discovery
+	registryAdapter := registry.NewRegistryAdapter(regManager.Registry())
+
+	// Step 2.5: Create registries (tools and plugins still use legacy registries for now)
 	toolRegistry := tool.NewToolRegistry()
 	pluginRegistry := plugin.NewPluginRegistry()
 	payloadRegistry := payload.NewPayloadRegistryWithDefaults(db)
-
-	// Step 2.5: Discover running agents (legacy discovery removed)
-	if err := discoverAndRegisterAgents(context.Background(), homeDir, agentRegistry); err != nil {
-		slog.Warn("failed to discover running agents", "error", err)
-	}
 
 	// Step 3: Create LLM components
 	llmRegistry, slotManager, err := initializeLLMComponents()
@@ -326,14 +330,14 @@ func createAttackRunner() (attack.AttackRunner, error) {
 
 	// Step 4: Create harness factory
 	harnessConfig := harness.HarnessConfig{
-		LLMRegistry:    llmRegistry,
-		SlotManager:    slotManager,
-		ToolRegistry:   toolRegistry,
-		PluginRegistry: pluginRegistry,
-		AgentRegistry:  agentRegistry,
-		FindingStore:   nil, // Will be created per-harness if needed
-		Logger:         slog.Default(),
-		Tracer:         trace.NewNoopTracerProvider().Tracer("attack-runner"),
+		LLMRegistry:     llmRegistry,
+		SlotManager:     slotManager,
+		ToolRegistry:    toolRegistry,
+		PluginRegistry:  pluginRegistry,
+		RegistryAdapter: registryAdapter, // Use new etcd-based registry adapter
+		FindingStore:    nil,              // Will be created per-harness if needed
+		Logger:          slog.Default(),
+		Tracer:          trace.NewNoopTracerProvider().Tracer("attack-runner"),
 	}
 
 	harnessFactory, err := harness.NewDefaultHarnessFactory(harnessConfig)
@@ -357,7 +361,7 @@ func createAttackRunner() (attack.AttackRunner, error) {
 	// Step 7: Create and return attack runner
 	runner := attack.NewAttackRunner(
 		orchestrator,
-		agentRegistry,
+		registryAdapter,
 		payloadRegistry,
 		missionStore,
 		findingStore,
@@ -660,14 +664,6 @@ func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
 	slotManager := llm.NewSlotManager(registry)
 
 	return registry, slotManager, nil
-}
-
-// discoverAndRegisterAgents discovers and registers agents with the GRPCAgentRegistry.
-// Legacy discovery removed - this function is stubbed for now.
-func discoverAndRegisterAgents(ctx context.Context, homeDir string, registry *agent.GRPCAgentRegistry) error {
-	// Legacy discovery removed - will be replaced with registry-based discovery in Phase 4
-	slog.Debug("agent discovery temporarily disabled (legacy code removed)")
-	return nil
 }
 
 // slogAdapter adapts slog.Logger to the component.Logger interface

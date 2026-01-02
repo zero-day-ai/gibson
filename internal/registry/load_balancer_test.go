@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	sdkregistry "github.com/zero-day-ai/sdk/registry"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
 
 // mockRegistry is a simple in-memory registry for testing.

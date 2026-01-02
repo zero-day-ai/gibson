@@ -368,7 +368,6 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 
 	// Setup mocks for both components
 	for _, comp := range components {
-		mockRegistry.On("Get", componentKind, comp.Name).Return(comp, nil)
 		mockRegistry.On("GetByName", mock.Anything, componentKind, comp.Name).Return(comp, nil)
 		mockGit.On("Pull", comp.RepoPath).Return(nil)
 		mockGit.On("GetVersion", comp.RepoPath).Return("newversion", nil)
@@ -378,8 +377,8 @@ func TestInstallerUpdateAll_Success(t *testing.T) {
 			Stdout:  "build successful",
 		}
 		mockBuilder.On("Build", mock.Anything, mock.Anything, comp.Name, mock.Anything, mock.Anything).Return(buildResult, nil)
-		mockRegistry.On("Unregister", componentKind, comp.Name).Return(nil)
-		mockRegistry.On("Register", mock.Anything).Return(nil)
+		mockRegistry.On("Delete", mock.Anything, componentKind, comp.Name).Return(nil)
+		mockRegistry.On("Create", mock.Anything, mock.Anything).Return(nil)
 	}
 
 	opts := UpdateOptions{}
@@ -407,12 +406,14 @@ func TestUninstall_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	component := &Component{
-		Kind:   componentKind,
-		Name:   componentName,
-		Status: ComponentStatusAvailable,
+		Kind:     componentKind,
+		Name:     componentName,
+		Status:   ComponentStatusAvailable,
+		RepoPath: componentDir,
 	}
-	mockRegistry.On("Get", componentKind, componentName).Return(component, nil)
-	mockRegistry.On("Unregister", componentKind, componentName).Return(nil)
+	mockRegistry.On("GetByName", mock.Anything, componentKind, componentName).Return(component, nil)
+	mockRegistry.On("List", mock.Anything, componentKind).Return([]*Component{component}, nil)
+	mockRegistry.On("Delete", mock.Anything, componentKind, componentName).Return(nil)
 
 	result, err := installer.Uninstall(context.Background(), componentKind, componentName)
 

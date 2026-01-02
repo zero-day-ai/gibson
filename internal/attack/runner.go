@@ -11,6 +11,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/payload"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
@@ -31,7 +32,7 @@ type AttackRunner interface {
 // and handles auto-persistence logic based on findings.
 type DefaultAttackRunner struct {
 	orchestrator    mission.MissionOrchestrator
-	agentRegistry   agent.AgentRegistry
+	discovery       registry.ComponentDiscovery
 	payloadRegistry payload.PayloadRegistry
 	missionStore    mission.MissionStore
 	findingStore    finding.FindingStore
@@ -80,11 +81,18 @@ func WithPayloadFilter(filter PayloadFilter) RunnerOption {
 	}
 }
 
+// WithComponentDiscovery sets the component discovery interface for agent discovery.
+func WithComponentDiscovery(discovery registry.ComponentDiscovery) RunnerOption {
+	return func(r *DefaultAttackRunner) {
+		r.discovery = discovery
+	}
+}
+
 // NewAttackRunner creates a new DefaultAttackRunner with the provided dependencies.
 // It uses functional options for optional configuration.
 func NewAttackRunner(
 	orchestrator mission.MissionOrchestrator,
-	agentRegistry agent.AgentRegistry,
+	discovery registry.ComponentDiscovery,
 	payloadRegistry payload.PayloadRegistry,
 	missionStore mission.MissionStore,
 	findingStore finding.FindingStore,
@@ -92,7 +100,7 @@ func NewAttackRunner(
 ) *DefaultAttackRunner {
 	runner := &DefaultAttackRunner{
 		orchestrator:    orchestrator,
-		agentRegistry:   agentRegistry,
+		discovery:       discovery,
 		payloadRegistry: payloadRegistry,
 		missionStore:    missionStore,
 		findingStore:    findingStore,
@@ -110,7 +118,8 @@ func NewAttackRunner(
 		runner.targetResolver = NewDefaultTargetResolver(nil)
 	}
 	if runner.agentSelector == nil {
-		runner.agentSelector = NewAgentSelector(agentRegistry)
+		// Create agent selector using ComponentDiscovery
+		runner.agentSelector = NewAgentSelector(discovery)
 	}
 	if runner.payloadFilter == nil {
 		runner.payloadFilter = NewPayloadFilter(payloadRegistry)

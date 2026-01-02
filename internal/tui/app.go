@@ -52,7 +52,7 @@ type App struct {
 	missionStore    mission.MissionStore
 	componentDAO    database.ComponentDAO
 	findingStore    finding.FindingStore
-	agentRegistry   agent.AgentRegistry
+	registryAdapter *registry.RegistryAdapter
 	streamManager   *agent.StreamManager
 	registryManager *registry.Manager
 
@@ -66,7 +66,7 @@ type AppConfig struct {
 	MissionStore    mission.MissionStore
 	ComponentDAO    database.ComponentDAO
 	FindingStore    finding.FindingStore
-	AgentRegistry   agent.AgentRegistry
+	RegistryAdapter *registry.RegistryAdapter
 	StreamManager   *agent.StreamManager
 	RegistryManager *registry.Manager
 }
@@ -89,7 +89,7 @@ func NewApp(ctx context.Context, config AppConfig) *App {
 		missionStore:    config.MissionStore,
 		componentDAO:    config.ComponentDAO,
 		findingStore:    config.FindingStore,
-		agentRegistry:   config.AgentRegistry,
+		registryAdapter: config.RegistryAdapter,
 		streamManager:   config.StreamManager,
 		registryManager: config.RegistryManager,
 	}

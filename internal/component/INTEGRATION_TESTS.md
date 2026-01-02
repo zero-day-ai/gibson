@@ -1,15 +1,15 @@
-# Integration Tests for Local Component Lifecycle
+# Integration Tests for Component Lifecycle
 
-This document describes the integration tests for the local component lifecycle system.
+This document describes the integration tests for the component lifecycle system with etcd registry.
 
 ## Overview
 
-The integration tests in `integration_test.go` provide end-to-end validation of the local component lifecycle management, including:
+The integration tests in `integration_test.go` provide end-to-end validation of component lifecycle management with etcd-based discovery, including:
 
-- Component start/stop with PID, lock, and socket tracking
-- Crash recovery and stale state cleanup
-- Duplicate start prevention via file locks
-- Component discovery across different kinds
+- Component start/stop with registry registration
+- Health monitoring and automatic deregistration
+- Multi-instance support and load balancing
+- Component discovery via etcd registry
 - Concurrent operations and thread safety
 
 ## Running the Tests
@@ -48,116 +48,103 @@ This skips the concurrent operations test which may take longer.
 
 ## Test Coverage
 
-### TestLocalLifecycleFullStartStop
-Tests the complete lifecycle of starting and stopping a component with proper PID file, lock file, and Unix socket management.
+### TestRegistryLifecycleFullStartStop
+Tests the complete lifecycle of starting and stopping a component with registry registration.
 
 **Validates:**
-- PID file creation and content
-- Lock acquisition and release
-- Socket file creation
-- Component running status detection
+- Component registration with etcd
+- Metadata storage (name, version, endpoint, capabilities)
+- Health check endpoints
+- Graceful deregistration on stop
 
-### TestLocalLifecycleCrashRecovery
-Tests cleanup of stale state when a component's files are left behind after a crash.
-
-**Validates:**
-- Stale PID file detection and removal
-- Dead process cleanup
-- Lock file cleanup
-- Socket file cleanup
-
-### TestLocalLifecycleDuplicateStartPrevention
-Tests that the file lock mechanism prevents duplicate starts of the same component.
+### TestRegistryLifecycleCrashRecovery
+Tests automatic cleanup when components crash without deregistering.
 
 **Validates:**
-- Exclusive lock enforcement
-- ComponentAlreadyRunningError
-- Multi-tracker conflict resolution
+- TTL-based expiration of stale entries
+- Automatic removal of unhealthy components
+- Registry consistency after crashes
 
-### TestLocalLifecycleDiscoveryFindsRunningAgents
-Tests that the discovery mechanism correctly finds all running components.
+### TestRegistryLifecycleMultiInstance
+Tests running multiple instances of the same component.
 
 **Validates:**
-- Multiple component discovery
+- Multiple instance registration
+- Instance-specific metadata
+- Load balancing across instances
+- Independent lifecycle management
+
+### TestRegistryLifecycleDiscoveryFindsRunningAgents
+Tests that the discovery mechanism correctly finds all registered components via etcd.
+
+**Validates:**
+- Registry-based component discovery
 - Real-time discovery updates
-- Component health validation
+- Health status validation
 - Dynamic state changes
 
-### TestLocalLifecycleDiscoveryMixedHealthStates
-Tests discovery with a mix of healthy and unhealthy components.
-
-**Validates:**
-- Dead process filtering
-- Missing socket detection
-- Automatic cleanup of unhealthy components
-
-### TestLocalLifecycleDiscoveryAcrossKinds
+### TestRegistryLifecycleDiscoveryAcrossKinds
 Tests that discovery correctly filters by component kind (agent, tool, plugin).
 
 **Validates:**
 - Agent-specific discovery
 - Tool-specific discovery
 - Plugin-specific discovery
-- Kind-based filtering
+- Namespace-based filtering
 
-### TestLocalLifecycleConcurrentStartStop
-Tests thread safety of concurrent start/stop operations.
+### TestRegistryLifecycleConcurrentStartStop
+Tests thread safety of concurrent start/stop operations with registry.
 
 **Validates:**
-- Concurrent start/stop operations
-- Lock contention handling
+- Concurrent registration/deregistration
+- etcd consistency under load
 - Race condition prevention
-- Internal state consistency
+- Registry state consistency
 
-### TestLocalLifecycleStaleSocketCleanup
-Tests cleanup of leftover socket files from crashed components.
-
-**Validates:**
-- Stale socket detection
-- Socket file removal
-- Connection validation
-
-### TestLocalLifecycleHealthySocketNotRemoved
-Tests that healthy, active sockets are not removed during cleanup.
+### TestRegistryLifecycleHealthMonitoring
+Tests continuous health monitoring via TTL keepalive.
 
 **Validates:**
-- Health check validation
-- Socket protection
-- Error handling for healthy components
+- TTL-based keepalive mechanism
+- Automatic expiration detection
+- Health status tracking
+- Reconnection handling
 
 ## Test Helpers
 
-### `startTestServer(t *testing.T, socketPath string) *grpc.Server`
+### `startTestRegistry(t *testing.T) (*registry.Client, func())`
 
-Starts a gRPC server with health check on a Unix socket.
+Starts an embedded etcd instance for testing.
 
 **Parameters:**
 - `t`: Testing instance
-- `socketPath`: Absolute path to Unix socket
+
+**Returns:**
+- `*registry.Client`: Registry client for test operations
+- `func()`: Cleanup function to stop the registry
+
+**Features:**
+- Temporary data directory
+- Automatic cleanup on test completion
+- Isolated test environment
+
+### `startComponentServer(t *testing.T, endpoint string, reg *registry.Client) *grpc.Server`
+
+Starts a gRPC server with health check and registry registration.
+
+**Parameters:**
+- `t`: Testing instance
+- `endpoint`: gRPC endpoint (e.g., "localhost:50051")
+- `reg`: Registry client for self-registration
 
 **Returns:**
 - `*grpc.Server`: Server instance for cleanup
 
 **Features:**
-- Automatic socket cleanup
-- Health service registration
+- Automatic registration on startup
+- Health service implementation
+- Graceful deregistration on shutdown
 - Background serving
-- Socket creation validation
-
-### `killProcessByPID(pid int) error`
-
-Sends signals to a process to terminate it (SIGTERM then SIGKILL).
-
-**Parameters:**
-- `pid`: Process ID to terminate
-
-**Returns:**
-- `error`: Error if process termination fails
-
-**Features:**
-- Graceful shutdown attempt (SIGTERM)
-- Forced termination (SIGKILL)
-- Wait period between signals
 
 ## Implementation Notes
 
@@ -173,15 +160,16 @@ Each test uses `setupTestEnv(t)` which:
 - Returns a cleanup function
 - Ensures tests don't interfere with each other
 
-### Process Simulation
+### Component Simulation
 
-Tests use goroutines with gRPC servers instead of spawning actual subprocesses because:
+Tests use in-process gRPC servers with registry integration instead of spawning actual subprocesses because:
 - Faster execution
 - Better portability across platforms
 - Easier cleanup and error handling
 - Simplified test infrastructure
+- Full registry integration testing
 
-**Note:** In production, components are actual subprocesses with separate PIDs.
+**Note:** In production, components are actual processes that self-register with the etcd registry via the SDK.
 
 ### CI/CD Compatibility
 
@@ -193,26 +181,25 @@ Tests are designed to work in CI environments:
 
 ## Troubleshooting
 
-### Tests Fail with "Socket already exists"
+### Tests Fail with "etcd: failed to start"
 
-Cleanup from a previous test run may have failed. Manually remove sockets:
+The embedded etcd instance may not have cleaned up properly. Manually remove data:
 
 ```bash
-rm -rf ~/.gibson-test-*/run
+rm -rf ~/.gibson-test-*/etcd-data
 ```
 
-### Tests Fail with "Cannot acquire lock"
+### Tests Fail with "registry connection refused"
 
-Another process or test may hold the lock. Check for stuck test processes:
+The test registry may not have started. Check for port conflicts:
 
 ```bash
-ps aux | grep integration_test
-kill -9 <PID>
+lsof -i :2379
 ```
 
 ### Tests Timeout
 
-Increase the timeout value:
+Increase the timeout value (etcd startup can take a few seconds):
 
 ```bash
 go test -tags integration,fts5 -v -timeout 10m ./internal/component/
@@ -220,8 +207,9 @@ go test -tags integration,fts5 -v -timeout 10m ./internal/component/
 
 ## Future Enhancements
 
-- Add tests with actual subprocess spawning
-- Add tests for network failures
-- Add tests for filesystem permission errors
-- Add benchmarks for discovery performance
-- Add tests for very large numbers of components (100+)
+- Add tests with actual subprocess spawning and registry integration
+- Add tests for etcd cluster failures and failover
+- Add tests for network partition scenarios
+- Add benchmarks for registry discovery performance at scale
+- Add tests for very large numbers of components (1000+)
+- Add tests for TLS-enabled registry connections

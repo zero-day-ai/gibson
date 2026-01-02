@@ -482,13 +482,6 @@ func setupTestHarness(t *testing.T, mockResponses []string) (AgentHarness, *Harn
 	err = pluginRegistry.Register(NewTargetInfoPlugin(), plugin.PluginConfig{})
 	require.NoError(t, err)
 
-	// Create agent registry and register agents
-	agentRegistry := agent.NewAgentRegistry()
-	err = agentRegistry.RegisterInternal("recon_agent", NewReconAgent)
-	require.NoError(t, err)
-	err = agentRegistry.RegisterInternal("exploit_agent", NewExploitAgent)
-	require.NoError(t, err)
-
 	// Create temporary database file for mission memory (WAL mode requires file-based DB)
 	tmpDB := filepath.Join(t.TempDir(), "test.db")
 	db, err := database.Open(tmpDB)
@@ -509,7 +502,6 @@ func setupTestHarness(t *testing.T, mockResponses []string) (AgentHarness, *Harn
 		SlotManager:    slotManager,
 		ToolRegistry:   toolRegistry,
 		PluginRegistry: pluginRegistry,
-		AgentRegistry:  agentRegistry,
 		MemoryManager:  memoryManager,
 		FindingStore:   findingStore,
 	}
@@ -1257,7 +1249,6 @@ func TestIntegration_CompleteWithTools(t *testing.T) {
 	slotManager := llm.NewSlotManager(llmRegistry)
 	toolRegistry := tool.NewToolRegistry()
 	pluginRegistry := plugin.NewPluginRegistry()
-	agentRegistry := agent.NewAgentRegistry()
 
 	db, err := database.Open(":memory:")
 	require.NoError(t, err)
@@ -1273,7 +1264,6 @@ func TestIntegration_CompleteWithTools(t *testing.T) {
 		SlotManager:    slotManager,
 		ToolRegistry:   toolRegistry,
 		PluginRegistry: pluginRegistry,
-		AgentRegistry:  agentRegistry,
 		MemoryManager:  memoryManager,
 		FindingStore:   findingStore,
 	}

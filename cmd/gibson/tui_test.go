@@ -38,15 +38,12 @@ func TestInitializeDependencies_NoConfig(t *testing.T) {
 	// Should not error - config is optional
 	assert.NoError(t, err)
 
-	// Component registry should still be initialized
-	assert.NotNil(t, appConfig.ComponentRegistry)
+	// Registry manager and adapter may be nil without config
+	// (That's OK - TUI runs without agent features in that case)
 
-	// Agent registry should still be initialized
-	assert.NotNil(t, appConfig.AgentRegistry)
-
-	// DB-dependent things should be nil
+	// DB-dependent things should be nil without config
 	assert.Nil(t, appConfig.DB)
-	assert.Nil(t, appConfig.MissionDAO)
+	assert.Nil(t, appConfig.MissionStore)
 	assert.Nil(t, appConfig.FindingStore)
 }
 

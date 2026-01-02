@@ -10,6 +10,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
@@ -64,6 +65,71 @@ func (m *MockMemoryStore) Close() error {
 var _ memory.MemoryManager = (*MockMemoryStore)(nil)
 
 // ────────────────────────────────────────────────────────────────────────────
+// Mock Registry Adapter for Testing
+// ────────────────────────────────────────────────────────────────────────────
+
+type MockRegistryAdapter struct {
+	DiscoverAgentFn    func(ctx context.Context, name string) (agent.Agent, error)
+	DiscoverToolFn     func(ctx context.Context, name string) (tool.Tool, error)
+	DiscoverPluginFn   func(ctx context.Context, name string) (plugin.Plugin, error)
+	ListAgentsFn       func(ctx context.Context) ([]registry.AgentInfo, error)
+	ListToolsFn        func(ctx context.Context) ([]registry.ToolInfo, error)
+	ListPluginsFn      func(ctx context.Context) ([]registry.PluginInfo, error)
+	DelegateToAgentFn  func(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error)
+}
+
+func (m *MockRegistryAdapter) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {
+	if m.DiscoverAgentFn != nil {
+		return m.DiscoverAgentFn(ctx, name)
+	}
+	return nil, types.NewError("MOCK_ERROR", "DiscoverAgent not implemented")
+}
+
+func (m *MockRegistryAdapter) DiscoverTool(ctx context.Context, name string) (tool.Tool, error) {
+	if m.DiscoverToolFn != nil {
+		return m.DiscoverToolFn(ctx, name)
+	}
+	return nil, types.NewError("MOCK_ERROR", "DiscoverTool not implemented")
+}
+
+func (m *MockRegistryAdapter) DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error) {
+	if m.DiscoverPluginFn != nil {
+		return m.DiscoverPluginFn(ctx, name)
+	}
+	return nil, types.NewError("MOCK_ERROR", "DiscoverPlugin not implemented")
+}
+
+func (m *MockRegistryAdapter) ListAgents(ctx context.Context) ([]registry.AgentInfo, error) {
+	if m.ListAgentsFn != nil {
+		return m.ListAgentsFn(ctx)
+	}
+	return nil, types.NewError("MOCK_ERROR", "ListAgents not implemented")
+}
+
+func (m *MockRegistryAdapter) ListTools(ctx context.Context) ([]registry.ToolInfo, error) {
+	if m.ListToolsFn != nil {
+		return m.ListToolsFn(ctx)
+	}
+	return nil, types.NewError("MOCK_ERROR", "ListTools not implemented")
+}
+
+func (m *MockRegistryAdapter) ListPlugins(ctx context.Context) ([]registry.PluginInfo, error) {
+	if m.ListPluginsFn != nil {
+		return m.ListPluginsFn(ctx)
+	}
+	return nil, types.NewError("MOCK_ERROR", "ListPlugins not implemented")
+}
+
+func (m *MockRegistryAdapter) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
+	if m.DelegateToAgentFn != nil {
+		return m.DelegateToAgentFn(ctx, name, task, harness)
+	}
+	return agent.Result{}, types.NewError("MOCK_ERROR", "DelegateToAgent not implemented")
+}
+
+var _ registry.ComponentDiscovery = (*MockRegistryAdapter)(nil)
+
+// ────────────────────────────────────────────────────────────────────────────
 // NewHarnessFactory Tests
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -81,7 +147,6 @@ func TestNewHarnessFactory_Success(t *testing.T) {
 	assert.NotNil(t, storedConfig.LLMRegistry)
 	assert.NotNil(t, storedConfig.ToolRegistry)
 	assert.NotNil(t, storedConfig.PluginRegistry)
-	assert.NotNil(t, storedConfig.AgentRegistry)
 	assert.NotNil(t, storedConfig.Logger)
 	assert.NotNil(t, storedConfig.FindingStore)
 	assert.NotNil(t, storedConfig.Metrics)
@@ -118,7 +183,6 @@ func TestNewHarnessFactory_AppliesDefaults(t *testing.T) {
 	assert.NotNil(t, storedConfig.LLMRegistry, "LLMRegistry should be defaulted")
 	assert.NotNil(t, storedConfig.ToolRegistry, "ToolRegistry should be defaulted")
 	assert.NotNil(t, storedConfig.PluginRegistry, "PluginRegistry should be defaulted")
-	assert.NotNil(t, storedConfig.AgentRegistry, "AgentRegistry should be defaulted")
 	assert.NotNil(t, storedConfig.Logger, "Logger should be defaulted")
 	assert.NotNil(t, storedConfig.FindingStore, "FindingStore should be defaulted")
 	assert.NotNil(t, storedConfig.Metrics, "Metrics should be defaulted")
@@ -134,7 +198,6 @@ func TestNewHarnessFactory_PreservesProvidedConfig(t *testing.T) {
 	slotMgr := llm.NewSlotManager(llmReg)
 	toolReg := tool.NewToolRegistry()
 	pluginReg := plugin.NewPluginRegistry()
-	agentReg := agent.NewAgentRegistry()
 	findingStore := NewInMemoryFindingStore()
 	metrics := NewNoOpMetricsRecorder()
 	memStore := &MockMemoryStore{}
@@ -144,7 +207,6 @@ func TestNewHarnessFactory_PreservesProvidedConfig(t *testing.T) {
 		LLMRegistry:    llmReg,
 		ToolRegistry:   toolReg,
 		PluginRegistry: pluginReg,
-		AgentRegistry:  agentReg,
 		FindingStore:   findingStore,
 		Metrics:        metrics,
 		MemoryManager:  memStore,
@@ -160,7 +222,6 @@ func TestNewHarnessFactory_PreservesProvidedConfig(t *testing.T) {
 	assert.Equal(t, llmReg, storedConfig.LLMRegistry)
 	assert.Equal(t, toolReg, storedConfig.ToolRegistry)
 	assert.Equal(t, pluginReg, storedConfig.PluginRegistry)
-	assert.Equal(t, agentReg, storedConfig.AgentRegistry)
 	assert.Equal(t, findingStore, storedConfig.FindingStore)
 	assert.Equal(t, metrics, storedConfig.Metrics)
 	assert.Equal(t, memStore, storedConfig.MemoryManager)
@@ -173,7 +234,6 @@ func TestNewHarnessFactory_FullConfiguration(t *testing.T) {
 		LLMRegistry:         llm.NewLLMRegistry(),
 		ToolRegistry:        tool.NewToolRegistry(),
 		PluginRegistry:      plugin.NewPluginRegistry(),
-		AgentRegistry:       agent.NewAgentRegistry(),
 		FindingStore:        NewInMemoryFindingStore(),
 		Metrics:             NewNoOpMetricsRecorder(),
 		MemoryManager:       &MockMemoryStore{},
@@ -192,7 +252,6 @@ func TestNewHarnessFactory_FullConfiguration(t *testing.T) {
 	assert.NotNil(t, storedConfig.LLMRegistry)
 	assert.NotNil(t, storedConfig.ToolRegistry)
 	assert.NotNil(t, storedConfig.PluginRegistry)
-	assert.NotNil(t, storedConfig.AgentRegistry)
 	assert.NotNil(t, storedConfig.FindingStore)
 	assert.NotNil(t, storedConfig.Metrics)
 	assert.NotNil(t, storedConfig.MemoryManager)
@@ -781,4 +840,102 @@ func TestFactory_DifferentMissionsSameAgent(t *testing.T) {
 		assert.Equal(t, missions[i].Name, h.Mission().Name)
 		assert.Equal(t, "same-agent", h.Mission().CurrentAgent)
 	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// RegistryAdapter Tests (Task 3.3)
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestFactory_Create_WithRegistryAdapter verifies that the factory correctly passes
+// the RegistryAdapter from config to created harnesses.
+func TestFactory_Create_WithRegistryAdapter(t *testing.T) {
+	// Create mock registry adapter
+	mockAdapter := &MockRegistryAdapter{}
+
+	// Create config with registry adapter
+	config := HarnessConfig{
+		SlotManager:     llm.NewSlotManager(llm.NewLLMRegistry()),
+		RegistryAdapter: mockAdapter,
+	}
+
+	factory, err := NewHarnessFactory(config)
+	require.NoError(t, err)
+
+	// Create harness
+	missionCtx := NewMissionContext(types.NewID(), "test-mission", "test-agent")
+	targetInfo := NewTargetInfo(types.NewID(), "test-target", "https://example.com", "web")
+
+	harness, err := factory.Create("test-agent", missionCtx, targetInfo)
+	require.NoError(t, err)
+
+	// Verify harness has the registry adapter
+	// We need to type assert to access the internal field
+	concreteHarness, ok := harness.(*DefaultAgentHarness)
+	require.True(t, ok, "harness should be *DefaultAgentHarness")
+	assert.Equal(t, mockAdapter, concreteHarness.registryAdapter)
+}
+
+// TestFactory_CreateChild_WithRegistryAdapter verifies that child harnesses
+// inherit the RegistryAdapter from their parent via the factory config.
+func TestFactory_CreateChild_WithRegistryAdapter(t *testing.T) {
+	// Create mock registry adapter
+	mockAdapter := &MockRegistryAdapter{}
+
+	// Create config with registry adapter
+	config := HarnessConfig{
+		SlotManager:     llm.NewSlotManager(llm.NewLLMRegistry()),
+		RegistryAdapter: mockAdapter,
+	}
+
+	factory, err := NewHarnessFactory(config)
+	require.NoError(t, err)
+
+	// Create parent harness
+	missionCtx := NewMissionContext(types.NewID(), "test-mission", "parent-agent")
+	targetInfo := NewTargetInfo(types.NewID(), "test-target", "https://example.com", "web")
+
+	parentHarness, err := factory.Create("parent-agent", missionCtx, targetInfo)
+	require.NoError(t, err)
+
+	// Create child harness
+	childHarness, err := factory.CreateChild(parentHarness, "child-agent")
+	require.NoError(t, err)
+
+	// Verify both harnesses have the registry adapter
+	concreteParent, ok := parentHarness.(*DefaultAgentHarness)
+	require.True(t, ok, "parent harness should be *DefaultAgentHarness")
+	assert.Equal(t, mockAdapter, concreteParent.registryAdapter)
+
+	concreteChild, ok := childHarness.(*DefaultAgentHarness)
+	require.True(t, ok, "child harness should be *DefaultAgentHarness")
+	assert.Equal(t, mockAdapter, concreteChild.registryAdapter)
+}
+
+// TestFactory_Create_WithoutRegistryAdapter verifies that agent operations
+// gracefully handle missing registry adapter.
+func TestFactory_Create_WithoutRegistryAdapter(t *testing.T) {
+	// Create config WITHOUT registry adapter
+	config := HarnessConfig{
+		SlotManager: llm.NewSlotManager(llm.NewLLMRegistry()),
+		// RegistryAdapter is nil
+	}
+
+	factory, err := NewHarnessFactory(config)
+	require.NoError(t, err)
+
+	// Create harness
+	missionCtx := NewMissionContext(types.NewID(), "test-mission", "test-agent")
+	targetInfo := NewTargetInfo(types.NewID(), "test-target", "https://example.com", "web")
+
+	harness, err := factory.Create("test-agent", missionCtx, targetInfo)
+	require.NoError(t, err)
+
+	// Verify harness has nil registry adapter
+	concreteHarness, ok := harness.(*DefaultAgentHarness)
+	require.True(t, ok, "harness should be *DefaultAgentHarness")
+	assert.Nil(t, concreteHarness.registryAdapter)
+
+	// ListAgents should return empty list
+	agents := harness.ListAgents()
+	assert.Empty(t, agents)
 }

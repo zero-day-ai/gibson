@@ -213,7 +213,6 @@ func TestAgentList_Success(t *testing.T) {
 // Tests for agent install command
 
 func TestAgentInstall_Success(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
 	mockInstaller := new(MockInstaller)
 
 	repoURL := "https://github.com/test/scanner"
@@ -226,7 +225,6 @@ func TestAgentInstall_Success(t *testing.T) {
 	}
 
 	mockInstaller.On("Install", mock.Anything, repoURL, mock.Anything).Return(expectedResult, nil)
-	mockRegistry.On("Save").Return(nil)
 
 	result, err := mockInstaller.Install(context.Background(), repoURL, component.InstallOptions{})
 
@@ -236,7 +234,6 @@ func TestAgentInstall_Success(t *testing.T) {
 	assert.True(t, result.Installed)
 
 	mockInstaller.AssertExpectations(t)
-	mockRegistry.AssertExpectations(t)
 }
 
 func TestAgentInstall_WithOptions(t *testing.T) {
@@ -343,15 +340,11 @@ func TestAgentInstall_Errors(t *testing.T) {
 // Tests for agent uninstall command
 
 func TestAgentUninstall_Success(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
 	mockInstaller := new(MockInstaller)
-	mockLifecycle := new(MockLifecycleManager)
 
 	agentName := "scanner"
 	agent := createTestAgent(agentName, "1.0.0", component.ComponentStatusAvailable)
 
-	mockRegistry.On("Get", component.ComponentKindAgent, agentName).Return(agent)
-	mockRegistry.On("Save").Return(nil)
 	mockInstaller.On("Uninstall", mock.Anything, component.ComponentKindAgent, agentName).Return(&component.UninstallResult{
 		Name:     agentName,
 		Kind:     component.ComponentKindAgent,
@@ -365,22 +358,16 @@ func TestAgentUninstall_Success(t *testing.T) {
 	assert.NotNil(t, result)
 	assert.Equal(t, agentName, result.Name)
 
-	mockRegistry.AssertExpectations(t)
 	mockInstaller.AssertExpectations(t)
-	mockLifecycle.AssertExpectations(t)
 }
 
 func TestAgentUninstall_StopsRunningAgent(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
 	mockInstaller := new(MockInstaller)
 	mockLifecycle := new(MockLifecycleManager)
 
 	agentName := "scanner"
 	agent := createRunningTestAgent(agentName, "1.0.0")
 
-	mockRegistry.On("Get", component.ComponentKindAgent, agentName).Return(agent)
-	mockRegistry.On("Update", agent).Return(nil)
-	mockRegistry.On("Save").Return(nil)
 	mockLifecycle.On("StopComponent", mock.Anything, agent).Return(nil)
 	mockInstaller.On("Uninstall", mock.Anything, component.ComponentKindAgent, agentName).Return(&component.UninstallResult{
 		Name:       agentName,
@@ -406,7 +393,6 @@ func TestAgentUninstall_StopsRunningAgent(t *testing.T) {
 	assert.True(t, result.WasRunning)
 	assert.True(t, result.WasStopped)
 
-	mockRegistry.AssertExpectations(t)
 	mockInstaller.AssertExpectations(t)
 	mockLifecycle.AssertExpectations(t)
 }
@@ -426,7 +412,6 @@ func TestAgentUninstall_NotFound(t *testing.T) {
 // Tests for agent update command
 
 func TestAgentUpdate_Success(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
 	mockInstaller := new(MockInstaller)
 
 	agentName := "scanner"
@@ -441,7 +426,6 @@ func TestAgentUpdate_Success(t *testing.T) {
 		OldVersion: oldVersion,
 		NewVersion: newVersion,
 	}, nil)
-	mockRegistry.On("Save").Return(nil)
 
 	result, err := mockInstaller.Update(context.Background(), component.ComponentKindAgent, agentName, component.UpdateOptions{})
 
@@ -452,7 +436,6 @@ func TestAgentUpdate_Success(t *testing.T) {
 	assert.Equal(t, newVersion, result.NewVersion)
 
 	mockInstaller.AssertExpectations(t)
-	mockRegistry.AssertExpectations(t)
 }
 
 func TestAgentUpdate_NoChanges(t *testing.T) {
@@ -512,16 +495,12 @@ func TestAgentUpdate_WithRestart(t *testing.T) {
 // Tests for agent start command
 
 func TestAgentStart_Success(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
 	mockLifecycle := new(MockLifecycleManager)
 
 	agentName := "scanner"
 	agent := createTestAgent(agentName, "1.0.0", component.ComponentStatusAvailable)
 	expectedPort := 50001
 
-	mockRegistry.On("Get", component.ComponentKindAgent, agentName).Return(agent)
-	mockRegistry.On("Update", agent).Return(nil)
-	mockRegistry.On("Save").Return(nil)
 	mockLifecycle.On("StartComponent", mock.Anything, agent).Return(expectedPort, nil)
 
 	port, err := mockLifecycle.StartComponent(context.Background(), agent)
@@ -529,25 +508,16 @@ func TestAgentStart_Success(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, expectedPort, port)
 
-	mockRegistry.AssertExpectations(t)
 	mockLifecycle.AssertExpectations(t)
 }
 
 func TestAgentStart_AlreadyRunning(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
-	mockLifecycle := new(MockLifecycleManager)
-
 	agentName := "scanner"
 	agent := createRunningTestAgent(agentName, "1.0.0")
-
-	mockRegistry.On("Get", component.ComponentKindAgent, agentName).Return(agent)
 
 	// Verify agent is already running
 	assert.True(t, agent.IsRunning())
 	assert.Greater(t, agent.PID, 0)
-
-	mockRegistry.AssertExpectations(t)
-	mockLifecycle.AssertExpectations(t)
 }
 
 func TestAgentStart_NotFound(t *testing.T) {
@@ -582,37 +552,26 @@ func TestAgentStart_FailsHealthCheck(t *testing.T) {
 // Tests for agent stop command
 
 func TestAgentStop_Success(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
 	mockLifecycle := new(MockLifecycleManager)
 
 	agentName := "scanner"
 	agent := createRunningTestAgent(agentName, "1.0.0")
 
-	mockRegistry.On("Get", component.ComponentKindAgent, agentName).Return(agent)
-	mockRegistry.On("Update", agent).Return(nil)
-	mockRegistry.On("Save").Return(nil)
 	mockLifecycle.On("StopComponent", mock.Anything, agent).Return(nil)
 
 	err := mockLifecycle.StopComponent(context.Background(), agent)
 
 	assert.NoError(t, err)
 
-	mockRegistry.AssertExpectations(t)
 	mockLifecycle.AssertExpectations(t)
 }
 
 func TestAgentStop_NotRunning(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
-
 	agentName := "scanner"
 	agent := createTestAgent(agentName, "1.0.0", component.ComponentStatusStopped)
 
-	mockRegistry.On("Get", component.ComponentKindAgent, agentName).Return(agent)
-
 	// Verify agent is not running
 	assert.False(t, agent.IsRunning())
-
-	mockRegistry.AssertExpectations(t)
 }
 
 func TestAgentStop_GracefulShutdown(t *testing.T) {
@@ -767,7 +726,6 @@ func TestAgentLogs_ReadSuccess(t *testing.T) {
 // Integration-style tests
 
 func TestAgentLifecycle_InstallStartStop(t *testing.T) {
-	mockRegistry := new(MockComponentRegistry)
 	mockInstaller := new(MockInstaller)
 	mockLifecycle := new(MockLifecycleManager)
 
@@ -782,7 +740,6 @@ func TestAgentLifecycle_InstallStartStop(t *testing.T) {
 		Installed: true,
 	}
 	mockInstaller.On("Install", mock.Anything, repoURL, mock.Anything).Return(installResult, nil)
-	mockRegistry.On("Save").Return(nil).Times(3)
 
 	result, err := mockInstaller.Install(context.Background(), repoURL, component.InstallOptions{})
 	assert.NoError(t, err)
@@ -790,8 +747,6 @@ func TestAgentLifecycle_InstallStartStop(t *testing.T) {
 
 	// Step 2: Start
 	agent := result.Component
-	mockRegistry.On("Get", component.ComponentKindAgent, agentName).Return(agent)
-	mockRegistry.On("Update", agent).Return(nil).Times(2)
 	mockLifecycle.On("StartComponent", mock.Anything, agent).Return(50001, nil)
 
 	port, err := mockLifecycle.StartComponent(context.Background(), agent)
@@ -804,7 +759,6 @@ func TestAgentLifecycle_InstallStartStop(t *testing.T) {
 	err = mockLifecycle.StopComponent(context.Background(), agent)
 	assert.NoError(t, err)
 
-	mockRegistry.AssertExpectations(t)
 	mockInstaller.AssertExpectations(t)
 	mockLifecycle.AssertExpectations(t)
 }

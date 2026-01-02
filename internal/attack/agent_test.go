@@ -10,10 +10,14 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/component"
+	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/registry"
+	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // MockAgentRegistry is a mock implementation of agent.AgentRegistry
+// Kept for backward compatibility with runner tests until runner is updated
 type MockAgentRegistry struct {
 	mock.Mock
 }
@@ -76,6 +80,64 @@ func (m *MockAgentRegistry) IsRegistered(name string) bool {
 	return args.Bool(0)
 }
 
+// MockComponentDiscovery is a mock implementation of registry.ComponentDiscovery
+type MockComponentDiscovery struct {
+	mock.Mock
+}
+
+func (m *MockComponentDiscovery) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(agent.Agent), args.Error(1)
+}
+
+func (m *MockComponentDiscovery) DiscoverTool(ctx context.Context, name string) (tool.Tool, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(tool.Tool), args.Error(1)
+}
+
+func (m *MockComponentDiscovery) DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(plugin.Plugin), args.Error(1)
+}
+
+func (m *MockComponentDiscovery) ListAgents(ctx context.Context) ([]registry.AgentInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]registry.AgentInfo), args.Error(1)
+}
+
+func (m *MockComponentDiscovery) ListTools(ctx context.Context) ([]registry.ToolInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]registry.ToolInfo), args.Error(1)
+}
+
+func (m *MockComponentDiscovery) ListPlugins(ctx context.Context) ([]registry.PluginInfo, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]registry.PluginInfo), args.Error(1)
+}
+
+func (m *MockComponentDiscovery) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
+	args := m.Called(ctx, name, task, harness)
+	return args.Get(0).(agent.Result), args.Error(1)
+}
+
 // MockAgent is a mock implementation of agent.Agent
 type MockAgent struct {
 	mock.Mock
@@ -136,41 +198,42 @@ func (m *MockAgent) Health(ctx context.Context) types.HealthStatus {
 	return args.Get(0).(types.HealthStatus)
 }
 
-// Helper function to create test agent descriptors
-func createTestAgentDescriptor(name, version, description string) agent.AgentDescriptor {
-	return agent.AgentDescriptor{
+// Helper function to create test registry agent info
+func createTestRegistryAgentInfo(name, version, description string) registry.AgentInfo {
+	return registry.AgentInfo{
 		Name:        name,
 		Version:     version,
 		Description: description,
+		Instances:   1,
+		Endpoints:   []string{"localhost:50051"},
 		Capabilities: []string{
 			"llm_interaction",
 			"payload_execution",
 		},
-		TargetTypes: []component.TargetType{
-			component.TargetTypeLLMChat,
-			component.TargetTypeLLMAPI,
+		TargetTypes: []string{
+			string(component.TargetTypeLLMChat),
+			string(component.TargetTypeLLMAPI),
 		},
-		TechniqueTypes: []component.TechniqueType{
-			component.TechniquePromptInjection,
-			component.TechniqueJailbreak,
+		TechniqueTypes: []string{
+			string(component.TechniquePromptInjection),
+			string(component.TechniqueJailbreak),
 		},
-		IsExternal: false,
 	}
 }
 
 func TestAgentSelector_Select_Success(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 	mockAgent := new(MockAgent)
 
 	// Setup expectations
-	mockRegistry.On("Create", "test-agent", mock.AnythingOfType("agent.AgentConfig")).
+	mockDiscovery.On("DiscoverAgent", ctx, "test-agent").
 		Return(mockAgent, nil)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test agent selection
 	result, err := selector.Select(ctx, "test-agent")
@@ -179,28 +242,25 @@ func TestAgentSelector_Select_Success(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, mockAgent, result)
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestAgentSelector_Select_AgentNotFound(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 
 	// Setup expectations - agent not found
-	mockRegistry.On("Create", "nonexistent-agent", mock.AnythingOfType("agent.AgentConfig")).
-		Return(nil, assert.AnError)
-
-	// Setup List() for error message generation
-	descriptors := []agent.AgentDescriptor{
-		createTestAgentDescriptor("agent1", "1.0.0", "First test agent"),
-		createTestAgentDescriptor("agent2", "1.0.0", "Second test agent"),
+	notFoundErr := &registry.AgentNotFoundError{
+		Name:      "nonexistent-agent",
+		Available: []string{"agent1", "agent2"},
 	}
-	mockRegistry.On("List").Return(descriptors)
+	mockDiscovery.On("DiscoverAgent", ctx, "nonexistent-agent").
+		Return(nil, notFoundErr)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test agent selection
 	result, err := selector.Select(ctx, "nonexistent-agent")
@@ -217,24 +277,24 @@ func TestAgentSelector_Select_AgentNotFound(t *testing.T) {
 	assert.Contains(t, availableAgents, "agent1")
 	assert.Contains(t, availableAgents, "agent2")
 
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestAgentSelector_Select_AgentRequired(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 
-	// Setup List() for error message generation
-	descriptors := []agent.AgentDescriptor{
-		createTestAgentDescriptor("agent1", "1.0.0", "First test agent"),
-		createTestAgentDescriptor("agent2", "1.0.0", "Second test agent"),
+	// Setup ListAgents() for error message generation
+	agentInfos := []registry.AgentInfo{
+		createTestRegistryAgentInfo("agent1", "1.0.0", "First test agent"),
+		createTestRegistryAgentInfo("agent2", "1.0.0", "Second test agent"),
 	}
-	mockRegistry.On("List").Return(descriptors)
+	mockDiscovery.On("ListAgents", ctx).Return(agentInfos, nil)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test with empty agent name
 	result, err := selector.Select(ctx, "")
@@ -250,26 +310,26 @@ func TestAgentSelector_Select_AgentRequired(t *testing.T) {
 	assert.Contains(t, availableAgents, "agent1")
 	assert.Contains(t, availableAgents, "agent2")
 
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestAgentSelector_ListAvailable_Success(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 
 	// Setup test data
-	descriptors := []agent.AgentDescriptor{
-		createTestAgentDescriptor("agent-alpha", "1.0.0", "Alpha test agent"),
-		createTestAgentDescriptor("agent-beta", "2.0.0", "Beta test agent"),
-		createTestAgentDescriptor("agent-gamma", "1.5.0", "Gamma test agent"),
+	agentInfos := []registry.AgentInfo{
+		createTestRegistryAgentInfo("agent-alpha", "1.0.0", "Alpha test agent"),
+		createTestRegistryAgentInfo("agent-beta", "2.0.0", "Beta test agent"),
+		createTestRegistryAgentInfo("agent-gamma", "1.5.0", "Gamma test agent"),
 	}
 
-	mockRegistry.On("List").Return(descriptors)
+	mockDiscovery.On("ListAgents", ctx).Return(agentInfos, nil)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test listing agents
 	infos, err := selector.ListAvailable(ctx)
@@ -293,20 +353,20 @@ func TestAgentSelector_ListAvailable_Success(t *testing.T) {
 	assert.Len(t, infos[0].TechniqueTypes, 2)
 	assert.Contains(t, infos[0].TechniqueTypes, component.TechniquePromptInjection)
 
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestAgentSelector_ListAvailable_Empty(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 
 	// Return empty list
-	mockRegistry.On("List").Return([]agent.AgentDescriptor{})
+	mockDiscovery.On("ListAgents", ctx).Return([]registry.AgentInfo{}, nil)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test listing agents
 	infos, err := selector.ListAvailable(ctx)
@@ -315,45 +375,45 @@ func TestAgentSelector_ListAvailable_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, infos)
 
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestValidateAgentName_ValidAgent(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 	mockAgent := new(MockAgent)
 
 	// Setup expectations
-	mockRegistry.On("Create", "valid-agent", mock.AnythingOfType("agent.AgentConfig")).
+	mockDiscovery.On("DiscoverAgent", ctx, "valid-agent").
 		Return(mockAgent, nil)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test validation
 	err := ValidateAgentName(ctx, selector, "valid-agent")
 
 	// Verify
 	assert.NoError(t, err)
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestValidateAgentName_EmptyName(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 
-	// Setup List() for error message
-	descriptors := []agent.AgentDescriptor{
-		createTestAgentDescriptor("agent1", "1.0.0", "Test agent 1"),
+	// Setup ListAgents() for error message
+	agentInfos := []registry.AgentInfo{
+		createTestRegistryAgentInfo("agent1", "1.0.0", "Test agent 1"),
 	}
-	mockRegistry.On("List").Return(descriptors)
+	mockDiscovery.On("ListAgents", ctx).Return(agentInfos, nil)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test validation
 	err := ValidateAgentName(ctx, selector, "")
@@ -361,27 +421,25 @@ func TestValidateAgentName_EmptyName(t *testing.T) {
 	// Verify
 	require.Error(t, err)
 	assert.True(t, IsAgentRequiredError(err))
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestValidateAgentName_InvalidAgent(t *testing.T) {
 	ctx := context.Background()
 
-	// Create mock registry
-	mockRegistry := new(MockAgentRegistry)
+	// Create mock discovery
+	mockDiscovery := new(MockComponentDiscovery)
 
 	// Setup expectations - agent not found
-	mockRegistry.On("Create", "invalid-agent", mock.AnythingOfType("agent.AgentConfig")).
-		Return(nil, assert.AnError)
-
-	// Setup List() for error message
-	descriptors := []agent.AgentDescriptor{
-		createTestAgentDescriptor("agent1", "1.0.0", "Test agent 1"),
+	notFoundErr := &registry.AgentNotFoundError{
+		Name:      "invalid-agent",
+		Available: []string{"agent1"},
 	}
-	mockRegistry.On("List").Return(descriptors)
+	mockDiscovery.On("DiscoverAgent", ctx, "invalid-agent").
+		Return(nil, notFoundErr)
 
 	// Create selector
-	selector := NewAgentSelector(mockRegistry)
+	selector := NewAgentSelector(mockDiscovery)
 
 	// Test validation
 	err := ValidateAgentName(ctx, selector, "invalid-agent")
@@ -389,7 +447,7 @@ func TestValidateAgentName_InvalidAgent(t *testing.T) {
 	// Verify
 	require.Error(t, err)
 	assert.True(t, IsAgentNotFoundError(err))
-	mockRegistry.AssertExpectations(t)
+	mockDiscovery.AssertExpectations(t)
 }
 
 func TestFormatAgentList(t *testing.T) {
@@ -498,16 +556,16 @@ func TestAgentSelector_Select_TableDriven(t *testing.T) {
 	tests := []struct {
 		name         string
 		agentName    string
-		setupMock    func(*MockAgentRegistry)
+		setupMock    func(*MockComponentDiscovery)
 		expectError  bool
 		errorChecker func(*testing.T, error)
 	}{
 		{
 			name:      "successful selection",
 			agentName: "test-agent",
-			setupMock: func(m *MockAgentRegistry) {
+			setupMock: func(m *MockComponentDiscovery) {
 				mockAgent := new(MockAgent)
-				m.On("Create", "test-agent", mock.AnythingOfType("agent.AgentConfig")).
+				m.On("DiscoverAgent", mock.Anything, "test-agent").
 					Return(mockAgent, nil)
 			},
 			expectError: false,
@@ -515,11 +573,11 @@ func TestAgentSelector_Select_TableDriven(t *testing.T) {
 		{
 			name:      "empty agent name",
 			agentName: "",
-			setupMock: func(m *MockAgentRegistry) {
-				descriptors := []agent.AgentDescriptor{
-					createTestAgentDescriptor("agent1", "1.0.0", "Test agent"),
+			setupMock: func(m *MockComponentDiscovery) {
+				agentInfos := []registry.AgentInfo{
+					createTestRegistryAgentInfo("agent1", "1.0.0", "Test agent"),
 				}
-				m.On("List").Return(descriptors)
+				m.On("ListAgents", mock.Anything).Return(agentInfos, nil)
 			},
 			expectError: true,
 			errorChecker: func(t *testing.T, err error) {
@@ -529,13 +587,13 @@ func TestAgentSelector_Select_TableDriven(t *testing.T) {
 		{
 			name:      "agent not found",
 			agentName: "nonexistent",
-			setupMock: func(m *MockAgentRegistry) {
-				m.On("Create", "nonexistent", mock.AnythingOfType("agent.AgentConfig")).
-					Return(nil, assert.AnError)
-				descriptors := []agent.AgentDescriptor{
-					createTestAgentDescriptor("agent1", "1.0.0", "Test agent"),
+			setupMock: func(m *MockComponentDiscovery) {
+				notFoundErr := &registry.AgentNotFoundError{
+					Name:      "nonexistent",
+					Available: []string{"agent1"},
 				}
-				m.On("List").Return(descriptors)
+				m.On("DiscoverAgent", mock.Anything, "nonexistent").
+					Return(nil, notFoundErr)
 			},
 			expectError: true,
 			errorChecker: func(t *testing.T, err error) {
@@ -547,10 +605,10 @@ func TestAgentSelector_Select_TableDriven(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			mockRegistry := new(MockAgentRegistry)
-			tt.setupMock(mockRegistry)
+			mockDiscovery := new(MockComponentDiscovery)
+			tt.setupMock(mockDiscovery)
 
-			selector := NewAgentSelector(mockRegistry)
+			selector := NewAgentSelector(mockDiscovery)
 			result, err := selector.Select(ctx, tt.agentName)
 
 			if tt.expectError {
@@ -564,7 +622,7 @@ func TestAgentSelector_Select_TableDriven(t *testing.T) {
 				assert.NotNil(t, result)
 			}
 
-			mockRegistry.AssertExpectations(t)
+			mockDiscovery.AssertExpectations(t)
 		})
 	}
 }

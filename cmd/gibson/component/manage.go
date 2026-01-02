@@ -560,4 +560,3 @@ func runBuild(cmd *cobra.Command, args []string, cfg Config) error {
 func openDatabase(dbPath string) (*database.DB, error) {
 	return database.Open(dbPath)
 }
-

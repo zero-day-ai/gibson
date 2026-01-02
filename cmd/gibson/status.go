@@ -69,12 +69,12 @@ type LLMProviderStatus struct {
 
 // RegistryStatus represents registry health information
 type RegistryStatus struct {
-	Type     string    `json:"type"`
-	Endpoint string    `json:"endpoint"`
-	Healthy  bool      `json:"healthy"`
-	Uptime   string    `json:"uptime"`
-	Services int       `json:"services"`
-	Error    string    `json:"error,omitempty"`
+	Type     string `json:"type"`
+	Endpoint string `json:"endpoint"`
+	Healthy  bool   `json:"healthy"`
+	Uptime   string `json:"uptime"`
+	Services int    `json:"services"`
+	Error    string `json:"error,omitempty"`
 }
 
 func init() {

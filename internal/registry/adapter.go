@@ -1,0 +1,617 @@
+package registry
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/tool"
+	sdkregistry "github.com/zero-day-ai/sdk/registry"
+)
+
+// ComponentDiscovery provides a unified interface for discovering and connecting to
+// agents, tools, and plugins registered in the etcd registry.
+//
+// This interface abstracts away the complexity of:
+//   - Querying the registry for service instances
+//   - Load-balancing across multiple instances
+//   - Managing gRPC connection pooling
+//   - Wrapping gRPC clients with Gibson's component interfaces
+//
+// Example usage:
+//
+//	reg, _ := NewExternalRegistry(cfg)
+//	adapter := NewRegistryAdapter(reg)
+//
+//	// Discover and connect to an agent
+//	davinci, err := adapter.DiscoverAgent(ctx, "davinci")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Execute a task on the agent
+//	result, err := davinci.Execute(ctx, task, harness)
+//
+// Thread-safe: All methods can be called concurrently.
+type ComponentDiscovery interface {
+	// DiscoverAgent finds an agent by name and returns a gRPC client implementing agent.Agent.
+	//
+	// This method:
+	//  1. Queries the registry for all instances of the agent
+	//  2. Load-balances to select an instance
+	//  3. Gets or creates a gRPC connection from the pool
+	//  4. Returns a GRPCAgentClient wrapping the connection
+	//
+	// If no instances are registered, returns AgentNotFoundError with a list of
+	// available agents to help with debugging.
+	//
+	// Example:
+	//   agent, err := cd.DiscoverAgent(ctx, "k8skiller")
+	//   if err != nil {
+	//       var notFound *AgentNotFoundError
+	//       if errors.As(err, &notFound) {
+	//           fmt.Printf("Available agents: %v\n", notFound.Available)
+	//       }
+	//       return err
+	//   }
+	DiscoverAgent(ctx context.Context, name string) (agent.Agent, error)
+
+	// DiscoverTool finds a tool by name and returns a gRPC client implementing tool.Tool.
+	//
+	// This method follows the same pattern as DiscoverAgent but for tools.
+	// Note: Tool gRPC client implementation is not yet complete, so this currently
+	// returns an error indicating the feature is not implemented.
+	DiscoverTool(ctx context.Context, name string) (tool.Tool, error)
+
+	// DiscoverPlugin finds a plugin by name and returns a gRPC client implementing plugin.Plugin.
+	//
+	// This method follows the same pattern as DiscoverAgent but for plugins.
+	// Note: Plugin gRPC client implementation is not yet complete, so this currently
+	// returns an error indicating the feature is not implemented.
+	DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error)
+
+	// ListAgents returns information about all registered agents.
+	//
+	// This aggregates instances by agent name and includes:
+	//   - Name, version, description
+	//   - Number of instances running
+	//   - Endpoints for all instances
+	//   - Capabilities, target types, technique types
+	//
+	// Useful for status displays, dashboards, and agent selection UIs.
+	ListAgents(ctx context.Context) ([]AgentInfo, error)
+
+	// ListTools returns information about all registered tools.
+	//
+	// This aggregates instances by tool name and includes:
+	//   - Name, version, description
+	//   - Number of instances running
+	//   - Endpoints for all instances
+	//
+	// Useful for status displays and tool selection UIs.
+	ListTools(ctx context.Context) ([]ToolInfo, error)
+
+	// ListPlugins returns information about all registered plugins.
+	//
+	// This aggregates instances by plugin name and includes:
+	//   - Name, version, description
+	//   - Number of instances running
+	//   - Endpoints for all instances
+	//
+	// Useful for status displays and plugin selection UIs.
+	ListPlugins(ctx context.Context) ([]PluginInfo, error)
+
+	// DelegateToAgent executes a task on a remote agent via gRPC.
+	//
+	// This is a convenience method that combines DiscoverAgent and Execute in a single call.
+	// It discovers the agent, establishes a connection, executes the task, and returns the result.
+	//
+	// The harness parameter provides the runtime environment for the remote agent.
+	// Note: Currently the harness is not fully propagated over gRPC (future enhancement).
+	//
+	// Example:
+	//   result, err := cd.DelegateToAgent(ctx, "davinci", task, harness)
+	DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error)
+}
+
+// AgentInfo provides metadata about a registered agent.
+//
+// Multiple instances of the same agent are aggregated into a single AgentInfo
+// entry with multiple endpoints.
+type AgentInfo struct {
+	// Name is the agent's unique identifier (e.g., "davinci", "k8skiller")
+	Name string `json:"name"`
+
+	// Version is the semantic version of the agent (e.g., "1.2.3")
+	// If instances have different versions, this is the most recent
+	Version string `json:"version"`
+
+	// Description explains what the agent does
+	Description string `json:"description"`
+
+	// Instances is the number of running instances
+	Instances int `json:"instances"`
+
+	// Endpoints lists all instance endpoints (e.g., ["localhost:50051", "localhost:50052"])
+	Endpoints []string `json:"endpoints"`
+
+	// Capabilities lists the security testing capabilities (e.g., ["prompt_injection", "jailbreak"])
+	Capabilities []string `json:"capabilities"`
+
+	// TargetTypes lists supported target types (e.g., ["llm_chat", "llm_api"])
+	TargetTypes []string `json:"target_types"`
+
+	// TechniqueTypes lists attack techniques employed (e.g., ["prompt_injection", "model_extraction"])
+	TechniqueTypes []string `json:"technique_types"`
+}
+
+// ToolInfo provides metadata about a registered tool.
+type ToolInfo struct {
+	// Name is the tool's unique identifier (e.g., "nmap", "sqlmap")
+	Name string `json:"name"`
+
+	// Version is the semantic version of the tool
+	Version string `json:"version"`
+
+	// Description explains what the tool does
+	Description string `json:"description"`
+
+	// Instances is the number of running instances
+	Instances int `json:"instances"`
+
+	// Endpoints lists all instance endpoints
+	Endpoints []string `json:"endpoints"`
+}
+
+// PluginInfo provides metadata about a registered plugin.
+type PluginInfo struct {
+	// Name is the plugin's unique identifier
+	Name string `json:"name"`
+
+	// Version is the semantic version of the plugin
+	Version string `json:"version"`
+
+	// Description explains what the plugin does
+	Description string `json:"description"`
+
+	// Instances is the number of running instances
+	Instances int `json:"instances"`
+
+	// Endpoints lists all instance endpoints
+	Endpoints []string `json:"endpoints"`
+}
+
+// RegistryAdapter implements ComponentDiscovery using etcd registry and gRPC connection pooling.
+//
+// This is the primary implementation that bridges Gibson's registry infrastructure
+// with component discovery. It coordinates between:
+//   - Registry: Service discovery and instance listing
+//   - LoadBalancer: Instance selection strategies
+//   - GRPCPool: Connection management and reuse
+//
+// Example usage:
+//
+//	reg, _ := NewExternalRegistry(cfg)
+//	adapter := NewRegistryAdapter(reg)
+//	defer adapter.Close()
+//
+//	// Discover and use components
+//	agent, _ := adapter.DiscoverAgent(ctx, "davinci")
+//	tools, _ := adapter.ListTools(ctx)
+//
+// Thread-safe: All methods can be called concurrently.
+type RegistryAdapter struct {
+	// registry provides service discovery via etcd
+	registry sdkregistry.Registry
+
+	// loadBalancer selects instances when multiple are available
+	loadBalancer *LoadBalancer
+
+	// pool manages gRPC connections with automatic health checking
+	pool *GRPCPool
+}
+
+// NewRegistryAdapter creates a new adapter wrapping an etcd registry.
+//
+// The adapter uses round-robin load balancing by default. This can be changed
+// by accessing adapter.loadBalancer.SetStrategy().
+//
+// The adapter creates a new GRPCPool with default settings (insecure credentials).
+// For custom connection options (TLS, keepalive, etc.), create a pool separately
+// and use the WithPool option (when available).
+//
+// The caller is responsible for closing the registry when done. The adapter
+// will close the connection pool when Close() is called.
+//
+// Parameters:
+//   - reg: An active registry connection (embedded or external)
+//
+// Returns a RegistryAdapter ready for component discovery.
+func NewRegistryAdapter(reg sdkregistry.Registry) *RegistryAdapter {
+	return &RegistryAdapter{
+		registry:     reg,
+		loadBalancer: NewLoadBalancer(reg, StrategyRoundRobin),
+		pool:         NewGRPCPool(),
+	}
+}
+
+// DiscoverAgent discovers and connects to an agent by name.
+//
+// This method:
+//  1. Queries registry for agent instances: registry.Discover(ctx, "agent", name)
+//  2. Returns AgentNotFoundError if no instances exist
+//  3. Load-balances to select an instance
+//  4. Gets/creates gRPC connection from pool
+//  5. Returns GRPCAgentClient wrapping the connection
+//
+// If the registry is unavailable, returns RegistryUnavailableError.
+// If instances exist but all are unhealthy, returns NoHealthyInstancesError.
+//
+// The returned agent.Agent interface can be used exactly like a local agent:
+//
+//	agent, err := adapter.DiscoverAgent(ctx, "k8skiller")
+//	if err != nil {
+//	    return err
+//	}
+//
+//	result, err := agent.Execute(ctx, task, harness)
+func (a *RegistryAdapter) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {
+	// Query registry for instances
+	instances, err := a.registry.Discover(ctx, "agent", name)
+	if err != nil {
+		return nil, &RegistryUnavailableError{Cause: err}
+	}
+
+	if len(instances) == 0 {
+		// No instances found - provide helpful error with available agents
+		available, err := a.getAvailableAgentNames(ctx)
+		if err != nil {
+			// Failed to list available agents, return simpler error
+			return nil, &AgentNotFoundError{
+				Name:      name,
+				Available: []string{},
+			}
+		}
+		return nil, &AgentNotFoundError{
+			Name:      name,
+			Available: available,
+		}
+	}
+
+	// Load balance to select an instance
+	selected, err := a.loadBalancer.Select(ctx, "agent", name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select agent instance: %w", err)
+	}
+
+	// Get or create gRPC connection
+	conn, err := a.pool.Get(ctx, selected.Endpoint)
+	if err != nil {
+		// Connection failed - this instance may be unhealthy
+		// Try to remove it from the pool and return error
+		_ = a.pool.Remove(selected.Endpoint)
+		return nil, fmt.Errorf("failed to connect to agent %s at %s: %w", name, selected.Endpoint, err)
+	}
+
+	// Create and return GRPCAgentClient
+	client := NewGRPCAgentClient(conn, *selected)
+	return client, nil
+}
+
+// DiscoverTool discovers and connects to a tool by name.
+//
+// Note: Tool gRPC client implementation is not yet complete.
+// This method is a placeholder that returns an error.
+// Future implementation will follow the same pattern as DiscoverAgent.
+func (a *RegistryAdapter) DiscoverTool(ctx context.Context, name string) (tool.Tool, error) {
+	return nil, fmt.Errorf("tool discovery not yet implemented: %s", name)
+}
+
+// DiscoverPlugin discovers and connects to a plugin by name.
+//
+// Note: Plugin gRPC client implementation is not yet complete.
+// This method is a placeholder that returns an error.
+// Future implementation will follow the same pattern as DiscoverAgent.
+func (a *RegistryAdapter) DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error) {
+	return nil, fmt.Errorf("plugin discovery not yet implemented: %s", name)
+}
+
+// ListAgents returns information about all registered agents.
+//
+// This method:
+//  1. Calls registry.DiscoverAll(ctx, "agent") to get all agent instances
+//  2. Aggregates instances by name
+//  3. Extracts metadata (capabilities, target types, etc.) from ServiceInfo
+//  4. Returns a deduplicated list of AgentInfo
+//
+// The returned list is useful for:
+//   - Status displays showing available agents
+//   - Dashboards monitoring agent health
+//   - Agent selection UIs
+//
+// Example output:
+//
+//	[
+//	  {
+//	    "name": "davinci",
+//	    "version": "1.0.0",
+//	    "instances": 2,
+//	    "endpoints": ["localhost:50051", "localhost:50052"],
+//	    "capabilities": ["jailbreak", "prompt_injection"]
+//	  }
+//	]
+func (a *RegistryAdapter) ListAgents(ctx context.Context) ([]AgentInfo, error) {
+	// Query registry for all agent instances
+	instances, err := a.registry.DiscoverAll(ctx, "agent")
+	if err != nil {
+		return nil, &RegistryUnavailableError{Cause: err}
+	}
+
+	// Aggregate by name
+	agentMap := make(map[string]*AgentInfo)
+	for _, inst := range instances {
+		if info, exists := agentMap[inst.Name]; exists {
+			// Add to existing entry
+			info.Instances++
+			info.Endpoints = append(info.Endpoints, inst.Endpoint)
+		} else {
+			// Create new entry
+			agentMap[inst.Name] = &AgentInfo{
+				Name:           inst.Name,
+				Version:        inst.Version,
+				Description:    inst.Metadata["description"],
+				Instances:      1,
+				Endpoints:      []string{inst.Endpoint},
+				Capabilities:   parseCommaSeparated(inst.Metadata["capabilities"]),
+				TargetTypes:    parseCommaSeparated(inst.Metadata["target_types"]),
+				TechniqueTypes: parseCommaSeparated(inst.Metadata["technique_types"]),
+			}
+		}
+	}
+
+	// Convert map to slice
+	result := make([]AgentInfo, 0, len(agentMap))
+	for _, info := range agentMap {
+		result = append(result, *info)
+	}
+
+	return result, nil
+}
+
+// ListTools returns information about all registered tools.
+//
+// This method follows the same aggregation pattern as ListAgents.
+func (a *RegistryAdapter) ListTools(ctx context.Context) ([]ToolInfo, error) {
+	// Query registry for all tool instances
+	instances, err := a.registry.DiscoverAll(ctx, "tool")
+	if err != nil {
+		return nil, &RegistryUnavailableError{Cause: err}
+	}
+
+	// Aggregate by name
+	toolMap := make(map[string]*ToolInfo)
+	for _, inst := range instances {
+		if info, exists := toolMap[inst.Name]; exists {
+			// Add to existing entry
+			info.Instances++
+			info.Endpoints = append(info.Endpoints, inst.Endpoint)
+		} else {
+			// Create new entry
+			toolMap[inst.Name] = &ToolInfo{
+				Name:        inst.Name,
+				Version:     inst.Version,
+				Description: inst.Metadata["description"],
+				Instances:   1,
+				Endpoints:   []string{inst.Endpoint},
+			}
+		}
+	}
+
+	// Convert map to slice
+	result := make([]ToolInfo, 0, len(toolMap))
+	for _, info := range toolMap {
+		result = append(result, *info)
+	}
+
+	return result, nil
+}
+
+// ListPlugins returns information about all registered plugins.
+//
+// This method follows the same aggregation pattern as ListAgents.
+func (a *RegistryAdapter) ListPlugins(ctx context.Context) ([]PluginInfo, error) {
+	// Query registry for all plugin instances
+	instances, err := a.registry.DiscoverAll(ctx, "plugin")
+	if err != nil {
+		return nil, &RegistryUnavailableError{Cause: err}
+	}
+
+	// Aggregate by name
+	pluginMap := make(map[string]*PluginInfo)
+	for _, inst := range instances {
+		if info, exists := pluginMap[inst.Name]; exists {
+			// Add to existing entry
+			info.Instances++
+			info.Endpoints = append(info.Endpoints, inst.Endpoint)
+		} else {
+			// Create new entry
+			pluginMap[inst.Name] = &PluginInfo{
+				Name:        inst.Name,
+				Version:     inst.Version,
+				Description: inst.Metadata["description"],
+				Instances:   1,
+				Endpoints:   []string{inst.Endpoint},
+			}
+		}
+	}
+
+	// Convert map to slice
+	result := make([]PluginInfo, 0, len(pluginMap))
+	for _, info := range pluginMap {
+		result = append(result, *info)
+	}
+
+	return result, nil
+}
+
+// DelegateToAgent discovers an agent and executes a task on it.
+//
+// This is a convenience method that combines DiscoverAgent and Execute.
+// It's useful for one-off task delegation without keeping a reference to the agent.
+//
+// Example:
+//
+//	result, err := adapter.DelegateToAgent(ctx, "davinci", task, harness)
+//	if err != nil {
+//	    log.Printf("Delegation failed: %v", err)
+//	    return err
+//	}
+//
+//	log.Printf("Task result: %s", result.Status)
+func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
+	// Discover the agent
+	agentClient, err := a.DiscoverAgent(ctx, name)
+	if err != nil {
+		return agent.Result{}, err
+	}
+
+	// Execute the task
+	result, err := agentClient.Execute(ctx, task, harness)
+	if err != nil {
+		return agent.Result{}, fmt.Errorf("agent execution failed: %w", err)
+	}
+
+	return result, nil
+}
+
+// Close releases resources held by the adapter.
+//
+// This closes the gRPC connection pool, terminating all active connections.
+// The registry is NOT closed - the caller is responsible for that.
+//
+// After Close() is called, the adapter should not be used.
+//
+// Returns an error if the pool fails to close (typically safe to ignore).
+func (a *RegistryAdapter) Close() error {
+	if a.pool != nil {
+		return a.pool.Close()
+	}
+	return nil
+}
+
+// getAvailableAgentNames returns a list of all registered agent names.
+//
+// This is used to provide helpful error messages when an agent is not found.
+// Returns an empty slice if the registry query fails.
+func (a *RegistryAdapter) getAvailableAgentNames(ctx context.Context) ([]string, error) {
+	instances, err := a.registry.DiscoverAll(ctx, "agent")
+	if err != nil {
+		return []string{}, err
+	}
+
+	// Deduplicate by name
+	nameSet := make(map[string]struct{})
+	for _, inst := range instances {
+		nameSet[inst.Name] = struct{}{}
+	}
+
+	// Convert to sorted slice
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
+	}
+
+	return names, nil
+}
+
+// parseCommaSeparated is defined in grpc_agent_client.go
+// and is reused here to parse metadata fields
+
+// AgentNotFoundError is returned when an agent is requested but no instances are registered.
+//
+// This error includes a list of available agents to help with debugging and
+// provides a clear error message.
+//
+// Example usage:
+//
+//	agent, err := adapter.DiscoverAgent(ctx, "nonexistent")
+//	if err != nil {
+//	    var notFound *AgentNotFoundError
+//	    if errors.As(err, &notFound) {
+//	        fmt.Printf("Agent '%s' not found\n", notFound.Name)
+//	        fmt.Printf("Available agents: %v\n", notFound.Available)
+//	    }
+//	    return err
+//	}
+type AgentNotFoundError struct {
+	// Name is the requested agent name
+	Name string
+
+	// Available is a list of registered agent names
+	Available []string
+}
+
+// Error implements the error interface.
+func (e *AgentNotFoundError) Error() string {
+	if len(e.Available) == 0 {
+		return fmt.Sprintf("agent '%s' not found (no agents registered)", e.Name)
+	}
+	return fmt.Sprintf("agent '%s' not found (available: %s)", e.Name, strings.Join(e.Available, ", "))
+}
+
+// RegistryUnavailableError is returned when the registry cannot be reached or returns an error.
+//
+// This error wraps the underlying cause for debugging.
+//
+// Example usage:
+//
+//	agents, err := adapter.ListAgents(ctx)
+//	if err != nil {
+//	    var unavailable *RegistryUnavailableError
+//	    if errors.As(err, &unavailable) {
+//	        log.Printf("Registry down: %v", unavailable.Cause)
+//	    }
+//	}
+type RegistryUnavailableError struct {
+	// Cause is the underlying error from the registry
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *RegistryUnavailableError) Error() string {
+	return fmt.Sprintf("registry unavailable: %v", e.Cause)
+}
+
+// Unwrap enables errors.Unwrap to access the underlying error.
+func (e *RegistryUnavailableError) Unwrap() error {
+	return e.Cause
+}
+
+// NoHealthyInstancesError is returned when instances exist but all are unhealthy.
+//
+// This indicates a service is registered but all instances are failing health checks
+// or connection attempts.
+//
+// Example usage:
+//
+//	agent, err := adapter.DiscoverAgent(ctx, "davinci")
+//	if err != nil {
+//	    var noHealthy *NoHealthyInstancesError
+//	    if errors.As(err, &noHealthy) {
+//	        log.Printf("All %d instances of %s are unhealthy", noHealthy.Total, noHealthy.Name)
+//	    }
+//	}
+type NoHealthyInstancesError struct {
+	// Name is the service name
+	Name string
+
+	// Total is the number of registered instances (all unhealthy)
+	Total int
+}
+
+// Error implements the error interface.
+func (e *NoHealthyInstancesError) Error() string {
+	return fmt.Sprintf("no healthy instances of '%s' available (%d total instances)", e.Name, e.Total)
+}

@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
@@ -145,7 +146,7 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 
 	// Initialize registry manager if configured
 	if cfg != nil {
-		regMgr := GetRegistryManager(ctx)
+		regMgr := component.GetRegistryManager(ctx)
 		if regMgr == nil {
 			// Registry not initialized in root, create one for TUI
 			regMgr = initializeRegistryForTUI(ctx, cfg)
@@ -190,9 +191,17 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 		appConfig.FindingStore = store
 	}
 
-	// Initialize agent registry
-	agentRegistry := agent.NewAgentRegistry()
-	appConfig.AgentRegistry = agentRegistry
+	// Initialize registry adapter if registry manager is available
+	if appConfig.RegistryManager != nil {
+		// Create registry adapter from the registry manager
+		registryAdapter := registry.NewRegistryAdapter(appConfig.RegistryManager.Registry())
+		appConfig.RegistryAdapter = registryAdapter
+		cleanupFuncs = append(cleanupFuncs, func() {
+			_ = registryAdapter.Close()
+		})
+	}
+	// Note: If RegistryManager is nil, TUI will run without agent features.
+	// Agent registry is no longer created as a fallback (legacy registry removed).
 
 	// Initialize SessionDAO and StreamManager if database is available
 	if appConfig.DB != nil {

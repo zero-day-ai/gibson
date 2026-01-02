@@ -185,7 +185,7 @@ External Components (gRPC):
 |---------|---------|
 | `internal/agent` | Agent registry, slot management, and delegation |
 | `internal/attack` | Attack execution engine with payload filtering |
-| `internal/component` | External component lifecycle management |
+| `internal/component` | Component lifecycle and etcd registry integration |
 | `internal/config` | Configuration loading and validation |
 | `internal/crypto` | Credential encryption (AES-256-GCM) |
 | `internal/database` | SQLite3 with FTS5, WAL, migrations |
@@ -201,6 +201,7 @@ External Components (gRPC):
 | `internal/plan` | Mission planning and approval workflows |
 | `internal/plugin` | Plugin registry and gRPC communication |
 | `internal/prompt` | Prompt assembly and relay system |
+| `internal/registry` | etcd-based component discovery and health monitoring |
 | `internal/tool` | Tool registry and gRPC communication |
 | `internal/tui` | Terminal UI (bubbletea-based) |
 | `internal/workflow` | DAG workflow engine with YAML parsing |
@@ -250,7 +251,7 @@ gibson --help
 gibson init
 ```
 
-This creates `~/.gibson/` with the default configuration and database.
+This creates `~/.gibson/` with the default configuration, database, and embedded etcd registry for component discovery.
 
 ### 2. Quick Attack
 
@@ -320,8 +321,11 @@ gibson agent install https://github.com/zero-day-ai/gibson-agent-scanner
 # Install from a mono-repo using the # fragment to specify subdirectory
 gibson agent install https://github.com/zero-day-ai/gibson-agents#security/scanner
 
-# Start an agent
+# Start an agent (registers with etcd)
 gibson agent start scanner
+
+# View registered agents and their instances
+gibson agent status
 
 # View agent logs
 gibson agent logs scanner
@@ -792,146 +796,55 @@ Gibson supports environment variable substitution in configuration:
 - `${GIBSON_REGISTRY_ENDPOINTS}` - Registry endpoints for component discovery
 - Any other environment variable using `${VAR_NAME}` syntax
 
-### Registry Configuration
+### Registry System
 
-Gibson uses an etcd-based service registry for component discovery and health monitoring. Components (agents, tools, plugins) register themselves when they start and are automatically discovered by the Gibson CLI.
+Gibson uses an etcd-based registry for component discovery. When you run `gibson init`, an embedded etcd instance is configured automatically.
 
-#### Embedded Mode (Default)
+#### How It Works
 
-For local development and single-node deployments, Gibson runs an embedded etcd instance:
+1. **Initialization**: `gibson init` configures the embedded registry
+2. **Registration**: When agents start, they register with the etcd registry
+3. **Discovery**: `gibson agent status` shows registered agents from the registry
+4. **Attack Execution**: `gibson attack --agent <name>` discovers agents via the registry
+5. **Load Balancing**: Multiple instances of the same agent are automatically load-balanced
+
+#### Configuration
+
+The registry is configured in `~/.gibson/config.yaml`:
 
 ```yaml
+# Embedded Mode (Default)
 registry:
   type: embedded
   data_dir: ${HOME}/.gibson/etcd-data
   listen_address: localhost:2379
   namespace: gibson
   ttl: 30s
+
+# External Mode (Production)
+# registry:
+#   type: etcd
+#   endpoints:
+#     - etcd1.example.com:2379
+#     - etcd2.example.com:2379
+#   namespace: gibson
+#   ttl: 30s
 ```
 
-The embedded registry:
-- Starts automatically with Gibson
-- Requires no external dependencies
-- Persists data to disk at `data_dir`
-- Suitable for development and testing
-
-#### External Mode (Production)
-
-For production deployments with multiple Gibson instances or distributed components:
-
-```yaml
-registry:
-  type: etcd
-  endpoints:
-    - https://etcd1.example.com:2379
-    - https://etcd2.example.com:2379
-    - https://etcd3.example.com:2379
-  namespace: gibson
-  ttl: 30s
-  tls:
-    enabled: true
-    cert_file: /path/to/client.crt
-    key_file: /path/to/client.key
-    ca_file: /path/to/ca.crt
-```
-
-External registry benefits:
-- High availability with etcd cluster
-- Shared state across multiple Gibson instances
-- Production-grade reliability and performance
-- Support for distributed component deployments
-
-#### Component Self-Registration
-
-Components built with the Gibson SDK automatically register themselves when started:
-
-```go
-import (
-    "github.com/zero-day-ai/sdk/serve"
-    "github.com/zero-day-ai/sdk/registry"
-)
-
-func main() {
-    myAgent, _ := agent.New(cfg)
-
-    // Automatic registration using environment variable
-    serve.Agent(myAgent,
-        serve.WithPort(50051),
-        serve.WithRegistryFromEnv(), // Reads GIBSON_REGISTRY_ENDPOINTS
-    )
-}
-```
-
-When Gibson starts a component via `gibson agent start`, it automatically sets the `GIBSON_REGISTRY_ENDPOINTS` environment variable:
+#### Viewing Registry Status
 
 ```bash
-# Gibson sets this automatically:
-GIBSON_REGISTRY_ENDPOINTS=localhost:2379
-
-# For external etcd:
-GIBSON_REGISTRY_ENDPOINTS=etcd1:2379,etcd2:2379,etcd3:2379
-```
-
-#### Registry Status
-
-Check registry health and registered components:
-
-```bash
-# View registry status
-gibson status
-
-# Output shows:
-# Registry: embedded (localhost:2379) - healthy
-#   Uptime: 2h 15m
-#   Registered Services: 12
-
-# View registered agents
+# View registered agents with instances
 gibson agent status
 
-# Output shows:
-# NAME              VERSION    INSTANCES    ENDPOINTS
-# prompt-injector   1.0.0      2            localhost:50051, localhost:50052
-# jailbreaker       1.2.1      1            localhost:50053
-
 # View specific agent instances
-gibson agent status prompt-injector
+gibson agent status <agent-name>
 
-# Output shows:
-# INSTANCE                              ENDPOINT           STARTED
-# prompt-injector-a1b2c3d4-5678-9abc   localhost:50051    2024-01-15 10:30:15
-# prompt-injector-e4f5g6h7-8901-2def   localhost:50052    2024-01-15 10:31:22
+# View all registered components
+gibson status
 ```
 
-#### Multi-Instance Support
-
-The registry supports running multiple instances of the same component for load balancing and high availability:
-
-```bash
-# Start multiple instances on different ports
-gibson agent start scanner --port 50051
-gibson agent start scanner --port 50052
-gibson agent start scanner --port 50053
-
-# Gibson automatically load-balances across all instances
-gibson agent status scanner
-# Shows 3 instances registered
-
-# Instances auto-deregister when stopped
-gibson agent stop scanner --port 50051
-gibson agent status scanner
-# Shows 2 instances remaining
-```
-
-#### Registry Lifecycle
-
-Components maintain their registry entries via TTL-based keepalive:
-
-1. **Registration**: Component registers on startup with metadata (name, version, endpoint, capabilities)
-2. **Keepalive**: Component renews its registry entry every `TTL/3` (default: 10s)
-3. **Deregistration**: Component explicitly deregisters on graceful shutdown
-4. **Auto-expiry**: If component crashes, entry expires after TTL (default: 30s)
-
-This ensures the registry always reflects the current state of running components without requiring manual cleanup of stale entries.
+Components built with the Gibson SDK automatically register when started via `gibson agent start`. The registry uses TTL-based keepalive to ensure only running components are discoverable.
 
 * * *
 

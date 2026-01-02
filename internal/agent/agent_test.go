@@ -427,6 +427,9 @@ func TestAgentRuntime(t *testing.T) {
 
 // TestAgentRegistry tests the agent registry
 func TestAgentRegistry(t *testing.T) {
+	t.Skip("Legacy AgentRegistry implementation removed - use registry.ComponentDiscovery instead")
+	return // Skip rest of function to avoid compilation errors
+	/* Legacy test code - removed with old registry implementation
 	t.Run("NewAgentRegistry", func(t *testing.T) {
 		registry := NewAgentRegistry()
 		assert.NotNil(t, registry)
@@ -617,10 +620,14 @@ func TestAgentRegistry(t *testing.T) {
 		assert.True(t, health.IsHealthy())
 		assert.Contains(t, health.Message, "Registry healthy")
 	})
+	*/
 }
 
 // TestDelegationHarness tests the delegation harness
 func TestDelegationHarness(t *testing.T) {
+	t.Skip("Legacy AgentRegistry implementation removed - use registry.ComponentDiscovery instead")
+	return
+	/* Legacy test code - removed with old registry implementation
 	t.Run("NewDelegationHarness", func(t *testing.T) {
 		registry := NewAgentRegistry()
 		harness := NewDelegationHarness(registry)
@@ -691,6 +698,7 @@ func TestDelegationHarness(t *testing.T) {
 		// Should not panic
 		harness.Log("info", "test message", map[string]any{"key": "value"})
 	})
+	*/
 }
 
 // Mock implementations for testing
@@ -734,6 +742,9 @@ func TestNewEvidence(t *testing.T) {
 
 // TestAgentRegistry_Additional tests additional registry features
 func TestAgentRegistry_Additional(t *testing.T) {
+	t.Skip("Legacy AgentRegistry implementation removed - use registry.ComponentDiscovery instead")
+	return
+	/* Legacy test code - removed with old registry implementation
 	t.Run("RegisterExternal", func(t *testing.T) {
 		registry := NewAgentRegistry()
 		client := &mockExternalAgent{name: "external"}
@@ -780,6 +791,7 @@ func TestAgentRegistry_Additional(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, "external", agent.Name())
 	})
+	*/
 }
 
 type mockExternalAgent struct {
@@ -868,6 +880,9 @@ func TestGRPCAgentClient(t *testing.T) {
 
 // TestAgentRegistry_ErrorPaths tests error handling paths
 func TestAgentRegistry_ErrorPaths(t *testing.T) {
+	t.Skip("Legacy AgentRegistry implementation removed - use registry.ComponentDiscovery instead")
+	return
+	/* Legacy test code - removed with old registry implementation
 	t.Run("DelegateToAgent_InitializeFails", func(t *testing.T) {
 		registry := NewAgentRegistry()
 
@@ -986,6 +1001,7 @@ func TestAgentRegistry_ErrorPaths(t *testing.T) {
 		assert.NoError(t, err)
 		assert.False(t, registry.IsRegistered("external"))
 	})
+	*/
 }
 
 // TestSlotMergeConfig_AllFields tests all merge paths

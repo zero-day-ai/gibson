@@ -612,19 +612,19 @@ func (s *DBMissionStore) scanMission(scanner interface {
 }) (*Mission, error) {
 	var m Mission
 	var (
-		idStr                 string
-		statusStr             string
-		targetIDStr           string
-		workflowIDStr         string
-		workflowJSON          sql.NullString
-		constraintsStr        sql.NullString
-		metricsStr            sql.NullString
-		checkpointStr         sql.NullString
-		errorStr              sql.NullString
-		agentAssignmentsStr   sql.NullString
-		metadataStr           sql.NullString
-		startedAt             sql.NullTime
-		completedAt           sql.NullTime
+		idStr               string
+		statusStr           string
+		targetIDStr         string
+		workflowIDStr       string
+		workflowJSON        sql.NullString
+		constraintsStr      sql.NullString
+		metricsStr          sql.NullString
+		checkpointStr       sql.NullString
+		errorStr            sql.NullString
+		agentAssignmentsStr sql.NullString
+		metadataStr         sql.NullString
+		startedAt           sql.NullTime
+		completedAt         sql.NullTime
 	)
 
 	err := scanner.Scan(

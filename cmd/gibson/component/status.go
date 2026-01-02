@@ -14,10 +14,10 @@ import (
 
 // StatusOutput represents the JSON output structure for component status.
 type StatusOutput struct {
-	Name      string            `json:"name"`
-	Version   string            `json:"version"`
-	Instances []InstanceOutput  `json:"instances"`
-	Count     int               `json:"count"`
+	Name      string           `json:"name"`
+	Version   string           `json:"version"`
+	Instances []InstanceOutput `json:"instances"`
+	Count     int              `json:"count"`
 }
 
 // InstanceOutput represents a single instance in JSON output.

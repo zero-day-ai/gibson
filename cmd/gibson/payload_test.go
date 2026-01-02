@@ -532,11 +532,11 @@ func TestIsValidSeverity(t *testing.T) {
 		severity agent.FindingSeverity
 		want     bool
 	}{
-		{"critical", agent.FindingSeverityCritical, true},
-		{"high", agent.FindingSeverityHigh, true},
-		{"medium", agent.FindingSeverityMedium, true},
-		{"low", agent.FindingSeverityLow, true},
-		{"info", agent.FindingSeverityInfo, true},
+		{"critical", agent.SeverityCritical, true},
+		{"high", agent.SeverityHigh, true},
+		{"medium", agent.SeverityMedium, true},
+		{"low", agent.SeverityLow, true},
+		{"info", agent.SeverityInfo, true},
 		{"invalid", agent.FindingSeverity("invalid"), false},
 	}
 

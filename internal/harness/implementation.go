@@ -9,6 +9,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
@@ -42,8 +43,9 @@ type DefaultAgentHarness struct {
 	toolRegistry   tool.ToolRegistry
 	pluginRegistry plugin.PluginRegistry
 
-	// Agent registry for delegation
-	agentRegistry agent.AgentRegistry
+	// Registry adapter for unified component discovery via etcd
+	// Used for agent delegation operations (DelegateToAgent, ListAgents)
+	registryAdapter registry.ComponentDiscovery
 
 	// Memory and storage
 	memoryStore  memory.MemoryManager
@@ -614,8 +616,18 @@ func (h *DefaultAgentHarness) DelegateToAgent(ctx context.Context, name string, 
 		)
 	}
 
-	// Use the registry's DelegateToAgent method which handles agent creation and execution
-	result, err := h.agentRegistry.DelegateToAgent(ctx, name, task, agentHarness)
+	// Use registry adapter for delegation
+	if h.registryAdapter == nil {
+		h.logger.Error("no registry adapter available for delegation", "agent", name)
+		return agent.Result{}, types.NewError(
+			ErrHarnessDelegationFailed,
+			"registry adapter not configured for agent delegation",
+		)
+	}
+
+	h.logger.Debug("using registry adapter for delegation", "agent", name)
+	result, err := h.registryAdapter.DelegateToAgent(ctx, name, task, agentHarness)
+
 	if err != nil {
 		h.logger.Error("agent execution failed",
 			"agent", name,
@@ -666,21 +678,34 @@ func (h *DefaultAgentHarness) DelegateToAgent(ctx context.Context, name string, 
 
 // ListAgents returns descriptors for all registered agents.
 func (h *DefaultAgentHarness) ListAgents() []AgentDescriptor {
-	agentDescriptors := h.agentRegistry.List()
-
-	// Convert from agent.AgentDescriptor to harness.AgentDescriptor
-	descriptors := make([]AgentDescriptor, len(agentDescriptors))
-	for i, a := range agentDescriptors {
-		descriptors[i] = AgentDescriptor{
-			Name:         a.Name,
-			Version:      a.Version,
-			Description:  a.Description,
-			Capabilities: a.Capabilities,
-			Slots:        a.Slots,
-			IsExternal:   a.IsExternal,
-		}
+	// Use registry adapter for listing agents
+	if h.registryAdapter == nil {
+		h.logger.Warn("no registry adapter available for listing agents")
+		return []AgentDescriptor{}
 	}
 
+	h.logger.Debug("using registry adapter for listing agents")
+
+	// Get agents from registry adapter
+	agentInfos, err := h.registryAdapter.ListAgents(context.Background())
+	if err != nil {
+		h.logger.Error("failed to list agents from registry adapter", "error", err)
+		// Return empty list on error rather than panicking
+		return []AgentDescriptor{}
+	}
+
+	// Convert from registry.AgentInfo to harness.AgentDescriptor
+	descriptors := make([]AgentDescriptor, len(agentInfos))
+	for i, info := range agentInfos {
+		descriptors[i] = AgentDescriptor{
+			Name:         info.Name,
+			Version:      info.Version,
+			Description:  info.Description,
+			Capabilities: info.Capabilities,
+			Slots:        []agent.SlotDefinition{}, // AgentInfo doesn't include slots
+			IsExternal:   true,                     // All registry adapter agents are external
+		}
+	}
 	return descriptors
 }
 

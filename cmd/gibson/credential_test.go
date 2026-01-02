@@ -156,14 +156,22 @@ func TestCredentialList(t *testing.T) {
 				require.NoError(t, err)
 				assert.Len(t, result, 2)
 
-				// Verify first credential
-				assert.Equal(t, "openai-key", result[0]["name"])
-				assert.Equal(t, "openai", result[0]["provider"])
-				assert.Equal(t, "api_key", result[0]["type"])
-
-				// Verify second credential
-				assert.Equal(t, "anthropic-key", result[1]["name"])
-				assert.Equal(t, "anthropic", result[1]["provider"])
+				// Database may return in any order, so check both credentials exist
+				foundOpenAI := false
+				foundAnthropic := false
+				for _, cred := range result {
+					if cred["name"] == "openai-key" {
+						assert.Equal(t, "openai", cred["provider"])
+						assert.Equal(t, "api_key", cred["type"])
+						foundOpenAI = true
+					}
+					if cred["name"] == "anthropic-key" {
+						assert.Equal(t, "anthropic", cred["provider"])
+						foundAnthropic = true
+					}
+				}
+				assert.True(t, foundOpenAI, "openai-key credential not found")
+				assert.True(t, foundAnthropic, "anthropic-key credential not found")
 			},
 			checkSecrets: true,
 		},

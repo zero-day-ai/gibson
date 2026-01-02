@@ -16,6 +16,7 @@ import (
 )
 
 // Mock implementations for testing
+// Note: MockComponentDiscovery and MockAgent are defined in agent_test.go
 
 type MockMissionOrchestrator struct {
 	mock.Mock
@@ -278,9 +279,9 @@ func (m *MockPayloadFilter) Filter(ctx context.Context, opts *AttackOptions) ([]
 }
 
 // Test helper to create a runner with mocks
-func setupRunner(t *testing.T) (*DefaultAttackRunner, *MockMissionOrchestrator, *MockAgentRegistry, *MockPayloadRegistry, *MockMissionStore, *MockFindingStore, *MockTargetResolver, *MockAgentSelector, *MockPayloadFilter) {
+func setupRunner(t *testing.T) (*DefaultAttackRunner, *MockMissionOrchestrator, *MockComponentDiscovery, *MockPayloadRegistry, *MockMissionStore, *MockFindingStore, *MockTargetResolver, *MockAgentSelector, *MockPayloadFilter) {
 	orchestrator := new(MockMissionOrchestrator)
-	agentRegistry := new(MockAgentRegistry)
+	discovery := new(MockComponentDiscovery)
 	payloadRegistry := new(MockPayloadRegistry)
 	missionStore := new(MockMissionStore)
 	findingStore := new(MockFindingStore)
@@ -290,7 +291,7 @@ func setupRunner(t *testing.T) (*DefaultAttackRunner, *MockMissionOrchestrator, 
 
 	runner := NewAttackRunner(
 		orchestrator,
-		agentRegistry,
+		discovery,
 		payloadRegistry,
 		missionStore,
 		findingStore,
@@ -299,20 +300,20 @@ func setupRunner(t *testing.T) (*DefaultAttackRunner, *MockMissionOrchestrator, 
 		WithPayloadFilter(payloadFilter),
 	)
 
-	return runner, orchestrator, agentRegistry, payloadRegistry, missionStore, findingStore, targetResolver, agentSelector, payloadFilter
+	return runner, orchestrator, discovery, payloadRegistry, missionStore, findingStore, targetResolver, agentSelector, payloadFilter
 }
 
 // TestNewAttackRunner verifies runner initialization
 func TestNewAttackRunner(t *testing.T) {
 	orchestrator := new(MockMissionOrchestrator)
-	agentRegistry := new(MockAgentRegistry)
+	discovery := new(MockComponentDiscovery)
 	payloadRegistry := new(MockPayloadRegistry)
 	missionStore := new(MockMissionStore)
 	findingStore := new(MockFindingStore)
 
 	runner := NewAttackRunner(
 		orchestrator,
-		agentRegistry,
+		discovery,
 		payloadRegistry,
 		missionStore,
 		findingStore,
@@ -320,7 +321,7 @@ func TestNewAttackRunner(t *testing.T) {
 
 	assert.NotNil(t, runner)
 	assert.NotNil(t, runner.orchestrator)
-	assert.NotNil(t, runner.agentRegistry)
+	assert.NotNil(t, runner.discovery)
 	assert.NotNil(t, runner.payloadRegistry)
 	assert.NotNil(t, runner.missionStore)
 	assert.NotNil(t, runner.findingStore)
@@ -567,7 +568,7 @@ func TestRun_PersistFlag(t *testing.T) {
 
 // TestRun_Cancellation verifies cancellation handling
 func TestRun_Cancellation(t *testing.T) {
-	runner, orchestrator, _, _, _, _, targetResolver, agentSelector, payloadFilter := setupRunner(t)
+	runner, orchestrator, _, _, missionStore, _, targetResolver, agentSelector, payloadFilter := setupRunner(t)
 
 	opts := &AttackOptions{
 		AgentName: "test-agent",
@@ -591,6 +592,7 @@ func TestRun_Cancellation(t *testing.T) {
 	targetResolver.On("Resolve", mock.Anything, opts).Return(targetConfig, nil)
 	agentSelector.On("Select", mock.Anything, "test-agent").Return(mockAgent, nil)
 	payloadFilter.On("Filter", mock.Anything, opts).Return([]payload.Payload{}, nil)
+	missionStore.On("Save", mock.Anything, mock.AnythingOfType("*mission.Mission")).Return(nil)
 	// The orchestrator will be called and should return a context cancelled error
 	orchestrator.On("Execute", mock.Anything, mock.AnythingOfType("*mission.Mission")).Return(nil, context.Canceled)
 
@@ -604,7 +606,7 @@ func TestRun_Cancellation(t *testing.T) {
 
 // TestRun_Timeout verifies timeout handling
 func TestRun_Timeout(t *testing.T) {
-	runner, orchestrator, _, _, _, _, targetResolver, agentSelector, payloadFilter := setupRunner(t)
+	runner, orchestrator, _, _, missionStore, _, targetResolver, agentSelector, payloadFilter := setupRunner(t)
 	ctx := context.Background()
 
 	opts := &AttackOptions{
@@ -626,6 +628,7 @@ func TestRun_Timeout(t *testing.T) {
 	targetResolver.On("Resolve", mock.Anything, opts).Return(targetConfig, nil)
 	agentSelector.On("Select", mock.Anything, "test-agent").Return(mockAgent, nil)
 	payloadFilter.On("Filter", mock.Anything, opts).Return([]payload.Payload{}, nil)
+	missionStore.On("Save", mock.Anything, mock.AnythingOfType("*mission.Mission")).Return(nil)
 
 	// Simulate timeout by returning context deadline exceeded
 	orchestrator.On("Execute", mock.Anything, mock.AnythingOfType("*mission.Mission")).

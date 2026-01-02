@@ -64,9 +64,6 @@ func TestHarnessConfig_ApplyDefaults(t *testing.T) {
 	if config.PluginRegistry == nil {
 		t.Error("expected PluginRegistry to be defaulted")
 	}
-	if config.AgentRegistry == nil {
-		t.Error("expected AgentRegistry to be defaulted")
-	}
 	if config.Logger == nil {
 		t.Error("expected Logger to be defaulted")
 	}
