@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -45,9 +47,10 @@ func (m MissionSummary) Description() string {
 
 // MissionView represents the mission management view with list and details.
 type MissionView struct {
-	ctx   context.Context
-	store mission.MissionStore
-	theme *styles.Theme
+	ctx     context.Context
+	store   mission.MissionStore
+	theme   *styles.Theme
+	homeDir string
 
 	// UI components
 	list        list.Model
@@ -69,7 +72,7 @@ type MissionView struct {
 }
 
 // NewMissionView creates a new mission view.
-func NewMissionView(ctx context.Context, store mission.MissionStore) *MissionView {
+func NewMissionView(ctx context.Context, store mission.MissionStore, homeDir string) *MissionView {
 	// Create list with default delegate
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
@@ -90,6 +93,7 @@ func NewMissionView(ctx context.Context, store mission.MissionStore) *MissionVie
 		ctx:             ctx,
 		store:           store,
 		theme:           styles.DefaultTheme(),
+		homeDir:         homeDir,
 		list:            l,
 		logViewport:     vp,
 		missions:        []MissionSummary{},
@@ -583,16 +587,51 @@ func (m *MissionView) handleMissionDetailsLoaded(msg missionDetailsLoadedMsg) te
 	// Clear existing logs
 	m.logs = []string{}
 
-	// TODO: Load logs from a log storage system when available
-	// For now, show placeholder logs
-	if msg.mission.Status == mission.MissionStatusRunning {
-		m.logs = append(m.logs,
-			fmt.Sprintf("[%s] Mission started", time.Now().Format(time.RFC3339)),
-			"Initializing workflow execution...",
-			"Loading agent configurations...",
-			"Ready to execute tasks...",
-		)
+	// Try to load logs from file
+	if m.homeDir != "" {
+		logPath := filepath.Join(m.homeDir, "logs", "missions", fmt.Sprintf("%s.log", msg.mission.ID))
+		if logData, err := os.ReadFile(logPath); err == nil {
+			// Successfully read log file
+			logLines := strings.Split(string(logData), "\n")
+			m.logs = logLines
+			return nil
+		}
 	}
+
+	// No log file found, generate summary from mission state
+	var logBuilder strings.Builder
+
+	logBuilder.WriteString(fmt.Sprintf("Mission: %s\n", msg.mission.Name))
+	logBuilder.WriteString(fmt.Sprintf("ID: %s\n", msg.mission.ID))
+	logBuilder.WriteString(fmt.Sprintf("Status: %s\n", msg.mission.Status))
+	logBuilder.WriteString(fmt.Sprintf("Description: %s\n\n", msg.mission.Description))
+
+	// Timestamps
+	logBuilder.WriteString(fmt.Sprintf("Created: %s\n", msg.mission.CreatedAt.Format(time.RFC3339)))
+	if msg.mission.StartedAt != nil {
+		logBuilder.WriteString(fmt.Sprintf("Started: %s\n", msg.mission.StartedAt.Format(time.RFC3339)))
+	}
+	if msg.mission.CompletedAt != nil {
+		logBuilder.WriteString(fmt.Sprintf("Completed: %s\n", msg.mission.CompletedAt.Format(time.RFC3339)))
+		duration := msg.mission.CompletedAt.Sub(*msg.mission.StartedAt)
+		logBuilder.WriteString(fmt.Sprintf("Duration: %s\n", duration.Round(time.Second)))
+	} else if msg.mission.StartedAt != nil {
+		duration := time.Since(*msg.mission.StartedAt)
+		logBuilder.WriteString(fmt.Sprintf("Elapsed: %s\n", duration.Round(time.Second)))
+	}
+
+	logBuilder.WriteString("\n")
+	logBuilder.WriteString(fmt.Sprintf("Findings: %d\n", msg.mission.FindingsCount))
+	logBuilder.WriteString(fmt.Sprintf("Progress: %.0f%%\n", msg.mission.Progress*100))
+
+	// Add workflow info if available
+	if m.workflow != nil {
+		logBuilder.WriteString(fmt.Sprintf("\nWorkflow Nodes: %d\n", len(m.workflow.Nodes)))
+		logBuilder.WriteString(fmt.Sprintf("Workflow Edges: %d\n", len(m.workflow.Edges)))
+	}
+
+	// Split into lines for display
+	m.logs = strings.Split(logBuilder.String(), "\n")
 
 	return nil
 }

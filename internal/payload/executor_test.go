@@ -11,46 +11,41 @@ import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/registry"
+	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// mockAgentRegistry implements agent.AgentRegistry for testing
-type mockAgentRegistry struct{}
+// mockComponentDiscovery implements registry.ComponentDiscovery for testing
+type mockComponentDiscovery struct{}
 
-func (m *mockAgentRegistry) RegisterInternal(name string, factory agent.AgentFactory) error {
-	return nil
-}
-
-func (m *mockAgentRegistry) RegisterExternal(name string, client agent.ExternalAgentClient) error {
-	return nil
-}
-
-func (m *mockAgentRegistry) Unregister(name string) error {
-	return nil
-}
-
-func (m *mockAgentRegistry) List() []agent.AgentDescriptor {
-	return []agent.AgentDescriptor{}
-}
-
-func (m *mockAgentRegistry) GetDescriptor(name string) (agent.AgentDescriptor, error) {
-	return agent.AgentDescriptor{}, nil
-}
-
-func (m *mockAgentRegistry) Create(name string, cfg agent.AgentConfig) (agent.Agent, error) {
+func (m *mockComponentDiscovery) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {
 	return nil, nil
 }
 
-func (m *mockAgentRegistry) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
+func (m *mockComponentDiscovery) DiscoverTool(ctx context.Context, name string) (tool.Tool, error) {
+	return nil, nil
+}
+
+func (m *mockComponentDiscovery) DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error) {
+	return nil, nil
+}
+
+func (m *mockComponentDiscovery) ListAgents(ctx context.Context) ([]registry.AgentInfo, error) {
+	return []registry.AgentInfo{}, nil
+}
+
+func (m *mockComponentDiscovery) ListTools(ctx context.Context) ([]registry.ToolInfo, error) {
+	return []registry.ToolInfo{}, nil
+}
+
+func (m *mockComponentDiscovery) ListPlugins(ctx context.Context) ([]registry.PluginInfo, error) {
+	return []registry.PluginInfo{}, nil
+}
+
+func (m *mockComponentDiscovery) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
 	return agent.Result{}, nil
-}
-
-func (m *mockAgentRegistry) Health(ctx context.Context) types.HealthStatus {
-	return types.NewHealthStatus(types.HealthStateHealthy, "mock agent registry healthy")
-}
-
-func (m *mockAgentRegistry) RunningAgents() []agent.AgentRuntime {
-	return []agent.AgentRuntime{}
 }
 
 // TestNewPayloadExecutor tests executor creation
@@ -60,10 +55,10 @@ func TestNewPayloadExecutor(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	config := DefaultExecutorConfig()
-	executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+	executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 	require.NotNil(t, executor)
 }
@@ -75,7 +70,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	ctx := context.Background()
 
@@ -104,7 +99,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 		// Create executor with findings disabled for simpler test
 		config := DefaultExecutorConfig()
 		config.CreateFindings = false
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create execution request
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -136,7 +131,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create execution request without required parameter
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -156,7 +151,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create execution request
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -175,7 +170,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create execution request with very short timeout
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -193,7 +188,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 
 	t.Run("execute with nil request", func(t *testing.T) {
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Execute with nil request
 		_, err := executor.Execute(ctx, nil)
@@ -203,7 +198,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 
 	t.Run("execute with empty payload ID", func(t *testing.T) {
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create request with empty payload ID
 		req := NewExecutionRequest("", types.NewID(), types.NewID())
@@ -216,7 +211,7 @@ func TestPayloadExecutor_Execute(t *testing.T) {
 
 	t.Run("execute with non-existent payload", func(t *testing.T) {
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create request with non-existent payload ID
 		req := NewExecutionRequest(types.NewID(), types.NewID(), types.NewID())
@@ -235,7 +230,7 @@ func TestPayloadExecutor_ExecuteDryRun(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	ctx := context.Background()
 
@@ -255,7 +250,7 @@ func TestPayloadExecutor_ExecuteDryRun(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create dry run request
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -288,7 +283,7 @@ func TestPayloadExecutor_ExecuteDryRun(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create dry run request without required parameter
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -311,7 +306,7 @@ func TestPayloadExecutor_ExecuteDryRun(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create dry run request
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -326,7 +321,7 @@ func TestPayloadExecutor_ExecuteDryRun(t *testing.T) {
 
 	t.Run("dry run with nil request", func(t *testing.T) {
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Execute dry run with nil request
 		_, err := executor.ExecuteDryRun(ctx, nil)
@@ -346,7 +341,7 @@ func TestPayloadExecutor_ExecuteDryRun(t *testing.T) {
 		require.NoError(t, err)
 
 		config := DefaultExecutorConfig()
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Create dry run request
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -366,10 +361,10 @@ func TestPayloadExecutor_ValidateParameters(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	config := DefaultExecutorConfig()
-	executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+	executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 	t.Run("validate with all required parameters", func(t *testing.T) {
 		payload := createTestPayloadForExecutor("test-validate-valid")
@@ -447,7 +442,7 @@ func TestPayloadExecutor_SuccessIndicators(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	ctx := context.Background()
 
@@ -467,7 +462,7 @@ func TestPayloadExecutor_SuccessIndicators(t *testing.T) {
 
 		config := DefaultExecutorConfig()
 		config.CreateFindings = false
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Execute
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -496,7 +491,7 @@ func TestPayloadExecutor_SuccessIndicators(t *testing.T) {
 
 		config := DefaultExecutorConfig()
 		config.CreateFindings = false
-		executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+		executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 		// Execute
 		req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())
@@ -517,7 +512,7 @@ func TestPayloadExecutor_Concurrency(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	ctx := context.Background()
 
@@ -536,7 +531,7 @@ func TestPayloadExecutor_Concurrency(t *testing.T) {
 
 	config := DefaultExecutorConfig()
 	config.CreateFindings = false
-	executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+	executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 	// Execute multiple payloads concurrently
 	concurrency := 10
@@ -569,7 +564,7 @@ func TestPayloadExecutor_ContextCancellation(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	// Create and register a test payload
 	payload := createTestPayloadForExecutor("test-cancel")
@@ -578,7 +573,7 @@ func TestPayloadExecutor_ContextCancellation(t *testing.T) {
 	require.NoError(t, err)
 
 	config := DefaultExecutorConfig()
-	executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+	executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -604,7 +599,7 @@ func TestExecutionStore_Integration(t *testing.T) {
 
 	registry := NewPayloadRegistryWithDefaults(db)
 	executionStore := NewExecutionStore(db)
-	agentRegistry := &mockAgentRegistry{}
+	discovery := &mockComponentDiscovery{}
 
 	ctx := context.Background()
 
@@ -618,7 +613,7 @@ func TestExecutionStore_Integration(t *testing.T) {
 	config := DefaultExecutorConfig()
 	config.StoreExecutions = true
 	config.CreateFindings = false
-	executor := NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, config)
+	executor := NewPayloadExecutor(registry, executionStore, findingStore, discovery, config)
 
 	// Execute
 	req := NewExecutionRequest(payload.ID, types.NewID(), types.NewID())

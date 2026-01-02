@@ -62,6 +62,35 @@ type ParsedRepoURL struct {
 	Subdir string
 }
 
+// installContext tracks resources created during installation for rollback on failure
+type installContext struct {
+	// copiedArtifacts contains paths of artifacts copied to bin/
+	copiedArtifacts []string
+
+	// dbRegistered indicates whether component was registered in DB
+	dbRegistered bool
+
+	// componentKind is the kind of component being installed
+	componentKind ComponentKind
+
+	// componentName is the name of the component being installed
+	componentName string
+}
+
+// rollback removes all resources created during installation
+// Errors are intentionally ignored as this is cleanup code during error handling
+func (ic *installContext) rollback(dao ComponentDAO, ctx context.Context) {
+	// Remove all copied artifacts
+	for _, artifactPath := range ic.copiedArtifacts {
+		_ = os.Remove(artifactPath)
+	}
+
+	// Remove database entry if it was registered
+	if ic.dbRegistered && dao != nil {
+		_ = dao.Delete(ctx, ic.componentKind, ic.componentName)
+	}
+}
+
 // ParseRepoURL parses a repository URL that may contain a subdirectory fragment.
 // Supports the syntax: https://github.com/user/repo.git#path/to/component
 // or: git@github.com:user/repo.git#path/to/component
@@ -366,11 +395,27 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	// Add component name to span now that we have it
 	span.SetAttributes(attribute.String(AttrComponentName, manifest.Name))
 
+	// Create install context for rollback on failure
+	installCtx := &installContext{
+		componentKind: kind,
+		componentName: manifest.Name,
+	}
+
 	// Step 5: Check if component already exists in database
 	if !opts.Force && i.dao != nil {
 		if existing, err := i.dao.GetByName(ctx, kind, manifest.Name); err == nil && existing != nil {
-			return result, NewComponentExistsError(manifest.Name).
-				WithContext("path", existing.RepoPath)
+			// Check if this is an orphaned component (DB entry exists but binary is missing)
+			if i.isOrphanedComponent(existing) {
+				// Clean up the orphaned entry and proceed with installation
+				if cleanupErr := i.cleanupOrphanedComponent(ctx, kind, manifest.Name, existing); cleanupErr != nil {
+					return result, cleanupErr
+				}
+				// Cleanup succeeded - proceed with installation
+			} else {
+				// Valid existing component - fail with "already exists" error
+				return result, NewComponentExistsError(manifest.Name).
+					WithContext("path", existing.RepoPath)
+			}
 		}
 	}
 
@@ -421,6 +466,18 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	// Step 8: Copy artifacts to bin directory
 	var binPath string
 	if manifest.Build != nil && len(manifest.Build.Artifacts) > 0 {
+		// Verify artifacts exist before attempting to copy them
+		if err := i.verifyArtifactsExist(manifest.Build.Artifacts, buildWorkDir); err != nil {
+			// Cleanup on failure
+			if opts.Force {
+				_ = os.RemoveAll(repoDir)
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(ErrorAttributes(err, "verify_artifacts")...)
+			return result, err
+		}
+
 		// Copy artifacts from build work directory to bin/
 		primaryArtifact, err := i.copyArtifactsToBin(kind, manifest.Build.Artifacts, buildWorkDir)
 		if err != nil {
@@ -434,6 +491,8 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 			return result, err
 		}
 		binPath = primaryArtifact
+		// Track copied artifact for rollback on failure
+		installCtx.copiedArtifacts = append(installCtx.copiedArtifacts, binPath)
 	} else {
 		// No artifacts specified - this might be a script-based component
 		// Set binPath to empty string for now
@@ -463,10 +522,8 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 
 	// Validate component
 	if err := component.Validate(); err != nil {
-		// Cleanup on failure
-		if binPath != "" {
-			_ = os.Remove(binPath)
-		}
+		// Rollback on validation failure
+		installCtx.rollback(i.dao, ctx)
 		if opts.Force {
 			_ = os.RemoveAll(repoDir)
 		}
@@ -476,10 +533,8 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	// Step 10: Register component in database (unless SkipRegister is set)
 	if !opts.SkipRegister && i.dao != nil {
 		if err := i.dao.Create(ctx, component); err != nil {
-			// Cleanup on failure
-			if binPath != "" {
-				_ = os.Remove(binPath)
-			}
+			// Rollback on DB registration failure
+			installCtx.rollback(i.dao, ctx)
 			if opts.Force {
 				_ = os.RemoveAll(repoDir)
 			}
@@ -686,6 +741,9 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 
 	// Step 3: Process each component
 	for _, manifestPath := range componentPaths {
+		// Create install context for rollback on failure
+		installCtx := &installContext{componentKind: kind}
+
 		// Load component manifest
 		compManifest, err := LoadManifest(manifestPath)
 		if err != nil {
@@ -698,6 +756,9 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 			continue
 		}
 
+		// Set component name in install context for rollback tracking
+		installCtx.componentName = compManifest.Name
+
 		// Get component directory (where the component manifest is located)
 		componentDir := filepath.Dir(manifestPath)
 
@@ -707,15 +768,34 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 			relPath = componentDir
 		}
 
+		// Declare buildWorkDir - will be set based on whether build runs
+		var buildWorkDir string
+
 		// Check if component already exists in database
 		if !opts.Force && i.dao != nil {
 			if existing, err := i.dao.GetByName(ctx, kind, compManifest.Name); err == nil && existing != nil {
-				result.Failed = append(result.Failed, InstallFailure{
-					Path:  relPath,
-					Name:  compManifest.Name,
-					Error: NewComponentExistsError(compManifest.Name),
-				})
-				continue
+				// Check if this is an orphaned component (DB entry exists but binary is missing)
+				if i.isOrphanedComponent(existing) {
+					// Clean up the orphaned entry and proceed with installation
+					if cleanupErr := i.cleanupOrphanedComponent(ctx, kind, compManifest.Name, existing); cleanupErr != nil {
+						// Cleanup failed - add to Failed and continue
+						result.Failed = append(result.Failed, InstallFailure{
+							Path:  relPath,
+							Name:  compManifest.Name,
+							Error: cleanupErr,
+						})
+						continue
+					}
+					// Cleanup succeeded - proceed with installation (don't add to Failed, don't continue)
+				} else {
+					// Valid existing component - fail with "already exists" error
+					result.Failed = append(result.Failed, InstallFailure{
+						Path:  relPath,
+						Name:  compManifest.Name,
+						Error: NewComponentExistsError(compManifest.Name),
+					})
+					continue
+				}
 			}
 		}
 
@@ -746,20 +826,20 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 				attribute.String(AttrBuildCommand+" component", compManifest.Build.Command),
 				attribute.Int64(AttrBuildDuration+" component", buildDuration.Milliseconds()),
 			)
+
+			// Set buildWorkDir based on where the build actually ran
+			buildWorkDir = componentDir
+			if compManifest.Build.WorkDir != "" {
+				buildWorkDir = filepath.Join(componentDir, compManifest.Build.WorkDir)
+			}
+		} else {
+			// No build ran, artifacts should be in componentDir
+			buildWorkDir = componentDir
 		}
 
-		// Determine the source directory for artifacts
-		// If component has build.workdir, artifacts are there; otherwise use componentDir
-		artifactSourceDir := componentDir
-		if compManifest.Build != nil && compManifest.Build.WorkDir != "" {
-			artifactSourceDir = filepath.Join(componentDir, compManifest.Build.WorkDir)
-		}
-
-		// Copy artifacts to bin/ directory
-		var binPath string
+		// Verify artifacts exist before attempting to copy them
 		if compManifest.Build != nil && len(compManifest.Build.Artifacts) > 0 {
-			binPath, err = i.copyArtifactsToBin(kind, compManifest.Build.Artifacts, artifactSourceDir)
-			if err != nil {
+			if err := i.verifyArtifactsExist(compManifest.Build.Artifacts, buildWorkDir); err != nil {
 				result.Failed = append(result.Failed, InstallFailure{
 					Path:  relPath,
 					Name:  compManifest.Name,
@@ -767,6 +847,24 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 				})
 				continue
 			}
+		}
+
+		// Copy artifacts to bin/ directory
+		var binPath string
+		if compManifest.Build != nil && len(compManifest.Build.Artifacts) > 0 {
+			binPath, err = i.copyArtifactsToBin(kind, compManifest.Build.Artifacts, buildWorkDir)
+			if err != nil {
+				// Rollback any resources created during this installation
+				installCtx.rollback(i.dao, ctx)
+				result.Failed = append(result.Failed, InstallFailure{
+					Path:  relPath,
+					Name:  compManifest.Name,
+					Error: err,
+				})
+				continue
+			}
+			// Track the copied artifact for rollback on subsequent failures
+			installCtx.copiedArtifacts = append(installCtx.copiedArtifacts, binPath)
 		} else {
 			// No artifacts specified - this might be OK for some components
 			// Use empty binPath (component might be library, script, etc.)
@@ -798,10 +896,8 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 
 		// Validate component
 		if err := component.Validate(); err != nil {
-			// Cleanup bin artifact on failure
-			if binPath != "" {
-				_ = os.Remove(binPath)
-			}
+			// Rollback any resources created during this installation
+			installCtx.rollback(i.dao, ctx)
 			result.Failed = append(result.Failed, InstallFailure{
 				Path:  relPath,
 				Name:  compManifest.Name,
@@ -813,10 +909,8 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 		// Register component in database (unless SkipRegister is set)
 		if !opts.SkipRegister && i.dao != nil {
 			if err := i.dao.Create(ctx, component); err != nil {
-				// Cleanup bin artifact on failure
-				if binPath != "" {
-					_ = os.Remove(binPath)
-				}
+				// Rollback any resources created during this installation
+				installCtx.rollback(i.dao, ctx)
 				result.Failed = append(result.Failed, InstallFailure{
 					Path: relPath,
 					Name: compManifest.Name,
@@ -946,9 +1040,30 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 		artifactSourceDir = filepath.Join(repoDir, manifest.Build.WorkDir)
 	}
 
+	// Create install context for rollback tracking
+	installCtx := &installContext{
+		componentKind: kind,
+		componentName: manifest.Name,
+	}
+
 	// Copy artifacts to bin/ directory
 	var binPath string
 	if manifest.Build != nil && len(manifest.Build.Artifacts) > 0 {
+		// Verify all artifacts exist before attempting to copy
+		if err := i.verifyArtifactsExist(manifest.Build.Artifacts, artifactSourceDir); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			span.SetAttributes(ErrorAttributes(err, "verify_artifacts")...)
+			result.Failed = append(result.Failed, InstallFailure{
+				Path:  repoDir,
+				Name:  manifest.Name,
+				Error: err,
+			})
+			result.ComponentsFound = 1
+			result.Duration = time.Since(start)
+			return result, err
+		}
+
 		binPath, err = i.copyArtifactsToBin(kind, manifest.Build.Artifacts, artifactSourceDir)
 		if err != nil {
 			validationErr := WrapComponentError(ErrCodeLoadFailed, "failed to copy artifacts to bin", err).
@@ -965,6 +1080,9 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 			result.Duration = time.Since(start)
 			return result, validationErr
 		}
+
+		// Track copied artifact for potential rollback
+		installCtx.copiedArtifacts = append(installCtx.copiedArtifacts, binPath)
 	} else {
 		// No artifacts specified - this might be OK for some components
 		// Use empty binPath (component might be library, script, etc.)
@@ -989,10 +1107,8 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 
 	// Validate component
 	if err := component.Validate(); err != nil {
-		// Cleanup bin artifact on failure
-		if binPath != "" {
-			_ = os.Remove(binPath)
-		}
+		// Rollback copied artifacts on failure
+		installCtx.rollback(i.dao, ctx)
 		validationErr := NewValidationFailedError("component validation failed", err)
 		span.RecordError(validationErr)
 		span.SetStatus(codes.Error, validationErr.Error())
@@ -1010,10 +1126,8 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 	// Step 4: Register with i.dao.Create()
 	if !opts.SkipRegister && i.dao != nil {
 		if err := i.dao.Create(ctx, component); err != nil {
-			// Cleanup bin artifact on failure
-			if binPath != "" {
-				_ = os.Remove(binPath)
-			}
+			// Rollback copied artifacts on failure
+			installCtx.rollback(i.dao, ctx)
 			registerErr := WrapComponentError(ErrCodeLoadFailed, "failed to register component", err).
 				WithComponent(manifest.Name)
 			span.RecordError(registerErr)
@@ -1698,6 +1812,35 @@ func (i *DefaultInstaller) getReposDir(kind ComponentKind) string {
 	return filepath.Join(i.homeDir, kind.String()+"s", "_repos")
 }
 
+// verifyArtifactsExist checks that all specified artifacts exist at the source directory.
+// This is called before copying artifacts to detect build failures early with clear error messages.
+// Returns nil if all artifacts exist, or a ComponentError with details about missing artifacts.
+func (i *DefaultInstaller) verifyArtifactsExist(artifacts []string, sourceDir string) error {
+	var missingArtifacts []string
+	var searchedPaths []string
+
+	for _, artifact := range artifacts {
+		fullPath := filepath.Join(sourceDir, artifact)
+		searchedPaths = append(searchedPaths, fullPath)
+
+		if _, err := os.Stat(fullPath); err != nil {
+			if os.IsNotExist(err) {
+				missingArtifacts = append(missingArtifacts, artifact)
+			}
+			// Ignore other errors (like permission issues) - they'll be caught during copy
+		}
+	}
+
+	if len(missingArtifacts) > 0 {
+		return WrapComponentError(ErrCodeLoadFailed, "artifacts not found after build", nil).
+			WithContext("missing_artifacts", strings.Join(missingArtifacts, ", ")).
+			WithContext("searched_paths", strings.Join(searchedPaths, ", ")).
+			WithContext("source_dir", sourceDir)
+	}
+
+	return nil
+}
+
 // copyArtifactsToBin copies build artifacts from sourceDir to the bin directory for the specified component kind.
 // It creates the bin directory if it doesn't exist, copies all artifacts preserving file permissions,
 // and returns the path to the primary artifact (first in the list).
@@ -1727,8 +1870,10 @@ func (i *DefaultInstaller) copyArtifactsToBin(kind ComponentKind, artifacts []st
 		if err := copyFile(srcPath, dstPath); err != nil {
 			return "", WrapComponentError(ErrCodeLoadFailed, "failed to copy artifact", err).
 				WithContext("artifact", artifact).
-				WithContext("from", srcPath).
-				WithContext("to", dstPath)
+				WithContext("source", srcPath).
+				WithContext("destination", dstPath).
+				WithContext("source_dir", sourceDir).
+				WithContext("remediation", "verify build completed successfully and artifact exists at source path")
 		}
 
 		// First artifact is the primary artifact
@@ -1738,6 +1883,61 @@ func (i *DefaultInstaller) copyArtifactsToBin(kind ComponentKind, artifacts []st
 	}
 
 	return primaryArtifactPath, nil
+}
+
+// isOrphanedComponent checks if a component database record is orphaned
+// (i.e., the DB record exists but the binary file is missing).
+// Returns false if:
+//   - comp is nil
+//   - comp.BinPath is empty (script-based components without binaries)
+//   - BinPath file exists or there's an error other than "not exist"
+// Returns true if:
+//   - BinPath is set but the file doesn't exist
+func (i *DefaultInstaller) isOrphanedComponent(comp *Component) bool {
+	if comp == nil {
+		return false
+	}
+
+	if comp.BinPath == "" {
+		return false
+	}
+
+	_, err := os.Stat(comp.BinPath)
+	if os.IsNotExist(err) {
+		return true
+	}
+
+	return false
+}
+
+// cleanupOrphanedComponent cleans up an orphaned component database entry
+// (i.e., the DB record exists but the binary file is missing).
+// Returns nil if the component is not orphaned or if cleanup succeeds.
+// Returns a ComponentError if the database delete operation fails.
+func (i *DefaultInstaller) cleanupOrphanedComponent(ctx context.Context, kind ComponentKind, name string, existing *Component) error {
+	// Check if component is actually orphaned
+	if !i.isOrphanedComponent(existing) {
+		return nil
+	}
+
+	// Get span from context for tracing
+	span := trace.SpanFromContext(ctx)
+
+	// Add span event with component details
+	span.AddEvent("cleaning up orphaned component", trace.WithAttributes(
+		attribute.String("component.name", name),
+		attribute.String("component.bin_path", existing.BinPath),
+	))
+
+	// Delete the orphaned entry from the database
+	if i.dao != nil {
+		if err := i.dao.Delete(ctx, kind, name); err != nil {
+			return WrapComponentError(ErrCodeLoadFailed, "failed to delete orphaned component", err).
+				WithComponent(name)
+		}
+	}
+
+	return nil
 }
 
 // extractRepoName extracts the repository name from a git repository URL.

@@ -12,6 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/attack"
+	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/tui/console"
@@ -28,6 +30,10 @@ type ConsoleConfig struct {
 	FindingStore finding.FindingStore
 	// StreamManager manages bidirectional gRPC streams to agents.
 	StreamManager *agent.StreamManager
+	// Installer handles component installation operations.
+	Installer component.Installer
+	// AttackRunner executes attack missions.
+	AttackRunner attack.AttackRunner
 	// HomeDir is the Gibson home directory path (e.g., ~/.gibson).
 	HomeDir string
 	// ConfigFile is the path to the Gibson configuration file.
@@ -121,6 +127,8 @@ func NewConsoleView(ctx context.Context, config ConsoleConfig) *ConsoleView {
 		ComponentDAO:  config.ComponentDAO,
 		FindingStore:  config.FindingStore,
 		StreamManager: config.StreamManager,
+		Installer:     config.Installer,
+		AttackRunner:  config.AttackRunner,
 		HomeDir:       config.HomeDir,
 		ConfigFile:    config.ConfigFile,
 	}

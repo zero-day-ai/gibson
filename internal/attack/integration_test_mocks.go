@@ -18,79 +18,50 @@ import (
 
 // Mock implementations for integration tests
 
-type mockIntegrationAgentRegistry struct {
+type mockIntegrationComponentDiscovery struct {
 	agents map[string]agent.Agent
 }
 
-func newMockIntegrationAgentRegistry() *mockIntegrationAgentRegistry {
-	return &mockIntegrationAgentRegistry{
+func newMockIntegrationComponentDiscovery() *mockIntegrationComponentDiscovery {
+	return &mockIntegrationComponentDiscovery{
 		agents: map[string]agent.Agent{
 			"test-agent": &mockIntegrationAgent{name: "test-agent"},
 		},
 	}
 }
 
-func (r *mockIntegrationAgentRegistry) Register(descriptor agent.AgentDescriptor) error {
-	return nil
-}
-
-func (r *mockIntegrationAgentRegistry) Create(name string, config agent.AgentConfig) (agent.Agent, error) {
+func (r *mockIntegrationComponentDiscovery) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {
 	if a, ok := r.agents[name]; ok {
 		return a, nil
 	}
 	return nil, fmt.Errorf("agent not found: %s", name)
 }
 
-func (r *mockIntegrationAgentRegistry) Get(name string) (agent.Agent, error) {
+func (r *mockIntegrationComponentDiscovery) DiscoverTool(ctx context.Context, name string) (interface{}, error) {
+	return nil, fmt.Errorf("tool discovery not implemented in mock")
+}
+
+func (r *mockIntegrationComponentDiscovery) DiscoverPlugin(ctx context.Context, name string) (interface{}, error) {
+	return nil, fmt.Errorf("plugin discovery not implemented in mock")
+}
+
+func (r *mockIntegrationComponentDiscovery) ListAgents(ctx context.Context) ([]interface{}, error) {
+	return []interface{}{}, nil
+}
+
+func (r *mockIntegrationComponentDiscovery) ListTools(ctx context.Context) ([]interface{}, error) {
+	return []interface{}{}, nil
+}
+
+func (r *mockIntegrationComponentDiscovery) ListPlugins(ctx context.Context) ([]interface{}, error) {
+	return []interface{}{}, nil
+}
+
+func (r *mockIntegrationComponentDiscovery) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
 	if a, ok := r.agents[name]; ok {
-		return a, nil
+		return a.Execute(ctx, task, harness)
 	}
-	return nil, fmt.Errorf("agent not found: %s", name)
-}
-
-func (r *mockIntegrationAgentRegistry) List() []agent.AgentDescriptor {
-	return []agent.AgentDescriptor{
-		{
-			Name:           "test-agent",
-			Description:    "Test agent for integration tests",
-			Version:        "1.0.0",
-			Capabilities:   []string{"test"},
-			TargetTypes:    []component.TargetType{component.TargetTypeLLMAPI},
-			TechniqueTypes: []component.TechniqueType{component.TechniquePromptInjection},
-		},
-	}
-}
-
-func (r *mockIntegrationAgentRegistry) Close() error {
-	return nil
-}
-
-func (r *mockIntegrationAgentRegistry) RegisterInternal(name string, factory agent.AgentFactory) error {
-	return nil
-}
-
-func (r *mockIntegrationAgentRegistry) RegisterExternal(name string, client agent.ExternalAgentClient) error {
-	return nil
-}
-
-func (r *mockIntegrationAgentRegistry) Unregister(name string) error {
-	return nil
-}
-
-func (r *mockIntegrationAgentRegistry) GetDescriptor(name string) (agent.AgentDescriptor, error) {
-	return agent.AgentDescriptor{}, nil
-}
-
-func (r *mockIntegrationAgentRegistry) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
-	return agent.Result{}, nil
-}
-
-func (r *mockIntegrationAgentRegistry) Health(ctx context.Context) types.HealthStatus {
-	return types.Healthy("mock registry ready")
-}
-
-func (r *mockIntegrationAgentRegistry) RunningAgents() []agent.AgentRuntime {
-	return []agent.AgentRuntime{}
+	return agent.Result{}, fmt.Errorf("agent not found: %s", name)
 }
 
 type mockIntegrationAgent struct {

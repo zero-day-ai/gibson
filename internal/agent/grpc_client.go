@@ -14,7 +14,7 @@ import (
 	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 )
 
-// GRPCAgentClient implements ExternalAgentClient for gRPC-based agents.
+// GRPCAgentClient implements the Agent interface for gRPC-based agents.
 // This is a placeholder for Stage 7 (gRPC integration).
 //
 // External agents allow extending Gibson with agents written in any language

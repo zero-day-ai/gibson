@@ -6,10 +6,17 @@ import (
 	"time"
 )
 
+// AgentDelegator provides the capability to delegate tasks to other agents.
+// This interface is used by DelegationHarness to avoid import cycles.
+type AgentDelegator interface {
+	// DelegateToAgent executes a task on a named agent
+	DelegateToAgent(ctx context.Context, name string, task Task, harness AgentHarness) (Result, error)
+}
+
 // DelegationHarness implements AgentHarness for delegated agent execution.
-// This is used internally by the registry when executing delegated tasks.
+// This is used internally when executing delegated tasks.
 type DelegationHarness struct {
-	registry   AgentRegistry
+	delegator  AgentDelegator
 	logger     Logger
 	toolExec   ToolExecutor
 	pluginExec PluginExecutor
@@ -31,9 +38,9 @@ type PluginExecutor interface {
 }
 
 // NewDelegationHarness creates a new delegation harness
-func NewDelegationHarness(registry AgentRegistry) *DelegationHarness {
+func NewDelegationHarness(delegator AgentDelegator) *DelegationHarness {
 	return &DelegationHarness{
-		registry:   registry,
+		delegator:  delegator,
 		logger:     &defaultLogger{},
 		toolExec:   &noopToolExecutor{},
 		pluginExec: &noopPluginExecutor{},
@@ -105,7 +112,7 @@ func (h *DelegationHarness) DelegateToAgent(ctx context.Context, agentName strin
 	})
 
 	startTime := time.Now()
-	result, err := h.registry.DelegateToAgent(ctx, agentName, task, h)
+	result, err := h.delegator.DelegateToAgent(ctx, agentName, task, h)
 	duration := time.Since(startTime)
 
 	if err != nil {

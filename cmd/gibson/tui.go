@@ -10,10 +10,15 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/attack"
+	comp "github.com/zero-day-ai/gibson/internal/component"
+	"github.com/zero-day-ai/gibson/internal/component/build"
+	"github.com/zero-day-ai/gibson/internal/component/git"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tui"
 	"go.opentelemetry.io/otel"
@@ -144,6 +149,13 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 		}
 	}
 
+	// Set homeDir from config or use default
+	if cfg != nil && cfg.Core.HomeDir != "" {
+		appConfig.HomeDir = cfg.Core.HomeDir
+	} else {
+		appConfig.HomeDir = config.DefaultHomeDir()
+	}
+
 	// Initialize registry manager if configured
 	if cfg != nil {
 		regMgr := component.GetRegistryManager(ctx)
@@ -219,6 +231,38 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 		cleanupFuncs = append(cleanupFuncs, func() {
 			_ = streamManager.DisconnectAll()
 		})
+	}
+
+	// Initialize Installer (always available if ComponentDAO exists)
+	if appConfig.ComponentDAO != nil {
+		gitOps := git.NewDefaultGitOperations()
+		builder := build.NewDefaultBuildExecutor()
+		installer := comp.NewDefaultInstaller(gitOps, builder, appConfig.ComponentDAO)
+		appConfig.Installer = installer
+	}
+
+	// Initialize AttackRunner if all dependencies are available
+	// Note: AttackRunner is optional - gracefully degrade if not available
+	if appConfig.DB != nil && appConfig.MissionStore != nil && appConfig.FindingStore != nil && appConfig.RegistryAdapter != nil {
+		// Create payload registry from database
+		payloadRegistry := payload.NewPayloadRegistryWithDefaults(appConfig.DB)
+
+		// Create mission orchestrator (simplified version for TUI)
+		// Note: In production, this might be initialized differently
+		tracer := otel.Tracer("gibson-attack")
+
+		attackRunner := attack.NewAttackRunner(
+			nil, // orchestrator - set to nil for now, will be enhanced
+			appConfig.RegistryAdapter,
+			payloadRegistry,
+			appConfig.MissionStore,
+			appConfig.FindingStore,
+			attack.WithTracer(tracer),
+		)
+		appConfig.AttackRunner = attackRunner
+	} else {
+		// Log that AttackRunner is unavailable
+		fmt.Fprintf(os.Stderr, "Warning: AttackRunner not available - missing required dependencies\n")
 	}
 
 	return appConfig, cleanup, nil

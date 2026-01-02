@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/finding/export"
 	"github.com/zero-day-ai/gibson/internal/tui/styles"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
@@ -788,9 +790,61 @@ func (v *FindingsView) loadFindings() tea.Cmd {
 // exportFindings exports findings in the specified format.
 func (v *FindingsView) exportFindings(format string) tea.Cmd {
 	return func() tea.Msg {
-		// Export logic would go here
-		// For now, just return a success message
-		filename := fmt.Sprintf("findings_%s.%s", time.Now().Format("20060102_150405"), format)
+		// Convert findings slice to pointers
+		findingPtrs := make([]*finding.EnhancedFinding, len(v.findings))
+		for i := range v.findings {
+			findingPtrs[i] = &v.findings[i]
+		}
+
+		// Select appropriate exporter based on format
+		var exporter export.Exporter
+		var fileExt string
+
+		switch format {
+		case "json":
+			exporter = export.NewJSONExporter(true) // true for indented output
+			fileExt = "json"
+		case "csv":
+			exporter = export.NewCSVExporter()
+			fileExt = "csv"
+		case "sarif":
+			exporter = export.NewSARIFExporter()
+			fileExt = "sarif"
+		case "markdown", "md":
+			exporter = export.NewMarkdownExporter()
+			fileExt = "md"
+		case "html":
+			exporter = export.NewHTMLExporter()
+			fileExt = "html"
+		default:
+			return findingExportedMsg{
+				message: fmt.Sprintf("Error: unsupported format '%s'", format),
+			}
+		}
+
+		// Get export options with defaults
+		opts := export.DefaultExportOptions()
+
+		// Call exporter
+		data, err := exporter.Export(v.ctx, findingPtrs, opts)
+		if err != nil {
+			return findingExportedMsg{
+				message: fmt.Sprintf("Export failed: %v", err),
+			}
+		}
+
+		// Generate filename with timestamp
+		timestamp := time.Now().Format("20060102_150405")
+		filename := fmt.Sprintf("findings_%s.%s", timestamp, fileExt)
+
+		// Write to file in current working directory
+		if err := os.WriteFile(filename, data, 0644); err != nil {
+			return findingExportedMsg{
+				message: fmt.Sprintf("Failed to write file: %v", err),
+			}
+		}
+
+		// Return success message with filename and count
 		return findingExportedMsg{
 			message: fmt.Sprintf("Exported %d findings to %s", len(v.findings), filename),
 		}

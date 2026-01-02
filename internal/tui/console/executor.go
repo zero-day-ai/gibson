@@ -4,17 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/google/uuid"
 	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/attack"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/component/build"
 	"github.com/zero-day-ai/gibson/internal/component/git"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/gibson/internal/workflow"
+	"gopkg.in/yaml.v3"
 )
 
 // ExecutorConfig holds all dependencies and configuration needed for command execution.
@@ -27,6 +33,10 @@ type ExecutorConfig struct {
 	FindingStore finding.FindingStore
 	// StreamManager manages bidirectional streams to agents.
 	StreamManager *agent.StreamManager
+	// Installer provides component installation functionality.
+	Installer component.Installer
+	// AttackRunner provides attack execution functionality.
+	AttackRunner attack.AttackRunner
 	// HomeDir is the Gibson home directory path (e.g., ~/.gibson).
 	HomeDir string
 	// ConfigFile is the path to the Gibson configuration file.
@@ -1216,7 +1226,7 @@ func (e *Executor) handleAgentStop(ctx context.Context, args []string) (*Executi
 func (e *Executor) handleAgentInstall(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if len(args) < 1 {
 		return &ExecutionResult{
-			Error:    "Usage: /agents install <repo-url>",
+			Error:    "Usage: /agent install <repo-url> [--force] [--branch <name>] [--tag <name>]",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
@@ -1224,35 +1234,30 @@ func (e *Executor) handleAgentInstall(ctx context.Context, args []string) (*Exec
 
 	repoURL := args[0]
 
-	if e.config.ComponentDAO == nil || e.config.DB == nil {
+	if e.config.ComponentDAO == nil {
 		return &ExecutionResult{
-			Error:    "Component DAO or database not available",
+			Error:    "Component DAO not available",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
 	}
 
-	// Note: For the TUI, we'll use default install options
-	// In a full implementation, you might parse flags from args
+	// Parse optional flags
 	opts := component.InstallOptions{
-		Force:        false,
+		Force:        ContainsFlag(args[1:], "--force"),
+		Branch:       GetFlag(args[1:], "--branch"),
+		Tag:          GetFlag(args[1:], "--tag"),
 		SkipBuild:    false,
 		SkipRegister: false,
 	}
 
-	// Create installer with dependencies
-	gitOps := git.NewDefaultGitOperations()
-	builder := build.NewDefaultBuildExecutor()
-	installer := component.NewDefaultInstaller(gitOps, builder, e.config.ComponentDAO)
+	// Get installer (creates default if not configured)
+	installer := e.getInstaller()
 
 	// Perform the installation
 	result, err := installer.Install(ctx, repoURL, component.ComponentKindAgent, opts)
 	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Installation failed: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
+		return ErrorResult(fmt.Errorf("installation failed: %w", err))
 	}
 
 	var output strings.Builder
@@ -1328,23 +1333,41 @@ func (e *Executor) handleAgentUninstall(ctx context.Context, args []string) (*Ex
 		}, nil
 	}
 
-	// Create installer
-	gitOps := git.NewDefaultGitOperations()
-	builder := build.NewDefaultBuildExecutor()
-	installer := component.NewDefaultInstaller(gitOps, builder, e.config.ComponentDAO)
+	// Stop component if it's running
+	if existing.IsRunning() {
+		lifecycleManager := e.getLifecycleManager()
+		if err := lifecycleManager.StopComponent(ctx, existing); err != nil {
+			return &ExecutionResult{
+				Error:    fmt.Sprintf("Failed to stop agent before uninstall: %v", err),
+				IsError:  true,
+				ExitCode: 1,
+			}, err
+		}
+	}
 
-	// Uninstall the agent
-	result, err := installer.Uninstall(ctx, component.ComponentKindAgent, agentName)
-	if err != nil {
+	// Delete from database
+	if err := e.config.ComponentDAO.Delete(ctx, component.ComponentKindAgent, agentName); err != nil {
 		return &ExecutionResult{
-			Error:    fmt.Sprintf("Uninstall failed: %v", err),
+			Error:    fmt.Sprintf("Failed to delete agent from database: %v", err),
 			IsError:  true,
 			ExitCode: 1,
 		}, err
 	}
 
+	// Remove installation directory if it exists
+	if existing.RepoPath != "" {
+		if err := os.RemoveAll(existing.RepoPath); err != nil && !os.IsNotExist(err) {
+			// Log warning but don't fail - directory might already be gone
+			return &ExecutionResult{
+				Output:   fmt.Sprintf("Agent '%s' uninstalled from database, but failed to remove directory: %v\n", agentName, err),
+				IsError:  false,
+				ExitCode: 0,
+			}, nil
+		}
+	}
+
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Agent '%s' uninstalled successfully in %v", agentName, result.Duration),
+		Output:   fmt.Sprintf("Agent '%s' uninstalled successfully\n", agentName),
 		IsError:  false,
 		ExitCode: 0,
 	}, nil
@@ -1354,7 +1377,7 @@ func (e *Executor) handleAgentUninstall(ctx context.Context, args []string) (*Ex
 func (e *Executor) handleAgentLogs(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if len(args) < 1 {
 		return &ExecutionResult{
-			Error:    "Usage: /agents logs <agent-name>",
+			Error:    "Usage: /agents logs <agent-name> [--lines N]",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
@@ -1370,7 +1393,7 @@ func (e *Executor) handleAgentLogs(ctx context.Context, args []string) (*Executi
 		}, nil
 	}
 
-	// Get the agent component
+	// Get the agent component to validate it exists
 	agent, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindAgent, agentName)
 	if err != nil {
 		return &ExecutionResult{
@@ -1387,13 +1410,42 @@ func (e *Executor) handleAgentLogs(ctx context.Context, args []string) (*Executi
 		}, nil
 	}
 
-	// For now, return a placeholder message
-	// In a full implementation, this would read from ~/.gibson/logs/<agent-name>.log
-	// or integrate with the actual logging system
-	logPath := fmt.Sprintf("%s/logs/%s.log", e.config.HomeDir, agentName)
+	// Parse --lines flag (default 50)
+	lines := 50
+	if linesStr := GetFlag(args[1:], "--lines"); linesStr != "" {
+		if _, err := fmt.Sscanf(linesStr, "%d", &lines); err != nil {
+			return &ExecutionResult{
+				Error:    fmt.Sprintf("Invalid --lines value: %s", linesStr),
+				IsError:  true,
+				ExitCode: 1,
+			}, nil
+		}
+	}
+
+	// Build log path: {HomeDir}/logs/agent/{agentName}.log
+	logPath := fmt.Sprintf("%s/logs/agent/%s.log", e.config.HomeDir, agentName)
+
+	// Check if log file exists
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("No logs found for agent '%s'\nExpected log file: %s\n", agentName, logPath),
+			IsError:  false,
+			ExitCode: 0,
+		}, nil
+	}
+
+	// Read last N lines
+	content, err := ReadLastNLines(logPath, lines)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to read log file: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
 
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Log viewer not yet implemented.\nLogs would be displayed from: %s\n\nUse the CLI command 'gibson agent logs %s' for full log viewing.", logPath, agentName),
+		Output:   content,
 		IsError:  false,
 		ExitCode: 0,
 	}, nil
@@ -1402,28 +1454,85 @@ func (e *Executor) handleAgentLogs(ctx context.Context, args []string) (*Executi
 // handleAttack launches a single-agent attack against a target.
 // Usage: /attack <agent-name> --target <url> [--mode <mode>] [--goal <goal>]
 func (e *Executor) handleAttack(ctx context.Context, args []string) (*ExecutionResult, error) {
-	// Note: The Execute method doesn't pass ParsedCommand to handlers,
-	// so we cannot access flags directly. This is a design limitation.
-	// For TUI integration, this will need enhancement.
-
 	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /attack <agent-name> --target <url> [--mode <mode>]\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+		return UsageResult("Usage: /attack <target-url> --agent <name> [--goal <text>] [--mode <mode>] [--max-findings <n>] [--timeout <duration>]")
 	}
 
-	agentName := args[0]
+	targetURL := args[0]
 
-	// For now, return a placeholder since full attack integration requires:
-	// 1. Parsing flags from args (--target, --mode, --goal, etc.)
-	// 2. Target URL validation
-	// 3. Integration with attack orchestrator
-	// 4. Agent session management
+	// Parse required --agent flag
+	agentName := GetFlag(args[1:], "--agent")
+	if agentName == "" {
+		return ErrorResult(fmt.Errorf("--agent flag is required"))
+	}
+
+	// Check if AttackRunner is available
+	if e.config.AttackRunner == nil {
+		return ErrorResult(fmt.Errorf("attack functionality not available - AttackRunner not configured"))
+	}
+
+	// Parse optional flags
+	goal := GetFlag(args[1:], "--goal")
+	_ = GetFlag(args[1:], "--mode") // mode not currently used in AttackOptions
+
+	// Parse --max-findings (default 0 = unlimited)
+	maxFindings := 0
+	if maxFindingsStr := GetFlag(args[1:], "--max-findings"); maxFindingsStr != "" {
+		if _, err := fmt.Sscanf(maxFindingsStr, "%d", &maxFindings); err != nil {
+			return ErrorResult(fmt.Errorf("invalid --max-findings value: %s", maxFindingsStr))
+		}
+	}
+
+	// Parse --timeout (default 0 = no timeout)
+	var timeout time.Duration
+	if timeoutStr := GetFlag(args[1:], "--timeout"); timeoutStr != "" {
+		var err error
+		timeout, err = time.ParseDuration(timeoutStr)
+		if err != nil {
+			return ErrorResult(fmt.Errorf("invalid --timeout value: %s (use format like 5m, 1h)", timeoutStr))
+		}
+	}
+
+	// Create attack options
+	opts := &attack.AttackOptions{
+		TargetURL:   targetURL,
+		AgentName:   agentName,
+		Goal:        goal,
+		MaxFindings: maxFindings,
+		Timeout:     timeout,
+	}
+
+	// Validate options
+	if err := opts.Validate(); err != nil {
+		return ErrorResult(fmt.Errorf("invalid attack options: %w", err))
+	}
+
+	// Execute attack
+	result, err := e.config.AttackRunner.Run(ctx, opts)
+	if err != nil {
+		return ErrorResult(fmt.Errorf("attack failed: %w", err))
+	}
+
+	// Format result
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Attack completed:\n"))
+	output.WriteString(fmt.Sprintf("  Status: %s\n", result.Status))
+	output.WriteString(fmt.Sprintf("  Duration: %v\n", result.Duration))
+	output.WriteString(fmt.Sprintf("  Findings: %d\n", len(result.Findings)))
+
+	if len(result.Findings) > 0 {
+		output.WriteString("\nDiscovered Findings:\n")
+		for i, f := range result.Findings {
+			output.WriteString(fmt.Sprintf("  %d. [%s] %s\n", i+1, f.Severity, f.Title))
+		}
+	}
+
+	if result.Error != nil {
+		output.WriteString(fmt.Sprintf("\nError: %s\n", result.Error.Error()))
+	}
 
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Attack command for agent '%s' requires full attack orchestrator integration\nThis will be implemented in the TUI integration phase\n", agentName),
+		Output:   output.String(),
 		IsError:  false,
 		ExitCode: 0,
 	}, nil
@@ -1569,40 +1678,61 @@ func (e *Executor) handleMissionStop(ctx context.Context, args []string) (*Execu
 // handleMissionCreate creates a new mission.
 // Usage: /mission-create <name>
 func (e *Executor) handleMissionCreate(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /mission-create <name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	// Parse -f or --file flag for workflow file path
+	filePath := GetFlag(args, "-f")
+	if filePath == "" {
+		filePath = GetFlag(args, "--file")
 	}
 
-	missionName := args[0]
+	// If no file path provided, return usage error
+	if filePath == "" {
+		return UsageResult("Usage: /mission create -f <workflow.yaml>")
+	}
 
+	// Check if database is available
 	if e.config.DB == nil {
-		return &ExecutionResult{
-			Output:   "Database not available\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+		return ErrorResult(fmt.Errorf("database not available"))
 	}
 
+	// Read workflow file content
+	workflowContent, err := os.ReadFile(filePath)
+	if err != nil {
+		return ErrorResult(fmt.Errorf("failed to read workflow file: %w", err))
+	}
+
+	// Parse YAML into workflow.Workflow struct
+	var wf workflow.Workflow
+	if err := yaml.Unmarshal(workflowContent, &wf); err != nil {
+		return ErrorResult(fmt.Errorf("failed to parse workflow YAML: %w", err))
+	}
+
+	// Serialize workflow to JSON for storage
+	workflowJSON, err := json.Marshal(wf)
+	if err != nil {
+		return ErrorResult(fmt.Errorf("failed to serialize workflow: %w", err))
+	}
+
+	// Create mission with generated ID
+	missionID := uuid.New().String()
+	m := &mission.Mission{
+		ID:           types.ID(missionID),
+		Name:         wf.Name,
+		Description:  wf.Description,
+		Status:       mission.MissionStatusPending,
+		WorkflowJSON: string(workflowJSON),
+		CreatedAt:    time.Now(),
+	}
+
+	// Create mission store
 	missionStore := mission.NewDBMissionStore(e.config.DB)
 
-	// Check if mission already exists
-	if _, err := missionStore.GetByName(ctx, missionName); err == nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Mission '%s' already exists\n", missionName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	// Save mission
+	if err := missionStore.Save(ctx, m); err != nil {
+		return ErrorResult(fmt.Errorf("failed to save mission: %w", err))
 	}
 
-	// Create placeholder mission
-	// Note: Full workflow parsing and creation requires workflow file path from flags
-
 	return &ExecutionResult{
-		Output:   "Mission creation requires workflow file specification\nThis will be fully implemented in the TUI integration phase\n",
+		Output:   fmt.Sprintf("Mission '%s' created successfully (ID: %s)\nTo start: /mission start %s\n", m.Name, m.ID, m.Name),
 		IsError:  false,
 		ExitCode: 0,
 	}, nil
@@ -1823,16 +1953,55 @@ func (e *Executor) handleToolStop(ctx context.Context, args []string) (*Executio
 func (e *Executor) handleToolInstall(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if len(args) < 1 {
 		return &ExecutionResult{
-			Output:   "Usage: /tool install <source>\n",
+			Error:    "Usage: /tool install <repo-url> [--force] [--branch <name>] [--tag <name>]",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
 	}
 
+	repoURL := args[0]
+
+	if e.config.ComponentDAO == nil {
+		return &ExecutionResult{
+			Error:    "Component DAO not available",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Parse optional flags
+	opts := component.InstallOptions{
+		Force:        ContainsFlag(args[1:], "--force"),
+		Branch:       GetFlag(args[1:], "--branch"),
+		Tag:          GetFlag(args[1:], "--tag"),
+		SkipBuild:    false,
+		SkipRegister: false,
+	}
+
+	// Get installer (creates default if not configured)
+	installer := e.getInstaller()
+
+	// Perform the installation
+	result, err := installer.Install(ctx, repoURL, component.ComponentKindTool, opts)
+	if err != nil {
+		return ErrorResult(fmt.Errorf("installation failed: %w", err))
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Tool '%s' (v%s) installed successfully in %v\n",
+		result.Component.Name,
+		result.Component.Version,
+		result.Duration))
+
+	if result.BuildOutput != "" {
+		output.WriteString("\nBuild output:\n")
+		output.WriteString(result.BuildOutput)
+	}
+
 	return &ExecutionResult{
-		Output:   "Tool installation from TUI is not yet implemented.\nUse: gibson tool install <source>\n",
-		IsError:  true,
-		ExitCode: 1,
+		Output:   output.String(),
+		IsError:  false,
+		ExitCode: 0,
 	}, nil
 }
 
@@ -1840,33 +2009,85 @@ func (e *Executor) handleToolInstall(ctx context.Context, args []string) (*Execu
 func (e *Executor) handleToolUninstall(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if len(args) < 1 {
 		return &ExecutionResult{
-			Output:   "Usage: /tool uninstall <name> --confirm\n",
+			Error:    "Usage: /tool uninstall <tool-name> --confirm",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
 	}
 
+	toolName := args[0]
+
 	// Check for --confirm flag
-	confirmed := false
-	for _, arg := range args {
-		if arg == "--confirm" {
-			confirmed = true
-			break
+	if !ContainsFlag(args, "--confirm") {
+		return &ExecutionResult{
+			Error:    "Uninstall requires --confirm flag for safety",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	if e.config.ComponentDAO == nil {
+		return &ExecutionResult{
+			Error:    "Database not available. Run 'gibson init' to initialize.",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Get component from database
+	existing, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindTool, toolName)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to get tool: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, err
+	}
+	if existing == nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Tool '%s' not found", toolName),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Stop component if it's running
+	if existing.IsRunning() {
+		lifecycleManager := e.getLifecycleManager()
+		if err := lifecycleManager.StopComponent(ctx, existing); err != nil {
+			return &ExecutionResult{
+				Error:    fmt.Sprintf("Failed to stop tool before uninstall: %v", err),
+				IsError:  true,
+				ExitCode: 1,
+			}, err
 		}
 	}
 
-	if !confirmed {
+	// Delete from database
+	if err := e.config.ComponentDAO.Delete(ctx, component.ComponentKindTool, toolName); err != nil {
 		return &ExecutionResult{
-			Output:   "Uninstall requires --confirm flag to proceed.\nUsage: /tool uninstall <name> --confirm\n",
+			Error:    fmt.Sprintf("Failed to delete tool from database: %v", err),
 			IsError:  true,
 			ExitCode: 1,
-		}, nil
+		}, err
+	}
+
+	// Remove installation directory if it exists
+	if existing.RepoPath != "" {
+		if err := os.RemoveAll(existing.RepoPath); err != nil && !os.IsNotExist(err) {
+			// Log warning but don't fail - directory might already be gone
+			return &ExecutionResult{
+				Output:   fmt.Sprintf("Tool '%s' uninstalled from database, but failed to remove directory: %v\n", toolName, err),
+				IsError:  false,
+				ExitCode: 0,
+			}, nil
+		}
 	}
 
 	return &ExecutionResult{
-		Output:   "Tool uninstallation from TUI is not yet implemented.\nUse: gibson tool uninstall <name> --force\n",
-		IsError:  true,
-		ExitCode: 1,
+		Output:   fmt.Sprintf("Tool '%s' uninstalled successfully\n", toolName),
+		IsError:  false,
+		ExitCode: 0,
 	}, nil
 }
 
@@ -1874,7 +2095,7 @@ func (e *Executor) handleToolUninstall(ctx context.Context, args []string) (*Exe
 func (e *Executor) handleToolLogs(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if len(args) < 1 {
 		return &ExecutionResult{
-			Output:   "Usage: /tool logs <name>\n",
+			Error:    "Usage: /tool logs <tool-name> [--lines N]",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
@@ -1884,13 +2105,13 @@ func (e *Executor) handleToolLogs(ctx context.Context, args []string) (*Executio
 
 	if e.config.ComponentDAO == nil {
 		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
+			Error:    "Database not available. Run 'gibson init' to initialize.",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
 	}
 
-	// Get tool
+	// Get the tool component to validate it exists
 	tool, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindTool, toolName)
 	if err != nil {
 		return &ExecutionResult{
@@ -1901,17 +2122,49 @@ func (e *Executor) handleToolLogs(ctx context.Context, args []string) (*Executio
 	}
 	if tool == nil {
 		return &ExecutionResult{
-			Output:   fmt.Sprintf("Tool '%s' not found\n", toolName),
+			Error:    fmt.Sprintf("Tool '%s' not found", toolName),
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
 	}
 
-	// Construct log file path
-	logPath := fmt.Sprintf("%s/logs/%s.log", e.config.HomeDir, toolName)
+	// Parse --lines flag (default 50)
+	lines := 50
+	if linesStr := GetFlag(args[1:], "--lines"); linesStr != "" {
+		if _, err := fmt.Sscanf(linesStr, "%d", &lines); err != nil {
+			return &ExecutionResult{
+				Error:    fmt.Sprintf("Invalid --lines value: %s", linesStr),
+				IsError:  true,
+				ExitCode: 1,
+			}, nil
+		}
+	}
+
+	// Build log path: {HomeDir}/logs/tool/{toolName}.log
+	logPath := fmt.Sprintf("%s/logs/tool/%s.log", e.config.HomeDir, toolName)
+
+	// Check if log file exists
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("No logs found for tool '%s'\nExpected log file: %s\n", toolName, logPath),
+			IsError:  false,
+			ExitCode: 0,
+		}, nil
+	}
+
+	// Read last N lines
+	content, err := ReadLastNLines(logPath, lines)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to read log file: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
 
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Log file path: %s\n\nLog viewing in TUI not yet implemented.\nUse: gibson tool logs %s\n", logPath, toolName),
+		Output:   content,
+		IsError:  false,
 		ExitCode: 0,
 	}, nil
 }
@@ -1929,13 +2182,15 @@ func (e *Executor) handlePlugin(ctx context.Context, args []string) (*ExecutionR
 		return e.handlePluginStart(ctx, args[1:])
 	case "stop":
 		return e.handlePluginStop(ctx, args[1:])
+	case "logs":
+		return e.handlePluginLogs(ctx, args[1:])
 	case "install":
 		return e.handlePluginInstall(ctx, args[1:])
 	case "uninstall":
 		return e.handlePluginUninstall(ctx, args[1:])
 	default:
 		return &ExecutionResult{
-			Output:   fmt.Sprintf("Unknown plugin subcommand: %s\nAvailable: list, start, stop, install, uninstall\n", args[0]),
+			Output:   fmt.Sprintf("Unknown plugin subcommand: %s\nAvailable: list, start, stop, logs, install, uninstall\n", args[0]),
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
@@ -2072,20 +2327,137 @@ func (e *Executor) handlePluginStop(ctx context.Context, args []string) (*Execut
 	}, nil
 }
 
-// handlePluginInstall installs a new plugin component.
-func (e *Executor) handlePluginInstall(ctx context.Context, args []string) (*ExecutionResult, error) {
+// handlePluginLogs displays logs for a plugin component.
+func (e *Executor) handlePluginLogs(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if len(args) < 1 {
 		return &ExecutionResult{
-			Output:   "Usage: /plugin install <source>\n",
+			Error:    "Usage: /plugin logs <plugin-name> [--lines N]",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	pluginName := args[0]
+
+	if e.config.ComponentDAO == nil {
+		return &ExecutionResult{
+			Error:    "Database not available. Run 'gibson init' to initialize.",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Get the plugin component to validate it exists
+	plugin, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindPlugin, pluginName)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to get plugin: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, err
+	}
+	if plugin == nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Plugin '%s' not found", pluginName),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Parse --lines flag (default 50)
+	lines := 50
+	if linesStr := GetFlag(args[1:], "--lines"); linesStr != "" {
+		if _, err := fmt.Sscanf(linesStr, "%d", &lines); err != nil {
+			return &ExecutionResult{
+				Error:    fmt.Sprintf("Invalid --lines value: %s", linesStr),
+				IsError:  true,
+				ExitCode: 1,
+			}, nil
+		}
+	}
+
+	// Build log path: {HomeDir}/logs/plugin/{pluginName}.log
+	logPath := fmt.Sprintf("%s/logs/plugin/%s.log", e.config.HomeDir, pluginName)
+
+	// Check if log file exists
+	if _, err := os.Stat(logPath); os.IsNotExist(err) {
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("No logs found for plugin '%s'\nExpected log file: %s\n", pluginName, logPath),
+			IsError:  false,
+			ExitCode: 0,
+		}, nil
+	}
+
+	// Read last N lines
+	content, err := ReadLastNLines(logPath, lines)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to read log file: %v", err),
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
 	}
 
 	return &ExecutionResult{
-		Output:   "Plugin installation from TUI is not yet implemented.\nUse: gibson plugin install <source>\n",
-		IsError:  true,
-		ExitCode: 1,
+		Output:   content,
+		IsError:  false,
+		ExitCode: 0,
+	}, nil
+}
+
+// handlePluginInstall installs a new plugin component.
+func (e *Executor) handlePluginInstall(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if len(args) < 1 {
+		return &ExecutionResult{
+			Error:    "Usage: /plugin install <repo-url> [--force] [--branch <name>] [--tag <name>]",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	repoURL := args[0]
+
+	if e.config.ComponentDAO == nil {
+		return &ExecutionResult{
+			Error:    "Component DAO not available",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Parse optional flags
+	opts := component.InstallOptions{
+		Force:        ContainsFlag(args[1:], "--force"),
+		Branch:       GetFlag(args[1:], "--branch"),
+		Tag:          GetFlag(args[1:], "--tag"),
+		SkipBuild:    false,
+		SkipRegister: false,
+	}
+
+	// Get installer (creates default if not configured)
+	installer := e.getInstaller()
+
+	// Perform the installation
+	result, err := installer.Install(ctx, repoURL, component.ComponentKindPlugin, opts)
+	if err != nil {
+		return ErrorResult(fmt.Errorf("installation failed: %w", err))
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Plugin '%s' (v%s) installed successfully in %v\n",
+		result.Component.Name,
+		result.Component.Version,
+		result.Duration))
+
+	if result.BuildOutput != "" {
+		output.WriteString("\nBuild output:\n")
+		output.WriteString(result.BuildOutput)
+	}
+
+	return &ExecutionResult{
+		Output:   output.String(),
+		IsError:  false,
+		ExitCode: 0,
 	}, nil
 }
 
@@ -2093,39 +2465,102 @@ func (e *Executor) handlePluginInstall(ctx context.Context, args []string) (*Exe
 func (e *Executor) handlePluginUninstall(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if len(args) < 1 {
 		return &ExecutionResult{
-			Output:   "Usage: /plugin uninstall <name> --confirm\n",
+			Error:    "Usage: /plugin uninstall <plugin-name> --confirm",
 			IsError:  true,
 			ExitCode: 1,
 		}, nil
 	}
 
+	pluginName := args[0]
+
 	// Check for --confirm flag
-	confirmed := false
-	for _, arg := range args {
-		if arg == "--confirm" {
-			confirmed = true
-			break
+	if !ContainsFlag(args, "--confirm") {
+		return &ExecutionResult{
+			Error:    "Uninstall requires --confirm flag for safety",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	if e.config.ComponentDAO == nil {
+		return &ExecutionResult{
+			Error:    "Database not available. Run 'gibson init' to initialize.",
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Get component from database
+	existing, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindPlugin, pluginName)
+	if err != nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Failed to get plugin: %v", err),
+			IsError:  true,
+			ExitCode: 1,
+		}, err
+	}
+	if existing == nil {
+		return &ExecutionResult{
+			Error:    fmt.Sprintf("Plugin '%s' not found", pluginName),
+			IsError:  true,
+			ExitCode: 1,
+		}, nil
+	}
+
+	// Stop component if it's running
+	if existing.IsRunning() {
+		lifecycleManager := e.getLifecycleManager()
+		if err := lifecycleManager.StopComponent(ctx, existing); err != nil {
+			return &ExecutionResult{
+				Error:    fmt.Sprintf("Failed to stop plugin before uninstall: %v", err),
+				IsError:  true,
+				ExitCode: 1,
+			}, err
 		}
 	}
 
-	if !confirmed {
+	// Delete from database
+	if err := e.config.ComponentDAO.Delete(ctx, component.ComponentKindPlugin, pluginName); err != nil {
 		return &ExecutionResult{
-			Output:   "Uninstall requires --confirm flag to proceed.\nUsage: /plugin uninstall <name> --confirm\n",
+			Error:    fmt.Sprintf("Failed to delete plugin from database: %v", err),
 			IsError:  true,
 			ExitCode: 1,
-		}, nil
+		}, err
+	}
+
+	// Remove installation directory if it exists
+	if existing.RepoPath != "" {
+		if err := os.RemoveAll(existing.RepoPath); err != nil && !os.IsNotExist(err) {
+			// Log warning but don't fail - directory might already be gone
+			return &ExecutionResult{
+				Output:   fmt.Sprintf("Plugin '%s' uninstalled from database, but failed to remove directory: %v\n", pluginName, err),
+				IsError:  false,
+				ExitCode: 0,
+			}, nil
+		}
 	}
 
 	return &ExecutionResult{
-		Output:   "Plugin uninstallation from TUI is not yet implemented.\nUse: gibson plugin uninstall <name> --force\n",
-		IsError:  true,
-		ExitCode: 1,
+		Output:   fmt.Sprintf("Plugin '%s' uninstalled successfully\n", pluginName),
+		IsError:  false,
+		ExitCode: 0,
 	}, nil
 }
 
 // getLifecycleManager creates a lifecycle manager for component operations.
 func (e *Executor) getLifecycleManager() component.LifecycleManager {
 	return component.NewLifecycleManager(e.config.ComponentDAO, nil)
+}
+
+// getInstaller returns the Installer from config, or creates a default installer if not set.
+func (e *Executor) getInstaller() component.Installer {
+	if e.config.Installer != nil {
+		return e.config.Installer
+	}
+	// Create default installer if not provided
+	gitOps := git.NewDefaultGitOperations()
+	builder := build.NewDefaultBuildExecutor()
+	return component.NewDefaultInstaller(gitOps, builder, e.config.ComponentDAO)
 }
 
 // handleFocus switches TUI focus to a specific agent and subscribes to its event stream.

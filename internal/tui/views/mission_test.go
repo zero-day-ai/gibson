@@ -83,7 +83,7 @@ func (m *MockMissionStore) Count(ctx context.Context, filter *mission.MissionFil
 func TestNewMissionView(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 
 	assert.NotNil(t, view)
 	assert.NotNil(t, view.theme)
@@ -99,7 +99,7 @@ func TestMissionView_Init(t *testing.T) {
 			{ID: "1", Name: "Test Mission", Status: mission.MissionStatusRunning},
 		},
 	}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 
 	cmd := view.Init()
 
@@ -110,7 +110,7 @@ func TestMissionView_Init(t *testing.T) {
 func TestMissionView_Update_WindowSize(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 
 	msg := tea.WindowSizeMsg{Width: 150, Height: 50}
 	_, _ = view.Update(msg)
@@ -122,7 +122,7 @@ func TestMissionView_Update_WindowSize(t *testing.T) {
 func TestMissionView_Update_ToggleDetails(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 	view.width = 100
 	view.height = 30
 
@@ -143,7 +143,7 @@ func TestMissionView_Update_ToggleDetails(t *testing.T) {
 func TestMissionView_View_Empty(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 
 	// Before setting size
 	output := view.View()
@@ -159,7 +159,7 @@ func TestMissionView_View_Empty(t *testing.T) {
 func TestMissionView_RenderProgressBar(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 
 	tests := []struct {
 		progress float64
@@ -183,7 +183,7 @@ func TestMissionView_RenderProgressBar(t *testing.T) {
 func TestMissionView_RenderStatusBar(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 	view.width = 100
 
 	output := view.renderStatusBar()
@@ -196,7 +196,7 @@ func TestMissionView_RenderStatusBar(t *testing.T) {
 func TestMissionView_RenderStatusBar_WithError(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}
-	view := NewMissionView(ctx, mockStore)
+	view := NewMissionView(ctx, mockStore, "/tmp/gibson-test")
 	view.width = 100
 	view.err = assert.AnError
 

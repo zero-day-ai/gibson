@@ -53,7 +53,7 @@ func TestIntegration_FullAttackExecution(t *testing.T) {
 			defer targetServer.Close()
 
 			// Create mock registries and stores
-			agentRegistry := newMockIntegrationAgentRegistry()
+			agentRegistry := newMockIntegrationComponentDiscovery()
 			payloadRegistry := newMockIntegrationPayloadRegistry()
 			missionStore := newMockIntegrationMissionStore()
 			findingStore := newMockIntegrationFindingStore()
@@ -116,7 +116,7 @@ func TestIntegration_EphemeralMode(t *testing.T) {
 
 	runner := NewAttackRunner(
 		orchestrator,
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		missionStore,
 		findingStore,
@@ -170,7 +170,7 @@ func TestIntegration_PersistentMode(t *testing.T) {
 
 	runner := NewAttackRunner(
 		orchestrator,
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		missionStore,
 		findingStore,
@@ -412,7 +412,7 @@ func TestIntegration_MockTargetServer(t *testing.T) {
 
 			runner := NewAttackRunner(
 				newMockIntegrationOrchestrator(false),
-				newMockIntegrationAgentRegistry(),
+				newMockIntegrationComponentDiscovery(),
 				newMockIntegrationPayloadRegistry(),
 				newMockIntegrationMissionStore(),
 				newMockIntegrationFindingStore(),
@@ -452,7 +452,7 @@ func TestIntegration_ConcurrentAttacks(t *testing.T) {
 	// Create shared components (must be thread-safe)
 	runner := NewAttackRunner(
 		newMockIntegrationOrchestrator(false),
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
 		newMockIntegrationFindingStore(),
@@ -501,7 +501,7 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 
 	runner := NewAttackRunner(
 		newMockIntegrationOrchestratorWithDelay(2*time.Second),
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
 		newMockIntegrationFindingStore(),
@@ -536,7 +536,7 @@ func TestIntegration_Timeout(t *testing.T) {
 
 	runner := NewAttackRunner(
 		newMockIntegrationOrchestratorWithDelay(3*time.Second),
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
 		newMockIntegrationFindingStore(),
@@ -564,7 +564,7 @@ func TestIntegration_DryRun(t *testing.T) {
 
 	runner := NewAttackRunner(
 		newMockIntegrationOrchestrator(false),
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
 		newMockIntegrationFindingStore(),
@@ -665,7 +665,7 @@ func TestIntegration_FindingsPersistence(t *testing.T) {
 
 			runner := NewAttackRunner(
 				orchestrator,
-				newMockIntegrationAgentRegistry(),
+				newMockIntegrationComponentDiscovery(),
 				newMockIntegrationPayloadRegistry(),
 				missionStore,
 				findingStore,
@@ -717,7 +717,7 @@ func TestIntegration_AttackDuration(t *testing.T) {
 
 	runner := NewAttackRunner(
 		newMockIntegrationOrchestratorWithDelay(100*time.Millisecond),
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
 		newMockIntegrationFindingStore(),
@@ -743,7 +743,7 @@ func TestIntegration_AttackMetrics(t *testing.T) {
 	orchestrator := newMockIntegrationOrchestrator(true)
 	runner := NewAttackRunner(
 		orchestrator,
-		newMockIntegrationAgentRegistry(),
+		newMockIntegrationComponentDiscovery(),
 		newMockIntegrationPayloadRegistry(),
 		newMockIntegrationMissionStore(),
 		newMockIntegrationFindingStore(),

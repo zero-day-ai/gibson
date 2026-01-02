@@ -30,7 +30,7 @@ func (m *MockMissionOrchestrator) Execute(ctx context.Context, missionObj *missi
 	return args.Get(0).(*mission.MissionResult), args.Error(1)
 }
 
-// MockAgentRegistry and MockAgent are defined in agent_test.go and reused here
+// MockComponentDiscovery and MockAgent are defined in agent_test.go and reused here
 
 type MockPayloadRegistry struct {
 	mock.Mock

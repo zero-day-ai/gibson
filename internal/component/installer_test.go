@@ -582,3 +582,218 @@ func TestParseRepoURL(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifyArtifactsExist_AllPresent tests successful artifact verification
+func TestVerifyArtifactsExist_AllPresent(t *testing.T) {
+	installer, _, _, _, _ := setupTestInstaller(t)
+
+	// Create temp dir with test files
+	tempDir := t.TempDir()
+	binary1 := filepath.Join(tempDir, "binary1")
+	binary2 := filepath.Join(tempDir, "binary2")
+
+	// Create the test files
+	err := os.WriteFile(binary1, []byte("test binary 1"), 0755)
+	require.NoError(t, err)
+	err = os.WriteFile(binary2, []byte("test binary 2"), 0755)
+	require.NoError(t, err)
+
+	// Verify artifacts exist
+	err = installer.verifyArtifactsExist([]string{"binary1", "binary2"}, tempDir)
+	require.NoError(t, err)
+}
+
+// TestVerifyArtifactsExist_Missing tests artifact verification with missing files
+func TestVerifyArtifactsExist_Missing(t *testing.T) {
+	installer, _, _, _, _ := setupTestInstaller(t)
+
+	// Create empty temp dir
+	tempDir := t.TempDir()
+
+	// Verify missing artifact
+	err := installer.verifyArtifactsExist([]string{"missing"}, tempDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "artifacts not found")
+}
+
+// TestIsOrphanedComponent_NilComponent tests orphan detection with nil component
+func TestIsOrphanedComponent_NilComponent(t *testing.T) {
+	installer, _, _, _, _ := setupTestInstaller(t)
+
+	result := installer.isOrphanedComponent(nil)
+	assert.False(t, result)
+}
+
+// TestIsOrphanedComponent_EmptyBinPath tests orphan detection with empty BinPath
+func TestIsOrphanedComponent_EmptyBinPath(t *testing.T) {
+	installer, _, _, _, _ := setupTestInstaller(t)
+
+	comp := &Component{BinPath: ""}
+	result := installer.isOrphanedComponent(comp)
+	assert.False(t, result)
+}
+
+// TestIsOrphanedComponent_MissingBinary tests orphan detection with missing binary
+func TestIsOrphanedComponent_MissingBinary(t *testing.T) {
+	installer, _, _, _, _ := setupTestInstaller(t)
+
+	comp := &Component{BinPath: "/nonexistent/path/binary"}
+	result := installer.isOrphanedComponent(comp)
+	assert.True(t, result)
+}
+
+// TestIsOrphanedComponent_ValidBinary tests orphan detection with existing binary
+func TestIsOrphanedComponent_ValidBinary(t *testing.T) {
+	installer, _, _, _, _ := setupTestInstaller(t)
+
+	// Create temp file
+	tempFile, err := os.CreateTemp("", "binary-*")
+	require.NoError(t, err)
+	defer os.Remove(tempFile.Name())
+	tempFile.Close()
+
+	comp := &Component{BinPath: tempFile.Name()}
+	result := installer.isOrphanedComponent(comp)
+	assert.False(t, result)
+}
+
+// TestInstallContext_Rollback tests rollback functionality
+func TestInstallContext_Rollback(t *testing.T) {
+	// Create temp files
+	tempFile1, err := os.CreateTemp("", "artifact1-*")
+	require.NoError(t, err)
+	file1Path := tempFile1.Name()
+	tempFile1.Close()
+
+	tempFile2, err := os.CreateTemp("", "artifact2-*")
+	require.NoError(t, err)
+	file2Path := tempFile2.Name()
+	tempFile2.Close()
+
+	// Verify files exist before rollback
+	_, err = os.Stat(file1Path)
+	require.NoError(t, err)
+	_, err = os.Stat(file2Path)
+	require.NoError(t, err)
+
+	// Create install context
+	installCtx := &installContext{
+		copiedArtifacts: []string{file1Path, file2Path},
+		componentKind:   ComponentKindAgent,
+		componentName:   "test",
+	}
+
+	// Create mock DAO
+	mockDAO := NewMockComponentDAO()
+	mockDAO.On("Delete", mock.Anything, ComponentKindAgent, "test").Return(nil)
+
+	// Perform rollback
+	installCtx.rollback(mockDAO, context.Background())
+
+	// Verify files are removed
+	_, err = os.Stat(file1Path)
+	assert.True(t, os.IsNotExist(err), "file1 should be removed")
+	_, err = os.Stat(file2Path)
+	assert.True(t, os.IsNotExist(err), "file2 should be removed")
+}
+
+// TestInstallRepository_WithWorkdir tests the mono-repo scenario with build.workdir
+// This replicates the k8skiller case where:
+// - Repository has a root component.yaml (kind: agent, build.workdir: ./k8skiller)
+// - k8skiller subdirectory contains the actual code
+// - Build artifacts are created in the workdir subdirectory
+func TestInstallRepository_WithWorkdir(t *testing.T) {
+	installer, mockGit, mockBuilder, mockDAO, tmpDir := setupTestInstaller(t)
+
+	// Create temporary directory structure mimicking the k8skiller mono-repo
+	repoDir := t.TempDir()
+
+	// Create root component.yaml with build.workdir pointing to subdirectory
+	// This is the pattern used by k8skiller and other mono-repos
+	rootManifestContent := `kind: agent
+name: k8skiller
+version: 1.0.0
+description: Kubernetes attack agent
+build:
+  command: echo "mock build"
+  workdir: ./k8skiller
+  artifacts:
+    - k8skiller
+runtime:
+  type: go
+  entrypoint: ./k8skiller
+`
+	err := os.WriteFile(filepath.Join(repoDir, ManifestFileName), []byte(rootManifestContent), 0644)
+	require.NoError(t, err)
+
+	// Create k8skiller subdirectory (the actual code directory)
+	k8skillerDir := filepath.Join(repoDir, "k8skiller")
+	err = os.MkdirAll(k8skillerDir, 0755)
+	require.NoError(t, err)
+
+	// Create mock binary file in the k8skiller directory (simulating build output)
+	k8skillerBinary := filepath.Join(k8skillerDir, "k8skiller")
+	err = os.WriteFile(k8skillerBinary, []byte("mock binary"), 0755)
+	require.NoError(t, err)
+
+	// Setup mocks
+	repoURL := "file://" + repoDir
+
+	// Mock git.Clone to copy our temp structure to the installer's repo directory
+	mockGit.On("Clone", repoURL, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		destDir := args.Get(1).(string)
+		// Copy the test directory structure to destination
+		err := copyDir(repoDir, destDir)
+		require.NoError(t, err)
+	}).Return(nil)
+
+	// Mock git.GetVersion
+	mockGit.On("GetVersion", mock.Anything).Return("test-commit-123", nil)
+
+	// Mock builder.Build - the build is already "done" (our mock binary exists)
+	// The installer will call this with the workdir set to repoDir/k8skiller
+	mockBuilder.On("Build", mock.Anything, mock.Anything, "k8skiller", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		// Verify that the build config has the correct WorkDir
+		buildCfg := args.Get(1).(build.BuildConfig)
+		// WorkDir should be the absolute path containing k8skiller
+		assert.Contains(t, buildCfg.WorkDir, "k8skiller")
+	}).Return(&build.BuildResult{
+		Success:  true,
+		Duration: 100 * time.Millisecond,
+		Stdout:   "mock build",
+	}, nil)
+
+	// Mock DAO operations
+	mockDAO.On("GetByName", mock.Anything, ComponentKindAgent, "k8skiller").Return(nil, nil)
+	mockDAO.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		comp := args.Get(1).(*Component)
+		// Verify the component has the correct paths
+		assert.Equal(t, "k8skiller", comp.Name)
+		assert.Equal(t, ComponentKindAgent, comp.Kind)
+		// BinPath should point to the binary in the agents/bin directory
+		assert.Contains(t, comp.BinPath, filepath.Join("agents", "bin", "k8skiller"))
+	}).Return(nil)
+
+	// Execute Install (single component)
+	opts := InstallOptions{}
+	result, err := installer.Install(context.Background(), repoURL, ComponentKindAgent, opts)
+
+	// Assert
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Installed)
+	assert.NotNil(t, result.Component)
+	assert.Equal(t, "k8skiller", result.Component.Name)
+	assert.Equal(t, ComponentKindAgent, result.Component.Kind)
+	assert.Equal(t, "test-commit-123", result.Component.Version)
+
+	// Verify the binary was copied to the agents/bin directory
+	binPath := filepath.Join(tmpDir, "agents", "bin", "k8skiller")
+	_, err = os.Stat(binPath)
+	assert.NoError(t, err, "binary should exist in agents/bin directory")
+
+	// Verify mocks
+	mockGit.AssertExpectations(t)
+	mockBuilder.AssertExpectations(t)
+	mockDAO.AssertExpectations(t)
+}

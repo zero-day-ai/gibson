@@ -7,6 +7,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -48,7 +49,7 @@ type payloadExecutor struct {
 	registry       PayloadRegistry
 	executionStore ExecutionStore
 	findingStore   finding.FindingStore
-	agentRegistry  agent.AgentRegistry
+	discovery      registry.ComponentDiscovery
 }
 
 // NewPayloadExecutor creates a new payload executor
@@ -56,7 +57,7 @@ func NewPayloadExecutor(
 	registry PayloadRegistry,
 	executionStore ExecutionStore,
 	findingStore finding.FindingStore,
-	agentRegistry agent.AgentRegistry,
+	discovery registry.ComponentDiscovery,
 	config ExecutorConfig,
 ) PayloadExecutor {
 	return &payloadExecutor{
@@ -66,7 +67,7 @@ func NewPayloadExecutor(
 		registry:       registry,
 		executionStore: executionStore,
 		findingStore:   findingStore,
-		agentRegistry:  agentRegistry,
+		discovery:      discovery,
 	}
 }
 
@@ -75,9 +76,9 @@ func NewPayloadExecutorWithDefaults(
 	registry PayloadRegistry,
 	executionStore ExecutionStore,
 	findingStore finding.FindingStore,
-	agentRegistry agent.AgentRegistry,
+	discovery registry.ComponentDiscovery,
 ) PayloadExecutor {
-	return NewPayloadExecutor(registry, executionStore, findingStore, agentRegistry, DefaultExecutorConfig())
+	return NewPayloadExecutor(registry, executionStore, findingStore, discovery, DefaultExecutorConfig())
 }
 
 // Execute runs a payload against a target

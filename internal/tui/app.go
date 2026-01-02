@@ -7,6 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/attack"
+	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
@@ -55,6 +57,9 @@ type App struct {
 	registryAdapter *registry.RegistryAdapter
 	streamManager   *agent.StreamManager
 	registryManager *registry.Manager
+	installer       component.Installer
+	attackRunner    attack.AttackRunner
+	homeDir         string
 
 	// Ready state
 	ready bool
@@ -69,6 +74,9 @@ type AppConfig struct {
 	RegistryAdapter *registry.RegistryAdapter
 	StreamManager   *agent.StreamManager
 	RegistryManager *registry.Manager
+	Installer       component.Installer
+	AttackRunner    attack.AttackRunner
+	HomeDir         string
 }
 
 // NewApp creates a new TUI application with the given context and configuration.
@@ -92,6 +100,9 @@ func NewApp(ctx context.Context, config AppConfig) *App {
 		registryAdapter: config.RegistryAdapter,
 		streamManager:   config.StreamManager,
 		registryManager: config.RegistryManager,
+		installer:       config.Installer,
+		attackRunner:    config.AttackRunner,
+		homeDir:         config.HomeDir,
 	}
 
 	// Initialize header
@@ -128,7 +139,7 @@ func (a *App) initViews() {
 
 	// Mission view
 	if a.missionStore != nil {
-		a.missionView = views.NewMissionView(a.ctx, a.missionStore)
+		a.missionView = views.NewMissionView(a.ctx, a.missionStore, a.homeDir)
 	}
 
 	// Findings view
@@ -142,6 +153,8 @@ func (a *App) initViews() {
 		ComponentDAO:  a.componentDAO,
 		FindingStore:  a.findingStore,
 		StreamManager: a.streamManager,
+		Installer:     a.installer,
+		AttackRunner:  a.attackRunner,
 		HomeDir:       "", // Can be set from config later
 		ConfigFile:    "", // Can be set from config later
 	})

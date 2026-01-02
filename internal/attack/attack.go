@@ -49,7 +49,7 @@ Create an AttackRunner with dependencies and execute attacks:
 
 	// Initialize dependencies
 	orchestrator := mission.NewOrchestrator(...)
-	agentRegistry := agent.NewRegistry()
+	discovery := registry.NewComponentDiscovery(...)
 	payloadRegistry := payload.NewRegistry()
 	missionStore := mission.NewStore(...)
 	findingStore := finding.NewStore(...)
@@ -57,7 +57,7 @@ Create an AttackRunner with dependencies and execute attacks:
 	// Create attack runner
 	runner := attack.NewAttackRunner(
 	    orchestrator,
-	    agentRegistry,
+	    discovery,
 	    payloadRegistry,
 	    missionStore,
 	    findingStore,
@@ -121,11 +121,11 @@ Specify targets by URL or use saved target lookups:
 
 # Agent Selection
 
-Agents are selected from the AgentRegistry. The attack package provides helpers
+Agents are discovered from the ComponentDiscovery system. The attack package provides helpers
 for listing and validating available agents:
 
 	// List available agents
-	selector := attack.NewAgentSelector(agentRegistry)
+	selector := attack.NewAgentSelector(discovery)
 	agents, err := selector.ListAvailable(ctx)
 	for _, agent := range agents {
 	    fmt.Printf("- %s: %s\n", agent.Name, agent.Description)
@@ -311,7 +311,7 @@ The package provides comprehensive test coverage with mocked components:
 
 	// Mock dependencies
 	mockOrchestrator := &mockMissionOrchestrator{}
-	mockAgentRegistry := &mockAgentRegistry{}
+	mockDiscovery := &mockComponentDiscovery{}
 	mockPayloadRegistry := &mockPayloadRegistry{}
 	mockMissionStore := &mockMissionStore{}
 	mockFindingStore := &mockFindingStore{}
@@ -319,7 +319,7 @@ The package provides comprehensive test coverage with mocked components:
 	// Create runner with mocks
 	runner := attack.NewAttackRunner(
 	    mockOrchestrator,
-	    mockAgentRegistry,
+	    mockDiscovery,
 	    mockPayloadRegistry,
 	    mockMissionStore,
 	    mockFindingStore,
@@ -399,7 +399,7 @@ The attack package is organized into focused components:
 	    // Initialize dependencies (simplified)
 	    runner := attack.NewAttackRunner(
 	        orchestrator,
-	        agentRegistry,
+	        discovery,
 	        payloadRegistry,
 	        missionStore,
 	        findingStore,
@@ -483,8 +483,8 @@ The attack package is organized into focused components:
 # Example: Custom Agent Validation
 
 	// Validate agent exists before attack
-	func validateAgentExists(registry agent.AgentRegistry, agentName string) error {
-	    selector := attack.NewAgentSelector(registry)
+	func validateAgentExists(discovery registry.ComponentDiscovery, agentName string) error {
+	    selector := attack.NewAgentSelector(discovery)
 
 	    if err := attack.ValidateAgentName(
 	        context.Background(),
