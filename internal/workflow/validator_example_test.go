@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -59,6 +60,11 @@ func ExampleDAGValidator_Validate() {
 	if err != nil {
 		fmt.Printf("Topological sort failed: %v\n", err)
 		return
+	}
+	// Sort middle elements for deterministic output (process1/process2 can be in either order)
+	if len(sorted) == 4 {
+		middle := sorted[1:3]
+		slices.Sort(middle)
 	}
 	fmt.Printf("Execution order: %v\n", sorted)
 
