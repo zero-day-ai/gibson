@@ -44,6 +44,12 @@ type StatusFlags struct {
 	JSON       bool          // Output in JSON format
 }
 
+// LogsFlags holds flags for logs commands.
+type LogsFlags struct {
+	Follow bool // Follow log output (like tail -f)
+	Lines  int  // Number of lines to show (default 50)
+}
+
 // ListFlags holds flags for list commands.
 type ListFlags struct {
 	Local  bool // Show only local components
@@ -62,6 +68,7 @@ type ComponentCommands struct {
 	Start      *cobra.Command
 	Stop       *cobra.Command
 	Status     *cobra.Command
+	Logs       *cobra.Command
 }
 
 // RegisterCommands creates and registers all common subcommands to the parent command.
@@ -81,6 +88,7 @@ func RegisterCommands(parent *cobra.Command, cfg Config) *ComponentCommands {
 	parent.AddCommand(commands.Start)
 	parent.AddCommand(commands.Stop)
 	parent.AddCommand(commands.Status)
+	parent.AddCommand(commands.Logs)
 
 	return commands
 }
@@ -94,6 +102,7 @@ func NewCommands(cfg Config) *ComponentCommands {
 	uninstallFlags := &UninstallFlags{}
 	statusFlags := &StatusFlags{}
 	listFlags := &ListFlags{}
+	logsFlags := &LogsFlags{}
 
 	// Create all commands
 	return &ComponentCommands{
@@ -107,5 +116,6 @@ func NewCommands(cfg Config) *ComponentCommands {
 		Start:      newStartCommand(cfg),
 		Stop:       newStopCommand(cfg),
 		Status:     newStatusCommand(cfg, statusFlags),
+		Logs:       newLogsCommand(cfg, logsFlags),
 	}
 }

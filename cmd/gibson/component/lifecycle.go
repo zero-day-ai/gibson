@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -147,6 +148,10 @@ func runStart(cmd *cobra.Command, args []string, cfg Config) error {
 	cmd.Printf("PID: %d\n", pid)
 	cmd.Printf("Port: %d\n", port)
 
+	// Show log path
+	logPath := filepath.Join(homeDir, "logs", string(cfg.Kind), fmt.Sprintf("%s.log", componentName))
+	cmd.Printf("Logs: %s\n", logPath)
+
 	return nil
 }
 
@@ -282,6 +287,28 @@ func startComponentWithRegistry(
 
 	cmd.Env = env
 
+	// Create log directory and file for component output
+	homeDir, _ := getGibsonHome()
+	logDir := filepath.Join(homeDir, "logs", string(comp.Kind))
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return 0, 0, fmt.Errorf("failed to create log directory: %w", err)
+	}
+
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", comp.Name))
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return 0, 0, fmt.Errorf("failed to create log file: %w", err)
+	}
+
+	// Write startup header to log
+	fmt.Fprintf(logFile, "\n=== %s started at %s ===\n", comp.Name, time.Now().Format(time.RFC3339))
+	fmt.Fprintf(logFile, "Port: %d\n", port)
+	fmt.Fprintf(logFile, "Binary: %s\n", comp.BinPath)
+	fmt.Fprintf(logFile, "Args: %v\n\n", args)
+
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
 	// Detach the child process from the parent's process group
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
@@ -289,8 +316,11 @@ func startComponentWithRegistry(
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
+		logFile.Close()
 		return 0, 0, fmt.Errorf("failed to start process: %w", err)
 	}
+
+	// Don't close the log file - the child process owns it now
 
 	pid = cmd.Process.Pid
 
