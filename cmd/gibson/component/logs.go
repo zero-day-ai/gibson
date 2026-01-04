@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 )
 
 // newLogsCommand creates a logs command for the specified component type.
@@ -39,61 +39,56 @@ Use --lines (-n) to specify the number of lines to show.`,
 func runLogs(cmd *cobra.Command, args []string, cfg Config, flags *LogsFlags) error {
 	componentName := args[0]
 
-	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+		return err
+	}
+	defer cc.Close()
+
+	// Build logs options
+	opts := core.LogsOptions{
+		Follow: flags.Follow,
+		Lines:  flags.Lines,
 	}
 
-	// Build log path
-	logPath := filepath.Join(homeDir, "logs", string(cfg.Kind), fmt.Sprintf("%s.log", componentName))
-
-	// Check if log file exists
-	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		return fmt.Errorf("no logs found for %s '%s' (expected at %s)", cfg.DisplayName, componentName, logPath)
-	}
-
-	// Open log file
-	file, err := os.Open(logPath)
+	// Call core function
+	result, err := core.ComponentLogs(cc, cfg.Kind, componentName, opts)
 	if err != nil {
-		return fmt.Errorf("failed to open log file: %w", err)
+		return err
 	}
-	defer file.Close()
 
-	if flags.Follow {
+	// Extract result data
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected result type")
+	}
+
+	// Check if this is follow mode
+	if follow, _ := data["follow"].(bool); follow {
+		logPath, _ := data["log_path"].(string)
+		// Open log file for following
+		file, err := os.Open(logPath)
+		if err != nil {
+			return fmt.Errorf("failed to open log file: %w", err)
+		}
+		defer file.Close()
 		return followLogs(cmd, file, logPath)
 	}
 
-	return tailLogs(cmd, file, flags.Lines)
-}
-
-// tailLogs shows the last N lines of the log file.
-func tailLogs(cmd *cobra.Command, file *os.File, lines int) error {
-	// Read the entire file and get the last N lines
-	// For large files, a more efficient implementation would seek from the end
-	scanner := bufio.NewScanner(file)
-	var allLines []string
-
-	for scanner.Scan() {
-		allLines = append(allLines, scanner.Text())
+	// Display lines
+	lines, ok := data["lines"].([]string)
+	if !ok {
+		return fmt.Errorf("unexpected lines type")
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("failed to read log file: %w", err)
-	}
-
-	// Get last N lines
-	start := 0
-	if len(allLines) > lines {
-		start = len(allLines) - lines
-	}
-
-	for _, line := range allLines[start:] {
+	for _, line := range lines {
 		cmd.Println(line)
 	}
 
 	return nil
 }
+
 
 // followLogs streams log output in real-time (like tail -f).
 func followLogs(cmd *cobra.Command, file *os.File, logPath string) error {

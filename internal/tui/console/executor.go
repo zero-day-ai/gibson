@@ -2,26 +2,47 @@ package console
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/google/uuid"
+	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/attack"
 	"github.com/zero-day-ai/gibson/internal/component"
-	"github.com/zero-day-ai/gibson/internal/component/build"
-	"github.com/zero-day-ai/gibson/internal/component/git"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/mission"
-	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/workflow"
-	"gopkg.in/yaml.v3"
+	"github.com/zero-day-ai/gibson/internal/registry"
 )
+
+// deprecatedCommands maps old hyphenated command names to their migration messages.
+// These commands have been removed in favor of the new slash command syntax.
+var deprecatedCommands = map[string]string{
+	"mission-create":   "Use '/mission run -f <file>' instead",
+	"mission-start":    "Use '/mission run -f <file>' instead",
+	"mission-stop":     "Use '/mission stop <name>' instead",
+	"mission-delete":   "Use '/mission delete <name>' instead",
+	"agent-start":      "Use '/agent start <name>' instead",
+	"agent-stop":       "Use '/agent stop <name>' instead",
+	"agent-install":    "Use '/agent install <source>' instead",
+	"agent-uninstall":  "Use '/agent uninstall <name>' instead",
+	"agent-execute":    "Use '/agent start <name>' then interact via steering commands",
+	"agent-exec":       "Use '/agent start <name>' then interact via steering commands",
+	"agent-run":        "Use '/agent start <name>' then interact via steering commands",
+	"agent-logs":       "Use '/agent logs <name>' instead",
+	"tool-start":       "Use '/tool start <name>' instead",
+	"tool-stop":        "Use '/tool stop <name>' instead",
+	"tool-install":     "Use '/tool install <source>' instead",
+	"tool-uninstall":   "Use '/tool uninstall <name>' instead",
+	"tool-logs":        "Use '/tool logs <name>' instead",
+	"plugin-start":     "Use '/plugin start <name>' instead",
+	"plugin-stop":      "Use '/plugin stop <name>' instead",
+	"plugin-install":   "Use '/plugin install <source>' instead",
+	"plugin-uninstall": "Use '/plugin uninstall <name>' instead",
+}
 
 // ExecutorConfig holds all dependencies and configuration needed for command execution.
 type ExecutorConfig struct {
@@ -37,6 +58,10 @@ type ExecutorConfig struct {
 	Installer component.Installer
 	// AttackRunner provides attack execution functionality.
 	AttackRunner attack.AttackRunner
+	// MissionStore provides access to mission data.
+	MissionStore mission.MissionStore
+	// RegManager provides access to the component registry.
+	RegManager *registry.Manager
 	// HomeDir is the Gibson home directory path (e.g., ~/.gibson).
 	HomeDir string
 	// ConfigFile is the path to the Gibson configuration file.
@@ -108,6 +133,16 @@ func (e *Executor) Execute(input string) (*ExecutionResult, error) {
 	// Look up the command in the registry
 	cmd, found := e.registry.Get(parsed.Name)
 	if !found {
+		// Check if this is a deprecated command
+		if suggestion, ok := deprecatedCommands[parsed.Name]; ok {
+			return &ExecutionResult{
+				Error:    fmt.Sprintf("Command '/%s' is deprecated. %s", parsed.Name, suggestion),
+				IsError:  true,
+				Duration: time.Since(startTime),
+				ExitCode: 1,
+			}, nil
+		}
+
 		return &ExecutionResult{
 			Error:    fmt.Sprintf("Unknown command: /%s", parsed.Name),
 			IsError:  true,
@@ -166,158 +201,53 @@ func (e *Executor) Execute(input string) (*ExecutionResult, error) {
 // This wires up the slash commands to their actual functionality using the
 // provided dependencies (DB, ComponentDAO, FindingStore).
 func (e *Executor) SetupHandlers() {
-	// /help - Show available commands
+	// Utility commands (TUI-only)
 	if cmd, ok := e.registry.Get("help"); ok {
 		cmd.Handler = e.handleHelp
 	}
-
-	// /clear - Clear console output
 	if cmd, ok := e.registry.Get("clear"); ok {
 		cmd.Handler = e.handleClear
 	}
-
-	// /status - Show system status
 	if cmd, ok := e.registry.Get("status"); ok {
 		cmd.Handler = e.handleStatus
 	}
-
-	// /agents - List agents (alias)
-	if cmd, ok := e.registry.Get("agents"); ok {
-		cmd.Handler = e.handleAgents
-	}
-
-	// /agent - Agent commands (with subcommand routing)
-	if cmd, ok := e.registry.Get("agent"); ok {
-		cmd.Handler = e.handleAgents
-	}
-
-	// Standalone agent commands
-	if cmd, ok := e.registry.Get("agent-start"); ok {
-		cmd.Handler = e.handleAgentStart
-	}
-	if cmd, ok := e.registry.Get("agent-execute"); ok {
-		cmd.Handler = e.handleAgentExecute
-	}
-	if cmd, ok := e.registry.Get("agent-stop"); ok {
-		cmd.Handler = e.handleAgentStop
-	}
-	if cmd, ok := e.registry.Get("agent-install"); ok {
-		cmd.Handler = e.handleAgentInstall
-	}
-	if cmd, ok := e.registry.Get("agent-uninstall"); ok {
-		cmd.Handler = e.handleAgentUninstall
-	}
-	if cmd, ok := e.registry.Get("agent-logs"); ok {
-		cmd.Handler = e.handleAgentLogs
-	}
-
-	// /missions - List missions
-	if cmd, ok := e.registry.Get("missions"); ok {
-		cmd.Handler = e.handleMissions
-	}
-
-	// /credentials - List credentials
-	if cmd, ok := e.registry.Get("credentials"); ok {
-		cmd.Handler = e.handleCredentials
-	}
-
-	// /findings - List findings
-	if cmd, ok := e.registry.Get("findings"); ok {
-		cmd.Handler = e.handleFindings
-	}
-
-	// /targets - List targets
-	if cmd, ok := e.registry.Get("targets"); ok {
-		cmd.Handler = e.handleTargets
-	}
-
-	if cmd, ok := e.registry.Get("tool"); ok {
-		cmd.Handler = e.handleTool
-	}
-	// /tool - Tool commands (with subcommand routing)
-
-	// /tools - List tools
-	if cmd, ok := e.registry.Get("tools"); ok {
-		cmd.Handler = e.handleTools
-	}
-
-	// Standalone tool commands
-	if cmd, ok := e.registry.Get("tool-start"); ok {
-		cmd.Handler = e.handleToolStart
-	}
-	if cmd, ok := e.registry.Get("tool-stop"); ok {
-		cmd.Handler = e.handleToolStop
-	}
-	if cmd, ok := e.registry.Get("tool-install"); ok {
-		cmd.Handler = e.handleToolInstall
-	}
-	if cmd, ok := e.registry.Get("tool-uninstall"); ok {
-		cmd.Handler = e.handleToolUninstall
-	}
-	if cmd, ok := e.registry.Get("tool-logs"); ok {
-		cmd.Handler = e.handleToolLogs
-	}
-
-	// /plugin - Plugin commands (with subcommand routing)
-	if cmd, ok := e.registry.Get("plugin"); ok {
-		cmd.Handler = e.handlePlugin
-	}
-
-	// /plugins - List plugins
-	if cmd, ok := e.registry.Get("plugins"); ok {
-		cmd.Handler = e.handlePlugins
-	}
-
-	// Standalone plugin commands
-	if cmd, ok := e.registry.Get("plugin-start"); ok {
-		cmd.Handler = e.handlePluginStart
-	}
-	if cmd, ok := e.registry.Get("plugin-stop"); ok {
-		cmd.Handler = e.handlePluginStop
-	}
-	if cmd, ok := e.registry.Get("plugin-install"); ok {
-		cmd.Handler = e.handlePluginInstall
-	}
-	if cmd, ok := e.registry.Get("plugin-uninstall"); ok {
-		cmd.Handler = e.handlePluginUninstall
-	}
-
-	// /config - Show configuration
 	if cmd, ok := e.registry.Get("config"); ok {
 		cmd.Handler = e.handleConfig
 	}
 
-	// /attack - Launch single-agent attack
-	if cmd, ok := e.registry.Get("attack"); ok {
-		cmd.Handler = e.handleAttack
-	}
-
-	// /mission - Mission management (router)
+	// Mission commands - routed to core
 	if cmd, ok := e.registry.Get("mission"); ok {
-		cmd.Handler = e.handleMission
+		cmd.Handler = e.handleMissionRouter
+	}
+	if cmd, ok := e.registry.Get("missions"); ok {
+		cmd.Handler = e.handleMissionsList
 	}
 
-	// /mission-start - Start a mission
-	if cmd, ok := e.registry.Get("mission-start"); ok {
-		cmd.Handler = e.handleMissionStart
+	// Agent commands - routed to core
+	if cmd, ok := e.registry.Get("agent"); ok {
+		cmd.Handler = e.handleComponentRouter(component.ComponentKindAgent)
+	}
+	if cmd, ok := e.registry.Get("agents"); ok {
+		cmd.Handler = e.handleAgentsList
 	}
 
-	// /mission-stop - Stop a mission
-	if cmd, ok := e.registry.Get("mission-stop"); ok {
-		cmd.Handler = e.handleMissionStop
+	// Tool commands - routed to core
+	if cmd, ok := e.registry.Get("tool"); ok {
+		cmd.Handler = e.handleComponentRouter(component.ComponentKindTool)
+	}
+	if cmd, ok := e.registry.Get("tools"); ok {
+		cmd.Handler = e.handleToolsList
 	}
 
-	// /mission-create - Create a mission
-	if cmd, ok := e.registry.Get("mission-create"); ok {
-		cmd.Handler = e.handleMissionCreate
+	// Plugin commands - routed to core
+	if cmd, ok := e.registry.Get("plugin"); ok {
+		cmd.Handler = e.handleComponentRouter(component.ComponentKindPlugin)
+	}
+	if cmd, ok := e.registry.Get("plugins"); ok {
+		cmd.Handler = e.handlePluginsList
 	}
 
-	// /mission-delete - Delete a mission
-	if cmd, ok := e.registry.Get("mission-delete"); ok {
-		cmd.Handler = e.handleMissionDelete
-	}
-
-	// Steering commands
+	// TUI-specific steering commands
 	if cmd, ok := e.registry.Get("focus"); ok {
 		cmd.Handler = e.handleFocus
 	}
@@ -333,9 +263,589 @@ func (e *Executor) SetupHandlers() {
 	if cmd, ok := e.registry.Get("resume"); ok {
 		cmd.Handler = e.handleResume
 	}
+
+	// Attack command (TUI-specific)
+	if cmd, ok := e.registry.Get("attack"); ok {
+		cmd.Handler = e.handleAttack
+	}
+
+	// Legacy list commands (aliases)
+	if cmd, ok := e.registry.Get("credentials"); ok {
+		cmd.Handler = e.handleCredentials
+	}
+	if cmd, ok := e.registry.Get("findings"); ok {
+		cmd.Handler = e.handleFindings
+	}
+	if cmd, ok := e.registry.Get("targets"); ok {
+		cmd.Handler = e.handleTargets
+	}
 }
 
-// handleHelp displays a list of available commands with their descriptions.
+// buildCommandContext creates a core.CommandContext from the executor's configuration.
+func (e *Executor) buildCommandContext() *core.CommandContext {
+	// Create mission store if not provided (backward compatibility)
+	missionStore := e.config.MissionStore
+	if missionStore == nil && e.config.DB != nil {
+		missionStore = mission.NewDBMissionStore(e.config.DB)
+	}
+
+	return &core.CommandContext{
+		Ctx:          e.ctx,
+		DB:           e.config.DB,
+		DAO:          e.config.ComponentDAO,
+		HomeDir:      e.config.HomeDir,
+		Installer:    e.config.Installer,
+		MissionStore: missionStore,
+		RegManager:   e.config.RegManager,
+		ConfigFile:   e.config.ConfigFile,
+	}
+}
+
+// formatCoreResult converts a core.CommandResult to an ExecutionResult for the TUI.
+func formatCoreResult(result *core.CommandResult) *ExecutionResult {
+	if result.Error != nil {
+		return &ExecutionResult{
+			Error:    result.Error.Error(),
+			IsError:  true,
+			Duration: result.Duration,
+			ExitCode: 1,
+		}
+	}
+
+	// Format the data based on type
+	output := result.Message
+	if output == "" && result.Data != nil {
+		output = fmt.Sprintf("%+v", result.Data)
+	}
+
+	return &ExecutionResult{
+		Output:   output,
+		IsError:  false,
+		Duration: result.Duration,
+		ExitCode: 0,
+	}
+}
+
+// errorResult creates an error ExecutionResult with the given message.
+func errorResult(message string) *ExecutionResult {
+	return &ExecutionResult{
+		Error:    message,
+		IsError:  true,
+		ExitCode: 1,
+	}
+}
+
+// ============================================================================
+// ROUTER HANDLERS - Route to core functions
+// ============================================================================
+
+// handleMissionRouter routes /mission subcommands to core functions.
+func (e *Executor) handleMissionRouter(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if len(args) == 0 {
+		return e.showMissionSubcommands()
+	}
+
+	subcommand := args[0]
+	subArgs := args[1:]
+	cc := e.buildCommandContext()
+	defer cc.Close()
+
+	var result *core.CommandResult
+	var err error
+
+	switch subcommand {
+	case "list":
+		statusFilter := GetFlag(subArgs, "--status")
+		result, err = core.MissionList(cc, statusFilter)
+		if err == nil {
+			return e.formatMissionListResult(result)
+		}
+
+	case "show":
+		if len(subArgs) == 0 {
+			return errorResult("usage: /mission show <name>"), nil
+		}
+		result, err = core.MissionShow(cc, subArgs[0])
+		if err == nil {
+			return e.formatMissionShowResult(result)
+		}
+
+	case "run":
+		file := GetFlag(subArgs, "--file")
+		if file == "" {
+			file = GetFlag(subArgs, "-f")
+		}
+		if file == "" {
+			return errorResult("usage: /mission run --file <file>"), nil
+		}
+		result, err = core.MissionRun(cc, file)
+		if err == nil {
+			return e.formatMissionRunResult(result)
+		}
+
+	case "resume":
+		if len(subArgs) == 0 {
+			return errorResult("usage: /mission resume <name>"), nil
+		}
+		result, err = core.MissionResume(cc, subArgs[0])
+		if err == nil {
+			return formatCoreResult(result), nil
+		}
+
+	case "stop":
+		if len(subArgs) == 0 {
+			return errorResult("usage: /mission stop <name>"), nil
+		}
+		result, err = core.MissionStop(cc, subArgs[0])
+		if err == nil {
+			return formatCoreResult(result), nil
+		}
+
+	case "delete":
+		if len(subArgs) == 0 {
+			return errorResult("usage: /mission delete <name>"), nil
+		}
+		force := GetFlag(subArgs, "--force") == "true"
+		result, err = core.MissionDelete(cc, subArgs[0], force)
+		if err == nil {
+			return formatCoreResult(result), nil
+		}
+
+	default:
+		return errorResult(fmt.Sprintf("Unknown subcommand: %s", subcommand)), nil
+	}
+
+	if err != nil {
+		return errorResult(err.Error()), err
+	}
+
+	return formatCoreResult(result), nil
+}
+
+// handleComponentRouter returns a handler that routes component subcommands to core functions.
+func (e *Executor) handleComponentRouter(kind component.ComponentKind) func(context.Context, []string) (*ExecutionResult, error) {
+	return func(ctx context.Context, args []string) (*ExecutionResult, error) {
+		if len(args) == 0 {
+			return e.showComponentSubcommands(kind)
+		}
+
+		subcommand := args[0]
+		subArgs := args[1:]
+		cc := e.buildCommandContext()
+		defer cc.Close()
+
+		var result *core.CommandResult
+		var err error
+
+		switch subcommand {
+		case "list":
+			opts := core.ListOptions{
+				Local:  GetFlag(subArgs, "--local") == "true",
+				Remote: GetFlag(subArgs, "--remote") == "true",
+			}
+			result, err = core.ComponentList(cc, kind, opts)
+			if err == nil {
+				return e.formatComponentListResult(kind, result)
+			}
+
+		case "show":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s show <name>", kind)), nil
+			}
+			result, err = core.ComponentShow(cc, kind, subArgs[0])
+			if err == nil {
+				return e.formatComponentShowResult(result)
+			}
+
+		case "install":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s install <source>", kind)), nil
+			}
+			source := subArgs[0]
+			opts := core.InstallOptions{
+				Branch:       GetFlag(subArgs, "--branch"),
+				Tag:          GetFlag(subArgs, "--tag"),
+				Force:        GetFlag(subArgs, "--force") == "true",
+				SkipBuild:    GetFlag(subArgs, "--skip-build") == "true",
+				SkipRegister: GetFlag(subArgs, "--skip-register") == "true",
+			}
+			result, err = core.ComponentInstall(cc, kind, source, opts)
+			if err == nil {
+				return formatCoreResult(result), nil
+			}
+
+		case "uninstall":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s uninstall <name>", kind)), nil
+			}
+			opts := core.UninstallOptions{
+				Force: GetFlag(subArgs, "--force") == "true",
+			}
+			result, err = core.ComponentUninstall(cc, kind, subArgs[0], opts)
+			if err == nil {
+				return formatCoreResult(result), nil
+			}
+
+		case "update":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s update <name>", kind)), nil
+			}
+			opts := core.UpdateOptions{
+				Restart:   GetFlag(subArgs, "--restart") == "true",
+				SkipBuild: GetFlag(subArgs, "--skip-build") == "true",
+			}
+			result, err = core.ComponentUpdate(cc, kind, subArgs[0], opts)
+			if err == nil {
+				return formatCoreResult(result), nil
+			}
+
+		case "build":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s build <name>", kind)), nil
+			}
+			result, err = core.ComponentBuild(cc, kind, subArgs[0])
+			if err == nil {
+				return formatCoreResult(result), nil
+			}
+
+		case "start":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s start <name>", kind)), nil
+			}
+			result, err = core.ComponentStart(cc, kind, subArgs[0])
+			if err == nil {
+				return e.formatComponentStartResult(result)
+			}
+
+		case "stop":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s stop <name>", kind)), nil
+			}
+			result, err = core.ComponentStop(cc, kind, subArgs[0])
+			if err == nil {
+				return formatCoreResult(result), nil
+			}
+
+		case "status":
+			name := ""
+			if len(subArgs) > 0 {
+				name = subArgs[0]
+			}
+			opts := core.StatusOptions{
+				JSON: GetFlag(subArgs, "--json") == "true",
+			}
+			result, err = core.ComponentStatus(cc, kind, name, opts)
+			if err == nil {
+				return e.formatComponentStatusResult(result)
+			}
+
+		case "logs":
+			if len(subArgs) == 0 {
+				return errorResult(fmt.Sprintf("usage: /%s logs <name>", kind)), nil
+			}
+			name := subArgs[0]
+			lines := 50
+			if linesStr := GetFlag(subArgs, "--lines"); linesStr != "" {
+				fmt.Sscanf(linesStr, "%d", &lines)
+			}
+			opts := core.LogsOptions{
+				Follow: GetFlag(subArgs, "--follow") == "true",
+				Lines:  lines,
+			}
+			result, err = core.ComponentLogs(cc, kind, name, opts)
+			if err == nil {
+				return e.formatComponentLogsResult(result)
+			}
+
+		default:
+			return errorResult(fmt.Sprintf("Unknown subcommand: %s", subcommand)), nil
+		}
+
+		if err != nil {
+			return errorResult(err.Error()), err
+		}
+
+		return formatCoreResult(result), nil
+	}
+}
+
+// ============================================================================
+// FORMATTING HELPERS - Convert core results to TUI output
+// ============================================================================
+
+func (e *Executor) showMissionSubcommands() (*ExecutionResult, error) {
+	output := `Usage: /mission <subcommand> [args]
+
+Available subcommands:
+  list [--status <status>]    List all missions
+  show <name>                 Show mission details
+  run --file <file>          Run a mission from workflow file
+  resume <name>              Resume a paused mission
+  stop <name>                Stop a running mission
+  delete <name> [--force]    Delete a mission
+`
+	return &ExecutionResult{Output: output, ExitCode: 0}, nil
+}
+
+func (e *Executor) showComponentSubcommands(kind component.ComponentKind) (*ExecutionResult, error) {
+	output := fmt.Sprintf(`Usage: /%s <subcommand> [args]
+
+Available subcommands:
+  list [--local|--remote]    List all %ss
+  show <name>                Show %s details
+  install <source>           Install a %s
+  uninstall <name>           Uninstall a %s
+  update <name>              Update a %s
+  build <name>               Build a %s
+  start <name>               Start a %s
+  stop <name>                Stop a %s
+  status [name]              Show %s status
+  logs <name>                Show %s logs
+`, kind, kind, kind, kind, kind, kind, kind, kind, kind, kind, kind)
+	return &ExecutionResult{Output: output, ExitCode: 0}, nil
+}
+
+func (e *Executor) formatMissionListResult(result *core.CommandResult) (*ExecutionResult, error) {
+	data, ok := result.Data.(*core.MissionListResult)
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	if len(data.Missions) == 0 {
+		return &ExecutionResult{Output: "No missions found\n", ExitCode: 0}, nil
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %-8s %s\n",
+		"NAME", "STATUS", "PROGRESS", "FINDINGS", "TARGET"))
+	output.WriteString(strings.Repeat("-", 80) + "\n")
+
+	for _, m := range data.Missions {
+		progress := fmt.Sprintf("%.1f%%", m.Progress*100)
+		targetID := m.TargetID
+		if targetID == "" {
+			targetID = "-"
+		}
+		output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %-8d %s\n",
+			m.Name, m.Status, progress, m.FindingsCount, targetID))
+	}
+
+	return &ExecutionResult{Output: output.String(), ExitCode: 0}, nil
+}
+
+func (e *Executor) formatMissionShowResult(result *core.CommandResult) (*ExecutionResult, error) {
+	m, ok := result.Data.(*mission.Mission)
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Mission: %s\n", m.Name))
+	output.WriteString(strings.Repeat("=", 60) + "\n")
+	output.WriteString(fmt.Sprintf("ID:          %s\n", m.ID))
+	output.WriteString(fmt.Sprintf("Status:      %s\n", m.Status))
+	output.WriteString(fmt.Sprintf("Progress:    %.1f%%\n", m.Progress*100))
+	output.WriteString(fmt.Sprintf("Findings:    %d\n", m.FindingsCount))
+	output.WriteString(fmt.Sprintf("Target:      %s\n", m.TargetID))
+	output.WriteString(fmt.Sprintf("Workflow ID: %s\n", m.WorkflowID))
+	output.WriteString(fmt.Sprintf("Created:     %s\n", m.CreatedAt.Format(time.RFC3339)))
+	if m.StartedAt != nil {
+		output.WriteString(fmt.Sprintf("Started:     %s\n", m.StartedAt.Format(time.RFC3339)))
+	}
+	if m.CompletedAt != nil {
+		output.WriteString(fmt.Sprintf("Completed:   %s\n", m.CompletedAt.Format(time.RFC3339)))
+	}
+	if m.Description != "" {
+		output.WriteString(fmt.Sprintf("\nDescription:\n%s\n", m.Description))
+	}
+
+	return &ExecutionResult{Output: output.String(), ExitCode: 0}, nil
+}
+
+func (e *Executor) formatMissionRunResult(result *core.CommandResult) (*ExecutionResult, error) {
+	data, ok := result.Data.(*core.MissionRunResult)
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Mission '%s' started successfully\n", data.Mission.Name))
+	output.WriteString(fmt.Sprintf("  Workflow: %d nodes, %d entry points, %d exit points\n",
+		data.NodesCount, data.EntryPoints, data.ExitPoints))
+	output.WriteString(fmt.Sprintf("  Status: %s\n", data.Status))
+
+	return &ExecutionResult{Output: output.String(), ExitCode: 0}, nil
+}
+
+func (e *Executor) formatComponentListResult(kind component.ComponentKind, result *core.CommandResult) (*ExecutionResult, error) {
+	components, ok := result.Data.([]*component.Component)
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	if len(components) == 0 {
+		return &ExecutionResult{Output: fmt.Sprintf("No %ss installed\n", kind), ExitCode: 0}, nil
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %-8s %s\n",
+		"NAME", "VERSION", "STATUS", "PORT", "SOURCE"))
+	output.WriteString(strings.Repeat("-", 80) + "\n")
+
+	for _, comp := range components {
+		port := "-"
+		if comp.Port > 0 {
+			port = fmt.Sprintf("%d", comp.Port)
+		}
+		output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %-8s %s\n",
+			comp.Name, comp.Version, comp.Status, port, comp.Source))
+	}
+
+	return &ExecutionResult{Output: output.String(), ExitCode: 0}, nil
+}
+
+func (e *Executor) formatComponentShowResult(result *core.CommandResult) (*ExecutionResult, error) {
+	comp, ok := result.Data.(*component.Component)
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("Component: %s\n", comp.Name))
+	output.WriteString(strings.Repeat("=", 60) + "\n")
+	output.WriteString(fmt.Sprintf("Kind:        %s\n", comp.Kind))
+	output.WriteString(fmt.Sprintf("Version:     %s\n", comp.Version))
+	output.WriteString(fmt.Sprintf("Status:      %s\n", comp.Status))
+	output.WriteString(fmt.Sprintf("Source:      %s\n", comp.Source))
+	if comp.Port > 0 {
+		output.WriteString(fmt.Sprintf("Port:        %d\n", comp.Port))
+	}
+	if comp.PID > 0 {
+		output.WriteString(fmt.Sprintf("PID:         %d\n", comp.PID))
+	}
+	output.WriteString(fmt.Sprintf("Repo Path:   %s\n", comp.RepoPath))
+	output.WriteString(fmt.Sprintf("Binary Path: %s\n", comp.BinPath))
+
+	return &ExecutionResult{Output: output.String(), ExitCode: 0}, nil
+}
+
+func (e *Executor) formatComponentStartResult(result *core.CommandResult) (*ExecutionResult, error) {
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	name := data["name"]
+	pid := data["pid"]
+	port := data["port"]
+
+	output := fmt.Sprintf("Component '%s' started successfully (PID: %v, Port: %v)\n", name, pid, port)
+	return &ExecutionResult{Output: output, ExitCode: 0}, nil
+}
+
+func (e *Executor) formatComponentStatusResult(result *core.CommandResult) (*ExecutionResult, error) {
+	// This will be formatted based on whether it's single instance or multiple
+	_, ok := result.Data.(map[string]interface{})
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	// For now, just use generic formatting
+	// TODO: Add proper registry instance formatting
+	return formatCoreResult(result), nil
+}
+
+func (e *Executor) formatComponentLogsResult(result *core.CommandResult) (*ExecutionResult, error) {
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		return formatCoreResult(result), nil
+	}
+
+	if follow, ok := data["follow"].(bool); ok && follow {
+		// Follow mode - return special result
+		return &ExecutionResult{
+			Output:   fmt.Sprintf("Following logs from %s\n", data["log_path"]),
+			ExitCode: 0,
+		}, nil
+	}
+
+	if lines, ok := data["lines"].([]string); ok {
+		output := strings.Join(lines, "\n") + "\n"
+		return &ExecutionResult{Output: output, ExitCode: 0}, nil
+	}
+
+	return formatCoreResult(result), nil
+}
+
+// ============================================================================
+// LIST COMMAND HANDLERS - Legacy aliases
+// ============================================================================
+
+func (e *Executor) handleMissionsList(ctx context.Context, args []string) (*ExecutionResult, error) {
+	cc := e.buildCommandContext()
+	defer cc.Close()
+
+	statusFilter := GetFlag(args, "--status")
+	result, err := core.MissionList(cc, statusFilter)
+	if err != nil {
+		return errorResult(err.Error()), err
+	}
+
+	return e.formatMissionListResult(result)
+}
+
+func (e *Executor) handleAgentsList(ctx context.Context, args []string) (*ExecutionResult, error) {
+	cc := e.buildCommandContext()
+	defer cc.Close()
+
+	opts := core.ListOptions{
+		Local:  GetFlag(args, "--local") == "true",
+		Remote: GetFlag(args, "--remote") == "true",
+	}
+	result, err := core.ComponentList(cc, component.ComponentKindAgent, opts)
+	if err != nil {
+		return errorResult(err.Error()), err
+	}
+
+	return e.formatComponentListResult(component.ComponentKindAgent, result)
+}
+
+func (e *Executor) handleToolsList(ctx context.Context, args []string) (*ExecutionResult, error) {
+	cc := e.buildCommandContext()
+	defer cc.Close()
+
+	opts := core.ListOptions{
+		Local:  GetFlag(args, "--local") == "true",
+		Remote: GetFlag(args, "--remote") == "true",
+	}
+	result, err := core.ComponentList(cc, component.ComponentKindTool, opts)
+	if err != nil {
+		return errorResult(err.Error()), err
+	}
+
+	return e.formatComponentListResult(component.ComponentKindTool, result)
+}
+
+func (e *Executor) handlePluginsList(ctx context.Context, args []string) (*ExecutionResult, error) {
+	cc := e.buildCommandContext()
+	defer cc.Close()
+
+	opts := core.ListOptions{
+		Local:  GetFlag(args, "--local") == "true",
+		Remote: GetFlag(args, "--remote") == "true",
+	}
+	result, err := core.ComponentList(cc, component.ComponentKindPlugin, opts)
+	if err != nil {
+		return errorResult(err.Error()), err
+	}
+
+	return e.formatComponentListResult(component.ComponentKindPlugin, result)
+}
+
+// ============================================================================
+// UTILITY HANDLERS - TUI-only commands
+// ============================================================================
+
 func (e *Executor) handleHelp(ctx context.Context, args []string) (*ExecutionResult, error) {
 	var output strings.Builder
 
@@ -358,7 +868,6 @@ func (e *Executor) handleHelp(ctx context.Context, args []string) (*ExecutionRes
 	}, nil
 }
 
-// handleClear returns an empty result, allowing the view to handle clearing.
 func (e *Executor) handleClear(ctx context.Context, args []string) (*ExecutionResult, error) {
 	return &ExecutionResult{
 		Output:   "", // Empty output signals the view to clear
@@ -367,7 +876,6 @@ func (e *Executor) handleClear(ctx context.Context, args []string) (*ExecutionRe
 	}, nil
 }
 
-// handleStatus displays system status information.
 func (e *Executor) handleStatus(ctx context.Context, args []string) (*ExecutionResult, error) {
 	var output strings.Builder
 
@@ -418,84 +926,21 @@ func (e *Executor) handleStatus(ctx context.Context, args []string) (*ExecutionR
 	}, nil
 }
 
-// handleAgents routes to appropriate subcommand handler or lists agents.
-func (e *Executor) handleAgents(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) == 0 {
-		return e.handleAgentsList(ctx, args)
-	}
-
-	switch args[0] {
-	case "list":
-		return e.handleAgentsList(ctx, args[1:])
-	case "focus":
-		return e.handleAgentsFocus(ctx, args[1:])
-	case "mode":
-		return e.handleAgentsMode(ctx, args[1:])
-	case "interrupt":
-		return e.handleAgentsInterrupt(ctx, args[1:])
-	case "status":
-		return e.handleAgentsStatus(ctx, args[1:])
-	case "start":
-		return e.handleAgentStart(ctx, args[1:])
-	case "stop":
-		return e.handleAgentStop(ctx, args[1:])
-	case "install":
-		return e.handleAgentInstall(ctx, args[1:])
-	case "uninstall":
-		return e.handleAgentUninstall(ctx, args[1:])
-	case "logs":
-		return e.handleAgentLogs(ctx, args[1:])
-	default:
-		// Treat as agent name for backward compatibility
-		return e.handleAgentsList(ctx, args)
-	}
-}
-
-// handleAgentsList lists all registered agents from the component DAO.
-func (e *Executor) handleAgentsList(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	agents, err := e.config.ComponentDAO.List(ctx, component.ComponentKindAgent)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to list agents: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	if len(agents) == 0 {
-		return &ExecutionResult{
-			Output:   "No agents installed\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
+func (e *Executor) handleConfig(ctx context.Context, args []string) (*ExecutionResult, error) {
 	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %-8s %s\n",
-		"NAME", "VERSION", "STATUS", "PORT", "SOURCE"))
-	output.WriteString(strings.Repeat("-", 80) + "\n")
 
-	for _, agent := range agents {
-		port := "-"
-		if agent.Port > 0 {
-			port = fmt.Sprintf("%d", agent.Port)
+	output.WriteString("Gibson Configuration\n")
+	output.WriteString(strings.Repeat("=", 60) + "\n\n")
+
+	// Read config file
+	if e.config.ConfigFile != "" {
+		if content, err := os.ReadFile(e.config.ConfigFile); err == nil {
+			output.WriteString(string(content))
+		} else {
+			output.WriteString(fmt.Sprintf("Error reading config file: %v\n", err))
 		}
-
-		output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %-8s %s\n",
-			agent.Name,
-			agent.Version,
-			agent.Status,
-			port,
-			agent.Source,
-		))
+	} else {
+		output.WriteString("No config file specified\n")
 	}
 
 	return &ExecutionResult{
@@ -505,264 +950,14 @@ func (e *Executor) handleAgentsList(ctx context.Context, args []string) (*Execut
 	}, nil
 }
 
-// handleAgentsFocus switches TUI focus to specific agent.
-func (e *Executor) handleAgentsFocus(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /agents focus <agent-name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Return message indicating focus should switch (TUI handles actual focus)
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Focusing on agent: %s\nAgent output will appear in the console view.\n", args[0]),
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentsMode changes agent mode (autonomous/interactive).
-func (e *Executor) handleAgentsMode(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 2 {
-		return &ExecutionResult{
-			Output:   "Usage: /agents mode <agent-name> <autonomous|interactive>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-	mode := args[1]
-
-	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Output:   "Stream manager not available\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	var agentMode database.AgentMode
-	switch mode {
-	case "autonomous", "auto":
-		agentMode = database.AgentModeAutonomous
-	case "interactive":
-		agentMode = database.AgentModeInteractive
-	default:
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Invalid mode: %s. Use 'autonomous' or 'interactive'\n", mode),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	if err := e.config.StreamManager.SetMode(agentName, agentMode); err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Failed to set mode: %v\n", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Agent %s mode set to %s\n", agentName, mode),
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentsInterrupt sends interrupt to agent.
-func (e *Executor) handleAgentsInterrupt(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /agents interrupt <agent-name> [reason]\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-	reason := "User requested interrupt"
-	if len(args) > 1 {
-		reason = strings.Join(args[1:], " ")
-	}
-
-	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Output:   "Stream manager not available\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	if err := e.config.StreamManager.SendInterrupt(agentName, reason); err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Failed to interrupt agent: %v\n", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Interrupt sent to agent %s\n", agentName),
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentsStatus shows detailed status of an agent.
-func (e *Executor) handleAgentsStatus(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /agents status <agent-name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-
-	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Output:   "Stream manager not available\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	session, err := e.config.StreamManager.GetSession(agentName)
-	if err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Agent not found: %s\n", agentName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Agent: %s\n", session.AgentName))
-	output.WriteString(fmt.Sprintf("Status: %s\n", session.Status))
-	output.WriteString(fmt.Sprintf("Mode: %s\n", session.Mode))
-	output.WriteString(fmt.Sprintf("Session ID: %s\n", session.ID))
-	output.WriteString(fmt.Sprintf("Started: %s\n", session.StartedAt.Format(time.RFC3339)))
-	if session.EndedAt != nil {
-		output.WriteString(fmt.Sprintf("Ended: %s\n", session.EndedAt.Format(time.RFC3339)))
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		ExitCode: 0,
-	}, nil
-}
-
-// handleMissions lists all missions from the database.
-func (e *Executor) handleMissions(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.DB == nil {
-		return &ExecutionResult{
-			Output:   "Database not available\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	missionStore := mission.NewDBMissionStore(e.config.DB)
-	missions, err := missionStore.List(ctx, nil)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to list missions: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	if len(missions) == 0 {
-		return &ExecutionResult{
-			Output:   "No missions found\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%-30s %-12s %-10s %-10s %s\n",
-		"NAME", "STATUS", "PROGRESS", "FINDINGS", "CREATED"))
-	output.WriteString(strings.Repeat("-", 80) + "\n")
-
-	for _, mission := range missions {
-		progress := fmt.Sprintf("%.1f%%", mission.Progress*100)
-		created := mission.CreatedAt.Format("2006-01-02")
-
-		output.WriteString(fmt.Sprintf("%-30s %-12s %-10s %-10d %s\n",
-			mission.Name,
-			mission.Status,
-			progress,
-			mission.FindingsCount,
-			created,
-		))
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleCredentials lists all credentials from the database.
 func (e *Executor) handleCredentials(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.DB == nil {
-		return &ExecutionResult{
-			Output:   "Database not available\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	credentialDAO := database.NewCredentialDAO(e.config.DB)
-	credentials, err := credentialDAO.List(ctx, nil)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to list credentials: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	if len(credentials) == 0 {
-		return &ExecutionResult{
-			Output:   "No credentials found\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%-25s %-15s %-15s %-10s %s\n",
-		"NAME", "TYPE", "PROVIDER", "STATUS", "DESCRIPTION"))
-	output.WriteString(strings.Repeat("-", 90) + "\n")
-
-	for _, cred := range credentials {
-		description := cred.Description
-		if len(description) > 30 {
-			description = description[:27] + "..."
-		}
-
-		output.WriteString(fmt.Sprintf("%-25s %-15s %-15s %-10s %s\n",
-			cred.Name,
-			cred.Type,
-			cred.Provider,
-			cred.Status,
-			description,
-		))
-	}
-
 	return &ExecutionResult{
-		Output:   output.String(),
+		Output:   "Credentials feature not yet implemented\n",
 		IsError:  false,
 		ExitCode: 0,
 	}, nil
 }
 
-// handleFindings lists security findings from the finding store.
 func (e *Executor) handleFindings(ctx context.Context, args []string) (*ExecutionResult, error) {
 	if e.config.FindingStore == nil {
 		return &ExecutionResult{
@@ -772,2005 +967,153 @@ func (e *Executor) handleFindings(ctx context.Context, args []string) (*Executio
 		}, nil
 	}
 
-	// Note: This is a simplified implementation that would need to be enhanced
-	// with mission filtering once we have a way to get the current mission context
+	// List all findings - pass empty mission ID to get all findings across all missions
+	// Note: This may need to be updated if we want mission-specific filtering
+	findings, err := e.config.FindingStore.List(ctx, "", nil)
+	if err != nil {
+		return errorResult(fmt.Sprintf("Failed to list findings: %v", err)), err
+	}
+
+	if len(findings) == 0 {
+		return &ExecutionResult{
+			Output:   "No findings\n",
+			IsError:  false,
+			ExitCode: 0,
+		}, nil
+	}
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("%-40s %-10s %-15s %s\n",
+		"ID", "SEVERITY", "CATEGORY", "TITLE"))
+	output.WriteString(strings.Repeat("-", 80) + "\n")
+
+	for _, f := range findings {
+		output.WriteString(fmt.Sprintf("%-40s %-10s %-15s %s\n",
+			f.ID, f.Severity, f.Category, f.Title))
+	}
+
 	return &ExecutionResult{
-		Output:   "Finding list functionality requires mission context\nUse the Findings view for full functionality\n",
+		Output:   output.String(),
 		IsError:  false,
 		ExitCode: 0,
 	}, nil
 }
 
-// handleTargets lists all targets from the database.
 func (e *Executor) handleTargets(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.DB == nil {
-		return &ExecutionResult{
-			Output:   "Database not available\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	targetDAO := database.NewTargetDAO(e.config.DB)
-	targets, err := targetDAO.List(ctx, nil)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to list targets: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	if len(targets) == 0 {
-		return &ExecutionResult{
-			Output:   "No targets found\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%-25s %-15s %-15s %-10s %s\n",
-		"NAME", "TYPE", "PROVIDER", "STATUS", "URL"))
-	output.WriteString(strings.Repeat("-", 90) + "\n")
-
-	for _, target := range targets {
-		url := target.URL
-		if len(url) > 35 {
-			url = url[:32] + "..."
-		}
-
-		output.WriteString(fmt.Sprintf("%-25s %-15s %-15s %-10s %s\n",
-			target.Name,
-			target.Type,
-			target.Provider,
-			target.Status,
-			url,
-		))
-	}
-
 	return &ExecutionResult{
-		Output:   output.String(),
+		Output:   "Targets feature not yet implemented\n",
 		IsError:  false,
 		ExitCode: 0,
 	}, nil
 }
 
-// handleTools lists all registered tools from the component DAO.
-func (e *Executor) handleTools(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
+// ============================================================================
+// TUI-SPECIFIC HANDLERS - Steering and attack
+// ============================================================================
 
-	tools, err := e.config.ComponentDAO.List(ctx, component.ComponentKindTool)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to list tools: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	if len(tools) == 0 {
-		return &ExecutionResult{
-			Output:   "No tools installed\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %s\n",
-		"NAME", "VERSION", "STATUS", "SOURCE"))
-	output.WriteString(strings.Repeat("-", 70) + "\n")
-
-	for _, tool := range tools {
-		output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %s\n",
-			tool.Name,
-			tool.Version,
-			tool.Status,
-			tool.Source,
-		))
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handlePlugins lists all registered plugins from the component DAO.
-func (e *Executor) handlePlugins(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	plugins, err := e.config.ComponentDAO.List(ctx, component.ComponentKindPlugin)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to list plugins: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	if len(plugins) == 0 {
-		return &ExecutionResult{
-			Output:   "No plugins installed\n",
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %s\n",
-		"NAME", "VERSION", "STATUS", "SOURCE"))
-	output.WriteString(strings.Repeat("-", 70) + "\n")
-
-	for _, plugin := range plugins {
-		output.WriteString(fmt.Sprintf("%-20s %-12s %-10s %s\n",
-			plugin.Name,
-			plugin.Version,
-			plugin.Status,
-			plugin.Source,
-		))
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleConfig displays configuration information.
-func (e *Executor) handleConfig(ctx context.Context, args []string) (*ExecutionResult, error) {
-	var output strings.Builder
-
-	output.WriteString("Gibson Configuration\n")
-	output.WriteString(strings.Repeat("=", 60) + "\n\n")
-
-	output.WriteString("Paths:\n")
-	output.WriteString(fmt.Sprintf("  Home Directory: %s\n", e.config.HomeDir))
-	output.WriteString(fmt.Sprintf("  Config File:    %s\n", e.config.ConfigFile))
-
-	output.WriteString("\n")
-	output.WriteString("Database:\n")
-	if e.config.DB != nil {
-		output.WriteString(fmt.Sprintf("  Path:           %s\n", e.config.DB.Path()))
-		output.WriteString("  Status:         Connected\n")
-	} else {
-		output.WriteString("  Status:         Not available\n")
-	}
-
-	output.WriteString("\n")
-	output.WriteString("Components:\n")
-	if e.config.ComponentDAO != nil {
-		output.WriteString("  DAO:            Available\n")
-		allComponents, _ := e.config.ComponentDAO.ListAll(ctx)
-		totalCount := 0
-		for _, components := range allComponents {
-			totalCount += len(components)
-		}
-		output.WriteString(fmt.Sprintf("  Total:          %d components\n", totalCount))
-	} else {
-		output.WriteString("  DAO:            Not available\n")
-	}
-
-	output.WriteString("\n")
-	output.WriteString("Findings:\n")
-	if e.config.FindingStore != nil {
-		output.WriteString("  Store:          Available\n")
-	} else {
-		output.WriteString("  Store:          Not available\n")
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentStart starts an agent component.
-func (e *Executor) handleAgentStart(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /agents start <agent-name>",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get the agent component
-	agent, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindAgent, agentName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if agent == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Agent '%s' not found", agentName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if already running
-	if agent.IsRunning() {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Agent '%s' is already running (PID: %d)", agentName, agent.PID),
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	// Create lifecycle manager
-	lifecycleManager := component.NewLifecycleManager(e.config.ComponentDAO, nil)
-
-	// Start the agent
-	port, err := lifecycleManager.StartComponent(ctx, agent)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to start agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Agent '%s' started successfully\n", agentName))
-	output.WriteString(fmt.Sprintf("PID: %d\n", agent.PID))
-	output.WriteString(fmt.Sprintf("Port: %d\n", port))
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentExecute executes a task on a running agent with streaming output.
-func (e *Executor) handleAgentExecute(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 2 {
-		return &ExecutionResult{
-			Error:    "Usage: /agent-execute <agent-name> <goal>",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-	goal := strings.Join(args[1:], " ")
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Error:    "Stream manager not available. Agent streaming is disabled.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get the agent component
-	agentComp, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindAgent, agentName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if agentComp == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Agent '%s' not found. Use /agent-install to install it first.", agentName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if agent is running
-	if !agentComp.IsRunning() {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Agent '%s' is not running. Use /agent-start %s to start it first.", agentName, agentName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Create gRPC connection to the agent
-	address := fmt.Sprintf("localhost:%d", agentComp.Port)
-	grpcClient, err := agent.NewGRPCAgentClient(address)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to connect to agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	// Build task using NewTask helper
-	task := agent.NewTask("tui-task", goal, map[string]any{
-		"source": "tui",
-	})
-
-	// Serialize task to JSON
-	taskJSON, err := json.Marshal(task)
-	if err != nil {
-		grpcClient.Close()
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to serialize task: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	// Connect to streaming
-	sessionID, err := e.config.StreamManager.Connect(ctx, agentName, grpcClient.Connection(), string(taskJSON), database.AgentModeAutonomous)
-	if err != nil {
-		grpcClient.Close()
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to start streaming session: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	// Set focused agent and subscribe to events
-	e.focusedAgent = agentName
-	if err := e.subscribeFocusedAgent(agentName); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to subscribe to agent events: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Started streaming execution on agent '%s'\n", agentName))
-	output.WriteString(fmt.Sprintf("Session ID: %s\n", sessionID))
-	output.WriteString(fmt.Sprintf("Goal: %s\n", goal))
-	output.WriteString("\nStreaming output will appear below...")
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentStop stops a running agent component.
-func (e *Executor) handleAgentStop(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /agents stop <agent-name>",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get the agent component
-	agent, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindAgent, agentName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if agent == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Agent '%s' not found", agentName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if running
-	if !agent.IsRunning() {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Agent '%s' is not running", agentName),
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	// Create lifecycle manager
-	lifecycleManager := component.NewLifecycleManager(e.config.ComponentDAO, nil)
-
-	// Stop the agent
-	if err := lifecycleManager.StopComponent(ctx, agent); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to stop agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Agent '%s' stopped successfully", agentName),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentInstall installs an agent from a git repository.
-func (e *Executor) handleAgentInstall(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /agent install <repo-url> [--force] [--branch <name>] [--tag <name>]",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	repoURL := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Component DAO not available",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Parse optional flags
-	opts := component.InstallOptions{
-		Force:        ContainsFlag(args[1:], "--force"),
-		Branch:       GetFlag(args[1:], "--branch"),
-		Tag:          GetFlag(args[1:], "--tag"),
-		SkipBuild:    false,
-		SkipRegister: false,
-	}
-
-	// Get installer (creates default if not configured)
-	installer := e.getInstaller()
-
-	// Perform the installation
-	result, err := installer.Install(ctx, repoURL, component.ComponentKindAgent, opts)
-	if err != nil {
-		return ErrorResult(fmt.Errorf("installation failed: %w", err))
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Agent '%s' (v%s) installed successfully in %v\n",
-		result.Component.Name,
-		result.Component.Version,
-		result.Duration))
-
-	if result.BuildOutput != "" {
-		output.WriteString("\nBuild output:\n")
-		output.WriteString(result.BuildOutput)
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentUninstall uninstalls an agent component.
-func (e *Executor) handleAgentUninstall(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /agents uninstall <agent-name> --confirm",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-
-	// Check for --confirm flag (we need to parse from args manually here)
-	// In a full implementation, this would use ParsedCommand.Flags
-	hasConfirm := false
-	for _, arg := range args {
-		if arg == "--confirm" {
-			hasConfirm = true
-			break
-		}
-	}
-
-	if !hasConfirm {
-		return &ExecutionResult{
-			Error:    "Uninstall requires --confirm flag for safety",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if component exists
-	existing, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindAgent, agentName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if existing == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Agent '%s' not found", agentName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Stop component if it's running
-	if existing.IsRunning() {
-		lifecycleManager := e.getLifecycleManager()
-		if err := lifecycleManager.StopComponent(ctx, existing); err != nil {
-			return &ExecutionResult{
-				Error:    fmt.Sprintf("Failed to stop agent before uninstall: %v", err),
-				IsError:  true,
-				ExitCode: 1,
-			}, err
-		}
-	}
-
-	// Delete from database
-	if err := e.config.ComponentDAO.Delete(ctx, component.ComponentKindAgent, agentName); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to delete agent from database: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	// Remove installation directory if it exists
-	if existing.RepoPath != "" {
-		if err := os.RemoveAll(existing.RepoPath); err != nil && !os.IsNotExist(err) {
-			// Log warning but don't fail - directory might already be gone
-			return &ExecutionResult{
-				Output:   fmt.Sprintf("Agent '%s' uninstalled from database, but failed to remove directory: %v\n", agentName, err),
-				IsError:  false,
-				ExitCode: 0,
-			}, nil
-		}
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Agent '%s' uninstalled successfully\n", agentName),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAgentLogs retrieves and displays recent logs for an agent.
-func (e *Executor) handleAgentLogs(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /agents logs <agent-name> [--lines N]",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	agentName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get the agent component to validate it exists
-	agent, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindAgent, agentName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if agent == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Agent '%s' not found", agentName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Parse --lines flag (default 50)
-	lines := 50
-	if linesStr := GetFlag(args[1:], "--lines"); linesStr != "" {
-		if _, err := fmt.Sscanf(linesStr, "%d", &lines); err != nil {
-			return &ExecutionResult{
-				Error:    fmt.Sprintf("Invalid --lines value: %s", linesStr),
-				IsError:  true,
-				ExitCode: 1,
-			}, nil
-		}
-	}
-
-	// Build log path: {HomeDir}/logs/agent/{agentName}.log
-	logPath := fmt.Sprintf("%s/logs/agent/%s.log", e.config.HomeDir, agentName)
-
-	// Check if log file exists
-	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("No logs found for agent '%s'\nExpected log file: %s\n", agentName, logPath),
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	// Read last N lines
-	content, err := ReadLastNLines(logPath, lines)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to read log file: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   content,
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleAttack launches a single-agent attack against a target.
-// Usage: /attack <agent-name> --target <url> [--mode <mode>] [--goal <goal>]
-func (e *Executor) handleAttack(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return UsageResult("Usage: /attack <target-url> --agent <name> [--goal <text>] [--mode <mode>] [--max-findings <n>] [--timeout <duration>]")
-	}
-
-	targetURL := args[0]
-
-	// Parse required --agent flag
-	agentName := GetFlag(args[1:], "--agent")
-	if agentName == "" {
-		return ErrorResult(fmt.Errorf("--agent flag is required"))
-	}
-
-	// Check if AttackRunner is available
-	if e.config.AttackRunner == nil {
-		return ErrorResult(fmt.Errorf("attack functionality not available - AttackRunner not configured"))
-	}
-
-	// Parse optional flags
-	goal := GetFlag(args[1:], "--goal")
-	_ = GetFlag(args[1:], "--mode") // mode not currently used in AttackOptions
-
-	// Parse --max-findings (default 0 = unlimited)
-	maxFindings := 0
-	if maxFindingsStr := GetFlag(args[1:], "--max-findings"); maxFindingsStr != "" {
-		if _, err := fmt.Sscanf(maxFindingsStr, "%d", &maxFindings); err != nil {
-			return ErrorResult(fmt.Errorf("invalid --max-findings value: %s", maxFindingsStr))
-		}
-	}
-
-	// Parse --timeout (default 0 = no timeout)
-	var timeout time.Duration
-	if timeoutStr := GetFlag(args[1:], "--timeout"); timeoutStr != "" {
-		var err error
-		timeout, err = time.ParseDuration(timeoutStr)
-		if err != nil {
-			return ErrorResult(fmt.Errorf("invalid --timeout value: %s (use format like 5m, 1h)", timeoutStr))
-		}
-	}
-
-	// Create attack options
-	opts := &attack.AttackOptions{
-		TargetURL:   targetURL,
-		AgentName:   agentName,
-		Goal:        goal,
-		MaxFindings: maxFindings,
-		Timeout:     timeout,
-	}
-
-	// Validate options
-	if err := opts.Validate(); err != nil {
-		return ErrorResult(fmt.Errorf("invalid attack options: %w", err))
-	}
-
-	// Execute attack
-	result, err := e.config.AttackRunner.Run(ctx, opts)
-	if err != nil {
-		return ErrorResult(fmt.Errorf("attack failed: %w", err))
-	}
-
-	// Format result
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Attack completed:\n"))
-	output.WriteString(fmt.Sprintf("  Status: %s\n", result.Status))
-	output.WriteString(fmt.Sprintf("  Duration: %v\n", result.Duration))
-	output.WriteString(fmt.Sprintf("  Findings: %d\n", len(result.Findings)))
-
-	if len(result.Findings) > 0 {
-		output.WriteString("\nDiscovered Findings:\n")
-		for i, f := range result.Findings {
-			output.WriteString(fmt.Sprintf("  %d. [%s] %s\n", i+1, f.Severity, f.Title))
-		}
-	}
-
-	if result.Error != nil {
-		output.WriteString(fmt.Sprintf("\nError: %s\n", result.Error.Error()))
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleMission routes mission subcommands to their specific handlers.
-func (e *Executor) handleMission(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) == 0 {
-		// Default to list
-		return e.handleMissions(ctx, args)
-	}
-
-	switch args[0] {
-	case "list":
-		return e.handleMissions(ctx, args[1:])
-	case "start", "run":
-		return e.handleMissionStart(ctx, args[1:])
-	case "stop":
-		return e.handleMissionStop(ctx, args[1:])
-	case "create":
-		return e.handleMissionCreate(ctx, args[1:])
-	case "delete":
-		return e.handleMissionDelete(ctx, args[1:])
-	default:
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Unknown mission subcommand: %s\nAvailable: list, start, stop, create, delete\n", args[0]),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-}
-
-// handleMissionStart starts a new or existing mission.
-// Usage: /mission-start <name>
-func (e *Executor) handleMissionStart(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /mission-start <name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	missionName := args[0]
-
-	if e.config.DB == nil {
-		return &ExecutionResult{
-			Output:   "Database not available\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	missionStore := mission.NewDBMissionStore(e.config.DB)
-
-	// Check if mission exists
-	m, err := missionStore.GetByName(ctx, missionName)
-	if err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Mission not found: %s\nCreate it first with /mission-create\n", missionName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Update status to running
-	now := time.Now()
-	m.Status = mission.MissionStatusRunning
-	m.StartedAt = &now
-	if err := missionStore.Update(ctx, m); err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Failed to start mission: %v\n", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Mission '%s' started successfully\nID: %s\n", m.Name, m.ID),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleMissionStop stops a running mission.
-// Usage: /mission-stop <name>
-func (e *Executor) handleMissionStop(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /mission-stop <name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	missionName := args[0]
-
-	if e.config.DB == nil {
-		return &ExecutionResult{
-			Output:   "Database not available\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	missionStore := mission.NewDBMissionStore(e.config.DB)
-
-	// Get mission
-	m, err := missionStore.GetByName(ctx, missionName)
-	if err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Mission not found: %s\n", missionName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if mission is running
-	if m.Status != mission.MissionStatusRunning {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Mission is not running (current status: %s)\n", m.Status),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Update status to cancelled
-	if err := missionStore.UpdateStatus(ctx, m.ID, mission.MissionStatusCancelled); err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Failed to stop mission: %v\n", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Mission '%s' stopped successfully\n", m.Name),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleMissionCreate creates a new mission.
-// Usage: /mission-create <name>
-func (e *Executor) handleMissionCreate(ctx context.Context, args []string) (*ExecutionResult, error) {
-	// Parse -f or --file flag for workflow file path
-	filePath := GetFlag(args, "-f")
-	if filePath == "" {
-		filePath = GetFlag(args, "--file")
-	}
-
-	// If no file path provided, return usage error
-	if filePath == "" {
-		return UsageResult("Usage: /mission create -f <workflow.yaml>")
-	}
-
-	// Check if database is available
-	if e.config.DB == nil {
-		return ErrorResult(fmt.Errorf("database not available"))
-	}
-
-	// Read workflow file content
-	workflowContent, err := os.ReadFile(filePath)
-	if err != nil {
-		return ErrorResult(fmt.Errorf("failed to read workflow file: %w", err))
-	}
-
-	// Parse YAML into workflow.Workflow struct
-	var wf workflow.Workflow
-	if err := yaml.Unmarshal(workflowContent, &wf); err != nil {
-		return ErrorResult(fmt.Errorf("failed to parse workflow YAML: %w", err))
-	}
-
-	// Serialize workflow to JSON for storage
-	workflowJSON, err := json.Marshal(wf)
-	if err != nil {
-		return ErrorResult(fmt.Errorf("failed to serialize workflow: %w", err))
-	}
-
-	// Create mission with generated ID
-	missionID := uuid.New().String()
-	m := &mission.Mission{
-		ID:           types.ID(missionID),
-		Name:         wf.Name,
-		Description:  wf.Description,
-		Status:       mission.MissionStatusPending,
-		WorkflowJSON: string(workflowJSON),
-		CreatedAt:    time.Now(),
-	}
-
-	// Create mission store
-	missionStore := mission.NewDBMissionStore(e.config.DB)
-
-	// Save mission
-	if err := missionStore.Save(ctx, m); err != nil {
-		return ErrorResult(fmt.Errorf("failed to save mission: %w", err))
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Mission '%s' created successfully (ID: %s)\nTo start: /mission start %s\n", m.Name, m.ID, m.Name),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleMissionDelete deletes a mission.
-// Usage: /mission-delete <name> [--confirm]
-func (e *Executor) handleMissionDelete(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /mission-delete <name> [--confirm]\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	missionName := args[0]
-
-	// Note: The --confirm flag should be checked via parsed.Flags.
-	// This is a limitation since CommandHandler doesn't receive ParsedCommand.
-	// For now, we delete without requiring confirmation (not ideal).
-
-	if e.config.DB == nil {
-		return &ExecutionResult{
-			Output:   "Database not available\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	missionStore := mission.NewDBMissionStore(e.config.DB)
-
-	// Get mission to retrieve ID
-	m, err := missionStore.GetByName(ctx, missionName)
-	if err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Mission not found: %s\n", missionName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Delete mission
-	if err := missionStore.Delete(ctx, m.ID); err != nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Failed to delete mission: %v\n", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Mission '%s' deleted successfully\n", m.Name),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleTool routes to appropriate tool subcommand handler or lists tools.
-func (e *Executor) handleTool(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) == 0 {
-		return e.handleToolsList(ctx, args)
-	}
-
-	switch args[0] {
-	case "list":
-		return e.handleToolsList(ctx, args[1:])
-	case "start":
-		return e.handleToolStart(ctx, args[1:])
-	case "stop":
-		return e.handleToolStop(ctx, args[1:])
-	case "install":
-		return e.handleToolInstall(ctx, args[1:])
-	case "uninstall":
-		return e.handleToolUninstall(ctx, args[1:])
-	case "logs":
-		return e.handleToolLogs(ctx, args[1:])
-	default:
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Unknown tool subcommand: %s\nAvailable: list, start, stop, install, uninstall, logs\n", args[0]),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-}
-
-// handleToolsList lists all tools (delegates to handleTools).
-func (e *Executor) handleToolsList(ctx context.Context, args []string) (*ExecutionResult, error) {
-	return e.handleTools(ctx, args)
-}
-
-// handleToolStart starts a tool component.
-func (e *Executor) handleToolStart(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /tool start <name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	toolName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get tool
-	tool, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindTool, toolName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get tool: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if tool == nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Tool '%s' not found\n", toolName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if already running
-	if tool.IsRunning() {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Tool '%s' is already running (PID: %d)\n", toolName, tool.PID),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Start the tool
-	lifecycleManager := e.getLifecycleManager()
-	port, err := lifecycleManager.StartComponent(ctx, tool)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to start tool: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Tool '%s' started successfully\nPID: %d\nPort: %d\n", toolName, tool.PID, port),
-		ExitCode: 0,
-	}, nil
-}
-
-// handleToolStop stops a running tool component.
-func (e *Executor) handleToolStop(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /tool stop <name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	toolName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get tool
-	tool, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindTool, toolName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get tool: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if tool == nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Tool '%s' not found\n", toolName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if running
-	if !tool.IsRunning() {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Tool '%s' is not running\n", toolName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Stop the tool
-	lifecycleManager := e.getLifecycleManager()
-	if err := lifecycleManager.StopComponent(ctx, tool); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to stop tool: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Tool '%s' stopped successfully\n", toolName),
-		ExitCode: 0,
-	}, nil
-}
-
-// handleToolInstall installs a new tool component.
-func (e *Executor) handleToolInstall(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /tool install <repo-url> [--force] [--branch <name>] [--tag <name>]",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	repoURL := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Component DAO not available",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Parse optional flags
-	opts := component.InstallOptions{
-		Force:        ContainsFlag(args[1:], "--force"),
-		Branch:       GetFlag(args[1:], "--branch"),
-		Tag:          GetFlag(args[1:], "--tag"),
-		SkipBuild:    false,
-		SkipRegister: false,
-	}
-
-	// Get installer (creates default if not configured)
-	installer := e.getInstaller()
-
-	// Perform the installation
-	result, err := installer.Install(ctx, repoURL, component.ComponentKindTool, opts)
-	if err != nil {
-		return ErrorResult(fmt.Errorf("installation failed: %w", err))
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Tool '%s' (v%s) installed successfully in %v\n",
-		result.Component.Name,
-		result.Component.Version,
-		result.Duration))
-
-	if result.BuildOutput != "" {
-		output.WriteString("\nBuild output:\n")
-		output.WriteString(result.BuildOutput)
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleToolUninstall uninstalls a tool component.
-func (e *Executor) handleToolUninstall(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /tool uninstall <tool-name> --confirm",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	toolName := args[0]
-
-	// Check for --confirm flag
-	if !ContainsFlag(args, "--confirm") {
-		return &ExecutionResult{
-			Error:    "Uninstall requires --confirm flag for safety",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get component from database
-	existing, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindTool, toolName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get tool: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if existing == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Tool '%s' not found", toolName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Stop component if it's running
-	if existing.IsRunning() {
-		lifecycleManager := e.getLifecycleManager()
-		if err := lifecycleManager.StopComponent(ctx, existing); err != nil {
-			return &ExecutionResult{
-				Error:    fmt.Sprintf("Failed to stop tool before uninstall: %v", err),
-				IsError:  true,
-				ExitCode: 1,
-			}, err
-		}
-	}
-
-	// Delete from database
-	if err := e.config.ComponentDAO.Delete(ctx, component.ComponentKindTool, toolName); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to delete tool from database: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	// Remove installation directory if it exists
-	if existing.RepoPath != "" {
-		if err := os.RemoveAll(existing.RepoPath); err != nil && !os.IsNotExist(err) {
-			// Log warning but don't fail - directory might already be gone
-			return &ExecutionResult{
-				Output:   fmt.Sprintf("Tool '%s' uninstalled from database, but failed to remove directory: %v\n", toolName, err),
-				IsError:  false,
-				ExitCode: 0,
-			}, nil
-		}
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Tool '%s' uninstalled successfully\n", toolName),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handleToolLogs displays logs for a tool component.
-func (e *Executor) handleToolLogs(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /tool logs <tool-name> [--lines N]",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	toolName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get the tool component to validate it exists
-	tool, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindTool, toolName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get tool: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if tool == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Tool '%s' not found", toolName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Parse --lines flag (default 50)
-	lines := 50
-	if linesStr := GetFlag(args[1:], "--lines"); linesStr != "" {
-		if _, err := fmt.Sscanf(linesStr, "%d", &lines); err != nil {
-			return &ExecutionResult{
-				Error:    fmt.Sprintf("Invalid --lines value: %s", linesStr),
-				IsError:  true,
-				ExitCode: 1,
-			}, nil
-		}
-	}
-
-	// Build log path: {HomeDir}/logs/tool/{toolName}.log
-	logPath := fmt.Sprintf("%s/logs/tool/%s.log", e.config.HomeDir, toolName)
-
-	// Check if log file exists
-	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("No logs found for tool '%s'\nExpected log file: %s\n", toolName, logPath),
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	// Read last N lines
-	content, err := ReadLastNLines(logPath, lines)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to read log file: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   content,
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handlePlugin routes to appropriate plugin subcommand handler or lists plugins.
-func (e *Executor) handlePlugin(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) == 0 {
-		return e.handlePluginsList(ctx, args)
-	}
-
-	switch args[0] {
-	case "list":
-		return e.handlePluginsList(ctx, args[1:])
-	case "start":
-		return e.handlePluginStart(ctx, args[1:])
-	case "stop":
-		return e.handlePluginStop(ctx, args[1:])
-	case "logs":
-		return e.handlePluginLogs(ctx, args[1:])
-	case "install":
-		return e.handlePluginInstall(ctx, args[1:])
-	case "uninstall":
-		return e.handlePluginUninstall(ctx, args[1:])
-	default:
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Unknown plugin subcommand: %s\nAvailable: list, start, stop, logs, install, uninstall\n", args[0]),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-}
-
-// handlePluginsList lists all plugins (delegates to handlePlugins).
-func (e *Executor) handlePluginsList(ctx context.Context, args []string) (*ExecutionResult, error) {
-	return e.handlePlugins(ctx, args)
-}
-
-// handlePluginStart starts a plugin component.
-func (e *Executor) handlePluginStart(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /plugin start <name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	pluginName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get plugin
-	plugin, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindPlugin, pluginName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get plugin: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if plugin == nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Plugin '%s' not found\n", pluginName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if already running
-	if plugin.IsRunning() {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Plugin '%s' is already running (PID: %d)\n", pluginName, plugin.PID),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Start the plugin
-	lifecycleManager := e.getLifecycleManager()
-	port, err := lifecycleManager.StartComponent(ctx, plugin)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to start plugin: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Plugin '%s' started successfully\nPID: %d\nPort: %d\n", pluginName, plugin.PID, port),
-		ExitCode: 0,
-	}, nil
-}
-
-// handlePluginStop stops a running plugin component.
-func (e *Executor) handlePluginStop(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Output:   "Usage: /plugin stop <name>\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	pluginName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Output:   "Database not available. Run 'gibson init' to initialize.\n",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get plugin
-	plugin, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindPlugin, pluginName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get plugin: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if plugin == nil {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Plugin '%s' not found\n", pluginName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Check if running
-	if !plugin.IsRunning() {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("Plugin '%s' is not running\n", pluginName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Stop the plugin
-	lifecycleManager := e.getLifecycleManager()
-	if err := lifecycleManager.StopComponent(ctx, plugin); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to stop plugin: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Plugin '%s' stopped successfully\n", pluginName),
-		ExitCode: 0,
-	}, nil
-}
-
-// handlePluginLogs displays logs for a plugin component.
-func (e *Executor) handlePluginLogs(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /plugin logs <plugin-name> [--lines N]",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	pluginName := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get the plugin component to validate it exists
-	plugin, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindPlugin, pluginName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get plugin: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if plugin == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Plugin '%s' not found", pluginName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Parse --lines flag (default 50)
-	lines := 50
-	if linesStr := GetFlag(args[1:], "--lines"); linesStr != "" {
-		if _, err := fmt.Sscanf(linesStr, "%d", &lines); err != nil {
-			return &ExecutionResult{
-				Error:    fmt.Sprintf("Invalid --lines value: %s", linesStr),
-				IsError:  true,
-				ExitCode: 1,
-			}, nil
-		}
-	}
-
-	// Build log path: {HomeDir}/logs/plugin/{pluginName}.log
-	logPath := fmt.Sprintf("%s/logs/plugin/%s.log", e.config.HomeDir, pluginName)
-
-	// Check if log file exists
-	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		return &ExecutionResult{
-			Output:   fmt.Sprintf("No logs found for plugin '%s'\nExpected log file: %s\n", pluginName, logPath),
-			IsError:  false,
-			ExitCode: 0,
-		}, nil
-	}
-
-	// Read last N lines
-	content, err := ReadLastNLines(logPath, lines)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to read log file: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	return &ExecutionResult{
-		Output:   content,
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handlePluginInstall installs a new plugin component.
-func (e *Executor) handlePluginInstall(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /plugin install <repo-url> [--force] [--branch <name>] [--tag <name>]",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	repoURL := args[0]
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Component DAO not available",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Parse optional flags
-	opts := component.InstallOptions{
-		Force:        ContainsFlag(args[1:], "--force"),
-		Branch:       GetFlag(args[1:], "--branch"),
-		Tag:          GetFlag(args[1:], "--tag"),
-		SkipBuild:    false,
-		SkipRegister: false,
-	}
-
-	// Get installer (creates default if not configured)
-	installer := e.getInstaller()
-
-	// Perform the installation
-	result, err := installer.Install(ctx, repoURL, component.ComponentKindPlugin, opts)
-	if err != nil {
-		return ErrorResult(fmt.Errorf("installation failed: %w", err))
-	}
-
-	var output strings.Builder
-	output.WriteString(fmt.Sprintf("Plugin '%s' (v%s) installed successfully in %v\n",
-		result.Component.Name,
-		result.Component.Version,
-		result.Duration))
-
-	if result.BuildOutput != "" {
-		output.WriteString("\nBuild output:\n")
-		output.WriteString(result.BuildOutput)
-	}
-
-	return &ExecutionResult{
-		Output:   output.String(),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// handlePluginUninstall uninstalls a plugin component.
-func (e *Executor) handlePluginUninstall(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /plugin uninstall <plugin-name> --confirm",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	pluginName := args[0]
-
-	// Check for --confirm flag
-	if !ContainsFlag(args, "--confirm") {
-		return &ExecutionResult{
-			Error:    "Uninstall requires --confirm flag for safety",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	if e.config.ComponentDAO == nil {
-		return &ExecutionResult{
-			Error:    "Database not available. Run 'gibson init' to initialize.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Get component from database
-	existing, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindPlugin, pluginName)
-	if err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to get plugin: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-	if existing == nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Plugin '%s' not found", pluginName),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Stop component if it's running
-	if existing.IsRunning() {
-		lifecycleManager := e.getLifecycleManager()
-		if err := lifecycleManager.StopComponent(ctx, existing); err != nil {
-			return &ExecutionResult{
-				Error:    fmt.Sprintf("Failed to stop plugin before uninstall: %v", err),
-				IsError:  true,
-				ExitCode: 1,
-			}, err
-		}
-	}
-
-	// Delete from database
-	if err := e.config.ComponentDAO.Delete(ctx, component.ComponentKindPlugin, pluginName); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to delete plugin from database: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, err
-	}
-
-	// Remove installation directory if it exists
-	if existing.RepoPath != "" {
-		if err := os.RemoveAll(existing.RepoPath); err != nil && !os.IsNotExist(err) {
-			// Log warning but don't fail - directory might already be gone
-			return &ExecutionResult{
-				Output:   fmt.Sprintf("Plugin '%s' uninstalled from database, but failed to remove directory: %v\n", pluginName, err),
-				IsError:  false,
-				ExitCode: 0,
-			}, nil
-		}
-	}
-
-	return &ExecutionResult{
-		Output:   fmt.Sprintf("Plugin '%s' uninstalled successfully\n", pluginName),
-		IsError:  false,
-		ExitCode: 0,
-	}, nil
-}
-
-// getLifecycleManager creates a lifecycle manager for component operations.
-func (e *Executor) getLifecycleManager() component.LifecycleManager {
-	return component.NewLifecycleManager(e.config.ComponentDAO, nil)
-}
-
-// getInstaller returns the Installer from config, or creates a default installer if not set.
-func (e *Executor) getInstaller() component.Installer {
-	if e.config.Installer != nil {
-		return e.config.Installer
-	}
-	// Create default installer if not provided
-	gitOps := git.NewDefaultGitOperations()
-	builder := build.NewDefaultBuildExecutor()
-	return component.NewDefaultInstaller(gitOps, builder, e.config.ComponentDAO)
-}
-
-// handleFocus switches TUI focus to a specific agent and subscribes to its event stream.
-// Usage: /focus <agent-name>
 func (e *Executor) handleFocus(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
+	if len(args) == 0 {
+		if e.focusedAgent == "" {
+			return &ExecutionResult{
+				Output:   "No agent currently focused\n",
+				ExitCode: 0,
+			}, nil
+		}
 		return &ExecutionResult{
-			Error:    "Usage: /focus <agent-name>",
-			IsError:  true,
-			ExitCode: 1,
+			Output:   fmt.Sprintf("Currently focused on agent: %s\n", e.focusedAgent),
+			ExitCode: 0,
 		}, nil
 	}
 
 	agentName := args[0]
-
-	// Verify the agent is running and has an active streaming session
-	if err := e.verifyAgentRunning(ctx, agentName); err != nil {
-		return &ExecutionResult{
-			Error:    err.Error(),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// If already focused on a different agent, unsubscribe first
-	if e.focusedAgent != "" && e.focusedAgent != agentName {
-		if err := e.unsubscribeFocusedAgent(); err != nil {
-			// Log but don't fail - we still want to switch focus
-			_ = err
-		}
-	}
-
-	// Set the focused agent
-	e.SetFocusedAgent(agentName)
-
-	// Subscribe to the agent's event stream
-	if err := e.subscribeFocusedAgent(agentName); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Focused on agent '%s' but failed to subscribe to events: %v", agentName, err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
+	e.focusedAgent = agentName
 
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Focused on agent: %s\nStreaming agent events to console.\n", agentName),
+		Output:   fmt.Sprintf("Focused on agent: %s\n", agentName),
 		ExitCode: 0,
 	}, nil
 }
 
-// handleInterrupt sends an interrupt to the focused agent.
-// Usage: /interrupt [reason]
 func (e *Executor) handleInterrupt(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Error:    "Stream manager not available",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	if e.focusedAgent == "" {
+		return errorResult("No agent focused. Use /focus <agent> first"), nil
 	}
 
-	focusedAgent := e.GetFocusedAgent()
-	if focusedAgent == "" {
-		return &ExecutionResult{
-			Error:    "No agent is currently focused. Use /focus <agent-name> first.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	reason := "User interrupt"
+	message := "interrupt requested"
 	if len(args) > 0 {
-		reason = strings.Join(args, " ")
+		message = strings.Join(args, " ")
 	}
 
-	if err := e.config.StreamManager.SendInterrupt(focusedAgent, reason); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to interrupt agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	if e.config.StreamManager == nil {
+		return errorResult("Stream manager not available"), nil
+	}
+
+	// Send interrupt to focused agent
+	if err := e.config.StreamManager.SendInterrupt(e.focusedAgent, message); err != nil {
+		return errorResult(fmt.Sprintf("Failed to send interrupt: %v", err)), err
 	}
 
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Interrupt sent to agent '%s'\n", focusedAgent),
+		Output:   fmt.Sprintf("Sent interrupt to %s: %s\n", e.focusedAgent, message),
 		ExitCode: 0,
 	}, nil
 }
 
-// handleMode sets the execution mode for the focused agent.
-// Usage: /mode <autonomous|interactive>
 func (e *Executor) handleMode(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if len(args) < 1 {
-		return &ExecutionResult{
-			Error:    "Usage: /mode <autonomous|interactive>",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	if e.focusedAgent == "" {
+		return errorResult("No agent focused. Use /focus <agent> first"), nil
 	}
 
-	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Error:    "Stream manager not available",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	focusedAgent := e.GetFocusedAgent()
-	if focusedAgent == "" {
-		return &ExecutionResult{
-			Error:    "No agent is currently focused. Use /focus <agent-name> first.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	if len(args) == 0 {
+		return errorResult("Usage: /mode <mode>"), nil
 	}
 
 	mode := args[0]
-	var agentMode database.AgentMode
-	switch mode {
-	case "autonomous", "auto":
-		agentMode = database.AgentModeAutonomous
-	case "interactive":
-		agentMode = database.AgentModeInteractive
-	default:
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Invalid mode: %s. Use 'autonomous' or 'interactive'", mode),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+
+	if e.config.StreamManager == nil {
+		return errorResult("Stream manager not available"), nil
 	}
 
-	if err := e.config.StreamManager.SetMode(focusedAgent, agentMode); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to set mode: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	// Send mode change to focused agent
+	// Convert string mode to database.AgentMode type
+	agentMode := database.AgentMode(mode)
+	if err := e.config.StreamManager.SetMode(e.focusedAgent, agentMode); err != nil {
+		return errorResult(fmt.Sprintf("Failed to change mode: %v", err)), err
 	}
 
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Agent '%s' mode set to %s\n", focusedAgent, mode),
+		Output:   fmt.Sprintf("Changed mode for %s to: %s\n", e.focusedAgent, mode),
 		ExitCode: 0,
 	}, nil
 }
 
-// handlePause pauses the focused agent's execution.
-// Usage: /pause
 func (e *Executor) handlePause(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if e.focusedAgent == "" {
+		return errorResult("No agent focused. Use /focus <agent> first"), nil
+	}
+
 	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Error:    "Stream manager not available",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+		return errorResult("Stream manager not available"), nil
 	}
 
-	focusedAgent := e.GetFocusedAgent()
-	if focusedAgent == "" {
-		return &ExecutionResult{
-			Error:    "No agent is currently focused. Use /focus <agent-name> first.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
-	}
-
-	// Use SendInterrupt with "pause" reason as workaround since PauseAgent doesn't exist
-	if err := e.config.StreamManager.SendInterrupt(focusedAgent, "pause requested"); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to pause agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	// Use SendInterrupt with "pause" reason as workaround
+	if err := e.config.StreamManager.SendInterrupt(e.focusedAgent, "pause requested"); err != nil {
+		return errorResult(fmt.Sprintf("Failed to pause agent: %v", err)), err
 	}
 
 	return &ExecutionResult{
-		Output:   fmt.Sprintf("Pause signal sent to agent '%s'\n", focusedAgent),
+		Output:   fmt.Sprintf("Paused agent: %s\n", e.focusedAgent),
 		ExitCode: 0,
 	}, nil
 }
 
-// handleResume resumes a paused agent with optional guidance.
-// Usage: /resume [message]
 func (e *Executor) handleResume(ctx context.Context, args []string) (*ExecutionResult, error) {
-	if e.config.StreamManager == nil {
-		return &ExecutionResult{
-			Error:    "Stream manager not available",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	if e.focusedAgent == "" {
+		return errorResult("No agent focused. Use /focus <agent> first"), nil
 	}
 
-	focusedAgent := e.GetFocusedAgent()
-	if focusedAgent == "" {
-		return &ExecutionResult{
-			Error:    "No agent is currently focused. Use /focus <agent-name> first.",
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	if e.config.StreamManager == nil {
+		return errorResult("Stream manager not available"), nil
 	}
 
 	guidance := ""
@@ -2778,103 +1121,37 @@ func (e *Executor) handleResume(ctx context.Context, args []string) (*ExecutionR
 		guidance = strings.Join(args, " ")
 	}
 
-	if err := e.config.StreamManager.Resume(focusedAgent, guidance); err != nil {
-		return &ExecutionResult{
-			Error:    fmt.Sprintf("Failed to resume agent: %v", err),
-			IsError:  true,
-			ExitCode: 1,
-		}, nil
+	if err := e.config.StreamManager.Resume(e.focusedAgent, guidance); err != nil {
+		return errorResult(fmt.Sprintf("Failed to resume agent: %v", err)), err
 	}
-
-	output := fmt.Sprintf("Agent '%s' resumed", focusedAgent)
-	if guidance != "" {
-		output += fmt.Sprintf(" with guidance: %s", guidance)
-	}
-	output += "\n"
 
 	return &ExecutionResult{
-		Output:   output,
+		Output:   fmt.Sprintf("Resumed agent: %s\n", e.focusedAgent),
 		ExitCode: 0,
 	}, nil
 }
 
-// verifyAgentRunning checks if an agent is actually running with an active streaming session.
-// Returns nil if the agent is running and has an active session, or an error describing the problem.
-func (e *Executor) verifyAgentRunning(ctx context.Context, agentName string) error {
-	// Check if ComponentDAO is available
-	if e.config.ComponentDAO == nil {
-		return fmt.Errorf("component DAO not available")
+func (e *Executor) handleAttack(ctx context.Context, args []string) (*ExecutionResult, error) {
+	if e.config.AttackRunner == nil {
+		return errorResult("Attack runner not available"), nil
 	}
 
-	// Check if agent exists
-	comp, err := e.config.ComponentDAO.GetByName(ctx, component.ComponentKindAgent, agentName)
-	if err != nil {
-		return fmt.Errorf("agent '%s' not found", agentName)
-	}
-	if comp == nil {
-		return fmt.Errorf("agent '%s' not found", agentName)
+	if len(args) == 0 {
+		return errorResult("Usage: /attack <attack-name> [args...]"), nil
 	}
 
-	// Check if agent process is running
-	if !comp.IsRunning() {
-		return fmt.Errorf("agent '%s' is not running. Use /agent-start %s to start it", agentName, agentName)
-	}
+	attackName := args[0]
+	attackArgs := args[1:]
 
-	// Check if StreamManager is available
-	if e.config.StreamManager == nil {
-		return fmt.Errorf("stream manager not available. Agent streaming is disabled")
-	}
+	// This is a simplified version - actual implementation would need to:
+	// 1. Parse attack configuration
+	// 2. Start attack execution
+	// 3. Stream results back to TUI
+	_ = attackName
+	_ = attackArgs
 
-	// Check if agent has an active streaming session
-	session, err := e.config.StreamManager.GetSession(agentName)
-	if err != nil || session == nil {
-		return fmt.Errorf("agent '%s' has no active streaming session. It may be running in non-streaming mode", agentName)
-	}
-
-	return nil
-}
-
-// subscribeFocusedAgent subscribes to the agent's event stream and starts the event processor.
-// Returns an error if subscription fails.
-func (e *Executor) subscribeFocusedAgent(agentName string) error {
-	if e.config.StreamManager == nil {
-		return fmt.Errorf("stream manager not available")
-	}
-
-	if e.program == nil {
-		return fmt.Errorf("program not set - cannot deliver events to TUI")
-	}
-
-	// Subscribe to the agent's event stream
-	eventChan := e.config.StreamManager.Subscribe(agentName)
-	if eventChan == nil {
-		return fmt.Errorf("failed to subscribe to agent stream: nil channel returned")
-	}
-
-	// Store the subscription channel
-	e.subscriptionCh = eventChan
-
-	// Create and start the event processor
-	e.eventProcessor = NewEventProcessor(eventChan, e.program, agentName)
-	e.eventProcessor.Start()
-
-	return nil
-}
-
-// unsubscribeFocusedAgent stops the event processor and unsubscribes from the current agent.
-// Safe to call even if no agent is focused.
-func (e *Executor) unsubscribeFocusedAgent() error {
-	// Stop the event processor if running
-	if e.eventProcessor != nil {
-		e.eventProcessor.Stop()
-		e.eventProcessor = nil
-	}
-
-	// Unsubscribe from the stream if we have a subscription
-	if e.subscriptionCh != nil && e.config.StreamManager != nil && e.focusedAgent != "" {
-		e.config.StreamManager.Unsubscribe(e.focusedAgent, e.subscriptionCh)
-		e.subscriptionCh = nil
-	}
-
-	return nil
+	return &ExecutionResult{
+		Output:   "Attack execution not yet fully implemented in TUI\n",
+		ExitCode: 0,
+	}, nil
 }

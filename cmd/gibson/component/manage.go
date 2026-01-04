@@ -2,7 +2,6 @@ package component
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -10,10 +9,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/component/build"
-	"github.com/zero-day-ai/gibson/internal/component/git"
-	"github.com/zero-day-ai/gibson/internal/database"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -104,54 +102,32 @@ func newBuildCommand(cfg Config) *cobra.Command {
 
 // runList executes the list command.
 func runList(cmd *cobra.Command, args []string, cfg Config, flags *ListFlags) error {
-	ctx := cmd.Context()
-
-	// Validate flags - cannot use both --local and --remote
-	if flags.Local && flags.Remote {
-		return fmt.Errorf("cannot use both --local and --remote flags")
-	}
-
-	// Open database connection for metadata
-	homeDir, err := getGibsonHome()
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+		return err
+	}
+	defer cc.Close()
+
+	// Build list options
+	opts := core.ListOptions{
+		Local:  flags.Local,
+		Remote: flags.Remote,
 	}
 
-	dbPath := homeDir + "/gibson.db"
-	db, err := openDatabase(dbPath)
+	// Call core function
+	result, err := core.ComponentList(cc, cfg.Kind, opts)
 	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	// Create component DAO
-	dao := database.NewComponentDAO(db)
-
-	// Use database-only listing (legacy discovery removed)
-	return runListFallback(cmd, ctx, cfg, flags, dao)
-}
-
-// runListFallback provides database-only listing.
-func runListFallback(cmd *cobra.Command, ctx context.Context, cfg Config, flags *ListFlags, dao database.ComponentDAO) error {
-	// Get all components of the specified kind from database
-	components, err := dao.List(ctx, cfg.Kind)
-	if err != nil {
-		return fmt.Errorf("failed to list components: %w", err)
+		return err
 	}
 
-	// Apply source filters if specified
-	var filtered []*component.Component
-	for _, comp := range components {
-		if flags.Local && comp.Source != "local" {
-			continue
-		}
-		if flags.Remote && comp.Source != "remote" {
-			continue
-		}
-		filtered = append(filtered, comp)
+	// Format output
+	components, ok := result.Data.([]*component.Component)
+	if !ok {
+		return fmt.Errorf("unexpected result type")
 	}
 
-	if len(filtered) == 0 {
+	if len(components) == 0 {
 		cmd.Printf("No %s installed.\n", cfg.DisplayPlural)
 		return nil
 	}
@@ -164,7 +140,7 @@ func runListFallback(cmd *cobra.Command, ctx context.Context, cfg Config, flags 
 		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tPORT\tSOURCE")
 		fmt.Fprintln(w, "----\t-------\t------\t----\t------")
 
-		for _, comp := range filtered {
+		for _, comp := range components {
 			port := "-"
 			if comp.Port > 0 {
 				port = fmt.Sprintf("%d", comp.Port)
@@ -183,7 +159,7 @@ func runListFallback(cmd *cobra.Command, ctx context.Context, cfg Config, flags 
 		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tSOURCE\tPATH")
 		fmt.Fprintln(w, "----\t-------\t------\t------\t----")
 
-		for _, comp := range filtered {
+		for _, comp := range components {
 			path := comp.RepoPath
 			if path == "" {
 				path = "-"
@@ -202,34 +178,28 @@ func runListFallback(cmd *cobra.Command, ctx context.Context, cfg Config, flags 
 	return nil
 }
 
+
 // runShow executes the show command.
 func runShow(cmd *cobra.Command, args []string, cfg Config) error {
-	ctx := cmd.Context()
 	componentName := args[0]
 
-	// Open database connection
-	homeDir, err := getGibsonHome()
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+		return err
+	}
+	defer cc.Close()
+
+	// Call core function
+	result, err := core.ComponentShow(cc, cfg.Kind, componentName)
+	if err != nil {
+		return err
 	}
 
-	dbPath := homeDir + "/gibson.db"
-	db, err := openDatabase(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	// Create component DAO
-	dao := database.NewComponentDAO(db)
-
-	// Get component
-	comp, err := dao.GetByName(ctx, cfg.Kind, componentName)
-	if err != nil {
-		return fmt.Errorf("failed to get component: %w", err)
-	}
-	if comp == nil {
-		return fmt.Errorf("%s '%s' not found", cfg.DisplayName, componentName)
+	// Extract component from result
+	comp, ok := result.Data.(*component.Component)
+	if !ok {
+		return fmt.Errorf("unexpected result type")
 	}
 
 	// Display component details
@@ -340,33 +310,7 @@ func runShow(cmd *cobra.Command, args []string, cfg Config) error {
 
 // runUninstall executes the uninstall command.
 func runUninstall(cmd *cobra.Command, args []string, cfg Config, flags *UninstallFlags) error {
-	ctx := cmd.Context()
 	componentName := args[0]
-
-	// Open database connection
-	homeDir, err := getGibsonHome()
-	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
-	}
-
-	dbPath := homeDir + "/gibson.db"
-	db, err := openDatabase(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	// Create component DAO
-	dao := database.NewComponentDAO(db)
-
-	// Check if component exists
-	existing, err := dao.GetByName(ctx, cfg.Kind, componentName)
-	if err != nil {
-		return fmt.Errorf("failed to get component: %w", err)
-	}
-	if existing == nil {
-		return fmt.Errorf("%s '%s' not found", cfg.DisplayName, componentName)
-	}
 
 	// Confirm uninstall unless --force is set
 	if !flags.Force {
@@ -384,15 +328,22 @@ func runUninstall(cmd *cobra.Command, args []string, cfg Config, flags *Uninstal
 		}
 	}
 
-	// Create installer
-	gitOps := git.NewDefaultGitOperations()
-	builder := build.NewDefaultBuildExecutor()
-	installer := component.NewDefaultInstaller(gitOps, builder, dao)
-
-	// Uninstall the component
-	result, err := installer.Uninstall(ctx, cfg.Kind, componentName)
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("uninstall failed: %w", err)
+		return err
+	}
+	defer cc.Close()
+
+	// Build uninstall options
+	opts := core.UninstallOptions{
+		Force: flags.Force,
+	}
+
+	// Call core function
+	result, err := core.ComponentUninstall(cc, cfg.Kind, componentName, opts)
+	if err != nil {
+		return err
 	}
 
 	cmd.Printf("%s '%s' uninstalled successfully in %v\n", titleCaser.String(cfg.DisplayName), componentName, result.Duration)
@@ -401,67 +352,50 @@ func runUninstall(cmd *cobra.Command, args []string, cfg Config, flags *Uninstal
 
 // runUpdate executes the update command.
 func runUpdate(cmd *cobra.Command, args []string, cfg Config, flags *UpdateFlags) error {
-	ctx := cmd.Context()
 	componentName := args[0]
 
 	cmd.Printf("Updating %s '%s'...\n", cfg.DisplayName, componentName)
 
-	// Open database connection
-	homeDir, err := getGibsonHome()
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+		return err
 	}
+	defer cc.Close()
 
-	dbPath := homeDir + "/gibson.db"
-	db, err := openDatabase(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	// Create component DAO
-	dao := database.NewComponentDAO(db)
-
-	// Check if component exists
-	existing, err := dao.GetByName(ctx, cfg.Kind, componentName)
-	if err != nil {
-		return fmt.Errorf("failed to get component: %w", err)
-	}
-	if existing == nil {
-		return fmt.Errorf("%s '%s' not found", cfg.DisplayName, componentName)
-	}
-
-	// Create installer
-	gitOps := git.NewDefaultGitOperations()
-	builder := build.NewDefaultBuildExecutor()
-	installer := component.NewDefaultInstaller(gitOps, builder, dao)
-
-	// Prepare update options
-	opts := component.UpdateOptions{
+	// Build update options
+	opts := core.UpdateOptions{
 		Restart:   flags.Restart,
 		SkipBuild: flags.SkipBuild,
+		Verbose:   flags.Verbose,
 	}
 
-	// Update the component
-	result, err := installer.Update(ctx, cfg.Kind, componentName, opts)
+	// Call core function
+	result, err := core.ComponentUpdate(cc, cfg.Kind, componentName, opts)
 	if err != nil {
-		return fmt.Errorf("update failed: %w", err)
+		return err
 	}
 
-	if !result.Updated {
-		cmd.Printf("%s '%s' is already up to date (v%s)\n", titleCaser.String(cfg.DisplayName), componentName, result.OldVersion)
+	// Extract update result
+	updateResult, ok := result.Data.(*component.UpdateResult)
+	if !ok {
+		return fmt.Errorf("unexpected result type")
+	}
+
+	if !updateResult.Updated {
+		cmd.Printf("%s '%s' is already up to date (v%s)\n", titleCaser.String(cfg.DisplayName), componentName, updateResult.OldVersion)
 		return nil
 	}
 
 	cmd.Printf("%s '%s' updated successfully (v%s → v%s) in %v\n",
 		titleCaser.String(cfg.DisplayName),
 		componentName,
-		result.OldVersion,
-		result.NewVersion,
+		updateResult.OldVersion,
+		updateResult.NewVersion,
 		result.Duration)
 
-	if result.BuildOutput != "" && !flags.SkipBuild && flags.Verbose {
-		cmd.Printf("\nBuild output:\n%s\n", result.BuildOutput)
+	if updateResult.BuildOutput != "" && !flags.SkipBuild && flags.Verbose {
+		cmd.Printf("\nBuild output:\n%s\n", updateResult.BuildOutput)
 	}
 
 	return nil
@@ -469,94 +403,39 @@ func runUpdate(cmd *cobra.Command, args []string, cfg Config, flags *UpdateFlags
 
 // runBuild executes the build command.
 func runBuild(cmd *cobra.Command, args []string, cfg Config) error {
-	ctx := cmd.Context()
 	componentName := args[0]
 
 	cmd.Printf("Building %s '%s'...\n", cfg.DisplayName, componentName)
 
-	// Open database connection
-	homeDir, err := getGibsonHome()
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+		return err
 	}
+	defer cc.Close()
 
-	dbPath := homeDir + "/gibson.db"
-	db, err := openDatabase(dbPath)
+	// Call core function
+	result, err := core.ComponentBuild(cc, cfg.Kind, componentName)
 	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	// Create component DAO
-	dao := database.NewComponentDAO(db)
-
-	// Get component
-	comp, err := dao.GetByName(ctx, cfg.Kind, componentName)
-	if err != nil {
-		return fmt.Errorf("failed to get component: %w", err)
-	}
-	if comp == nil {
-		return fmt.Errorf("%s '%s' not found", cfg.DisplayName, componentName)
+		return err
 	}
 
-	if comp.Manifest == nil || comp.Manifest.Build == nil {
-		return fmt.Errorf("%s '%s' has no build configuration", cfg.DisplayName, componentName)
+	// Extract build result
+	buildResult, ok := result.Data.(*build.BuildResult)
+	if !ok {
+		return fmt.Errorf("unexpected result type")
 	}
 
-	// Create builder
-	builder := build.NewDefaultBuildExecutor()
+	cmd.Printf("%s '%s' built successfully in %v\n", titleCaser.String(cfg.DisplayName), componentName, result.Duration)
 
-	// Prepare build configuration
-	buildCfg := comp.Manifest.Build
-	workDir := comp.RepoPath
-	if workDir == "" {
-		return fmt.Errorf("%s '%s' has no repository path configured", cfg.DisplayName, componentName)
-	}
-	buildConfig := build.BuildConfig{
-		WorkDir: workDir,
-		Command: "make",
-		Args:    []string{"build"},
-		Env:     buildCfg.GetEnv(),
+	if buildResult.Stdout != "" {
+		cmd.Printf("\nStdout:\n%s\n", buildResult.Stdout)
 	}
 
-	// Override with manifest build command if specified
-	if buildCfg.Command != "" {
-		// Split command into executable and args
-		parts := strings.Fields(buildCfg.Command)
-		if len(parts) > 0 {
-			buildConfig.Command = parts[0]
-			buildConfig.Args = parts[1:]
-		}
-	}
-
-	// Set working directory if specified
-	if buildCfg.WorkDir != "" {
-		buildConfig.WorkDir = workDir + "/" + buildCfg.WorkDir
-	}
-
-	// Build the component
-	start := time.Now()
-	result, err := builder.Build(ctx, buildConfig, comp.Name, comp.Version, "dev")
-	if err != nil {
-		return fmt.Errorf("build failed: %w", err)
-	}
-
-	duration := time.Since(start)
-
-	cmd.Printf("%s '%s' built successfully in %v\n", titleCaser.String(cfg.DisplayName), componentName, duration)
-
-	if result.Stdout != "" {
-		cmd.Printf("\nStdout:\n%s\n", result.Stdout)
-	}
-
-	if result.Stderr != "" {
-		cmd.Printf("\nStderr:\n%s\n", result.Stderr)
+	if buildResult.Stderr != "" {
+		cmd.Printf("\nStderr:\n%s\n", buildResult.Stderr)
 	}
 
 	return nil
 }
 
-// openDatabase opens the Gibson database at the specified path
-func openDatabase(dbPath string) (*database.DB, error) {
-	return database.Open(dbPath)
-}

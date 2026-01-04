@@ -466,3 +466,278 @@ func sortSuggestions(suggestions []Suggestion) {
 		return suggestions[i].Text < suggestions[j].Text
 	})
 }
+
+func TestCompleterSubcommandCompletion(t *testing.T) {
+	registry := NewCommandRegistry()
+
+	// Register a command with subcommands (mission)
+	registry.Register(&SlashCommand{
+		Name:        "mission",
+		Aliases:     []string{"missions"},
+		Description: "Manage missions",
+		Subcommands: map[string]*SlashCommand{
+			"list": {
+				Name:        "list",
+				Description: "List all missions",
+			},
+			"show": {
+				Name:        "show",
+				Description: "Show mission details",
+			},
+			"run": {
+				Name:        "run",
+				Description: "Run mission from workflow",
+			},
+			"resume": {
+				Name:        "resume",
+				Description: "Resume paused mission",
+			},
+			"stop": {
+				Name:        "stop",
+				Description: "Stop running mission",
+			},
+			"delete": {
+				Name:        "delete",
+				Description: "Delete mission",
+			},
+		},
+	})
+
+	// Register a command without subcommands
+	registry.Register(&SlashCommand{
+		Name:        "clear",
+		Description: "Clear console",
+	})
+
+	completer := NewCompleter(registry)
+
+	tests := []struct {
+		name  string
+		input string
+		want  []Suggestion
+	}{
+		{
+			name:  "command with trailing space shows all subcommands",
+			input: "/mission ",
+			want: []Suggestion{
+				{Text: "delete", Description: "Delete mission"},
+				{Text: "list", Description: "List all missions"},
+				{Text: "resume", Description: "Resume paused mission"},
+				{Text: "run", Description: "Run mission from workflow"},
+				{Text: "show", Description: "Show mission details"},
+				{Text: "stop", Description: "Stop running mission"},
+			},
+		},
+		{
+			name:  "partial subcommand matches multiple",
+			input: "/mission r",
+			want: []Suggestion{
+				{Text: "resume", Description: "Resume paused mission"},
+				{Text: "run", Description: "Run mission from workflow"},
+			},
+		},
+		{
+			name:  "partial subcommand matches single",
+			input: "/mission li",
+			want: []Suggestion{
+				{Text: "list", Description: "List all missions"},
+			},
+		},
+		{
+			name:  "full subcommand name",
+			input: "/mission list",
+			want: []Suggestion{
+				{Text: "list", Description: "List all missions"},
+			},
+		},
+		{
+			name:  "no matching subcommand",
+			input: "/mission xyz",
+			want:  nil,
+		},
+		{
+			name:  "subcommand with trailing space returns nothing (args start)",
+			input: "/mission list ",
+			want:  nil,
+		},
+		{
+			name:  "command without subcommands and trailing space returns nothing",
+			input: "/clear ",
+			want:  nil,
+		},
+		{
+			name:  "alias works for subcommand completion",
+			input: "/missions ",
+			want: []Suggestion{
+				{Text: "delete", Description: "Delete mission"},
+				{Text: "list", Description: "List all missions"},
+				{Text: "resume", Description: "Resume paused mission"},
+				{Text: "run", Description: "Run mission from workflow"},
+				{Text: "show", Description: "Show mission details"},
+				{Text: "stop", Description: "Stop running mission"},
+			},
+		},
+		{
+			name:  "alias with partial subcommand",
+			input: "/missions st",
+			want: []Suggestion{
+				{Text: "stop", Description: "Stop running mission"},
+			},
+		},
+		{
+			name:  "case insensitive subcommand matching",
+			input: "/mission R",
+			want: []Suggestion{
+				{Text: "resume", Description: "Resume paused mission"},
+				{Text: "run", Description: "Run mission from workflow"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := completer.GetSuggestions(tt.input)
+
+			// Handle nil vs empty slice equivalence
+			if len(got) == 0 && len(tt.want) == 0 {
+				return
+			}
+
+			// Sort for consistent comparison
+			if got != nil {
+				sortSuggestions(got)
+			}
+			if tt.want != nil {
+				sortSuggestions(tt.want)
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetSuggestions(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompleterSubcommandCompletionWithAgent(t *testing.T) {
+	registry := NewCommandRegistry()
+
+	// Register agent command with subcommands
+	registry.Register(&SlashCommand{
+		Name:        "agent",
+		Aliases:     []string{"agents"},
+		Description: "Manage agents",
+		Subcommands: map[string]*SlashCommand{
+			"start": {
+				Name:        "start",
+				Description: "Start an agent",
+			},
+			"stop": {
+				Name:        "stop",
+				Description: "Stop a running agent",
+			},
+			"status": {
+				Name:        "status",
+				Description: "Show agent status",
+			},
+		},
+	})
+
+	completer := NewCompleter(registry)
+
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "agent subcommand st completes to start, status, stop",
+			input: "/agent st",
+			want:  []string{"start", "status", "stop"},
+		},
+		{
+			name:  "agent subcommand sta completes to start, status",
+			input: "/agent sta",
+			want:  []string{"start", "status"},
+		},
+		{
+			name:  "agent subcommand star completes to start only",
+			input: "/agent star",
+			want:  []string{"start"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			suggestions := completer.GetSuggestions(tt.input)
+			got := make([]string, len(suggestions))
+			for i, s := range suggestions {
+				got[i] = s.Text
+			}
+
+			sort.Strings(got)
+			sort.Strings(tt.want)
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("GetSuggestions(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompleterComplete_Subcommands(t *testing.T) {
+	registry := NewCommandRegistry()
+	RegisterDefaultCommands(registry)
+	completer := NewCompleter(registry)
+
+	tests := []struct {
+		name     string
+		input    string
+		wantAny  []string // At least one of these should be present
+		wantNone []string // None of these should be present
+	}{
+		{
+			name:    "mission with space shows subcommands not top-level commands",
+			input:   "/mission ",
+			wantAny: []string{"list", "show", "run", "resume", "stop", "delete"},
+			wantNone: []string{"/mission", "/agent", "/clear"},
+		},
+		{
+			name:    "agent with space shows subcommands",
+			input:   "/agent ",
+			wantAny: []string{"list", "show", "start", "stop", "status"},
+			wantNone: []string{"/agent", "/mission"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := completer.Complete(tt.input)
+
+			// Check that at least one wanted item is present
+			foundAny := false
+			for _, item := range tt.wantAny {
+				for _, result := range got {
+					if result == item {
+						foundAny = true
+						break
+					}
+				}
+				if foundAny {
+					break
+				}
+			}
+			if !foundAny && len(tt.wantAny) > 0 {
+				t.Errorf("Complete(%q) = %v, want at least one of %v", tt.input, got, tt.wantAny)
+			}
+
+			// Check that none of the unwanted items are present
+			for _, unwanted := range tt.wantNone {
+				for _, result := range got {
+					if result == unwanted {
+						t.Errorf("Complete(%q) = %v, should not contain %q", tt.input, got, unwanted)
+					}
+				}
+			}
+		})
+	}
+}

@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/mission"
-	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
 
@@ -84,6 +84,41 @@ func getHomeDirFromFlags(flags *GlobalFlags) (string, error) {
 	return getGibsonHome()
 }
 
+// buildMissionCommandContext creates a CommandContext for mission commands.
+// It handles database connection, mission store initialization, and context setup.
+func buildMissionCommandContext(cmd *cobra.Command) (*core.CommandContext, error) {
+	ctx := cmd.Context()
+
+	// Parse global flags
+	flags, err := ParseGlobalFlags(cmd)
+	if err != nil {
+		return nil, internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
+	}
+
+	// Get Gibson home directory
+	homeDir, err := getHomeDirFromFlags(flags)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Gibson home: %w", err)
+	}
+
+	// Open database
+	dbPath := homeDir + "/gibson.db"
+	db, err := database.Open(dbPath)
+	if err != nil {
+		return nil, internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
+	}
+
+	// Create mission store
+	missionStore := mission.NewDBMissionStore(db)
+
+	return &core.CommandContext{
+		Ctx:          ctx,
+		DB:           db,
+		HomeDir:      homeDir,
+		MissionStore: missionStore,
+	}, nil
+}
+
 func init() {
 	// Add subcommands
 	missionCmd.AddCommand(missionListCmd)
@@ -106,48 +141,200 @@ func init() {
 
 // runMissionList lists all missions with optional status filter
 func runMissionList(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
+	// Build command context
+	cc, err := buildMissionCommandContext(cmd)
+	if err != nil {
+		return err
+	}
+	defer cc.Close()
 
-	// Parse global flags
+	// Call core function
+	result, err := core.MissionList(cc, missionStatusFilter)
+	if err != nil {
+		return err
+	}
+
+	// Handle errors from core
+	if result.Error != nil {
+		return internal.WrapError(internal.ExitError, "mission list failed", result.Error)
+	}
+
+	// Format output
+	return formatMissionListOutput(cmd, result)
+}
+
+// runMissionShow shows detailed mission information
+func runMissionShow(cmd *cobra.Command, args []string) error {
+	missionName := args[0]
+
+	// Build command context
+	cc, err := buildMissionCommandContext(cmd)
+	if err != nil {
+		return err
+	}
+	defer cc.Close()
+
+	// Call core function
+	result, err := core.MissionShow(cc, missionName)
+	if err != nil {
+		return err
+	}
+
+	// Handle errors from core
+	if result.Error != nil {
+		return internal.WrapError(internal.ExitError, "mission show failed", result.Error)
+	}
+
+	// Format output
+	return formatMissionShowOutput(cmd, result)
+}
+
+// runMissionRun creates and runs a new mission from workflow YAML
+func runMissionRun(cmd *cobra.Command, args []string) error {
+	// Parse global flags for verbose logging
 	flags, err := ParseGlobalFlags(cmd)
 	if err != nil {
 		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
 	}
 
-	// Get Gibson home directory
-	homeDir, err := getHomeDirFromFlags(flags)
-	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+	// Verbose output
+	if flags.IsVerbose() {
+		fmt.Printf("Loading workflow from %s\n", missionWorkflowFile)
 	}
 
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
+	// Build command context
+	cc, err := buildMissionCommandContext(cmd)
 	if err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
+		return err
 	}
-	defer db.Close()
+	defer cc.Close()
 
-	// Create mission store
-	missionStore := mission.NewDBMissionStore(db)
+	// Call core function
+	result, err := core.MissionRun(cc, missionWorkflowFile)
+	if err != nil {
+		return err
+	}
 
-	// Parse status filter
-	var filter *mission.MissionFilter
-	if missionStatusFilter != "" {
-		status := mission.MissionStatus(missionStatusFilter)
-		// Validate status
-		if !isValidMissionStatus(status) {
-			return internal.NewCLIError(internal.ExitError, "invalid status filter: must be pending, running, completed, failed, or cancelled")
+	// Handle errors from core
+	if result.Error != nil {
+		return internal.WrapError(internal.ExitError, "mission run failed", result.Error)
+	}
+
+	// Verbose output
+	if flags.IsVerbose() {
+		if runResult, ok := result.Data.(*core.MissionRunResult); ok {
+			fmt.Printf("Workflow loaded: %s (%d nodes)\n", runResult.Workflow.Name, runResult.NodesCount)
 		}
-		filter = mission.NewMissionFilter().WithStatus(status)
-	} else {
-		filter = mission.NewMissionFilter()
 	}
 
-	// List missions
-	missions, err := missionStore.List(ctx, filter)
+	// Format output
+	return formatMissionRunOutput(cmd, result)
+}
+
+// runMissionResume resumes a paused mission
+func runMissionResume(cmd *cobra.Command, args []string) error {
+	missionName := args[0]
+
+	// Build command context
+	cc, err := buildMissionCommandContext(cmd)
 	if err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to list missions", err)
+		return err
+	}
+	defer cc.Close()
+
+	// Call core function
+	result, err := core.MissionResume(cc, missionName)
+	if err != nil {
+		return err
+	}
+
+	// Handle errors from core
+	if result.Error != nil {
+		return internal.WrapError(internal.ExitError, "mission resume failed", result.Error)
+	}
+
+	// Format output
+	return formatMissionActionOutput(cmd, result)
+}
+
+// runMissionStop stops a running mission
+func runMissionStop(cmd *cobra.Command, args []string) error {
+	missionName := args[0]
+
+	// Build command context
+	cc, err := buildMissionCommandContext(cmd)
+	if err != nil {
+		return err
+	}
+	defer cc.Close()
+
+	// Call core function
+	result, err := core.MissionStop(cc, missionName)
+	if err != nil {
+		return err
+	}
+
+	// Handle errors from core
+	if result.Error != nil {
+		return internal.WrapError(internal.ExitError, "mission stop failed", result.Error)
+	}
+
+	// Format output
+	return formatMissionActionOutput(cmd, result)
+}
+
+// runMissionDelete deletes a mission
+func runMissionDelete(cmd *cobra.Command, args []string) error {
+	missionName := args[0]
+
+	// Confirmation prompt unless --force is set
+	if !missionForceDelete {
+		fmt.Printf("Are you sure you want to delete mission '%s'? This action cannot be undone.\n", missionName)
+		fmt.Print("Type 'yes' to confirm: ")
+
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return internal.WrapError(internal.ExitError, "failed to read confirmation", err)
+		}
+
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response != "yes" {
+			fmt.Println("Deletion cancelled")
+			return nil
+		}
+	}
+
+	// Build command context
+	cc, err := buildMissionCommandContext(cmd)
+	if err != nil {
+		return err
+	}
+	defer cc.Close()
+
+	// Call core function
+	result, err := core.MissionDelete(cc, missionName, missionForceDelete)
+	if err != nil {
+		return err
+	}
+
+	// Handle errors from core
+	if result.Error != nil {
+		return internal.WrapError(internal.ExitError, "mission delete failed", result.Error)
+	}
+
+	// Format output
+	return formatMissionActionOutput(cmd, result)
+}
+
+// Output formatting functions
+
+// formatMissionListOutput formats the mission list result
+func formatMissionListOutput(cmd *cobra.Command, result *core.CommandResult) error {
+	// Parse global flags
+	flags, err := ParseGlobalFlags(cmd)
+	if err != nil {
+		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
 	}
 
 	// Create formatter
@@ -157,24 +344,30 @@ func runMissionList(cmd *cobra.Command, args []string) error {
 	}
 	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
 
+	// Extract result data
+	listResult, ok := result.Data.(*core.MissionListResult)
+	if !ok {
+		return fmt.Errorf("invalid result type for mission list")
+	}
+
 	if outFormat == internal.FormatJSON {
 		return formatter.PrintJSON(map[string]interface{}{
-			"missions": missions,
-			"count":    len(missions),
+			"missions": listResult.Missions,
+			"count":    listResult.Count,
 		})
 	}
 
 	// Text format
-	if len(missions) == 0 {
+	if len(listResult.Missions) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No missions found")
 		return nil
 	}
 
 	// Print table
 	headers := []string{"Name", "Status", "Progress", "Findings", "Created", "Updated"}
-	rows := make([][]string, 0, len(missions))
+	rows := make([][]string, 0, len(listResult.Missions))
 
-	for _, m := range missions {
+	for _, m := range listResult.Missions {
 		progressPct := fmt.Sprintf("%.1f%%", m.Progress*100)
 
 		rows = append(rows, []string{
@@ -190,38 +383,12 @@ func runMissionList(cmd *cobra.Command, args []string) error {
 	return formatter.PrintTable(headers, rows)
 }
 
-// runMissionShow shows detailed mission information
-func runMissionShow(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
-	missionName := args[0]
-
+// formatMissionShowOutput formats the mission show result
+func formatMissionShowOutput(cmd *cobra.Command, result *core.CommandResult) error {
 	// Parse global flags
 	flags, err := ParseGlobalFlags(cmd)
 	if err != nil {
 		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
-	}
-
-	// Get Gibson home directory
-	homeDir, err := getHomeDirFromFlags(flags)
-	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
-	}
-
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
-	if err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
-	}
-	defer db.Close()
-
-	// Create mission store
-	missionStore := mission.NewDBMissionStore(db)
-
-	// Get mission
-	m, err := missionStore.GetByName(ctx, missionName)
-	if err != nil {
-		return internal.WrapError(internal.ExitError, "failed to get mission", err)
 	}
 
 	// Create formatter
@@ -230,6 +397,12 @@ func runMissionShow(cmd *cobra.Command, args []string) error {
 		outFormat = internal.FormatJSON
 	}
 	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
+
+	// Extract mission data
+	m, ok := result.Data.(*mission.Mission)
+	if !ok {
+		return fmt.Errorf("invalid result type for mission show")
+	}
 
 	if outFormat == internal.FormatJSON {
 		return formatter.PrintJSON(m)
@@ -280,84 +453,12 @@ func runMissionShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runMissionRun creates and runs a new mission from workflow YAML
-func runMissionRun(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
-
+// formatMissionRunOutput formats the mission run result
+func formatMissionRunOutput(cmd *cobra.Command, result *core.CommandResult) error {
 	// Parse global flags
 	flags, err := ParseGlobalFlags(cmd)
 	if err != nil {
 		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
-	}
-
-	// Get Gibson home directory
-	homeDir, err := getHomeDirFromFlags(flags)
-	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
-	}
-
-	// Parse workflow file
-	if flags.IsVerbose() {
-		fmt.Printf("Loading workflow from %s\n", missionWorkflowFile)
-	}
-
-	wf, err := workflow.ParseWorkflowFile(missionWorkflowFile)
-	if err != nil {
-		return internal.WrapError(internal.ExitError, "failed to parse workflow file", err)
-	}
-
-	if flags.IsVerbose() {
-		fmt.Printf("Workflow loaded: %s (%d nodes)\n", wf.Name, len(wf.Nodes))
-	}
-
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
-	if err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
-	}
-	defer db.Close()
-
-	// Create mission store
-	missionStore := mission.NewDBMissionStore(db)
-
-	// Serialize workflow to JSON
-	workflowJSON, err := json.Marshal(wf)
-	if err != nil {
-		return internal.WrapError(internal.ExitError, "failed to serialize workflow", err)
-	}
-
-	// Create mission
-	// Note: TargetID is required in the new Mission type, but we don't have it in this workflow-only context.
-	// This is a limitation - missions should probably be created with explicit target specification.
-	// For now, we'll use a zero ID as a placeholder, which will fail validation.
-	// TODO: Update mission run command to require a target specification
-	now := time.Now()
-	m := &mission.Mission{
-		ID:               types.NewID(),
-		Name:             wf.Name,
-		Description:      wf.Description,
-		Status:           mission.MissionStatusPending,
-		TargetID:         "", // FIXME: This should be specified by the user
-		WorkflowID:       wf.ID,
-		WorkflowJSON:     string(workflowJSON),
-		Progress:         0.0,
-		FindingsCount:    0,
-		AgentAssignments: make(map[string]string),
-		Metadata:         make(map[string]any),
-		CreatedAt:        now,
-		UpdatedAt:        now,
-	}
-
-	if err := missionStore.Save(ctx, m); err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to create mission", err)
-	}
-
-	// Update status to running
-	m.Status = mission.MissionStatusRunning
-	m.StartedAt = &now
-	if err := missionStore.Update(ctx, m); err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to start mission", err)
 	}
 
 	// Create formatter
@@ -367,69 +468,33 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	}
 	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
 
+	// Extract result data
+	runResult, ok := result.Data.(*core.MissionRunResult)
+	if !ok {
+		return fmt.Errorf("invalid result type for mission run")
+	}
+
 	if outFormat == internal.FormatJSON {
 		return formatter.PrintJSON(map[string]interface{}{
-			"mission": m,
-			"status":  "started",
+			"mission": runResult.Mission,
+			"status":  runResult.Status,
 		})
 	}
 
 	// Print success message
-	fmt.Printf("Mission '%s' started successfully\n", m.Name)
-	fmt.Printf("Mission ID: %s\n", m.ID)
-	fmt.Printf("Workflow: %s (%d nodes)\n", wf.Name, len(wf.Nodes))
+	fmt.Printf("Mission '%s' started successfully\n", runResult.Mission.Name)
+	fmt.Printf("Mission ID: %s\n", runResult.Mission.ID)
+	fmt.Printf("Workflow: %s (%d nodes)\n", runResult.Workflow.Name, runResult.NodesCount)
 
 	return nil
 }
 
-// runMissionResume resumes a paused mission
-func runMissionResume(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
-	missionName := args[0]
-
+// formatMissionActionOutput formats the output for mission actions (resume, stop, delete)
+func formatMissionActionOutput(cmd *cobra.Command, result *core.CommandResult) error {
 	// Parse global flags
 	flags, err := ParseGlobalFlags(cmd)
 	if err != nil {
 		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
-	}
-
-	// Get Gibson home directory
-	homeDir, err := getHomeDirFromFlags(flags)
-	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
-	}
-
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
-	if err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
-	}
-	defer db.Close()
-
-	// Create mission store
-	missionStore := mission.NewDBMissionStore(db)
-
-	// Get mission
-	m, err := missionStore.GetByName(ctx, missionName)
-	if err != nil {
-		return internal.WrapError(internal.ExitError, "failed to get mission", err)
-	}
-
-	// Check if mission can be resumed (not completed or failed)
-	if m.Status == mission.MissionStatusCompleted {
-		return internal.NewCLIError(internal.ExitError, "cannot resume completed mission")
-	}
-	if m.Status == mission.MissionStatusFailed {
-		return internal.NewCLIError(internal.ExitError, "cannot resume failed mission")
-	}
-	if m.Status == mission.MissionStatusCancelled {
-		return internal.NewCLIError(internal.ExitError, "cannot resume cancelled mission")
-	}
-
-	// Update status to running
-	if err := missionStore.UpdateStatus(ctx, m.ID, mission.MissionStatusRunning); err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to resume mission", err)
 	}
 
 	// Create formatter
@@ -440,167 +505,15 @@ func runMissionResume(cmd *cobra.Command, args []string) error {
 	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
 
 	if outFormat == internal.FormatJSON {
-		return formatter.PrintJSON(map[string]interface{}{
-			"mission": m.Name,
-			"status":  "resumed",
-		})
+		return formatter.PrintJSON(result.Data)
 	}
 
-	fmt.Printf("Mission '%s' resumed successfully\n", m.Name)
-	return nil
-}
-
-// runMissionStop stops a running mission
-func runMissionStop(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
-	missionName := args[0]
-
-	// Parse global flags
-	flags, err := ParseGlobalFlags(cmd)
-	if err != nil {
-		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
-	}
-
-	// Get Gibson home directory
-	homeDir, err := getHomeDirFromFlags(flags)
-	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
-	}
-
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
-	if err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
-	}
-	defer db.Close()
-
-	// Create mission store
-	missionStore := mission.NewDBMissionStore(db)
-
-	// Get mission
-	m, err := missionStore.GetByName(ctx, missionName)
-	if err != nil {
-		return internal.WrapError(internal.ExitError, "failed to get mission", err)
-	}
-
-	// Check if mission is running
-	if m.Status != mission.MissionStatusRunning {
-		return internal.NewCLIError(internal.ExitError, fmt.Sprintf("mission is not running (current status: %s)", m.Status))
-	}
-
-	// Update status to cancelled
-	if err := missionStore.UpdateStatus(ctx, m.ID, mission.MissionStatusCancelled); err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to stop mission", err)
-	}
-
-	// Create formatter
-	outFormat := internal.FormatText
-	if flags.OutputFormat == "json" {
-		outFormat = internal.FormatJSON
-	}
-	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
-
-	if outFormat == internal.FormatJSON {
-		return formatter.PrintJSON(map[string]interface{}{
-			"mission": m.Name,
-			"status":  "stopped",
-		})
-	}
-
-	fmt.Printf("Mission '%s' stopped successfully\n", m.Name)
-	return nil
-}
-
-// runMissionDelete deletes a mission
-func runMissionDelete(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
-	missionName := args[0]
-
-	// Parse global flags
-	flags, err := ParseGlobalFlags(cmd)
-	if err != nil {
-		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
-	}
-
-	// Confirmation prompt unless --force is set
-	if !missionForceDelete {
-		fmt.Printf("Are you sure you want to delete mission '%s'? This action cannot be undone.\n", missionName)
-		fmt.Print("Type 'yes' to confirm: ")
-
-		reader := bufio.NewReader(os.Stdin)
-		response, err := reader.ReadString('\n')
-		if err != nil {
-			return internal.WrapError(internal.ExitError, "failed to read confirmation", err)
-		}
-
-		response = strings.TrimSpace(strings.ToLower(response))
-		if response != "yes" {
-			fmt.Println("Deletion cancelled")
-			return nil
-		}
-	}
-
-	// Get Gibson home directory
-	homeDir, err := getHomeDirFromFlags(flags)
-	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
-	}
-
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
-	if err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
-	}
-	defer db.Close()
-
-	// Create mission store
-	missionStore := mission.NewDBMissionStore(db)
-
-	// Get mission to retrieve ID
-	m, err := missionStore.GetByName(ctx, missionName)
-	if err != nil {
-		return internal.WrapError(internal.ExitError, "failed to get mission", err)
-	}
-
-	// Delete mission
-	if err := missionStore.Delete(ctx, m.ID); err != nil {
-		return internal.WrapError(internal.ExitDatabaseError, "failed to delete mission", err)
-	}
-
-	// Create formatter
-	outFormat := internal.FormatText
-	if flags.OutputFormat == "json" {
-		outFormat = internal.FormatJSON
-	}
-	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
-
-	if outFormat == internal.FormatJSON {
-		return formatter.PrintJSON(map[string]interface{}{
-			"mission": m.Name,
-			"status":  "deleted",
-		})
-	}
-
-	fmt.Printf("Mission '%s' deleted successfully\n", m.Name)
+	// Print success message
+	fmt.Println(result.Message)
 	return nil
 }
 
 // Helper functions
-
-func isValidMissionStatus(status mission.MissionStatus) bool {
-	switch status {
-	case mission.MissionStatusPending,
-		mission.MissionStatusRunning,
-		mission.MissionStatusCompleted,
-		mission.MissionStatusFailed,
-		mission.MissionStatusCancelled:
-		return true
-	default:
-		return false
-	}
-}
 
 func formatTime(t time.Time) string {
 	// Format relative time for recent dates

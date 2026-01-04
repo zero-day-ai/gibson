@@ -1,7 +1,6 @@
 package component
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
 
@@ -70,35 +70,51 @@ Components automatically register when started and deregister when stopped.`,
 
 // runStatus executes the status command for a component.
 func runStatus(cmd *cobra.Command, args []string, cfg Config, flags *StatusFlags) error {
-	ctx := cmd.Context()
-
-	// Get registry manager from context
-	regManager := GetRegistryManager(ctx)
-	if regManager == nil {
-		return fmt.Errorf("registry not available (run 'gibson init' first)")
-	}
-
-	reg := regManager.Registry()
-	if reg == nil {
-		return fmt.Errorf("registry not started")
-	}
-
-	// If component name provided, show detailed instance info
+	var componentName string
 	if len(args) > 0 {
-		componentName := args[0]
-		return showComponentInstances(ctx, cmd, reg, cfg, flags, componentName)
+		componentName = args[0]
 	}
 
-	// Otherwise, show all components with instance counts
-	return showAllComponents(ctx, cmd, reg, cfg, flags)
+	// Build command context
+	cc, err := buildCommandContext(cmd)
+	if err != nil {
+		return err
+	}
+	defer cc.Close()
+
+	// Build status options
+	opts := core.StatusOptions{
+		Watch:      flags.Watch,
+		Interval:   flags.Interval,
+		ErrorCount: flags.ErrorCount,
+		JSON:       flags.JSON,
+	}
+
+	// Call core function
+	result, err := core.ComponentStatus(cc, cfg.Kind, componentName, opts)
+	if err != nil {
+		return err
+	}
+
+	// Extract result data
+	data, ok := result.Data.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("unexpected result type")
+	}
+
+	// Check if this is a specific component or all components
+	if componentName != "" {
+		return displayComponentInstances(cmd, cfg, flags, data)
+	}
+
+	return displayAllComponents(cmd, cfg, flags, data)
 }
 
-// showAllComponents displays all registered components with instance counts.
-func showAllComponents(ctx context.Context, cmd *cobra.Command, reg sdkregistry.Registry, cfg Config, flags *StatusFlags) error {
-	// Discover all instances of this kind
-	instances, err := reg.DiscoverAll(ctx, cfg.Kind.String())
-	if err != nil {
-		return fmt.Errorf("failed to discover %ss: %w", cfg.DisplayName, err)
+// displayAllComponents displays all registered components from the result data.
+func displayAllComponents(cmd *cobra.Command, cfg Config, flags *StatusFlags, data map[string]interface{}) error {
+	instances, ok := data["instances"].([]sdkregistry.ServiceInfo)
+	if !ok {
+		return fmt.Errorf("unexpected instances type")
 	}
 
 	if len(instances) == 0 {
@@ -148,16 +164,16 @@ func showAllComponents(ctx context.Context, cmd *cobra.Command, reg sdkregistry.
 	return displayAllTable(cmd, cfg, summaries)
 }
 
-// showComponentInstances displays detailed information about all instances of a specific component.
-func showComponentInstances(ctx context.Context, cmd *cobra.Command, reg sdkregistry.Registry, cfg Config, flags *StatusFlags, componentName string) error {
-	// Discover instances of this specific component
-	instances, err := reg.Discover(ctx, cfg.Kind.String(), componentName)
-	if err != nil {
-		return fmt.Errorf("failed to discover %s '%s': %w", cfg.DisplayName, componentName, err)
+// displayComponentInstances displays detailed information about all instances from the result data.
+func displayComponentInstances(cmd *cobra.Command, cfg Config, flags *StatusFlags, data map[string]interface{}) error {
+	componentName, ok := data["name"].(string)
+	if !ok {
+		return fmt.Errorf("unexpected name type")
 	}
 
-	if len(instances) == 0 {
-		return fmt.Errorf("%s '%s' not found in registry", cfg.DisplayName, componentName)
+	instances, ok := data["instances"].([]sdkregistry.ServiceInfo)
+	if !ok {
+		return fmt.Errorf("unexpected instances type")
 	}
 
 	// Sort by instance ID for consistent output

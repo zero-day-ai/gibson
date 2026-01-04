@@ -2,9 +2,9 @@ package console
 
 import (
 	"context"
+	"strings"
 	"testing"
 
-	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -71,164 +71,10 @@ func (m *mockComponentDAO) AddComponent(kind component.ComponentKind, name strin
 	}
 }
 
-func TestHandleFocus(t *testing.T) {
-	registry := NewCommandRegistry()
-	RegisterDefaultCommands(registry)
 
-	tests := []struct {
-		name        string
-		args        []string
-		wantError   bool
-		errorSubstr string
-	}{
-		{
-			name:        "no agent name",
-			args:        []string{},
-			wantError:   true,
-			errorSubstr: "Usage",
-		},
-		{
-			name:        "focus without ComponentDAO",
-			args:        []string{"davinci"},
-			wantError:   true,
-			errorSubstr: "component DAO not available",
-		},
-	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create executor without ComponentDAO
-			executor := NewExecutor(context.Background(), registry, ExecutorConfig{})
-			executor.SetupHandlers()
 
-			result, err := executor.handleFocus(context.Background(), tt.args)
-			if err != nil {
-				t.Fatalf("handleFocus returned error: %v", err)
-			}
 
-			if tt.wantError {
-				if !result.IsError {
-					t.Error("expected error result, got success")
-				}
-				if tt.errorSubstr != "" && result.Error == "" {
-					t.Errorf("expected error containing %q, got empty", tt.errorSubstr)
-				}
-			} else {
-				if result.IsError {
-					t.Errorf("unexpected error: %s", result.Error)
-				}
-			}
-		})
-	}
-}
-
-func TestHandleFocus_AgentNotFound(t *testing.T) {
-	registry := NewCommandRegistry()
-	RegisterDefaultCommands(registry)
-
-	mockDAO := newMockComponentDAO()
-	// Don't add any agents - simulating agent not found
-
-	executor := NewExecutor(context.Background(), registry, ExecutorConfig{
-		ComponentDAO: mockDAO,
-	})
-	executor.SetupHandlers()
-
-	result, err := executor.handleFocus(context.Background(), []string{"nonexistent"})
-	if err != nil {
-		t.Fatalf("handleFocus returned error: %v", err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error when agent not found")
-	}
-	if result.Error == "" {
-		t.Error("expected error message about agent not found")
-	}
-}
-
-func TestHandleFocus_AgentNotRunning(t *testing.T) {
-	registry := NewCommandRegistry()
-	RegisterDefaultCommands(registry)
-
-	mockDAO := newMockComponentDAO()
-	// Add agent that is stopped (not running)
-	mockDAO.AddComponent(component.ComponentKindAgent, "davinci", component.ComponentStatusStopped, 0)
-
-	executor := NewExecutor(context.Background(), registry, ExecutorConfig{
-		ComponentDAO: mockDAO,
-	})
-	executor.SetupHandlers()
-
-	result, err := executor.handleFocus(context.Background(), []string{"davinci"})
-	if err != nil {
-		t.Fatalf("handleFocus returned error: %v", err)
-	}
-
-	if !result.IsError {
-		t.Error("expected error when agent not running")
-	}
-	if result.Error == "" {
-		t.Error("expected error message about agent not running")
-	}
-}
-
-func TestHandleFocus_NoStreamManager(t *testing.T) {
-	registry := NewCommandRegistry()
-	RegisterDefaultCommands(registry)
-
-	mockDAO := newMockComponentDAO()
-	// Add a running agent
-	mockDAO.AddComponent(component.ComponentKindAgent, "davinci", component.ComponentStatusRunning, 12345)
-
-	executor := NewExecutor(context.Background(), registry, ExecutorConfig{
-		ComponentDAO: mockDAO,
-		// No StreamManager
-	})
-	executor.SetupHandlers()
-
-	result, err := executor.handleFocus(context.Background(), []string{"davinci"})
-	if err != nil {
-		t.Fatalf("handleFocus returned error: %v", err)
-	}
-
-	// Should fail because StreamManager is nil
-	if !result.IsError {
-		t.Error("expected error when StreamManager is nil")
-	}
-}
-
-func TestHandleFocus_WithStreamManager(t *testing.T) {
-	registry := NewCommandRegistry()
-	RegisterDefaultCommands(registry)
-
-	mockDAO := newMockComponentDAO()
-	// Add a running agent
-	mockDAO.AddComponent(component.ComponentKindAgent, "davinci", component.ComponentStatusRunning, 12345)
-
-	// Create a minimal stream manager
-	ctx := context.Background()
-	sessionDAO := &mockSessionDAO{}
-	streamManager := agent.NewStreamManager(ctx, agent.StreamManagerConfig{
-		SessionDAO: sessionDAO,
-	})
-
-	executor := NewExecutor(ctx, registry, ExecutorConfig{
-		ComponentDAO:  mockDAO,
-		StreamManager: streamManager,
-	})
-	executor.SetupHandlers()
-
-	result, err := executor.handleFocus(ctx, []string{"davinci"})
-	if err != nil {
-		t.Fatalf("handleFocus returned error: %v", err)
-	}
-
-	// Should fail because there's no active streaming session
-	if !result.IsError {
-		t.Error("expected error when no streaming session")
-	}
-}
 
 // mockSessionDAO is a simple mock for testing that implements database.SessionDAO
 type mockSessionDAO struct{}
@@ -446,6 +292,79 @@ func TestExecute_UnknownCommand(t *testing.T) {
 	}
 }
 
+func TestExecute_DeprecatedCommand(t *testing.T) {
+	registry := NewCommandRegistry()
+	RegisterDefaultCommands(registry)
+
+	executor := NewExecutor(context.Background(), registry, ExecutorConfig{})
+	executor.SetupHandlers()
+
+	tests := []struct {
+		name            string
+		command         string
+		wantErrorPrefix string
+		wantSuggestion  string
+	}{
+		{
+			name:            "mission-create deprecated",
+			command:         "/mission-create",
+			wantErrorPrefix: "Command '/mission-create' is deprecated.",
+			wantSuggestion:  "Use '/mission run -f <file>' instead",
+		},
+		{
+			name:            "agent-start deprecated",
+			command:         "/agent-start",
+			wantErrorPrefix: "Command '/agent-start' is deprecated.",
+			wantSuggestion:  "Use '/agent start <name>' instead",
+		},
+		{
+			name:            "tool-install deprecated",
+			command:         "/tool-install",
+			wantErrorPrefix: "Command '/tool-install' is deprecated.",
+			wantSuggestion:  "Use '/tool install <source>' instead",
+		},
+		{
+			name:            "plugin-stop deprecated",
+			command:         "/plugin-stop",
+			wantErrorPrefix: "Command '/plugin-stop' is deprecated.",
+			wantSuggestion:  "Use '/plugin stop <name>' instead",
+		},
+		{
+			name:            "agent-execute deprecated",
+			command:         "/agent-execute",
+			wantErrorPrefix: "Command '/agent-execute' is deprecated.",
+			wantSuggestion:  "Use '/agent start <name>' then interact via steering commands",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := executor.Execute(tt.command)
+			if err != nil {
+				t.Fatalf("Execute returned error: %v", err)
+			}
+
+			if !result.IsError {
+				t.Error("expected error for deprecated command")
+			}
+
+			if result.Error == "" {
+				t.Error("expected error message for deprecated command")
+			}
+
+			// Check that the error contains the deprecation message
+			if !strings.Contains(result.Error, tt.wantErrorPrefix) {
+				t.Errorf("error message %q does not contain expected prefix %q", result.Error, tt.wantErrorPrefix)
+			}
+
+			// Check that the error contains the suggestion
+			if !strings.Contains(result.Error, tt.wantSuggestion) {
+				t.Errorf("error message %q does not contain expected suggestion %q", result.Error, tt.wantSuggestion)
+			}
+		})
+	}
+}
+
 func TestExecute_HelpCommand(t *testing.T) {
 	registry := NewCommandRegistry()
 	RegisterDefaultCommands(registry)
@@ -488,7 +407,6 @@ func TestExecute_FocusCommand(t *testing.T) {
 	registry := NewCommandRegistry()
 	RegisterDefaultCommands(registry)
 
-	// Create executor without ComponentDAO - focus should fail
 	executor := NewExecutor(context.Background(), registry, ExecutorConfig{})
 	executor.SetupHandlers()
 
@@ -497,13 +415,83 @@ func TestExecute_FocusCommand(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 
-	// Expected to fail because no ComponentDAO
-	if !result.IsError {
-		t.Error("expected focus to fail without ComponentDAO")
+	// Focus now works without validation
+	if result.IsError {
+		t.Errorf("unexpected error: %s", result.Error)
 	}
 
-	// Focused agent should not be set
-	if executor.GetFocusedAgent() != "" {
-		t.Errorf("focused agent = %q, want empty (focus should have failed)", executor.GetFocusedAgent())
+	// Focused agent should be set
+	if executor.GetFocusedAgent() != "test-agent" {
+		t.Errorf("focused agent = %q, want %q", executor.GetFocusedAgent(), "test-agent")
+	}
+}
+
+
+
+
+
+
+
+
+// TestExecute_SubcommandRouting tests that subcommand-based commands have handlers registered
+func TestExecute_SubcommandRouting(t *testing.T) {
+	registry := NewCommandRegistry()
+	RegisterDefaultCommands(registry)
+
+	executor := NewExecutor(context.Background(), registry, ExecutorConfig{})
+	executor.SetupHandlers()
+
+	tests := []struct {
+		name        string
+		commandName string
+		hasHandler  bool
+	}{
+		{
+			name:        "mission command has handler",
+			commandName: "mission",
+			hasHandler:  true,
+		},
+		{
+			name:        "agent command has handler",
+			commandName: "agent",
+			hasHandler:  true,
+		},
+		{
+			name:        "tool command has handler",
+			commandName: "tool",
+			hasHandler:  true,
+		},
+		{
+			name:        "plugin command has handler",
+			commandName: "plugin",
+			hasHandler:  true,
+		},
+		{
+			name:        "mission alias (missions) resolves to same command",
+			commandName: "missions",
+			hasHandler:  true,
+		},
+		{
+			name:        "agent alias (agents) resolves to same command",
+			commandName: "agents",
+			hasHandler:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, ok := registry.Get(tt.commandName)
+			if !ok {
+				t.Fatalf("command %q not found in registry", tt.commandName)
+			}
+
+			if tt.hasHandler && cmd.Handler == nil {
+				t.Errorf("command %q should have a handler but doesn't", tt.commandName)
+			}
+
+			if !tt.hasHandler && cmd.Handler != nil {
+				t.Errorf("command %q should not have a handler but does", tt.commandName)
+			}
+		})
 	}
 }

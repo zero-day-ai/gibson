@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/mission"
@@ -698,7 +699,7 @@ func TestIsValidMissionStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.status), func(t *testing.T) {
-			assert.Equal(t, tt.valid, isValidMissionStatus(tt.status))
+			assert.Equal(t, tt.valid, core.IsValidMissionStatus(tt.status))
 		})
 	}
 }

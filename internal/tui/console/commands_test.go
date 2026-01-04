@@ -304,32 +304,16 @@ func TestRegisterDefaultCommands(t *testing.T) {
 	registry := NewCommandRegistry()
 	RegisterDefaultCommands(registry)
 
-	// List of expected default commands (primary names, not aliases)
+	// List of expected default commands (primary names only, NOT aliases)
+	// Updated to reflect new subcommand-based structure
+	// Note: Old hyphenated commands (e.g., agent-start, mission-create) have been removed
+	// in favor of the new subcommand syntax (e.g., /agent start, /mission run)
 	expectedCommands := []string{
-		"agent",
-		"agent-start",
-		"agent-execute",
-		"agent-stop",
-		"agent-install",
-		"agent-uninstall",
-		"agent-logs",
-		"tool",
-		"tool-start",
-		"tool-stop",
-		"tool-install",
-		"tool-uninstall",
-		"tool-logs",
-		"plugin",
-		"plugin-start",
-		"plugin-stop",
-		"plugin-install",
-		"plugin-uninstall",
+		"agent",     // primary name (has "agents" alias)
+		"tool",      // primary name (has "tools" alias)
+		"plugin",    // primary name (has "plugins" alias)
 		"attack",
-		"mission",
-		"mission-start",
-		"mission-stop",
-		"mission-create",
-		"mission-delete",
+		"mission",   // primary name (has "missions" alias)
 		"focus",
 		"interrupt",
 		"mode",
@@ -351,8 +335,9 @@ func TestRegisterDefaultCommands(t *testing.T) {
 			t.Errorf("default command %q not found", name)
 			continue
 		}
+		// The command's Name field should match the primary name
 		if cmd.Name != name {
-			t.Errorf("command name mismatch: got %q, want %q", cmd.Name, name)
+			t.Errorf("command primary name mismatch: got %q, want %q", cmd.Name, name)
 		}
 		if cmd.Description == "" {
 			t.Errorf("command %q has empty description", name)
@@ -366,10 +351,169 @@ func TestRegisterDefaultCommands(t *testing.T) {
 		}
 	}
 
-	// Verify total count
+	// Verify total count - List() returns unique commands (without duplicate aliases)
 	commands := registry.List()
 	if len(commands) != len(expectedCommands) {
-		t.Errorf("registered %d commands, want %d", len(commands), len(expectedCommands))
+		t.Errorf("registered %d unique commands, want %d", len(commands), len(expectedCommands))
+	}
+
+	// Verify that aliases work - they should retrieve the same command instance
+	aliasTests := map[string]string{
+		"agents":   "agent",
+		"tools":    "tool",
+		"plugins":  "plugin",
+		"missions": "mission",
+	}
+
+	for alias, primaryName := range aliasTests {
+		aliasCmd, ok := registry.Get(alias)
+		if !ok {
+			t.Errorf("alias %q not registered", alias)
+			continue
+		}
+		primaryCmd, _ := registry.Get(primaryName)
+		if aliasCmd != primaryCmd {
+			t.Errorf("alias %q does not point to same command as %q", alias, primaryName)
+		}
+	}
+}
+
+func TestRegisterDefaultCommands_SubcommandStructure(t *testing.T) {
+	registry := NewCommandRegistry()
+	RegisterDefaultCommands(registry)
+
+	tests := []struct {
+		name               string
+		commandName        string
+		expectedSubcommands []string
+	}{
+		{
+			name:        "agent has subcommands",
+			commandName: "agent",
+			expectedSubcommands: []string{
+				"list", "show", "install", "install-all", "uninstall",
+				"update", "build", "start", "stop", "status", "logs",
+			},
+		},
+		{
+			name:        "tool has subcommands",
+			commandName: "tool",
+			expectedSubcommands: []string{
+				"list", "show", "install", "install-all", "uninstall",
+				"update", "build", "start", "stop", "status", "logs",
+			},
+		},
+		{
+			name:        "plugin has subcommands",
+			commandName: "plugin",
+			expectedSubcommands: []string{
+				"list", "show", "install", "install-all", "uninstall",
+				"update", "build", "start", "stop", "status", "logs",
+			},
+		},
+		{
+			name:        "mission has subcommands",
+			commandName: "mission",
+			expectedSubcommands: []string{
+				"list", "show", "run", "resume", "stop", "delete",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, ok := registry.Get(tt.commandName)
+			if !ok {
+				t.Fatalf("command %q not found", tt.commandName)
+			}
+
+			if cmd.Subcommands == nil {
+				t.Fatalf("command %q has nil Subcommands map", tt.commandName)
+			}
+
+			// Check all expected subcommands are present
+			for _, subName := range tt.expectedSubcommands {
+				subcmd, ok := cmd.Subcommands[subName]
+				if !ok {
+					t.Errorf("subcommand %q not found in %q", subName, tt.commandName)
+					continue
+				}
+				if subcmd.Name != subName {
+					t.Errorf("subcommand name mismatch: got %q, want %q", subcmd.Name, subName)
+				}
+				if subcmd.Description == "" {
+					t.Errorf("subcommand %q.%q has empty description", tt.commandName, subName)
+				}
+				if subcmd.Usage == "" {
+					t.Errorf("subcommand %q.%q has empty usage", tt.commandName, subName)
+				}
+			}
+
+			// Verify subcommand count
+			if len(cmd.Subcommands) != len(tt.expectedSubcommands) {
+				t.Errorf("command %q has %d subcommands, want %d",
+					tt.commandName, len(cmd.Subcommands), len(tt.expectedSubcommands))
+			}
+		})
+	}
+}
+
+func TestRegisterDefaultCommands_Aliases(t *testing.T) {
+	registry := NewCommandRegistry()
+	RegisterDefaultCommands(registry)
+
+	tests := []struct {
+		name            string
+		commandName     string
+		expectedAliases []string
+	}{
+		{
+			name:            "agent has agents alias",
+			commandName:     "agent",
+			expectedAliases: []string{"agents"},
+		},
+		{
+			name:            "tool has tools alias",
+			commandName:     "tool",
+			expectedAliases: []string{"tools"},
+		},
+		{
+			name:            "plugin has plugins alias",
+			commandName:     "plugin",
+			expectedAliases: []string{"plugins"},
+		},
+		{
+			name:            "mission has missions alias",
+			commandName:     "mission",
+			expectedAliases: []string{"missions"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, ok := registry.Get(tt.commandName)
+			if !ok {
+				t.Fatalf("command %q not found", tt.commandName)
+			}
+
+			// Check that aliases match
+			if len(cmd.Aliases) != len(tt.expectedAliases) {
+				t.Errorf("command %q has %d aliases, want %d",
+					tt.commandName, len(cmd.Aliases), len(tt.expectedAliases))
+			}
+
+			// Verify each alias can retrieve the same command
+			for _, alias := range tt.expectedAliases {
+				aliasCmd, ok := registry.Get(alias)
+				if !ok {
+					t.Errorf("alias %q not registered", alias)
+					continue
+				}
+				if aliasCmd != cmd {
+					t.Errorf("alias %q does not point to same command instance", alias)
+				}
+			}
+		})
 	}
 }
 

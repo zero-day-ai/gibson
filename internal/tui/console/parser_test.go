@@ -296,6 +296,66 @@ func TestParse(t *testing.T) {
 			},
 			expectError: false,
 		},
+		// Task 7: TUI subcommand handling verification tests
+		{
+			name:  "mission run with file flag",
+			input: "/mission run -f file.yaml",
+			expected: &ParsedCommand{
+				Name:       "mission",
+				Subcommand: "run",
+				Args:       []string{},
+				Flags: map[string]string{
+					"f": "file.yaml",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name:  "agent list with local flag",
+			input: "/agent list --local",
+			expected: &ParsedCommand{
+				Name:       "agent",
+				Subcommand: "list",
+				Args:       []string{},
+				Flags: map[string]string{
+					"local": "true",
+				},
+			},
+			expectError: false,
+		},
+		{
+			name:  "mission no subcommand",
+			input: "/mission",
+			expected: &ParsedCommand{
+				Name:       "mission",
+				Subcommand: "",
+				Args:       []string{},
+				Flags:      map[string]string{},
+			},
+			expectError: false,
+		},
+		{
+			name:  "mission run no flags",
+			input: "/mission run",
+			expected: &ParsedCommand{
+				Name:       "mission",
+				Subcommand: "run",
+				Args:       []string{},
+				Flags:      map[string]string{},
+			},
+			expectError: false,
+		},
+		{
+			name:  "help no subcommand",
+			input: "/help",
+			expected: &ParsedCommand{
+				Name:       "help",
+				Subcommand: "",
+				Args:       []string{},
+				Flags:      map[string]string{},
+			},
+			expectError: false,
+		},
 	}
 
 	for _, tt := range tests {

@@ -3,14 +3,11 @@ package component
 import (
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/component"
-	"github.com/zero-day-ai/gibson/internal/component/build"
-	"github.com/zero-day-ai/gibson/internal/component/git"
-	"github.com/zero-day-ai/gibson/internal/database"
 )
 
 // newInstallCommand creates the install cobra.Command for a component type.
@@ -87,51 +84,47 @@ component types (tools, agents, plugins).`,
 
 // runInstall executes the install command logic.
 func runInstall(cmd *cobra.Command, args []string, cfg Config, flags *InstallFlags) error {
-	ctx := cmd.Context()
 	repoURL := args[0]
 
 	cmd.Printf("Installing %s from %s...\n", cfg.DisplayName, repoURL)
 
-	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+		return err
 	}
+	defer cc.Close()
 
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	// Get installer
-	installer := getInstaller(db)
-
-	// Prepare install options
-	opts := component.InstallOptions{
+	// Build install options
+	opts := core.InstallOptions{
 		Branch:       flags.Branch,
 		Tag:          flags.Tag,
 		Force:        flags.Force,
 		SkipBuild:    flags.SkipBuild,
 		SkipRegister: flags.SkipRegister,
+		Verbose:      flags.Verbose,
 	}
 
-	// Install the component
-	result, err := installer.Install(ctx, repoURL, cfg.Kind, opts)
+	// Call core function
+	result, err := core.ComponentInstall(cc, cfg.Kind, repoURL, opts)
 	if err != nil {
 		return FormatInstallError(cmd, err)
 	}
 
+	// Extract install result
+	installResult, ok := result.Data.(*component.InstallResult)
+	if !ok {
+		return fmt.Errorf("unexpected result type")
+	}
+
 	cmd.Printf("%s '%s' installed successfully (v%s) in %v\n",
 		titleCaser.String(cfg.DisplayName),
-		result.Component.Name,
-		result.Component.Version,
+		installResult.Component.Name,
+		installResult.Component.Version,
 		result.Duration)
 
-	if result.BuildOutput != "" && !flags.SkipBuild {
-		cmd.Printf("\nBuild output:\n%s\n", result.BuildOutput)
+	if installResult.BuildOutput != "" && !flags.SkipBuild {
+		cmd.Printf("\nBuild output:\n%s\n", installResult.BuildOutput)
 	}
 
 	return nil
@@ -139,66 +132,57 @@ func runInstall(cmd *cobra.Command, args []string, cfg Config, flags *InstallFla
 
 // runInstallAll executes the install-all command logic.
 func runInstallAll(cmd *cobra.Command, args []string, cfg Config, flags *InstallFlags) error {
-	ctx := cmd.Context()
 	repoURL := args[0]
 
 	cmd.Printf("Installing all %s from %s...\n", cfg.DisplayPlural, repoURL)
 
-	// Get Gibson home directory
-	homeDir, err := getGibsonHome()
+	// Build command context
+	cc, err := buildCommandContext(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to get Gibson home: %w", err)
+		return err
 	}
+	defer cc.Close()
 
-	// Open database
-	dbPath := homeDir + "/gibson.db"
-	db, err := database.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-	defer db.Close()
-
-	// Get installer
-	installer := getInstaller(db)
-
-	// Prepare install options
-	opts := component.InstallOptions{
+	// Build install options
+	opts := core.InstallOptions{
 		Branch:       flags.Branch,
 		Tag:          flags.Tag,
 		Force:        flags.Force,
 		SkipBuild:    flags.SkipBuild,
 		SkipRegister: flags.SkipRegister,
+		Verbose:      flags.Verbose,
 	}
 
-	// Install all components
-	result, err := installer.InstallAll(ctx, repoURL, cfg.Kind, opts)
+	// Call core function
+	result, err := core.ComponentInstallAll(cc, cfg.Kind, repoURL, opts)
 	if err != nil {
 		return FormatInstallError(cmd, err)
 	}
 
-	// Fail if no components were found
-	if result.ComponentsFound == 0 {
-		return fmt.Errorf("no %s found in repository %s", cfg.DisplayPlural, repoURL)
+	// Extract install all result
+	installAllResult, ok := result.Data.(*component.InstallAllResult)
+	if !ok {
+		return fmt.Errorf("unexpected result type")
 	}
 
 	// Print summary
 	cmd.Printf("\nInstallation complete in %v\n", result.Duration)
-	cmd.Printf("Components found: %d\n", result.ComponentsFound)
+	cmd.Printf("Components found: %d\n", installAllResult.ComponentsFound)
 	cmd.Printf("Successfully installed: %d, Skipped: %d, Failed: %d\n",
-		len(result.Successful), len(result.Skipped), len(result.Failed))
+		len(installAllResult.Successful), len(installAllResult.Skipped), len(installAllResult.Failed))
 
 	// List successful installations
-	if len(result.Successful) > 0 {
+	if len(installAllResult.Successful) > 0 {
 		cmd.Printf("\nInstalled %s:\n", cfg.DisplayPlural)
-		for _, r := range result.Successful {
+		for _, r := range installAllResult.Successful {
 			cmd.Printf("  - %s (v%s)\n", r.Component.Name, r.Component.Version)
 		}
 	}
 
 	// List failures with detailed error information
-	if len(result.Failed) > 0 {
+	if len(installAllResult.Failed) > 0 {
 		cmd.Printf("\nFailed installations:\n")
-		for _, f := range result.Failed {
+		for _, f := range installAllResult.Failed {
 			name := f.Name
 			if name == "" {
 				name = f.Path
@@ -229,9 +213,9 @@ func runInstallAll(cmd *cobra.Command, args []string, cfg Config, flags *Install
 	}
 
 	// List skipped components
-	if len(result.Skipped) > 0 {
+	if len(installAllResult.Skipped) > 0 {
 		cmd.Printf("\nSkipped (already installed):\n")
-		for _, s := range result.Skipped {
+		for _, s := range installAllResult.Skipped {
 			cmd.Printf("  - %s (%s)\n", s.Name, s.Reason)
 		}
 	}
@@ -239,23 +223,3 @@ func runInstallAll(cmd *cobra.Command, args []string, cfg Config, flags *Install
 	return nil
 }
 
-// getInstaller creates an installer with all required dependencies.
-func getInstaller(db *database.DB) component.Installer {
-	gitOps := git.NewDefaultGitOperations()
-	builder := build.NewDefaultBuildExecutor()
-	dao := database.NewComponentDAO(db)
-	return component.NewDefaultInstaller(gitOps, builder, dao)
-}
-
-// getGibsonHome returns the Gibson home directory.
-func getGibsonHome() (string, error) {
-	homeDir := os.Getenv("GIBSON_HOME")
-	if homeDir == "" {
-		userHome, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		homeDir = userHome + "/.gibson"
-	}
-	return homeDir, nil
-}
