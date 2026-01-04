@@ -126,10 +126,21 @@ func (e *Executor) Execute(input string) (*ExecutionResult, error) {
 		}, nil
 	}
 
-	// Build args list: prepend subcommand if present
+	// Build args list: prepend subcommand if present, then add flags
 	args := parsed.Args
 	if parsed.Subcommand != "" {
 		args = append([]string{parsed.Subcommand}, parsed.Args...)
+	}
+
+	// Append flags to args so handlers can use GetFlag()
+	for key, value := range parsed.Flags {
+		if len(key) == 1 {
+			// Short flag: -f value
+			args = append(args, "-"+key, value)
+		} else {
+			// Long flag: --flag value
+			args = append(args, "--"+key, value)
+		}
 	}
 
 	// Execute the command handler

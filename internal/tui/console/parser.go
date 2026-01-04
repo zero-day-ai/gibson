@@ -95,10 +95,31 @@ func Parse(input string) (*ParsedCommand, error) {
 			continue
 		}
 
-		// Check if this is a short flag
-		if strings.HasPrefix(token, "-") && len(token) > 1 {
-			// Treat short flags as boolean flags
+		// Check if this is a short flag (e.g., -f value or -f=value)
+		if strings.HasPrefix(token, "-") && len(token) > 1 && !strings.HasPrefix(token, "--") {
 			key := strings.TrimPrefix(token, "-")
+
+			// Check for -f=value format
+			if strings.Contains(key, "=") {
+				parts := strings.SplitN(key, "=", 2)
+				cmd.Flags[parts[0]] = parts[1]
+				i++
+				continue
+			}
+
+			// Single-letter flags (like -f) can take a value
+			// Multi-letter short flags (like -la) are treated as boolean
+			if len(key) == 1 && i+1 < len(tokens) {
+				nextToken := tokens[i+1]
+				// If next token is not a flag, use it as the value
+				if !strings.HasPrefix(nextToken, "-") {
+					cmd.Flags[key] = nextToken
+					i += 2
+					continue
+				}
+			}
+
+			// Boolean flag format: -f (no value) or -la (multi-letter)
 			cmd.Flags[key] = "true"
 			i++
 			continue
