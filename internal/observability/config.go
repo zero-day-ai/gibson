@@ -6,13 +6,16 @@ import (
 )
 
 // TracingConfig contains distributed tracing configuration for observability.
-// Supports multiple tracing providers with configurable sampling rates.
+// Supports multiple tracing providers with configurable sampling rates and TLS.
 type TracingConfig struct {
-	Enabled     bool    `yaml:"enabled" mapstructure:"enabled"`
-	Provider    string  `yaml:"provider" mapstructure:"provider"`
-	Endpoint    string  `yaml:"endpoint" mapstructure:"endpoint"`
-	ServiceName string  `yaml:"service_name" mapstructure:"service_name"`
-	SampleRate  float64 `yaml:"sample_rate" mapstructure:"sample_rate"`
+	Enabled      bool    `yaml:"enabled" mapstructure:"enabled"`
+	Provider     string  `yaml:"provider" mapstructure:"provider"`
+	Endpoint     string  `yaml:"endpoint" mapstructure:"endpoint"`
+	ServiceName  string  `yaml:"service_name" mapstructure:"service_name"`
+	SampleRate   float64 `yaml:"sample_rate" mapstructure:"sample_rate"`
+	TLSCertFile  string  `yaml:"tls_cert_file" mapstructure:"tls_cert_file"` // Client TLS certificate file
+	TLSKeyFile   string  `yaml:"tls_key_file" mapstructure:"tls_key_file"`   // Client TLS key file
+	InsecureMode bool    `yaml:"insecure_mode" mapstructure:"insecure_mode"` // Disable TLS verification (unsafe)
 }
 
 // Validate validates the TracingConfig fields.

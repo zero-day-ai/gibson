@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,6 +19,7 @@ import (
 
 // MockLLMCaller implements LLMCaller for testing
 type MockLLMCaller struct {
+	mu        sync.Mutex
 	responses []*llm.CompletionResponse
 	errors    []error
 	callCount int
@@ -31,6 +33,9 @@ func NewMockLLMCaller() *MockLLMCaller {
 }
 
 func (m *MockLLMCaller) Complete(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (*llm.CompletionResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.callCount >= len(m.responses) {
 		return nil, errors.New("no more mock responses")
 	}
@@ -68,6 +73,8 @@ func (m *MockLLMCaller) AddError(err error) {
 }
 
 func (m *MockLLMCaller) GetCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.callCount
 }
 

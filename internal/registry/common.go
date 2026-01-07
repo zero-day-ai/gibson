@@ -5,6 +5,27 @@ package registry
 
 import (
 	"path/filepath"
+	"time"
+
+	sdkregistry "github.com/zero-day-ai/sdk/registry"
+)
+
+// Health status constants for ServiceInfo metadata
+const (
+	// HealthStatusHealthy indicates the component is operational
+	HealthStatusHealthy = "healthy"
+
+	// HealthStatusDegraded indicates the component is partially functional
+	HealthStatusDegraded = "degraded"
+
+	// HealthStatusUnhealthy indicates the component is not functioning
+	HealthStatusUnhealthy = "unhealthy"
+
+	// MetadataKeyHealth is the metadata key for health status
+	MetadataKeyHealth = "health_status"
+
+	// MetadataKeyLastHealthCheck is the metadata key for last health check timestamp
+	MetadataKeyLastHealthCheck = "last_health_check"
 )
 
 // buildKey constructs the etcd key for a service instance.
@@ -31,4 +52,50 @@ func buildKey(namespace, kind, name, instanceID string) string {
 // happen to start with the same string.
 func buildPrefix(namespace, kind, name string) string {
 	return filepath.Join("/", namespace, kind, name) + "/"
+}
+
+// ensureHealthMetadata ensures that ServiceInfo has health status metadata.
+// If not present, it initializes with "healthy" status and current timestamp.
+func ensureHealthMetadata(info *sdkregistry.ServiceInfo) {
+	if info.Metadata == nil {
+		info.Metadata = make(map[string]string)
+	}
+
+	// Set health status if not present
+	if _, exists := info.Metadata[MetadataKeyHealth]; !exists {
+		info.Metadata[MetadataKeyHealth] = HealthStatusHealthy
+	}
+
+	// Always update last health check timestamp
+	info.Metadata[MetadataKeyLastHealthCheck] = time.Now().Format(time.RFC3339)
+}
+
+// GetHealthStatus extracts health status from ServiceInfo metadata.
+// Returns "healthy" if not set.
+func GetHealthStatus(info sdkregistry.ServiceInfo) string {
+	if info.Metadata == nil {
+		return HealthStatusHealthy
+	}
+	status, exists := info.Metadata[MetadataKeyHealth]
+	if !exists {
+		return HealthStatusHealthy
+	}
+	return status
+}
+
+// GetLastHealthCheck extracts last health check timestamp from ServiceInfo metadata.
+// Returns zero time if not set or unparseable.
+func GetLastHealthCheck(info sdkregistry.ServiceInfo) time.Time {
+	if info.Metadata == nil {
+		return time.Time{}
+	}
+	timestampStr, exists := info.Metadata[MetadataKeyLastHealthCheck]
+	if !exists {
+		return time.Time{}
+	}
+	timestamp, err := time.Parse(time.RFC3339, timestampStr)
+	if err != nil {
+		return time.Time{}
+	}
+	return timestamp
 }

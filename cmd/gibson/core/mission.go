@@ -7,6 +7,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
 
@@ -79,16 +80,23 @@ func MissionShow(cc *CommandContext, name string) (*CommandResult, error) {
 
 // MissionRunResult represents the structured output from MissionRun
 type MissionRunResult struct {
-	Mission      *mission.Mission
-	Workflow     *workflow.Workflow
-	Status       string
-	NodesCount   int
-	EntryPoints  int
-	ExitPoints   int
+	Mission     *mission.Mission
+	Workflow    *workflow.Workflow
+	Status      string
+	NodesCount  int
+	EntryPoints int
+	ExitPoints  int
 }
 
 // MissionRun creates and runs a new mission from a workflow YAML file.
+// This is the non-verbose version that calls MissionRunWithVerbose with nil verbose writer.
 func MissionRun(cc *CommandContext, workflowFile string) (*CommandResult, error) {
+	return MissionRunWithVerbose(cc, workflowFile, nil, verbose.LevelNone)
+}
+
+// MissionRunWithVerbose creates and runs a new mission from a workflow YAML file with verbose logging support.
+// If vw is non-nil, it integrates verbose event logging for mission events and DAG node execution.
+func MissionRunWithVerbose(cc *CommandContext, workflowFile string, vw *verbose.VerboseWriter, level verbose.VerboseLevel) (*CommandResult, error) {
 	// Validate mission store
 	if cc.MissionStore == nil {
 		return nil, fmt.Errorf("mission store not initialized")
@@ -146,6 +154,23 @@ func MissionRun(cc *CommandContext, workflowFile string) (*CommandResult, error)
 			Error: fmt.Errorf("failed to start mission: %w", err),
 		}, nil
 	}
+
+	// If verbose is enabled, set up mission event bridge
+	// Note: This would require having access to the orchestrator and its event emitter.
+	// Since the current implementation doesn't actually execute the mission (just creates it),
+	// we'll add a TODO for when mission execution is integrated.
+	// TODO: When mission execution is integrated:
+	//   if vw != nil {
+	//       bridge := verbose.NewMissionEventBridge(orchestrator.EventEmitter(), vw.Bus())
+	//       bridge.Start(cc.Ctx)
+	//       defer bridge.Stop()
+	//
+	//       // Wrap harness factory for verbose events
+	//       harnessFactory = verbose.WrapHarnessFactory(harnessFactory, vw.Bus(), level)
+	//   }
+
+	// TODO: Actually execute the mission with orchestrator
+	// For now, this just creates and saves the mission without executing it
 
 	return &CommandResult{
 		Data: &MissionRunResult{

@@ -13,6 +13,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/sdk/registry"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // GRPCAgentClient implements agent.Agent interface for agents discovered via etcd registry.
@@ -53,6 +54,22 @@ func NewGRPCAgentClient(conn *grpc.ClientConn, info registry.ServiceInfo) *GRPCA
 		client: proto.NewAgentServiceClient(conn),
 		info:   info,
 	}
+}
+
+// CallbackInfo contains callback configuration for agent execution.
+// It enables external agents to connect back to Gibson Core's HarnessCallbackService
+// to access LLM, tools, memory, GraphRAG, and findings functionality.
+type CallbackInfo struct {
+	// Endpoint is the callback server address (e.g., "gibson:50001")
+	Endpoint string
+	// Token is the optional authentication token for callback connections
+	Token string
+	// Mission is the mission context to pass to the agent (typically *harness.MissionContext)
+	// This will be JSON-marshaled and sent to the agent via the MissionJson field.
+	Mission any
+	// Target is the target information to pass to the agent (typically *harness.TargetInfo)
+	// This will be JSON-marshaled and sent to the agent via the TargetJson field.
+	Target any
 }
 
 // Name returns the agent name from ServiceInfo
@@ -203,10 +220,135 @@ func (c *GRPCAgentClient) Execute(ctx context.Context, task agent.Task, harness 
 		return result, nil
 	}
 
-	// Unmarshal result from JSON
-	var result agent.Result
-	if err := json.Unmarshal([]byte(resp.ResultJson), &result); err != nil {
+	// Unmarshal result from JSON using flexible struct to handle SDK's Output field
+	result, err := unmarshalAgentResult(resp.ResultJson, task.ID)
+	if err != nil {
+		return agent.Result{}, err
+	}
+
+	return result, nil
+}
+
+// ExecuteWithCallback runs the agent against a task with callback configuration.
+//
+// This method extends Execute() by populating callback fields in the gRPC request,
+// enabling external agents to connect back to Gibson Core's HarnessCallbackService
+// for LLM operations, tool execution, memory access, and findings submission.
+//
+// The callback parameter contains:
+//   - Endpoint: Callback server address for harness operations
+//   - Token: Optional authentication token for secure connections
+//   - Mission: Mission context (serialized to JSON)
+//   - Target: Target information (serialized to JSON)
+//
+// If callback is nil, this method behaves identically to Execute() (no callback fields set).
+//
+// Parameters:
+//   - ctx: Context for request cancellation and timeouts
+//   - task: Task configuration for the agent
+//   - callback: Optional callback configuration (nil falls back to standard execution)
+//
+// Returns the agent's execution result or an error if execution fails.
+func (c *GRPCAgentClient) ExecuteWithCallback(ctx context.Context, task agent.Task, callback *CallbackInfo) (agent.Result, error) {
+	// Marshal task to JSON
+	taskJSON, err := json.Marshal(task)
+	if err != nil {
+		result := agent.NewResult(task.ID)
+		result.Fail(fmt.Errorf("failed to marshal task: %w", err))
+		return result, nil
+	}
+
+	// Build the base request
+	timeoutMs := int64(task.Timeout.Milliseconds())
+	req := &proto.AgentExecuteRequest{
+		TaskJson:  string(taskJSON),
+		TimeoutMs: timeoutMs,
+	}
+
+	// Populate callback fields if callback info is provided
+	if callback != nil {
+		req.CallbackEndpoint = callback.Endpoint
+		req.CallbackToken = callback.Token
+
+		// Serialize mission context to JSON if provided
+		if callback.Mission != nil {
+			missionJSON, err := json.Marshal(callback.Mission)
+			if err != nil {
+				result := agent.NewResult(task.ID)
+				result.Fail(fmt.Errorf("failed to marshal mission context: %w", err))
+				return result, nil
+			}
+			req.MissionJson = string(missionJSON)
+		}
+
+		// Serialize target info to JSON if provided
+		if callback.Target != nil {
+			targetJSON, err := json.Marshal(callback.Target)
+			if err != nil {
+				result := agent.NewResult(task.ID)
+				result.Fail(fmt.Errorf("failed to marshal target info: %w", err))
+				return result, nil
+			}
+			req.TargetJson = string(targetJSON)
+		}
+	}
+
+	// Send Execute RPC
+	resp, err := c.client.Execute(ctx, req)
+	if err != nil {
+		result := agent.NewResult(task.ID)
+		result.Fail(fmt.Errorf("agent execution failed: %w", err))
+		return result, nil
+	}
+
+	// Check for errors in response
+	if resp.Error != nil {
+		result := agent.NewResult(task.ID)
+		result.Fail(fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message))
+		return result, nil
+	}
+
+	// Unmarshal result from JSON using flexible struct to handle SDK's Output field
+	result, err := unmarshalAgentResult(resp.ResultJson, task.ID)
+	if err != nil {
+		return agent.Result{}, err
+	}
+
+	return result, nil
+}
+
+// unmarshalAgentResult unmarshals the agent result JSON with flexible Output handling.
+// The SDK's Result.Output field can be any type (string, map, etc.) while Gibson's
+// internal Result expects map[string]any. This function handles the conversion.
+func unmarshalAgentResult(resultJSON string, taskID types.ID) (agent.Result, error) {
+	// Use flexible struct to handle SDK's Output field which can be any type
+	var rawResult struct {
+		TaskID      string         `json:"task_id"`
+		Status      string         `json:"status"`
+		Output      any            `json:"output,omitempty"`
+		Findings    []string       `json:"findings,omitempty"`
+		Metadata    map[string]any `json:"metadata,omitempty"`
+		StartedAt   string         `json:"started_at,omitempty"`
+		CompletedAt string         `json:"completed_at,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &rawResult); err != nil {
 		return agent.Result{}, fmt.Errorf("failed to unmarshal result: %w", err)
+	}
+
+	// Convert to Gibson Result, wrapping Output in a map if it's a string
+	result := agent.NewResult(taskID)
+	result.Status = agent.ResultStatus(rawResult.Status)
+
+	// Handle Output - wrap non-map values in a map
+	switch v := rawResult.Output.(type) {
+	case map[string]any:
+		result.Output = v
+	case string:
+		result.Output = map[string]any{"result": v}
+	case nil:
+		result.Output = make(map[string]any)
+	default:
+		result.Output = map[string]any{"data": v}
 	}
 
 	return result, nil
@@ -272,7 +414,8 @@ func (c *GRPCAgentClient) fetchDescriptor(ctx context.Context) (*agent.AgentDesc
 		Version:        resp.Version,
 		Description:    resp.Description,
 		Capabilities:   resp.Capabilities,
-		TargetTypes:    convertTargetTypes(resp.TargetTypes),
+		TargetTypes:    convertTargetTypes(resp.TargetTypes),        // Deprecated, for backward compat
+		TargetSchemas:  convertTargetSchemas(resp.TargetSchemas),    // New schema-based targets
 		TechniqueTypes: convertTechniqueTypes(resp.TechniqueTypes),
 		Slots:          nil, // Populated by fetchSlots()
 		IsExternal:     true,
@@ -369,6 +512,35 @@ func convertSlots(protoSlots []*proto.AgentSlotDefinition) []agent.SlotDefinitio
 				RequiredFeatures: ps.Constraints.RequiredFeatures,
 			},
 		}
+	}
+	return result
+}
+
+// convertTargetSchemas converts proto target schemas to SDK TargetSchema types.
+// It parses the schema_json field and converts it to the schema.JSON type used by the SDK.
+func convertTargetSchemas(protoSchemas []*proto.TargetSchemaProto) []agent.TargetSchema {
+	if protoSchemas == nil {
+		return []agent.TargetSchema{}
+	}
+
+	result := make([]agent.TargetSchema, 0, len(protoSchemas))
+	for _, ps := range protoSchemas {
+		// Parse the JSON schema string into a schema.JSON object
+		var schemaObj schema.JSON
+		if ps.SchemaJson != "" {
+			if err := json.Unmarshal([]byte(ps.SchemaJson), &schemaObj); err != nil {
+				// Log error but continue - we don't want to fail the entire conversion
+				// due to one malformed schema. The schema validation will catch this later.
+				continue
+			}
+		}
+
+		result = append(result, agent.TargetSchema{
+			Type:        ps.Type,
+			Version:     ps.Version,
+			Schema:      schemaObj,
+			Description: ps.Description,
+		})
 	}
 	return result
 }

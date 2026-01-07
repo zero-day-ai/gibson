@@ -38,7 +38,8 @@ func buildCommandContext(cmd *cobra.Command) (*core.CommandContext, error) {
 	// Create installer
 	gitOps := git.NewDefaultGitOperations()
 	builder := build.NewDefaultBuildExecutor()
-	installer := component.NewDefaultInstaller(gitOps, builder, dao)
+	lifecycle := component.NewLifecycleManager(dao, nil)
+	installer := component.NewDefaultInstaller(gitOps, builder, dao, lifecycle)
 
 	// Get registry manager from context (may be nil for some commands)
 	regManager := GetRegistryManager(ctx)
@@ -82,4 +83,34 @@ type RegistryManagerKey struct{}
 // WithRegistryManager returns a new context with the registry manager attached.
 func WithRegistryManager(ctx context.Context, m *registry.Manager) context.Context {
 	return context.WithValue(ctx, RegistryManagerKey{}, m)
+}
+
+// CallbackManagerKey is the context key for storing the callback manager.
+// This is exported so that the main package can use the same key.
+type CallbackManagerKey struct{}
+
+// GetCallbackManager retrieves the callback manager from the context.
+// Returns nil if the manager is not present in the context.
+func GetCallbackManager(ctx context.Context) interface{} {
+	return ctx.Value(CallbackManagerKey{})
+}
+
+// WithCallbackManager returns a new context with the callback manager attached.
+func WithCallbackManager(ctx context.Context, m interface{}) context.Context {
+	return context.WithValue(ctx, CallbackManagerKey{}, m)
+}
+
+// DaemonClientKey is the context key for storing the daemon client.
+// This is exported so that the main package can use the same key.
+type DaemonClientKey struct{}
+
+// GetDaemonClient retrieves the daemon client from the context.
+// Returns nil if the client is not present in the context.
+func GetDaemonClient(ctx context.Context) interface{} {
+	return ctx.Value(DaemonClientKey{})
+}
+
+// WithDaemonClient returns a new context with the daemon client attached.
+func WithDaemonClient(ctx context.Context, client interface{}) context.Context {
+	return context.WithValue(ctx, DaemonClientKey{}, client)
 }

@@ -251,7 +251,7 @@ func TestFindingShowCommand(t *testing.T) {
 			setupFinding: func(t *testing.T, db *database.DB) types.ID {
 				return types.NewID() // Random ID that doesn't exist
 			},
-			expectError: true,
+			expectError:  true,
 			expectOutput: []string{
 				// Error is returned but not printed to output when calling RunE directly
 			},
@@ -452,7 +452,7 @@ func TestFindingExportCommand(t *testing.T) {
 			setupFindings: func(t *testing.T, db *database.DB) {
 				createTestFindings(t, db, 1)
 			},
-			expectError: true,
+			expectError:    true,
 			validateOutput: nil, // Error validation is done via expectError check
 		},
 		{
@@ -744,9 +744,9 @@ func TestFindingListAllFindings(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-			// Initialize schema
-			err = db.InitSchema()
-			require.NoError(t, err)
+	// Initialize schema
+	err = db.InitSchema()
+	require.NoError(t, err)
 
 	// Create findings across multiple missions
 	store := finding.NewDBFindingStore(db)

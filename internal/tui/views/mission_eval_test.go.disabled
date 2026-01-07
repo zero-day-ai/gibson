@@ -1,0 +1,303 @@
+package views
+
+import (
+	"testing"
+	"time"
+
+	"github.com/zero-day-ai/gibson/internal/eval"
+	"github.com/zero-day-ai/gibson/internal/types"
+	sdkeval "github.com/zero-day-ai/sdk/eval"
+)
+
+// TestSetEvalSummary verifies that SetEvalSummary correctly updates the view state.
+func TestSetEvalSummary(t *testing.T) {
+	view := &MissionView{
+		evalEnabled: false,
+		evalSummary: nil,
+	}
+
+	// Create a test eval summary
+	summary := &eval.EvalSummary{
+		MissionID:     types.ID("test-mission-1"),
+		OverallScore:  0.75,
+		ScorerScores:  map[string]float64{"test_scorer": 0.75},
+		TotalSteps:    10,
+		TotalAlerts:   2,
+		WarningCount:  1,
+		CriticalCount: 1,
+		Duration:      5 * time.Minute,
+		TokensUsed:    1000,
+		FeedbackHistory: []sdkeval.Feedback{
+			{
+				Timestamp: time.Now(),
+				StepIndex: 5,
+				Overall: sdkeval.PartialScore{
+					Score:      0.8,
+					Confidence: 0.9,
+					Action:     sdkeval.ActionContinue,
+					Feedback:   "Looking good",
+				},
+				Scores: map[string]sdkeval.PartialScore{
+					"test_scorer": {
+						Score:      0.8,
+						Confidence: 0.9,
+						Feedback:   "Good performance",
+					},
+				},
+				Alerts: []sdkeval.Alert{
+					{
+						Level:     sdkeval.AlertWarning,
+						Scorer:    "test_scorer",
+						Score:     0.5,
+						Threshold: 0.6,
+						Message:   "Score below threshold",
+						Action:    sdkeval.ActionAdjust,
+					},
+				},
+			},
+		},
+	}
+
+	// Set the summary
+	view.SetEvalSummary(summary)
+
+	// Verify state was updated
+	if !view.evalEnabled {
+		t.Error("evalEnabled should be true after setting summary")
+	}
+
+	if view.evalSummary == nil {
+		t.Fatal("evalSummary should not be nil after setting")
+	}
+
+	if view.evalSummary.OverallScore != 0.75 {
+		t.Errorf("expected overall score 0.75, got %f", view.evalSummary.OverallScore)
+	}
+
+	if len(view.evalSummary.FeedbackHistory) != 1 {
+		t.Errorf("expected 1 feedback entry, got %d", len(view.evalSummary.FeedbackHistory))
+	}
+
+	// Test setting nil summary
+	view.SetEvalSummary(nil)
+
+	if view.evalEnabled {
+		t.Error("evalEnabled should be false after setting nil summary")
+	}
+
+	if view.evalSummary != nil {
+		t.Error("evalSummary should be nil after setting nil")
+	}
+}
+
+// TestRenderEvalBadge verifies that the eval badge renders correctly for different scores.
+func TestRenderEvalBadge(t *testing.T) {
+	view := &MissionView{}
+
+	tests := []struct {
+		score    float64
+		wantText string
+	}{
+		{0.9, "EXCELLENT"},
+		{0.7, "GOOD"},
+		{0.5, "FAIR"},
+		{0.3, "POOR"},
+		{0.1, "CRITICAL"},
+	}
+
+	for _, tt := range tests {
+		badge := view.renderEvalBadge(tt.score)
+		if badge == "" {
+			t.Errorf("badge should not be empty for score %f", tt.score)
+		}
+		// Note: We can't easily test the exact rendered output due to lipgloss styling,
+		// but we can verify it's not empty
+	}
+}
+
+// TestRenderAlertIndicator verifies that alert indicators are rendered correctly.
+func TestRenderAlertIndicator(t *testing.T) {
+	view := &MissionView{}
+
+	// Test with nil summary
+	indicator := view.renderAlertIndicator()
+	if indicator != "" {
+		t.Error("indicator should be empty when evalSummary is nil")
+	}
+
+	// Test with warnings only
+	view.evalSummary = &eval.EvalSummary{
+		WarningCount:  2,
+		CriticalCount: 0,
+	}
+	indicator = view.renderAlertIndicator()
+	if indicator == "" {
+		t.Error("indicator should not be empty with warnings")
+	}
+
+	// Test with critical alerts
+	view.evalSummary = &eval.EvalSummary{
+		WarningCount:  1,
+		CriticalCount: 1,
+	}
+	indicator = view.renderAlertIndicator()
+	if indicator == "" {
+		t.Error("indicator should not be empty with critical alerts")
+	}
+
+	// Test with no alerts
+	view.evalSummary = &eval.EvalSummary{
+		WarningCount:  0,
+		CriticalCount: 0,
+	}
+	indicator = view.renderAlertIndicator()
+	if indicator != "" {
+		t.Error("indicator should be empty with no alerts")
+	}
+}
+
+// TestRenderEvalResults verifies that eval results section renders correctly.
+func TestRenderEvalResults(t *testing.T) {
+	view := &MissionView{}
+
+	// Test with nil summary
+	results := view.renderEvalResults()
+	if results != "" {
+		t.Error("results should be empty when evalSummary is nil")
+	}
+
+	// Test with valid summary
+	view.evalSummary = &eval.EvalSummary{
+		MissionID:     types.ID("test-mission"),
+		OverallScore:  0.85,
+		ScorerScores:  map[string]float64{"scorer1": 0.8, "scorer2": 0.9},
+		TotalSteps:    20,
+		TotalAlerts:   3,
+		WarningCount:  2,
+		CriticalCount: 1,
+		Duration:      10 * time.Minute,
+		TokensUsed:    5000,
+		FeedbackHistory: []sdkeval.Feedback{
+			{Timestamp: time.Now(), StepIndex: 1},
+			{Timestamp: time.Now(), StepIndex: 10},
+		},
+	}
+
+	results = view.renderEvalResults()
+	if results == "" {
+		t.Error("results should not be empty with valid summary")
+	}
+
+	// Verify key information is present
+	if !containsString(results, "Evaluation Results") {
+		t.Error("results should contain 'Evaluation Results' header")
+	}
+
+	if !containsString(results, "Overall Score") {
+		t.Error("results should contain overall score")
+	}
+
+	if !containsString(results, "Scorer Scores") {
+		t.Error("results should contain scorer scores section")
+	}
+
+	if !containsString(results, "Total Steps") {
+		t.Error("results should contain total steps")
+	}
+
+	if !containsString(results, "Feedback Entries") {
+		t.Error("results should contain feedback entries count")
+	}
+}
+
+// TestRenderFeedbackHistory verifies that feedback history renders correctly.
+func TestRenderFeedbackHistory(t *testing.T) {
+	view := &MissionView{}
+
+	// Test with nil summary
+	history := view.renderFeedbackHistory(80, 40)
+	if history != "" {
+		t.Error("history should be empty when evalSummary is nil")
+	}
+
+	// Test with empty feedback history
+	view.evalSummary = &eval.EvalSummary{
+		FeedbackHistory: []sdkeval.Feedback{},
+	}
+	history = view.renderFeedbackHistory(80, 40)
+	if history != "" {
+		t.Error("history should be empty when feedback history is empty")
+	}
+
+	// Test with valid feedback history
+	view.evalSummary = &eval.EvalSummary{
+		FeedbackHistory: []sdkeval.Feedback{
+			{
+				Timestamp: time.Now(),
+				StepIndex: 5,
+				Overall: sdkeval.PartialScore{
+					Score:      0.75,
+					Confidence: 0.8,
+					Action:     sdkeval.ActionContinue,
+					Feedback:   "Good progress",
+				},
+				Scores: map[string]sdkeval.PartialScore{
+					"scorer1": {
+						Score:    0.7,
+						Feedback: "Decent performance",
+					},
+				},
+				Alerts: []sdkeval.Alert{
+					{
+						Level:   sdkeval.AlertWarning,
+						Message: "Below optimal",
+						Action:  sdkeval.ActionAdjust,
+					},
+				},
+			},
+		},
+	}
+
+	history = view.renderFeedbackHistory(80, 40)
+	if history == "" {
+		t.Error("history should not be empty with valid feedback")
+	}
+
+	if !containsString(history, "Feedback History") {
+		t.Error("history should contain 'Feedback History' header")
+	}
+
+	if !containsString(history, "Entry #1") {
+		t.Error("history should contain entry number")
+	}
+
+	if !containsString(history, "Step 5") {
+		t.Error("history should contain step index")
+	}
+
+	if !containsString(history, "Overall:") {
+		t.Error("history should contain overall score")
+	}
+
+	if !containsString(history, "Good progress") {
+		t.Error("history should contain feedback message")
+	}
+
+	if !containsString(history, "Alerts:") {
+		t.Error("history should contain alerts section")
+	}
+}
+
+// Helper function to check if a string contains a substring
+func containsString(s, substr string) bool {
+	return len(s) > 0 && len(substr) > 0 && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

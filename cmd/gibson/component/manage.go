@@ -12,6 +12,7 @@ import (
 	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/component/build"
+	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
@@ -102,6 +103,133 @@ func newBuildCommand(cfg Config) *cobra.Command {
 
 // runList executes the list command.
 func runList(cmd *cobra.Command, args []string, cfg Config, flags *ListFlags) error {
+	ctx := cmd.Context()
+
+	// Check for daemon client in context
+	if clientIface := GetDaemonClient(ctx); clientIface != nil {
+		// Daemon is available - use it for listing components
+		return runListWithDaemon(cmd, clientIface, cfg)
+	}
+
+	// No daemon - fall back to local database queries
+	return runListWithDatabase(cmd, cfg, flags)
+}
+
+// runListWithDaemon lists components using the daemon client
+func runListWithDaemon(cmd *cobra.Command, clientIface interface{}, cfg Config) error {
+	// Type assert to get the actual client
+	client, ok := clientIface.(*daemonclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
+
+	ctx := cmd.Context()
+
+	// Handle different component kinds
+	switch cfg.Kind {
+	case component.ComponentKindAgent:
+		agents, err := client.ListAgents(ctx)
+		if err != nil {
+			// Check if it's a connection error
+			if strings.Contains(err.Error(), "daemon not responding") {
+				return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+			}
+			return fmt.Errorf("failed to list agents from daemon: %w", err)
+		}
+
+		if len(agents) == 0 {
+			cmd.Printf("No %s registered.\n", cfg.DisplayPlural)
+			return nil
+		}
+
+		// Display agents in table format
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
+		fmt.Fprintln(w, "----\t-------\t------\t-------")
+
+		for _, agent := range agents {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+				agent.Name,
+				agent.Version,
+				agent.Status,
+				agent.Address,
+			)
+		}
+
+		w.Flush()
+		return nil
+
+	case component.ComponentKindTool:
+		tools, err := client.ListTools(ctx)
+		if err != nil {
+			// Check if it's a connection error
+			if strings.Contains(err.Error(), "daemon not responding") {
+				return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+			}
+			return fmt.Errorf("failed to list tools from daemon: %w", err)
+		}
+
+		if len(tools) == 0 {
+			cmd.Printf("No %s registered.\n", cfg.DisplayPlural)
+			return nil
+		}
+
+		// Display tools in table format
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
+		fmt.Fprintln(w, "----\t-------\t------\t-------")
+
+		for _, tool := range tools {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+				tool.Name,
+				tool.Version,
+				tool.Status,
+				tool.Address,
+			)
+		}
+
+		w.Flush()
+		return nil
+
+	case component.ComponentKindPlugin:
+		plugins, err := client.ListPlugins(ctx)
+		if err != nil {
+			// Check if it's a connection error
+			if strings.Contains(err.Error(), "daemon not responding") {
+				return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+			}
+			return fmt.Errorf("failed to list plugins from daemon: %w", err)
+		}
+
+		if len(plugins) == 0 {
+			cmd.Printf("No %s registered.\n", cfg.DisplayPlural)
+			return nil
+		}
+
+		// Display plugins in table format
+		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
+		fmt.Fprintln(w, "----\t-------\t------\t-------")
+
+		for _, plugin := range plugins {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+				plugin.Name,
+				plugin.Version,
+				plugin.Status,
+				plugin.Address,
+			)
+		}
+
+		w.Flush()
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+}
+
+// runListWithDatabase lists components using local database (fallback)
+func runListWithDatabase(cmd *cobra.Command, cfg Config, flags *ListFlags) error {
 	// Build command context
 	cc, err := buildCommandContext(cmd)
 	if err != nil {
@@ -177,7 +305,6 @@ func runList(cmd *cobra.Command, args []string, cfg Config, flags *ListFlags) er
 	w.Flush()
 	return nil
 }
-
 
 // runShow executes the show command.
 func runShow(cmd *cobra.Command, args []string, cfg Config) error {
@@ -438,4 +565,3 @@ func runBuild(cmd *cobra.Command, args []string, cfg Config) error {
 
 	return nil
 }
-

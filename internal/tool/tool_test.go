@@ -739,8 +739,8 @@ func TestNewToolDescriptor(t *testing.T) {
 func TestToolRegistry_ExternalTool(t *testing.T) {
 	registry := NewToolRegistry()
 
-	// Create an external tool client
-	client := NewGRPCToolClient("external-tool")
+	// Create a mock external tool client
+	client := NewMockTool("external-tool")
 
 	// Register external tool
 	err := registry.RegisterExternal("external-tool", client)
@@ -788,9 +788,9 @@ func TestToolRegistry_MixedTools(t *testing.T) {
 		t.Fatalf("failed to register internal-2: %v", err)
 	}
 
-	// Register external tools
-	external1 := NewGRPCToolClient("external-1")
-	external2 := NewGRPCToolClient("external-2")
+	// Register external tools (using mock tools for testing)
+	external1 := NewMockTool("external-1")
+	external2 := NewMockTool("external-2")
 
 	if err := registry.RegisterExternal("external-1", external1); err != nil {
 		t.Fatalf("failed to register external-1: %v", err)

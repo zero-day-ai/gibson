@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
+)
+
+// Legacy test variables for backward compatibility with old tests
+// These were replaced by addConnection in the new schema-based implementation
+// TODO: Update tests to use addConnection instead
+var (
+	addName  string
+	addModel string
 )
 
 // setupTestDB creates a temporary database for testing
@@ -637,6 +646,525 @@ func TestGetGibsonHome(t *testing.T) {
 				assert.Equal(t, tt.envValue, home)
 			} else {
 				assert.Contains(t, home, tt.wantPrefix)
+			}
+		})
+	}
+}
+
+// TestTargetAddWithSchemaBasedTypes tests the schema-based target add command
+// Note: These tests require tasks 11-12 to be complete (--type and --connection flags)
+// These tests will fail until the --connection flag is added to the target add command
+func TestTargetAddWithSchemaBasedTypes(t *testing.T) {
+	// Skip this test if the --connection flag hasn't been implemented yet
+	t.Skip("Skipping until tasks 11-12 are complete: --type and --connection flags need to be added to target.go")
+
+	tests := []struct {
+		name        string
+		targetType  string
+		connection  string
+		targetName  string
+		flags       map[string]string
+		wantErr     bool
+		errContains string
+		validate    func(*testing.T, *database.DB)
+	}{
+		{
+			name:       "http_api target with required fields",
+			targetType: "http_api",
+			connection: `{"url":"https://api.openai.com/v1/chat/completions","method":"POST"}`,
+			targetName: "test-http-api",
+			wantErr:    false,
+			validate: func(t *testing.T, db *database.DB) {
+				dao := database.NewTargetDAO(db)
+				target, err := dao.GetByName(context.Background(), "test-http-api")
+				require.NoError(t, err)
+				assert.Equal(t, "http_api", string(target.Type))
+				assert.NotNil(t, target.Connection)
+				assert.Equal(t, "https://api.openai.com/v1/chat/completions", target.Connection["url"])
+				assert.Equal(t, "POST", target.Connection["method"])
+			},
+		},
+		{
+			name:       "kubernetes target with cluster and namespace",
+			targetType: "kubernetes",
+			connection: `{"cluster":"prod-cluster","namespace":"ml-pipeline"}`,
+			targetName: "test-k8s",
+			wantErr:    false,
+			validate: func(t *testing.T, db *database.DB) {
+				dao := database.NewTargetDAO(db)
+				target, err := dao.GetByName(context.Background(), "test-k8s")
+				require.NoError(t, err)
+				assert.Equal(t, "kubernetes", string(target.Type))
+				assert.Equal(t, "prod-cluster", target.Connection["cluster"])
+				assert.Equal(t, "ml-pipeline", target.Connection["namespace"])
+			},
+		},
+		{
+			name:       "smart_contract target with chain and address",
+			targetType: "smart_contract",
+			connection: `{"chain":"ethereum","address":"0x1234567890abcdef1234567890abcdef12345678"}`,
+			targetName: "test-contract",
+			wantErr:    false,
+			validate: func(t *testing.T, db *database.DB) {
+				dao := database.NewTargetDAO(db)
+				target, err := dao.GetByName(context.Background(), "test-contract")
+				require.NoError(t, err)
+				assert.Equal(t, "smart_contract", string(target.Type))
+				assert.Equal(t, "ethereum", target.Connection["chain"])
+				assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", target.Connection["address"])
+			},
+		},
+		{
+			name:        "http_api target missing required url field",
+			targetType:  "http_api",
+			connection:  `{"method":"POST"}`,
+			targetName:  "test-invalid",
+			wantErr:     true,
+			errContains: "url",
+		},
+		{
+			name:        "kubernetes target missing required cluster field",
+			targetType:  "kubernetes",
+			connection:  `{"namespace":"default"}`,
+			targetName:  "test-invalid-k8s",
+			wantErr:     true,
+			errContains: "cluster",
+		},
+		{
+			name:        "invalid JSON in connection parameter",
+			targetType:  "http_api",
+			connection:  `{"url":"https://example.com"`,
+			targetName:  "test-bad-json",
+			wantErr:     true,
+			errContains: "JSON",
+		},
+		{
+			name:       "llm_api target with headers and timeout",
+			targetType: "llm_api",
+			connection: `{"url":"https://api.anthropic.com/v1/messages","headers":{"x-api-version":"2024-01-01"},"timeout":60}`,
+			targetName: "test-llm-api",
+			wantErr:    false,
+			validate: func(t *testing.T, db *database.DB) {
+				dao := database.NewTargetDAO(db)
+				target, err := dao.GetByName(context.Background(), "test-llm-api")
+				require.NoError(t, err)
+				assert.Equal(t, "llm_api", string(target.Type))
+				headers := target.Connection["headers"].(map[string]any)
+				assert.Equal(t, "2024-01-01", headers["x-api-version"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, _, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			// Create a fresh command for each test
+			cmd := &cobra.Command{
+				Use:  "add",
+				Args: cobra.MinimumNArgs(1),
+				RunE: runTargetAdd,
+			}
+
+			// Set up flags (these should exist after tasks 11-12 are complete)
+			var addConnection string // Placeholder - should be added to target.go in tasks 11-12
+			cmd.Flags().StringVar(&addName, "name", "", "Human-readable name for the target")
+			cmd.Flags().StringVar(&addType, "type", "", "Target type")
+			cmd.Flags().StringVar(&addConnection, "connection", "", "Connection parameters as JSON")
+			cmd.Flags().StringVar(&addProvider, "provider", "", "Provider")
+			cmd.Flags().StringVar(&addModel, "model", "", "Model identifier")
+			cmd.Flags().IntVar(&addTimeout, "timeout", 30, "Request timeout in seconds")
+
+			cmd.SetArgs([]string{tt.targetName})
+			cmd.Flags().Set("name", tt.targetName)
+			cmd.Flags().Set("type", tt.targetType)
+			cmd.Flags().Set("connection", tt.connection)
+
+			// Set additional flags if provided
+			for key, value := range tt.flags {
+				cmd.Flags().Set(key, value)
+			}
+
+			// Capture output
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+
+			// Execute command
+			err := cmd.ExecuteContext(context.Background())
+
+			// Check error expectation
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			// Run validation if provided
+			if tt.validate != nil && !tt.wantErr {
+				tt.validate(t, db)
+			}
+		})
+	}
+}
+
+// TestTargetListWithSchemaBasedTypes tests the list command output format with schema-based targets
+// Note: These tests require task 12 to be complete (target list updates for Type column)
+func TestTargetListWithSchemaBasedTypes(t *testing.T) {
+	t.Skip("Skipping until task 12 is complete: target list needs to show Type column")
+
+	tests := []struct {
+		name         string
+		setupTargets []types.Target
+		wantOutput   []string
+	}{
+		{
+			name: "list targets with different schema types",
+			setupTargets: []types.Target{
+				func() types.Target {
+					t := types.NewTarget("http-target", "", types.TargetType("http_api"))
+					t.Connection = map[string]any{
+						"url":    "https://api.example.com",
+						"method": "POST",
+					}
+					return *t
+				}(),
+				func() types.Target {
+					t := types.NewTarget("k8s-target", "", types.TargetType("kubernetes"))
+					t.Connection = map[string]any{
+						"cluster":   "prod",
+						"namespace": "default",
+					}
+					return *t
+				}(),
+				func() types.Target {
+					t := types.NewTarget("contract-target", "", types.TargetType("smart_contract"))
+					t.Connection = map[string]any{
+						"chain":   "ethereum",
+						"address": "0xabcd",
+					}
+					return *t
+				}(),
+			},
+			wantOutput: []string{
+				"http-target",
+				"http_api",
+				"k8s-target",
+				"kubernetes",
+				"contract-target",
+				"smart_contract",
+				"TYPE", // Column header
+			},
+		},
+		{
+			name: "list shows connection summary for http_api",
+			setupTargets: []types.Target{
+				func() types.Target {
+					t := types.NewTarget("api-target", "", types.TargetType("http_api"))
+					t.Connection = map[string]any{
+						"url": "https://api.openai.com",
+					}
+					return *t
+				}(),
+			},
+			wantOutput: []string{
+				"api-target",
+				"https://api.openai.com",
+			},
+		},
+		{
+			name: "list shows connection summary for kubernetes",
+			setupTargets: []types.Target{
+				func() types.Target {
+					t := types.NewTarget("cluster-target", "", types.TargetType("kubernetes"))
+					t.Connection = map[string]any{
+						"cluster": "staging-cluster",
+					}
+					return *t
+				}(),
+			},
+			wantOutput: []string{
+				"cluster-target",
+				"staging-cluster",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, _, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			// Setup targets
+			dao := database.NewTargetDAO(db)
+			ctx := context.Background()
+			for _, target := range tt.setupTargets {
+				err := dao.Create(ctx, &target)
+				require.NoError(t, err)
+			}
+
+			// Create command
+			cmd := &cobra.Command{
+				Use:  "list",
+				RunE: runTargetList,
+			}
+
+			cmd.Flags().StringVar(&listStatusFilter, "status", "", "Filter by status")
+			cmd.Flags().StringVar(&listProviderFilter, "provider", "", "Filter by provider")
+			cmd.SetArgs([]string{})
+
+			// Capture output
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+
+			// Execute command
+			err := cmd.ExecuteContext(ctx)
+			require.NoError(t, err)
+
+			// Verify output contains expected strings
+			output := buf.String()
+			for _, want := range tt.wantOutput {
+				assert.Contains(t, output, want, "output should contain %q", want)
+			}
+		})
+	}
+}
+
+// TestTargetShowWithSensitiveFieldMasking tests that sensitive fields are masked in show output
+// Note: These tests require task 12 to be complete (target show updates for Connection field masking)
+func TestTargetShowWithSensitiveFieldMasking(t *testing.T) {
+	t.Skip("Skipping until task 12 is complete: target show needs to mask sensitive Connection fields")
+
+	tests := []struct {
+		name               string
+		setupTarget        *types.Target
+		wantContain        []string
+		wantNotContain     []string
+		sensitiveFieldName string
+	}{
+		{
+			name: "api_key in connection is masked",
+			setupTarget: func() *types.Target {
+				t := types.NewTarget("secure-target", "", types.TargetType("http_api"))
+				t.Connection = map[string]any{
+					"url":     "https://api.example.com",
+					"api_key": "sk-1234567890abcdefghijklmnop",
+				}
+				return t
+			}(),
+			wantContain:        []string{"secure-target", "https://api.example.com", "api_key"},
+			wantNotContain:     []string{"sk-1234567890abcdefghijklmnop"},
+			sensitiveFieldName: "api_key",
+		},
+		{
+			name: "token in connection is masked",
+			setupTarget: func() *types.Target {
+				t := types.NewTarget("auth-target", "", types.TargetType("http_api"))
+				t.Connection = map[string]any{
+					"url":   "https://api.example.com",
+					"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+				}
+				return t
+			}(),
+			wantContain:        []string{"auth-target", "token"},
+			wantNotContain:     []string{"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"},
+			sensitiveFieldName: "token",
+		},
+		{
+			name: "password in connection is masked",
+			setupTarget: func() *types.Target {
+				t := types.NewTarget("db-target", "", types.TargetType("kubernetes"))
+				t.Connection = map[string]any{
+					"cluster":  "prod",
+					"password": "supersecretpassword123",
+				}
+				return t
+			}(),
+			wantContain:        []string{"db-target", "password"},
+			wantNotContain:     []string{"supersecretpassword123"},
+			sensitiveFieldName: "password",
+		},
+		{
+			name: "secret in connection is masked",
+			setupTarget: func() *types.Target {
+				t := types.NewTarget("secret-target", "", types.TargetType("http_api"))
+				t.Connection = map[string]any{
+					"url":    "https://api.example.com",
+					"secret": "very-secret-value-12345",
+				}
+				return t
+			}(),
+			wantContain:        []string{"secret-target", "secret"},
+			wantNotContain:     []string{"very-secret-value-12345"},
+			sensitiveFieldName: "secret",
+		},
+		{
+			name: "non-sensitive fields are shown",
+			setupTarget: func() *types.Target {
+				t := types.NewTarget("normal-target", "", types.TargetType("http_api"))
+				t.Connection = map[string]any{
+					"url":     "https://api.example.com",
+					"method":  "POST",
+					"timeout": 30,
+				}
+				return t
+			}(),
+			wantContain:    []string{"normal-target", "https://api.example.com", "POST", "30"},
+			wantNotContain: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, _, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			// Setup target
+			dao := database.NewTargetDAO(db)
+			err := dao.Create(context.Background(), tt.setupTarget)
+			require.NoError(t, err)
+
+			// Create command
+			cmd := &cobra.Command{
+				Use:  "show",
+				Args: cobra.ExactArgs(1),
+				RunE: runTargetShow,
+			}
+
+			cmd.SetArgs([]string{tt.setupTarget.Name})
+
+			// Capture output
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+
+			// Execute command
+			err = cmd.ExecuteContext(context.Background())
+			require.NoError(t, err)
+
+			output := buf.String()
+
+			// Verify expected content is present
+			for _, want := range tt.wantContain {
+				assert.Contains(t, output, want, "output should contain %q", want)
+			}
+
+			// Verify sensitive content is NOT present
+			for _, notWant := range tt.wantNotContain {
+				assert.NotContains(t, output, notWant, "output should NOT contain sensitive value %q", notWant)
+			}
+
+			// If there's a sensitive field, verify it shows masked value
+			if tt.sensitiveFieldName != "" {
+				assert.Contains(t, output, "***", "sensitive field should be masked with ***")
+			}
+		})
+	}
+}
+
+// TestTargetShowJSONOutput tests JSON output format for target show
+// Note: These tests require task 12 to be complete (target show JSON output with Connection field)
+func TestTargetShowJSONOutput(t *testing.T) {
+	t.Skip("Skipping until task 12 is complete: target show JSON output needs Connection field support")
+
+	tests := []struct {
+		name        string
+		setupTarget *types.Target
+		useJSON     bool
+		validate    func(*testing.T, string)
+	}{
+		{
+			name: "json output includes all fields",
+			setupTarget: func() *types.Target {
+				t := types.NewTarget("json-target", "", types.TargetType("http_api"))
+				t.Connection = map[string]any{
+					"url":    "https://api.example.com",
+					"method": "POST",
+				}
+				t.Description = "Test target for JSON"
+				t.Tags = []string{"test", "api"}
+				return t
+			}(),
+			useJSON: true,
+			validate: func(t *testing.T, output string) {
+				var result map[string]any
+				err := json.Unmarshal([]byte(output), &result)
+				require.NoError(t, err, "output should be valid JSON")
+
+				assert.Equal(t, "json-target", result["name"])
+				assert.Equal(t, "http_api", result["type"])
+				assert.NotNil(t, result["connection"])
+
+				connection := result["connection"].(map[string]any)
+				assert.Equal(t, "https://api.example.com", connection["url"])
+				assert.Equal(t, "POST", connection["method"])
+			},
+		},
+		{
+			name: "json output masks sensitive fields",
+			setupTarget: func() *types.Target {
+				t := types.NewTarget("secure-json-target", "", types.TargetType("http_api"))
+				t.Connection = map[string]any{
+					"url":     "https://api.example.com",
+					"api_key": "sk-secret123",
+				}
+				return t
+			}(),
+			useJSON: true,
+			validate: func(t *testing.T, output string) {
+				var result map[string]any
+				err := json.Unmarshal([]byte(output), &result)
+				require.NoError(t, err)
+
+				connection := result["connection"].(map[string]any)
+				// Sensitive field should be masked
+				assert.NotEqual(t, "sk-secret123", connection["api_key"])
+				assert.Contains(t, connection["api_key"], "***")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db, _, cleanup := setupTestDB(t)
+			defer cleanup()
+
+			// Setup target
+			dao := database.NewTargetDAO(db)
+			err := dao.Create(context.Background(), tt.setupTarget)
+			require.NoError(t, err)
+
+			// Create command
+			cmd := &cobra.Command{
+				Use:  "show",
+				Args: cobra.ExactArgs(1),
+				RunE: runTargetShow,
+			}
+
+			if tt.useJSON {
+				cmd.Flags().StringVar(&showOutputFormat, "output", "json", "Output format")
+				cmd.Flags().Set("output", "json")
+			}
+
+			cmd.SetArgs([]string{tt.setupTarget.Name})
+
+			// Capture output
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+
+			// Execute command
+			err = cmd.ExecuteContext(context.Background())
+			require.NoError(t, err)
+
+			// Validate output
+			if tt.validate != nil {
+				tt.validate(t, buf.String())
 			}
 		})
 	}

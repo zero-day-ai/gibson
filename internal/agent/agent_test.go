@@ -79,7 +79,11 @@ func TestSlotDefinition(t *testing.T) {
 		assert.Equal(t, "test", slot.Name)
 		assert.Equal(t, "Test slot", slot.Description)
 		assert.True(t, slot.Required)
-		assert.Equal(t, "anthropic", slot.Default.Provider)
+		// Provider and Model are empty by default (resolved at runtime by SlotManager)
+		assert.Equal(t, "", slot.Default.Provider)
+		assert.Equal(t, "", slot.Default.Model)
+		assert.Equal(t, 0.7, slot.Default.Temperature)
+		assert.Equal(t, 4096, slot.Default.MaxTokens)
 		assert.Equal(t, 8192, slot.Constraints.MinContextWindow)
 	})
 
@@ -109,7 +113,14 @@ func TestSlotDefinition(t *testing.T) {
 	})
 
 	t.Run("MergeConfig", func(t *testing.T) {
-		slot := NewSlotDefinition("test", "Test slot", true)
+		// Create a slot with explicit defaults set
+		slot := NewSlotDefinition("test", "Test slot", true).
+			WithDefault(SlotConfig{
+				Provider:    "anthropic",
+				Model:       "claude-3-sonnet-20240229",
+				Temperature: 0.7,
+				MaxTokens:   4096,
+			})
 
 		// Test with nil override (should return default)
 		merged := slot.MergeConfig(nil)
@@ -822,61 +833,10 @@ func (m *mockExternalAgent) Execute(ctx context.Context, task Task, harness Agen
 	return result, nil
 }
 
-// TestGRPCAgentClient tests the gRPC client placeholder
-func TestGRPCAgentClient(t *testing.T) {
-	t.Run("NewGRPCAgentClient", func(t *testing.T) {
-		client, err := NewGRPCAgentClient("localhost:50051")
-		assert.NoError(t, err)
-		assert.NotNil(t, client)
-	})
-
-	t.Run("Methods", func(t *testing.T) {
-		client, _ := NewGRPCAgentClient("localhost:50051")
-
-		assert.Equal(t, "grpc-agent", client.Name())
-		assert.Equal(t, "0.1.0", client.Version())
-		assert.NotEmpty(t, client.Description())
-		assert.Empty(t, client.Capabilities())
-		assert.Empty(t, client.TargetTypes())
-		assert.Empty(t, client.TechniqueTypes())
-		assert.Empty(t, client.LLMSlots())
-	})
-
-	t.Run("Execute_NotImplemented", func(t *testing.T) {
-		client, _ := NewGRPCAgentClient("localhost:50051")
-		task := NewTask("test", "test", nil)
-
-		result, err := client.Execute(context.Background(), task, nil)
-		assert.NoError(t, err) // Returns result, not error
-		assert.Equal(t, ResultStatusFailed, result.Status)
-		assert.NotNil(t, result.Error)
-	})
-
-	t.Run("Initialize", func(t *testing.T) {
-		client, _ := NewGRPCAgentClient("localhost:50051")
-		cfg := NewAgentConfig("test")
-		err := client.Initialize(context.Background(), cfg)
-		assert.NoError(t, err)
-	})
-
-	t.Run("Shutdown", func(t *testing.T) {
-		client, _ := NewGRPCAgentClient("localhost:50051")
-		err := client.Shutdown(context.Background())
-		assert.NoError(t, err)
-	})
-
-	t.Run("Health", func(t *testing.T) {
-		client, _ := NewGRPCAgentClient("localhost:50051")
-		health := client.Health(context.Background())
-		assert.False(t, health.IsHealthy())
-	})
-
-	t.Run("Close", func(t *testing.T) {
-		client, _ := NewGRPCAgentClient("localhost:50051")
-		err := client.Close()
-		assert.NoError(t, err)
-	})
-}
+// TestGRPCAgentClient placeholder test removed.
+// Comprehensive tests are in grpc_client_test.go which use a mock gRPC server
+// to test the full implementation including descriptor fetching, slot schema,
+// execution, health checks, etc.
 
 // TestAgentRegistry_ErrorPaths tests error handling paths
 func TestAgentRegistry_ErrorPaths(t *testing.T) {

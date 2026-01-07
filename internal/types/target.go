@@ -7,15 +7,23 @@ import (
 	"time"
 )
 
-// TargetType represents the type of LLM target system being tested
+// Deprecated: TargetType enum is deprecated in favor of string-based target types
+// with schema-based validation. Use string type directly for Target.Type field.
+// This enum is kept for backward compatibility during migration.
 type TargetType string
 
 const (
-	TargetTypeLLMChat    TargetType = "llm_chat"
-	TargetTypeLLMAPI     TargetType = "llm_api"
-	TargetTypeRAG        TargetType = "rag"
-	TargetTypeAgent      TargetType = "agent"
-	TargetTypeEmbedding  TargetType = "embedding"
+	// Deprecated: Use string "llm_chat" directly
+	TargetTypeLLMChat TargetType = "llm_chat"
+	// Deprecated: Use string "llm_api" directly
+	TargetTypeLLMAPI TargetType = "llm_api"
+	// Deprecated: Use string "rag" directly
+	TargetTypeRAG TargetType = "rag"
+	// Deprecated: Use string "agent" directly
+	TargetTypeAgent TargetType = "agent"
+	// Deprecated: Use string "embedding" directly
+	TargetTypeEmbedding TargetType = "embedding"
+	// Deprecated: Use string "multimodal" directly
 	TargetTypeMultimodal TargetType = "multimodal"
 )
 
@@ -156,11 +164,10 @@ func (a *AuthType) UnmarshalJSON(data []byte) error {
 type Target struct {
 	ID           ID                     `json:"id"`
 	Name         string                 `json:"name"`
-	Type         TargetType             `json:"type"`
+	Type         string                 `json:"type"` // Changed from TargetType enum to string for schema-based types
 	Provider     Provider               `json:"provider,omitempty"`
-	URL          string                 `json:"url"`
+	Connection   map[string]any         `json:"connection,omitempty"` // Schema-based connection parameters
 	Model        string                 `json:"model,omitempty"`
-	Headers      map[string]string      `json:"headers,omitempty"`
 	Config       map[string]interface{} `json:"config,omitempty"`
 	Capabilities []string               `json:"capabilities,omitempty"`
 	AuthType     AuthType               `json:"auth_type,omitempty"`
@@ -171,19 +178,28 @@ type Target struct {
 	Timeout      int                    `json:"timeout"` // seconds
 	CreatedAt    time.Time              `json:"created_at"`
 	UpdatedAt    time.Time              `json:"updated_at"`
+
+	// Deprecated: Use Connection["url"] instead. Kept for backward compatibility during migration.
+	URL string `json:"url,omitempty"`
+	// Deprecated: Use Connection["headers"] instead. Kept for backward compatibility during migration.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // NewTarget creates a new Target with default values
 // name: human-readable name for the target
 // url: endpoint URL for the target system
 // targetType: type of LLM system (llm_chat, llm_api, rag, etc.)
+//
+// Deprecated: Use NewTargetWithConnection instead for schema-based targets.
+// This constructor is kept for backward compatibility.
 func NewTarget(name, url string, targetType TargetType) *Target {
 	now := time.Now()
 	return &Target{
 		ID:           NewID(),
 		Name:         name,
-		Type:         targetType,
+		Type:         string(targetType),
 		URL:          url,
+		Connection:   map[string]any{"url": url},
 		Status:       TargetStatusActive,
 		Headers:      make(map[string]string),
 		Config:       make(map[string]interface{}),
@@ -193,6 +209,44 @@ func NewTarget(name, url string, targetType TargetType) *Target {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
+}
+
+// NewTargetWithConnection creates a new Target with schema-based connection parameters
+// name: human-readable name for the target
+// targetType: type of target system (http_api, kubernetes, smart_contract, etc.)
+// connection: schema-based connection parameters
+func NewTargetWithConnection(name, targetType string, connection map[string]any) *Target {
+	now := time.Now()
+	if connection == nil {
+		connection = make(map[string]any)
+	}
+	return &Target{
+		ID:           NewID(),
+		Name:         name,
+		Type:         targetType,
+		Connection:   connection,
+		Status:       TargetStatusActive,
+		Config:       make(map[string]interface{}),
+		Capabilities: []string{},
+		Tags:         []string{},
+		Timeout:      30, // default 30 seconds
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+}
+
+// GetURL returns the target URL for backward compatibility
+// If Connection["url"] is set, it returns that value, otherwise falls back to the URL field
+func (t *Target) GetURL() string {
+	if t.Connection != nil {
+		if url, ok := t.Connection["url"]; ok {
+			if urlStr, ok := url.(string); ok {
+				return urlStr
+			}
+		}
+	}
+	// Fall back to the deprecated URL field
+	return t.URL
 }
 
 // Validate checks if the Target has all required fields and valid values
@@ -207,14 +261,17 @@ func (t *Target) Validate() error {
 		return fmt.Errorf("target name cannot be empty")
 	}
 
-	// Validate URL
-	if strings.TrimSpace(t.URL) == "" {
-		return fmt.Errorf("target URL cannot be empty")
+	// Validate Type (now string-based, no enum validation)
+	if strings.TrimSpace(t.Type) == "" {
+		return fmt.Errorf("target type cannot be empty")
 	}
 
-	// Validate Type
-	if !t.Type.IsValid() {
-		return fmt.Errorf("invalid target type: %s", t.Type)
+	// Validate URL/Connection: prefer Connection, fall back to deprecated URL field
+	// For new targets, Connection should be set. For old targets, URL field may be set.
+	hasConnection := t.Connection != nil && len(t.Connection) > 0
+	hasURL := strings.TrimSpace(t.URL) != ""
+	if !hasConnection && !hasURL {
+		return fmt.Errorf("target must have either Connection parameters or URL")
 	}
 
 	// Validate Status
@@ -250,7 +307,7 @@ func (t *Target) Validate() error {
 // TargetFilter represents query filters for retrieving targets
 type TargetFilter struct {
 	Provider *Provider
-	Type     *TargetType
+	Type     *string // Changed from *TargetType to *string for schema-based types
 	Status   *TargetStatus
 	Tags     []string
 	Limit    int
@@ -273,7 +330,7 @@ func (f *TargetFilter) WithProvider(provider Provider) *TargetFilter {
 }
 
 // WithType sets the Type filter
-func (f *TargetFilter) WithType(targetType TargetType) *TargetFilter {
+func (f *TargetFilter) WithType(targetType string) *TargetFilter {
 	f.Type = &targetType
 	return f
 }

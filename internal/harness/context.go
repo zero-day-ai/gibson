@@ -52,13 +52,17 @@ func (m MissionContext) WithMetadata(key string, value any) MissionContext {
 // It provides agents with the necessary details to interact with targets
 // including authentication headers and provider-specific metadata.
 type TargetInfo struct {
-	ID       types.ID          `json:"id"`
-	Name     string            `json:"name"`
-	URL      string            `json:"url"`
-	Type     string            `json:"type"`
-	Provider string            `json:"provider,omitempty"`
-	Headers  map[string]string `json:"headers,omitempty"`
-	Metadata map[string]any    `json:"metadata,omitempty"`
+	ID         types.ID          `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Provider   string            `json:"provider,omitempty"`
+	Connection map[string]any    `json:"connection,omitempty"` // Schema-based connection parameters
+	Metadata   map[string]any    `json:"metadata,omitempty"`
+
+	// Deprecated: Use Connection["url"] instead. Kept for backward compatibility.
+	URL string `json:"url,omitempty"`
+	// Deprecated: Use Connection["headers"] instead. Kept for backward compatibility.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // NewTargetInfo creates a new target info with the given ID, name, URL, and type.

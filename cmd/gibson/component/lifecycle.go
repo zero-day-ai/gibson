@@ -2,10 +2,10 @@ package component
 
 import (
 	"fmt"
-	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/cmd/gibson/core"
+	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 )
 
 // newStartCommand creates a start command for the specified component type.
@@ -39,38 +39,49 @@ func newStopCommand(cfg Config) *cobra.Command {
 // runStart executes the start command for a component.
 func runStart(cmd *cobra.Command, args []string, cfg Config) error {
 	componentName := args[0]
+	ctx := cmd.Context()
 
 	cmd.Printf("Starting %s '%s'...\n", cfg.DisplayName, componentName)
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
-	}
-	defer cc.Close()
-
-	// Call core function
-	result, err := core.ComponentStart(cc, cfg.Kind, componentName)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
 
-	// Extract result data
-	data, ok := result.Data.(map[string]interface{})
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
 	if !ok {
-		return fmt.Errorf("unexpected result type")
+		return fmt.Errorf("invalid daemon client type")
 	}
 
-	pid, _ := data["pid"].(int)
-	port, _ := data["port"].(int)
+	// Call appropriate start method based on component kind
+	var result *daemonclient.StartResult
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		result, err = client.StartAgent(ctx, componentName)
+	case "tool":
+		result, err = client.StartTool(ctx, componentName)
+	case "plugin":
+		result, err = client.StartPlugin(ctx, componentName)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
+	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
+		return err
+	}
 
 	cmd.Printf("%s '%s' started successfully\n", capitalizeFirst(cfg.DisplayName), componentName)
-	cmd.Printf("PID: %d\n", pid)
-	cmd.Printf("Port: %d\n", port)
-
-	// Show log path
-	logPath := filepath.Join(cc.HomeDir, "logs", string(cfg.Kind), fmt.Sprintf("%s.log", componentName))
-	cmd.Printf("Logs: %s\n", logPath)
+	cmd.Printf("PID: %d\n", result.PID)
+	cmd.Printf("Port: %d\n", result.Port)
+	cmd.Printf("Logs: %s\n", result.LogPath)
 
 	return nil
 }
@@ -78,38 +89,51 @@ func runStart(cmd *cobra.Command, args []string, cfg Config) error {
 // runStop executes the stop command for a component.
 func runStop(cmd *cobra.Command, args []string, cfg Config) error {
 	componentName := args[0]
+	ctx := cmd.Context()
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
-	}
-	defer cc.Close()
-
-	// Call core function
-	result, err := core.ComponentStop(cc, cfg.Kind, componentName)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
 
-	// Extract result data
-	data, ok := result.Data.(map[string]interface{})
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
 	if !ok {
-		return fmt.Errorf("unexpected result type")
+		return fmt.Errorf("invalid daemon client type")
 	}
 
-	stoppedCount, _ := data["stopped_count"].(int)
-	totalCount, _ := data["total_count"].(int)
+	// Call appropriate stop method based on component kind
+	var result *daemonclient.StopResult
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		result, err = client.StopAgent(ctx, componentName)
+	case "tool":
+		result, err = client.StopTool(ctx, componentName)
+	case "plugin":
+		result, err = client.StopPlugin(ctx, componentName)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
+	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
+		return err
+	}
 
 	cmd.Printf("Stopping %s '%s' (%d instance(s))...\n",
-		cfg.DisplayName, componentName, totalCount)
+		cfg.DisplayName, componentName, result.TotalCount)
 
 	cmd.Printf("%s '%s' stopped successfully (%d/%d instances)\n",
-		capitalizeFirst(cfg.DisplayName), componentName, stoppedCount, totalCount)
+		capitalizeFirst(cfg.DisplayName), componentName, result.StoppedCount, result.TotalCount)
 
 	return nil
 }
-
 
 // capitalizeFirst capitalizes the first letter of a string.
 func capitalizeFirst(s string) string {

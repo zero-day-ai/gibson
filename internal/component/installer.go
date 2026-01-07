@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -274,21 +275,23 @@ type Installer interface {
 
 // DefaultInstaller implements Installer using git, build executor, and component DAO
 type DefaultInstaller struct {
-	git     git.GitOperations
-	builder build.BuildExecutor
-	dao     ComponentDAO
-	homeDir string
-	tracer  trace.Tracer
+	git       git.GitOperations
+	builder   build.BuildExecutor
+	dao       ComponentDAO
+	lifecycle LifecycleManager
+	homeDir   string
+	tracer    trace.Tracer
 }
 
 // NewDefaultInstaller creates a new DefaultInstaller instance
-func NewDefaultInstaller(gitOps git.GitOperations, builder build.BuildExecutor, dao ComponentDAO) *DefaultInstaller {
+func NewDefaultInstaller(gitOps git.GitOperations, builder build.BuildExecutor, dao ComponentDAO, lifecycle LifecycleManager) *DefaultInstaller {
 	return &DefaultInstaller{
-		git:     gitOps,
-		builder: builder,
-		dao:     dao,
-		homeDir: getDefaultHomeDir(),
-		tracer:  otel.GetTracerProvider().Tracer("gibson.component"),
+		git:       gitOps,
+		builder:   builder,
+		dao:       dao,
+		lifecycle: lifecycle,
+		homeDir:   getDefaultHomeDir(),
+		tracer:    otel.GetTracerProvider().Tracer("gibson.component"),
 	}
 }
 
@@ -1295,10 +1298,25 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 			wasRunning = comp.IsRunning()
 
 			// Step 1: Stop component if running
-			// Note: Actual stop logic would be handled by a component manager
-			// For now, we just note that it was running
-			if wasRunning {
-				// TODO: Implement stop via component manager
+			if wasRunning && i.lifecycle != nil {
+				span.AddEvent("stopping running component before upgrade", trace.WithAttributes(
+					attribute.String("component.name", name),
+					attribute.Int("component.pid", comp.PID),
+				))
+
+				// Create a timeout context for the stop operation
+				stopCtx, stopCancel := context.WithTimeout(ctx, DefaultShutdownTimeout)
+				defer stopCancel()
+
+				if err := i.lifecycle.StopComponent(stopCtx, comp); err != nil {
+					// Log the error but continue with upgrade
+					// The component may have already stopped or the process may be dead
+					span.AddEvent("failed to stop component gracefully", trace.WithAttributes(
+						attribute.String("error", err.Error()),
+					))
+				} else {
+					span.AddEvent("component stopped successfully", nil)
+				}
 			}
 		}
 	}
@@ -1496,10 +1514,33 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 		// Check if component is running
 		if comp.IsRunning() {
 			result.WasRunning = true
-			// TODO: Implement stop via component manager
-			// For now, just note that it was running
-			result.WasStopped = false
 			span.SetAttributes(attribute.Bool("gibson.component.was_running", true))
+
+			// Stop component before uninstalling
+			if i.lifecycle != nil {
+				span.AddEvent("stopping running component before uninstall", trace.WithAttributes(
+					attribute.String("component.name", name),
+					attribute.Int("component.pid", comp.PID),
+				))
+
+				// Create a timeout context for the stop operation
+				stopCtx, stopCancel := context.WithTimeout(ctx, DefaultShutdownTimeout)
+				defer stopCancel()
+
+				if err := i.lifecycle.StopComponent(stopCtx, comp); err != nil {
+					// Log error but continue with uninstall
+					// The process may already be dead
+					span.AddEvent("failed to stop component gracefully", trace.WithAttributes(
+						attribute.String("error", err.Error()),
+					))
+					result.WasStopped = false
+				} else {
+					span.AddEvent("component stopped successfully", nil)
+					result.WasStopped = true
+				}
+			} else {
+				result.WasStopped = false
+			}
 		}
 	} else {
 		// Fallback to legacy path if no DAO
@@ -1651,14 +1692,15 @@ func (i *DefaultInstaller) checkDependencies(ctx context.Context, manifest *Mani
 
 // checkSystemDependency checks if a system dependency is available
 func (i *DefaultInstaller) checkSystemDependency(dep string) error {
-	// Check if command exists in PATH
-	if _, err := os.Stat(dep); err == nil {
-		return nil
+	// Use exec.LookPath to check if the binary exists in PATH
+	path, err := exec.LookPath(dep)
+	if err != nil {
+		// Dependency not found in PATH
+		return fmt.Errorf("system dependency '%s' not found in PATH: install it using your package manager (e.g., apt install %s, brew install %s, yum install %s)", dep, dep, dep, dep)
 	}
 
-	// For now, just return nil (assume dependency is available)
-	// In a real implementation, we would check using exec.LookPath or similar
-	// TODO: Implement proper system dependency checking
+	// Dependency found
+	_ = path // Path is available if needed for debugging
 	return nil
 }
 
@@ -1959,6 +2001,7 @@ func (i *DefaultInstaller) copyArtifactsToBin(kind ComponentKind, artifacts []st
 //   - comp is nil
 //   - comp.BinPath is empty (script-based components without binaries)
 //   - BinPath file exists or there's an error other than "not exist"
+//
 // Returns true if:
 //   - BinPath is set but the file doesn't exist
 func (i *DefaultInstaller) isOrphanedComponent(comp *Component) bool {

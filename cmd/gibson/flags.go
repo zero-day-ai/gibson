@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/internal/verbose"
 )
 
 // OutputFormat represents the output format for CLI commands
@@ -17,6 +18,8 @@ const (
 // GlobalFlags holds global flags available to all commands
 type GlobalFlags struct {
 	Verbose      bool
+	VeryVerbose  bool
+	DebugVerbose bool
 	Quiet        bool
 	OutputFormat string
 	ConfigFile   string
@@ -27,7 +30,9 @@ var globalFlags = &GlobalFlags{}
 
 // RegisterGlobalFlags registers persistent flags on the root command
 func RegisterGlobalFlags(cmd *cobra.Command) {
-	cmd.PersistentFlags().BoolVarP(&globalFlags.Verbose, "verbose", "v", false, "Enable verbose output")
+	cmd.PersistentFlags().BoolVarP(&globalFlags.Verbose, "verbose", "v", false, "Enable verbose output (-v): shows major operations (LLM requests, tool calls, agent lifecycle)")
+	cmd.PersistentFlags().BoolVarP(&globalFlags.VeryVerbose, "very-verbose", "", false, "Enable very verbose output (-vv): adds detailed operation data (token counts, durations, parameters)")
+	cmd.PersistentFlags().BoolVarP(&globalFlags.DebugVerbose, "debug-verbose", "", false, "Enable debug output (-vvv): shows all internal events (memory operations, component health, system events)")
 	cmd.PersistentFlags().BoolVarP(&globalFlags.Quiet, "quiet", "q", false, "Suppress non-essential output")
 	cmd.PersistentFlags().StringVarP(&globalFlags.OutputFormat, "output", "o", "text", "Output format (text|json)")
 	cmd.PersistentFlags().StringVar(&globalFlags.ConfigFile, "config", "", "Path to config file (default: $GIBSON_HOME/config.yaml)")
@@ -67,4 +72,36 @@ func (f *GlobalFlags) IsVerbose() bool {
 // IsQuiet returns true if quiet mode is enabled
 func (f *GlobalFlags) IsQuiet() bool {
 	return f.Quiet
+}
+
+// VerbosityLevel returns the appropriate VerboseLevel based on the flags.
+// The hierarchy is:
+//   - Quiet mode: LevelNone
+//   - Debug (-vvv or --debug-verbose): LevelDebug (3)
+//   - Very verbose (-vv or --very-verbose): LevelVeryVerbose (2)
+//   - Verbose (-v or --verbose): LevelVerbose (1)
+//   - Default: LevelNone (0)
+func (f *GlobalFlags) VerbosityLevel() verbose.VerboseLevel {
+	// Quiet mode disables all verbose output
+	if f.Quiet {
+		return verbose.LevelNone
+	}
+
+	// Debug takes highest precedence
+	if f.DebugVerbose {
+		return verbose.LevelDebug
+	}
+
+	// Very verbose is next
+	if f.VeryVerbose {
+		return verbose.LevelVeryVerbose
+	}
+
+	// Regular verbose
+	if f.Verbose {
+		return verbose.LevelVerbose
+	}
+
+	// Default: no verbose output
+	return verbose.LevelNone
 }

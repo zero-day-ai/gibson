@@ -70,6 +70,39 @@ make proto-deps             # Install protoc plugins
 - etcd registry for service discovery and health monitoring
 - Components register at startup and use TTL-based keepalive
 
+## Daemon-Client Architecture
+
+Gibson uses a daemon-client architecture where the daemon owns runtime state and the CLI commands communicate via gRPC.
+
+### Data Sources
+
+**Daemon (runtime state)**: Component registration (agents, tools, plugins), health status, active missions
+**SQLite (persistent data)**: Findings, mission history, credentials, targets, payloads
+
+Commands query the appropriate data source:
+- `gibson agent list` / `tool list` / `plugin list` → Daemon registry (live state)
+- `gibson status` → Daemon gRPC (uptime, component counts, version)
+- `gibson findings list` → SQLite (historical data)
+- `gibson attack` → Daemon for execution (orchestrates registry components)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `internal/daemon/daemon.go` | Daemon lifecycle management, registry adapter initialization |
+| `internal/daemon/grpc.go` | Daemon's DaemonInterface implementation (ListAgents, Status, etc.) |
+| `internal/daemon/client/client.go` | gRPC client for CLI commands |
+| `internal/daemon/client/convert.go` | Proto-to-domain type conversion helpers |
+| `internal/daemon/api/daemon.proto` | gRPC service definition |
+
+### Command Routing
+
+Commands check for daemon availability using `GetDaemonClient()`:
+- **Daemon available**: Call `client.ListAgents()`, `client.Status()`, `client.RunAttack()`, etc.
+- **Daemon not running**: Return clear error message: "daemon not running, start with 'gibson daemon start'"
+
+This enables commands to work both in daemon mode (production) and standalone mode (development/testing).
+
 ### Key Patterns
 
 **Harness Pattern**: The `internal/harness` package provides the agent runtime environment. Agents receive a harness that exposes:
@@ -77,6 +110,37 @@ make proto-deps             # Install protoc plugins
 - `ExecuteTool()` - Registry-based tool execution
 - `SubmitFinding()` - Finding storage (local + async GraphRAG)
 - Memory access (working, mission, long-term)
+
+**HarnessFactory Wiring**: The daemon creates a `HarnessFactory` during startup that is wired throughout the execution flow:
+
+```
+daemon.Start()
+  └─> newInfrastructure()
+        ├─> Creates LLMRegistry (providers from config/env)
+        ├─> Creates SlotManager (wraps LLMRegistry)
+        ├─> Creates MemoryManagerFactory (for per-mission memory)
+        └─> Creates HarnessFactory (with all dependencies)
+              └─> Stores in infrastructure.harnessFactory
+
+MissionOrchestrator (created in daemon.go and mission_manager.go)
+  └─> WithHarnessFactory(infrastructure.harnessFactory)
+
+orchestrator.Execute(mission)
+  └─> harnessFactory.Create(agentName, missionCtx, target)
+        └─> Returns AgentHarness with:
+              - SlotManager for LLM slot resolution
+              - LLMRegistry for provider access
+              - MemoryFactory creates per-mission memory
+              - FindingStore for vulnerability storage
+```
+
+Key files:
+- `internal/daemon/infrastructure.go` - Holds slotManager, harnessFactory, memoryManagerFactory
+- `internal/daemon/harness_init.go` - Creates HarnessFactory with dependencies
+- `internal/daemon/slot_manager.go` - DaemonSlotManager implementation
+- `internal/daemon/memory_factory.go` - Creates mission-scoped MemoryManagers
+- `internal/harness/factory.go` - HarnessFactory interface and implementation
+- `internal/harness/config.go` - HarnessConfig with MemoryFactory callback
 
 **Slot-Based LLM Selection**: Agents request LLM slots by capability requirements (context window, etc.) rather than specific providers.
 

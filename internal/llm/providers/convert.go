@@ -69,10 +69,30 @@ func fromLangchainResponse(resp *llms.ContentResponse, model string) *llm.Comple
 	}
 
 	var content string
+	var toolCalls []llm.ToolCall
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 		if choice.Content != "" {
 			content = choice.Content
+		}
+
+		// Extract tool calls from the response
+		if len(choice.ToolCalls) > 0 {
+			toolCalls = make([]llm.ToolCall, 0, len(choice.ToolCalls))
+			for _, tc := range choice.ToolCalls {
+				var name, arguments string
+				if tc.FunctionCall != nil {
+					name = tc.FunctionCall.Name
+					arguments = tc.FunctionCall.Arguments
+				}
+
+				toolCalls = append(toolCalls, llm.ToolCall{
+					ID:        tc.ID,
+					Type:      tc.Type,
+					Name:      name,
+					Arguments: arguments,
+				})
+			}
 		}
 	}
 
@@ -92,14 +112,20 @@ func fromLangchainResponse(resp *llms.ContentResponse, model string) *llm.Comple
 				finishReason = llm.FinishReasonStop
 			}
 		}
+
+		// If we have tool calls but no explicit finish reason, set it to tool_calls
+		if len(toolCalls) > 0 && finishReason == llm.FinishReasonStop {
+			finishReason = llm.FinishReasonToolCalls
+		}
 	}
 
 	return &llm.CompletionResponse{
 		ID:    uuid.New().String(),
 		Model: model,
 		Message: llm.Message{
-			Role:    llm.RoleAssistant,
-			Content: content,
+			Role:      llm.RoleAssistant,
+			Content:   content,
+			ToolCalls: toolCalls,
 		},
 		FinishReason: finishReason,
 		Usage:        llm.CompletionTokenUsage{},
@@ -137,5 +163,34 @@ func buildCallOptions(req llm.CompletionRequest) []llms.CallOption {
 func buildStreamingCallOptions(req llm.CompletionRequest, streamFunc func(ctx context.Context, chunk []byte) error) []llms.CallOption {
 	callOpts := buildCallOptions(req)
 	callOpts = append(callOpts, llms.WithStreamingFunc(streamFunc))
+	return callOpts
+}
+
+// toSchemaTools converts Gibson ToolDef to langchaingo Tool format
+func toSchemaTools(tools []llm.ToolDef) []llms.Tool {
+	if len(tools) == 0 {
+		return nil
+	}
+
+	result := make([]llms.Tool, 0, len(tools))
+	for _, tool := range tools {
+		result = append(result, llms.Tool{
+			Type: "function",
+			Function: &llms.FunctionDefinition{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters:  tool.Parameters,
+			},
+		})
+	}
+	return result
+}
+
+// buildCallOptionsWithTools adds tools to call options
+func buildCallOptionsWithTools(req llm.CompletionRequest, tools []llm.ToolDef) []llms.CallOption {
+	callOpts := buildCallOptions(req)
+	if len(tools) > 0 {
+		callOpts = append(callOpts, llms.WithTools(toSchemaTools(tools)))
+	}
 	return callOpts
 }

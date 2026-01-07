@@ -16,6 +16,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// PlanningOrchestrator is an interface to avoid import cycle with planning package.
+// The actual implementation is in internal/planning/orchestrator.go.
+type PlanningOrchestrator interface {
+	// Methods would be defined here if needed by harness
+	// For now, we just need to check if it's nil
+}
+
 // DefaultAgentHarness is the production implementation of the AgentHarness interface.
 // It provides agents with access to all framework capabilities including LLM operations,
 // tool execution, plugin queries, sub-agent delegation, finding management, memory storage,
@@ -67,6 +74,11 @@ type DefaultAgentHarness struct {
 	// Knowledge graph integration
 	graphRAGBridge      GraphRAGBridge
 	graphRAGQueryBridge GraphRAGQueryBridge
+
+	// Planning integration
+	planningOrchestrator PlanningOrchestrator
+	planContext          *PlanningContext
+	stepBudget           int
 }
 
 // Ensure DefaultAgentHarness implements AgentHarness
@@ -423,17 +435,52 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 		"tool", name,
 		"input", input)
 
-	// Get tool from registry
+	// Try to get tool from local registry first
 	t, err := h.toolRegistry.Get(name)
 	if err != nil {
-		h.logger.Error("tool not found",
-			"tool", name,
-			"error", err)
-		return nil, types.WrapError(
-			ErrHarnessToolExecutionFailed,
-			fmt.Sprintf("tool not found: %s", name),
-			err,
-		)
+		// Tool not found locally - try to discover via registry adapter
+		if h.registryAdapter != nil {
+			h.logger.Debug("tool not found locally, attempting remote discovery",
+				"tool", name)
+
+			remoteTool, discErr := h.registryAdapter.DiscoverTool(ctx, name)
+			if discErr != nil {
+				h.logger.Error("tool not found (local or remote)",
+					"tool", name,
+					"local_error", err,
+					"discovery_error", discErr)
+				return nil, types.WrapError(
+					ErrHarnessToolExecutionFailed,
+					fmt.Sprintf("tool not found: %s (local: %v, remote: %v)", name, err, discErr),
+					err,
+				)
+			}
+
+			// Use discovered remote tool
+			t = remoteTool
+			h.logger.Debug("discovered remote tool",
+				"tool", name,
+				"version", remoteTool.Version())
+		} else {
+			// No registry adapter, can't discover remotely
+			h.logger.Error("tool not found locally and no registry adapter available",
+				"tool", name,
+				"error", err)
+			return nil, types.WrapError(
+				ErrHarnessToolExecutionFailed,
+				fmt.Sprintf("tool not found: %s", name),
+				err,
+			)
+		}
+	}
+
+	// Determine if tool is local or remote for logging
+	isRemote := false
+	if h.registryAdapter != nil {
+		// Check if tool implements registry gRPC client (remote)
+		if _, ok := t.(*registry.GRPCToolClient); ok {
+			isRemote = true
+		}
 	}
 
 	// Execute tool
@@ -441,11 +488,13 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 	if err != nil {
 		h.logger.Error("tool execution failed",
 			"tool", name,
+			"remote", isRemote,
 			"error", err)
 
 		// Record failure metrics
 		h.metrics.RecordCounter("tools.executions", 1, map[string]string{
 			"tool":   name,
+			"remote": fmt.Sprintf("%t", isRemote),
 			"status": "failed",
 		})
 
@@ -459,11 +508,13 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 	// Record success metrics
 	h.metrics.RecordCounter("tools.executions", 1, map[string]string{
 		"tool":   name,
+		"remote": fmt.Sprintf("%t", isRemote),
 		"status": "success",
 	})
 
 	h.logger.Debug("tool execution successful",
 		"tool", name,
+		"remote", isRemote,
 		"output", output)
 
 	return output, nil
@@ -471,18 +522,51 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 
 // ListTools returns descriptors for all registered tools.
 func (h *DefaultAgentHarness) ListTools() []ToolDescriptor {
-	toolDescriptors := h.toolRegistry.List()
+	// Get local tools from registry
+	localToolDescriptors := h.toolRegistry.List()
 
 	// Convert from tool.ToolDescriptor to harness.ToolDescriptor
-	descriptors := make([]ToolDescriptor, len(toolDescriptors))
-	for i, t := range toolDescriptors {
-		descriptors[i] = ToolDescriptor{
+	descriptors := make([]ToolDescriptor, 0, len(localToolDescriptors))
+	for _, t := range localToolDescriptors {
+		descriptors = append(descriptors, ToolDescriptor{
 			Name:         t.Name,
 			Description:  t.Description,
 			Version:      t.Version,
 			Tags:         t.Tags,
 			InputSchema:  t.InputSchema,
 			OutputSchema: t.OutputSchema,
+		})
+	}
+
+	// If registry adapter is available, add remote tools
+	if h.registryAdapter != nil {
+		ctx := context.Background()
+		remoteTools, err := h.registryAdapter.ListTools(ctx)
+		if err != nil {
+			h.logger.Warn("failed to list remote tools",
+				"error", err)
+			// Continue with just local tools
+		} else {
+			// Add remote tools to the list
+			// Use a map to deduplicate by name (local takes precedence)
+			localNames := make(map[string]struct{})
+			for _, desc := range descriptors {
+				localNames[desc.Name] = struct{}{}
+			}
+
+			// Add remote tools that don't exist locally
+			for _, remoteTool := range remoteTools {
+				if _, exists := localNames[remoteTool.Name]; !exists {
+					descriptors = append(descriptors, ToolDescriptor{
+						Name:        remoteTool.Name,
+						Description: remoteTool.Description,
+						Version:     remoteTool.Version,
+						Tags:        []string{}, // Remote tool info doesn't include tags
+						// Note: InputSchema and OutputSchema would require fetching descriptor
+						// from each tool, which is expensive. Leave empty for now.
+					})
+				}
+			}
 		}
 	}
 
@@ -504,17 +588,52 @@ func (h *DefaultAgentHarness) QueryPlugin(ctx context.Context, name string, meth
 		"method", method,
 		"params", params)
 
-	// Get plugin from registry
+	// Try to get plugin from local registry first
 	p, err := h.pluginRegistry.Get(name)
 	if err != nil {
-		h.logger.Error("plugin not found",
-			"plugin", name,
-			"error", err)
-		return nil, types.WrapError(
-			ErrHarnessPluginNotFound,
-			fmt.Sprintf("plugin not found: %s", name),
-			err,
-		)
+		// Plugin not found locally - try to discover via registry adapter
+		if h.registryAdapter != nil {
+			h.logger.Debug("plugin not found locally, attempting remote discovery",
+				"plugin", name)
+
+			remotePlugin, discErr := h.registryAdapter.DiscoverPlugin(ctx, name)
+			if discErr != nil {
+				h.logger.Error("plugin not found (local or remote)",
+					"plugin", name,
+					"local_error", err,
+					"discovery_error", discErr)
+				return nil, types.WrapError(
+					ErrHarnessPluginNotFound,
+					fmt.Sprintf("plugin not found: %s (local: %v, remote: %v)", name, err, discErr),
+					err,
+				)
+			}
+
+			// Use discovered remote plugin
+			p = remotePlugin
+			h.logger.Debug("discovered remote plugin",
+				"plugin", name,
+				"version", remotePlugin.Version())
+		} else {
+			// No registry adapter, can't discover remotely
+			h.logger.Error("plugin not found locally and no registry adapter available",
+				"plugin", name,
+				"error", err)
+			return nil, types.WrapError(
+				ErrHarnessPluginNotFound,
+				fmt.Sprintf("plugin not found: %s", name),
+				err,
+			)
+		}
+	}
+
+	// Determine if plugin is local or remote for logging
+	isRemote := false
+	if h.registryAdapter != nil {
+		// Check if plugin implements registry gRPC client (remote)
+		if _, ok := p.(*registry.GRPCPluginClient); ok {
+			isRemote = true
+		}
 	}
 
 	// Query plugin
@@ -523,12 +642,14 @@ func (h *DefaultAgentHarness) QueryPlugin(ctx context.Context, name string, meth
 		h.logger.Error("plugin query failed",
 			"plugin", name,
 			"method", method,
+			"remote", isRemote,
 			"error", err)
 
 		// Record failure metrics
 		h.metrics.RecordCounter("plugins.queries", 1, map[string]string{
 			"plugin": name,
 			"method": method,
+			"remote": fmt.Sprintf("%t", isRemote),
 			"status": "failed",
 		})
 
@@ -543,29 +664,63 @@ func (h *DefaultAgentHarness) QueryPlugin(ctx context.Context, name string, meth
 	h.metrics.RecordCounter("plugins.queries", 1, map[string]string{
 		"plugin": name,
 		"method": method,
+		"remote": fmt.Sprintf("%t", isRemote),
 		"status": "success",
 	})
 
 	h.logger.Debug("plugin query successful",
 		"plugin", name,
-		"method", method)
+		"method", method,
+		"remote", isRemote)
 
 	return result, nil
 }
 
 // ListPlugins returns descriptors for all registered plugins.
 func (h *DefaultAgentHarness) ListPlugins() []PluginDescriptor {
-	pluginDescriptors := h.pluginRegistry.List()
+	// Get local plugins from registry
+	localPluginDescriptors := h.pluginRegistry.List()
 
 	// Convert from plugin.PluginDescriptor to harness.PluginDescriptor
-	descriptors := make([]PluginDescriptor, len(pluginDescriptors))
-	for i, p := range pluginDescriptors {
-		descriptors[i] = PluginDescriptor{
+	descriptors := make([]PluginDescriptor, 0, len(localPluginDescriptors))
+	for _, p := range localPluginDescriptors {
+		descriptors = append(descriptors, PluginDescriptor{
 			Name:       p.Name,
 			Version:    p.Version,
 			Methods:    p.Methods,
 			IsExternal: p.IsExternal,
 			Status:     p.Status,
+		})
+	}
+
+	// If registry adapter is available, add remote plugins
+	if h.registryAdapter != nil {
+		ctx := context.Background()
+		remotePlugins, err := h.registryAdapter.ListPlugins(ctx)
+		if err != nil {
+			h.logger.Warn("failed to list remote plugins",
+				"error", err)
+			// Continue with just local plugins
+		} else {
+			// Add remote plugins to the list
+			// Use a map to deduplicate by name (local takes precedence)
+			localNames := make(map[string]struct{})
+			for _, desc := range descriptors {
+				localNames[desc.Name] = struct{}{}
+			}
+
+			// Add remote plugins that don't exist locally
+			for _, remotePlugin := range remotePlugins {
+				if _, exists := localNames[remotePlugin.Name]; !exists {
+					descriptors = append(descriptors, PluginDescriptor{
+						Name:       remotePlugin.Name,
+						Version:    remotePlugin.Version,
+						Methods:    []plugin.MethodDescriptor{}, // Would require fetching from plugin
+						IsExternal: true,                        // All remote plugins are external
+						Status:     plugin.PluginStatusUninitialized,
+					})
+				}
+			}
 		}
 	}
 
@@ -1188,6 +1343,70 @@ func (h *DefaultAgentHarness) GraphRAGHealth(ctx context.Context) types.HealthSt
 		"message", status.Message)
 
 	return status
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Planning Methods (PlanningContextProvider interface)
+// ────────────────────────────────────────────────────────────────────────────
+
+// PlanContext returns the current planning context, or nil if planning is disabled.
+// This provides the agent with read-only access to its position in the execution plan,
+// remaining steps, and budget allocation.
+func (h *DefaultAgentHarness) PlanContext() *PlanningContext {
+	return h.planContext
+}
+
+// GetStepBudget returns the token budget allocated for this specific step,
+// or 0 if unlimited/no planning is active.
+func (h *DefaultAgentHarness) GetStepBudget() int {
+	return h.stepBudget
+}
+
+// SignalReplanRecommended signals to the planning orchestrator that replanning
+// may be needed due to unexpected conditions encountered during execution.
+//
+// This is a hint to the planning system - the orchestrator will evaluate whether
+// replanning is actually warranted based on the reason and current mission state.
+func (h *DefaultAgentHarness) SignalReplanRecommended(ctx context.Context, reason string) error {
+	// If planning is disabled (no orchestrator), this is a no-op
+	if h.planningOrchestrator == nil {
+		h.logger.Debug("replan signal ignored - planning not enabled")
+		return nil
+	}
+
+	h.logger.Info("agent recommends replanning",
+		"reason", reason,
+		"agent", h.missionCtx.CurrentAgent)
+
+	// Note: The actual RequestReplan would need to be called by the mission controller
+	// when it processes step results. For now, we just log the signal.
+	// A full implementation would queue this signal for the controller to act on.
+
+	return nil
+}
+
+// ReportStepHints provides feedback to the step scorer about the execution results.
+// Agents can use this to share their confidence, suggest next steps, or provide
+// key findings that help the planning system make better decisions.
+func (h *DefaultAgentHarness) ReportStepHints(ctx context.Context, hints *StepHints) error {
+	// If planning is disabled (no orchestrator), this is a no-op
+	if h.planningOrchestrator == nil {
+		h.logger.Debug("step hints ignored - planning not enabled")
+		return nil
+	}
+
+	h.logger.Debug("agent reporting step hints",
+		"confidence", hints.Confidence,
+		"suggested_next_count", len(hints.SuggestedNext),
+		"replan_reason", hints.ReplanReason,
+		"key_findings_count", len(hints.KeyFindings),
+		"agent", h.missionCtx.CurrentAgent)
+
+	// Note: The actual RecordStepHints would be called by the mission controller
+	// when processing step completion. For now, we store hints locally and log them.
+	// A full implementation would pass these to the orchestrator's OnStepComplete method.
+
+	return nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────

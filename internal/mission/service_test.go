@@ -11,7 +11,7 @@ import (
 func TestDefaultMissionService_CreateFromConfig(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil) // workflow and finding stores not needed for this test
 	ctx := context.Background()
 
 	config := &MissionConfig{
@@ -39,7 +39,7 @@ func TestDefaultMissionService_CreateFromConfig(t *testing.T) {
 func TestDefaultMissionService_ValidateMission(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	ctx := context.Background()
 
 	t.Run("valid mission", func(t *testing.T) {
@@ -56,10 +56,10 @@ func TestDefaultMissionService_ValidateMission(t *testing.T) {
 	})
 }
 
-func TestDefaultMissionService_GetSummary(t *testing.T) {
+func TestDefaultMissionService_GetSummary_Basic(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	ctx := context.Background()
 
 	mission := createTestMission(t)

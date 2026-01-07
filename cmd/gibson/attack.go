@@ -15,6 +15,7 @@ import (
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	"github.com/zero-day-ai/gibson/internal/attack"
+	"github.com/zero-day-ai/gibson/internal/daemon/client"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/harness"
@@ -26,15 +27,16 @@ import (
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // attackCmd represents the attack command
 var attackCmd = &cobra.Command{
-	Use:   "attack URL",
+	Use:   "attack",
 	Short: "Launch a quick single-agent attack against a target",
-	Long: `Launch an attack against a target URL using a specified agent.
+	Long: `Launch an attack against a target using a specified agent.
 This command creates an ephemeral mission that is automatically persisted
 if findings are discovered (unless --no-persist is set).
 
@@ -43,27 +45,30 @@ a full mission workflow. It runs a single agent with optional payload
 filtering, execution constraints, and output formatting.
 
 Examples:
-  # Basic attack with required agent flag
-  gibson attack https://example.com --agent web-scanner
+  # Attack using a stored target
+  gibson attack --target my-api --agent web-scanner
+
+  # Attack with inline target definition
+  gibson attack --type http_api --connection '{"url":"https://example.com"}' --agent web-scanner
 
   # Attack with specific goal and timeout
-  gibson attack https://api.example.com --agent prompt-injector \
+  gibson attack --target api-prod --agent prompt-injector \
     --goal "Find prompt injection vulnerabilities" --timeout 30m
 
   # Attack with payload filtering
-  gibson attack https://target.com --agent sql-injector \
+  gibson attack --target test-app --agent sql-injector \
     --category injection --techniques T1059,T1190
 
   # Attack with output options
-  gibson attack https://example.com --agent xss-scanner \
+  gibson attack --target my-target --agent xss-scanner \
     --output json --verbose
 
   # Dry-run to validate configuration
-  gibson attack https://example.com --agent web-scanner --dry-run
+  gibson attack --target my-api --agent web-scanner --dry-run
 
   # List available agents
   gibson attack --list-agents`,
-	Args:              cobra.MaximumNArgs(1),
+	Args:              cobra.NoArgs,
 	RunE:              runAttackCommand,
 	ValidArgsFunction: nil,
 }
@@ -71,7 +76,9 @@ Examples:
 // Attack command flags
 var (
 	// Target configuration
-	attackTargetType     string
+	attackTargetName     string // --target flag for stored target name/ID
+	attackTargetType     string // --type flag for inline target type
+	attackConnection     string // --connection flag for inline target connection JSON
 	attackTargetProvider string
 	attackHeaders        string
 	attackCredential     string
@@ -111,9 +118,15 @@ var (
 	attackListAgents bool
 )
 
+// Note: globalCallbackManager is declared in root.go and initialized during loadConfig.
+// The attack command relies on the workflow engine to use this manager
+// for harness registration and callback coordination during agent execution.
+
 func init() {
 	// Target configuration flags
-	attackCmd.Flags().StringVar(&attackTargetType, "type", "", "Target type (llm_chat, llm_api, rag, etc.)")
+	attackCmd.Flags().StringVar(&attackTargetName, "target", "", "Stored target name or ID (required unless using --type and --connection)")
+	attackCmd.Flags().StringVar(&attackTargetType, "type", "", "Inline target type (http_api, kubernetes, smart_contract, etc.) - requires --connection")
+	attackCmd.Flags().StringVar(&attackConnection, "connection", "", "Inline target connection parameters as JSON - requires --type")
 	attackCmd.Flags().StringVar(&attackTargetProvider, "provider", "", "Target provider (openai, anthropic, custom, etc.)")
 	attackCmd.Flags().StringVar(&attackHeaders, "headers", "", "Custom HTTP headers as JSON object (e.g., '{\"X-API-Key\":\"value\"}')")
 	attackCmd.Flags().StringVar(&attackCredential, "credential", "", "Credential name or ID for authentication")
@@ -157,20 +170,66 @@ func init() {
 func runAttackCommand(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
-	// Handle --list-agents subcommand (Task 8.2)
+	// Setup verbose logging (Phase 5, Task 13)
+	vw, cleanup := internal.SetupVerbose(cmd, globalFlags.VerbosityLevel(), globalFlags.OutputFormat == "json")
+	defer cleanup()
+
+	// Handle --list-agents subcommand (Task 8.2, Task 14)
 	if attackListAgents {
 		return runListAgents(cmd, ctx)
 	}
 
-	// Validate that URL is provided
-	if len(args) == 0 {
-		return internal.NewCLIError(attack.ExitConfigError, "target URL is required\n\nUsage: gibson attack URL --agent AGENT")
+	// Reject positional URL arguments with clear migration error
+	if len(args) > 0 {
+		return internal.NewCLIError(attack.ExitConfigError,
+			"URL argument no longer supported. Use --target <name> or --type <type> --connection <json>\n\n"+
+				"Examples:\n"+
+				"  gibson attack --target my-api --agent web-scanner\n"+
+				"  gibson attack --type http_api --connection '{\"url\":\"https://example.com\"}' --agent web-scanner")
 	}
 
-	targetURL := args[0]
+	// Validate target specification: require --target OR (--type AND --connection)
+	hasStoredTarget := attackTargetName != ""
+	hasInlineTarget := attackTargetType != "" && attackConnection != ""
+
+	if !hasStoredTarget && !hasInlineTarget {
+		return internal.NewCLIError(attack.ExitConfigError,
+			"target specification required\n\n"+
+				"Either:\n"+
+				"  - Use --target <name> to reference a stored target, or\n"+
+				"  - Use --type <type> --connection <json> to define an inline target\n\n"+
+				"Examples:\n"+
+				"  gibson attack --target my-api --agent web-scanner\n"+
+				"  gibson attack --type http_api --connection '{\"url\":\"https://example.com\"}' --agent web-scanner")
+	}
+
+	if hasStoredTarget && hasInlineTarget {
+		return internal.NewCLIError(attack.ExitConfigError,
+			"cannot specify both --target and --type/--connection flags\n\n"+
+				"Use either:\n"+
+				"  --target <name> for stored target, or\n"+
+				"  --type <type> --connection <json> for inline target")
+	}
+
+	// Validate inline target has both flags
+	if (attackTargetType != "" && attackConnection == "") || (attackTargetType == "" && attackConnection != "") {
+		return internal.NewCLIError(attack.ExitConfigError,
+			"inline target requires both --type and --connection flags\n\n"+
+				"Example:\n"+
+				"  gibson attack --type http_api --connection '{\"url\":\"https://example.com\"}' --agent web-scanner")
+	}
+
+	// Task 15: Check for daemon client in context
+	// If daemon is available, use it for attack execution
+	if daemonClient := component.GetDaemonClient(ctx); daemonClient != nil {
+		// Use daemon client for attack execution
+		return runAttackViaDaemon(cmd, daemonClient)
+	}
+
+	// Fall back to local execution for standalone mode (when daemon not running)
 
 	// Parse flags into AttackOptions (Task 8.3)
-	opts, err := buildAttackOptions(targetURL)
+	opts, err := buildAttackOptions()
 	if err != nil {
 		return internal.WrapError(attack.ExitConfigError, "failed to build attack options", err)
 	}
@@ -193,7 +252,7 @@ func runAttackCommand(cmd *cobra.Command, args []string) error {
 	outputHandler := attack.NewOutputHandler(opts.OutputFormat, cmd.OutOrStdout(), opts.Verbose, opts.Quiet)
 
 	// Create attack runner with dependencies
-	runner, err := createAttackRunner(ctx)
+	runner, err := createAttackRunner(ctx, vw)
 	if err != nil {
 		return internal.WrapError(attack.ExitError, "failed to create attack runner", err)
 	}
@@ -225,16 +284,118 @@ func runAttackCommand(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runAttackViaDaemon executes an attack using the daemon client (Task 15)
+func runAttackViaDaemon(cmd *cobra.Command, daemonClient interface{}) error {
+	ctx := cmd.Context()
+
+	// Parse flags into AttackOptions
+	opts, err := buildAttackOptions()
+	if err != nil {
+		return internal.WrapError(attack.ExitConfigError, "failed to build attack options", err)
+	}
+
+	// Validate options
+	if err := opts.Validate(); err != nil {
+		return internal.WrapError(attack.ExitConfigError, "invalid attack configuration", err)
+	}
+
+	// Handle dry-run mode
+	if opts.DryRun {
+		return runDryRun(cmd, opts)
+	}
+
+	// Type assert to the daemon client
+	dclient, ok := daemonClient.(*client.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
+
+	// Set up signal handling for graceful cancellation
+	ctx, cancel := setupSignalHandler(ctx)
+	defer cancel()
+
+	// Create output handler
+	outputHandler := attack.NewOutputHandler(opts.OutputFormat, cmd.OutOrStdout(), opts.Verbose, opts.Quiet)
+
+	// Notify start
+	outputHandler.OnStart(opts)
+
+	// Convert AttackOptions to client.AttackOptions
+	clientOpts := client.AttackOptions{
+		Target:     opts.TargetURL,
+		AttackType: opts.AgentName,
+		MaxDepth:   opts.MaxTurns,
+		Timeout:    opts.Timeout,
+	}
+
+	// Execute attack via daemon and stream events
+	eventChan, err := dclient.RunAttack(ctx, clientOpts)
+	if err != nil {
+		// Check if it's a "not implemented" error from daemon
+		if strings.Contains(err.Error(), "not yet implemented") || strings.Contains(err.Error(), "Unimplemented") {
+			outputHandler.OnError(fmt.Errorf("daemon-based attack execution not yet implemented, use local mode"))
+			return internal.WrapError(attack.ExitError, "attack via daemon not yet implemented", err)
+		}
+		outputHandler.OnError(err)
+		return internal.WrapError(attack.ExitError, "failed to start attack via daemon", err)
+	}
+
+	// Stream events from daemon
+	findingCount := 0
+	for event := range eventChan {
+		if opts.Verbose {
+			cmd.Printf("[%s] %s: %s\n", event.Timestamp.Format("15:04:05"), event.Type, event.Message)
+		}
+
+		// Check for finding events
+		if event.Type == "finding" || event.Severity != "" {
+			findingCount++
+			// Note: In the future, we'll convert event.Data to a proper Finding struct
+			// For now, just track counts
+		}
+	}
+
+	// Create a result summary (simplified for now)
+	result := &attack.AttackResult{
+		// Note: We'll need to enhance the event stream to provide full result data
+		// For now, just show a completion message
+	}
+
+	outputHandler.OnComplete(result)
+
+	// Return with appropriate exit code
+	exitCode := attack.ExitSuccess
+	if findingCount > 0 {
+		exitCode = attack.ExitWithFindings
+	}
+
+	if exitCode != attack.ExitSuccess {
+		os.Exit(exitCode)
+	}
+
+	return nil
+}
+
 // buildAttackOptions constructs AttackOptions from command-line flags (Task 8.1, 8.3)
-func buildAttackOptions(targetURL string) (*attack.AttackOptions, error) {
+func buildAttackOptions() (*attack.AttackOptions, error) {
 	opts := attack.NewAttackOptions()
 
 	// Target configuration
-	opts.TargetURL = targetURL
+	// For stored target: use TargetName
+	if attackTargetName != "" {
+		opts.TargetName = attackTargetName
+	}
+
+	// For inline target: store type and connection JSON (will be validated later)
 	if attackTargetType != "" {
-		// Parse target type
 		opts.TargetType = types.TargetType(attackTargetType)
 	}
+	if attackConnection != "" {
+		// Store connection JSON in TargetURL temporarily for backward compatibility
+		// TODO: Add TargetConnection field to AttackOptions in future refactor
+		opts.TargetURL = attackConnection
+	}
+
 	opts.TargetProvider = attackTargetProvider
 	opts.Credential = attackCredential
 
@@ -290,7 +451,7 @@ func buildAttackOptions(targetURL string) (*attack.AttackOptions, error) {
 }
 
 // createAttackRunner creates an AttackRunner with all dependencies (Task 4.1, 4.2)
-func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
+func createAttackRunner(ctx context.Context, vw *verbose.VerboseWriter) (attack.AttackRunner, error) {
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
 	if err != nil {
@@ -335,20 +496,31 @@ func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 		ToolRegistry:    toolRegistry,
 		PluginRegistry:  pluginRegistry,
 		RegistryAdapter: registryAdapter, // Use new etcd-based registry adapter
-		FindingStore:    nil,              // Will be created per-harness if needed
+		FindingStore:    nil,             // Will be created per-harness if needed
 		Logger:          slog.Default(),
 		Tracer:          trace.NewNoopTracerProvider().Tracer("attack-runner"),
 	}
 
-	harnessFactory, err := harness.NewDefaultHarnessFactory(harnessConfig)
+	baseHarnessFactory, err := harness.NewDefaultHarnessFactory(harnessConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create harness factory: %w", err)
 	}
 
+	// Wrap harness factory with verbose events if verbose is enabled (Phase 5, Task 13)
+	var harnessFactory harness.HarnessFactoryInterface = baseHarnessFactory
+	if vw != nil {
+		harnessFactory = verbose.WrapHarnessFactory(harnessFactory, vw.Bus(), globalFlags.VerbosityLevel())
+	}
+
 	// Step 5: Create workflow executor
+	// NOTE (Task 7): When CallbackManager is available (Task 5), pass it to the workflow executor
+	// via a WithCallbackManager option (to be implemented in Task 6).
+	// This enables the workflow engine to register harnesses and provide callback endpoints
+	// when executing external gRPC agents.
 	workflowExecutor := workflow.NewWorkflowExecutor(
 		workflow.WithLogger(slog.Default()),
 		workflow.WithTracer(trace.NewNoopTracerProvider().Tracer("workflow")),
+		// TODO (Task 6): workflow.WithCallbackManager(globalCallbackManager),
 	)
 
 	// Step 6: Create mission orchestrator
@@ -358,15 +530,25 @@ func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 		mission.WithHarnessFactory(harnessFactory),
 	)
 
-	// Step 7: Create and return attack runner
+	// Step 7: Create attack runner options
+	runnerOpts := []attack.RunnerOption{
+		attack.WithLogger(slog.Default()),
+		attack.WithTracer(trace.NewNoopTracerProvider().Tracer("attack-runner")),
+	}
+
+	// Add verbose bus if enabled (Phase 5, Task 14)
+	if vw != nil {
+		runnerOpts = append(runnerOpts, attack.WithVerboseBus(vw.Bus()))
+	}
+
+	// Step 8: Create and return attack runner
 	runner := attack.NewAttackRunner(
 		orchestrator,
 		registryAdapter,
 		payloadRegistry,
 		missionStore,
 		findingStore,
-		attack.WithLogger(slog.Default()),
-		attack.WithTracer(trace.NewNoopTracerProvider().Tracer("attack-runner")),
+		runnerOpts...,
 	)
 
 	return runner, nil
@@ -374,19 +556,119 @@ func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 
 // runListAgents lists all available agents (Task 8.2)
 func runListAgents(cmd *cobra.Command, ctx context.Context) error {
-	// Create agent selector
-	// TODO: Wire up real agent registry
-	// For now, show a placeholder message
+	// Task 14: Check for daemon client first
+	if daemonClient := component.GetDaemonClient(ctx); daemonClient != nil {
+		return runListAgentsViaDaemon(cmd, ctx, daemonClient)
+	}
+
+	// Fall back to registry adapter for standalone mode (when daemon not running)
+	regManager := component.GetRegistryManager(ctx)
+	if regManager == nil {
+		return fmt.Errorf("registry not available (run 'gibson init' first)")
+	}
+
+	// Create registry adapter for component discovery
+	registryAdapter := registry.NewRegistryAdapter(regManager.Registry())
+	defer registryAdapter.Close()
+
+	// Query registry for all agents
+	agentInfos, err := registryAdapter.ListAgents(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list agents: %w", err)
+	}
 
 	if attackOutput == "json" {
 		// JSON output format
-		agents := []map[string]interface{}{
-			{
-				"name":         "placeholder-agent",
-				"description":  "Placeholder agent (registry integration pending)",
-				"capabilities": []string{"placeholder"},
-				"version":      "0.1.0",
-			},
+		encoder := json.NewEncoder(cmd.OutOrStdout())
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(map[string]interface{}{
+			"agents": agentInfos,
+		})
+	}
+
+	// Text output format
+	formatter := internal.NewTextFormatter(cmd.OutOrStdout())
+
+	cmd.Println("Available Agents:")
+	cmd.Println()
+
+	if len(agentInfos) == 0 {
+		cmd.Println("No agents registered.")
+		cmd.Println()
+		cmd.Println("To register an agent:")
+		cmd.Println("  1. Build your agent using the SDK")
+		cmd.Println("  2. Start it with 'agent serve --port <PORT>'")
+		cmd.Println("  3. It will auto-register with the embedded etcd")
+		return nil
+	}
+
+	// Build table rows from agent info
+	headers := []string{"Name", "Version", "Instances", "Capabilities"}
+	rows := make([][]string, 0, len(agentInfos))
+	for _, info := range agentInfos {
+		capabilities := strings.Join(info.Capabilities, ", ")
+		if capabilities == "" {
+			capabilities = "N/A"
+		}
+		rows = append(rows, []string{
+			info.Name,
+			info.Version,
+			fmt.Sprintf("%d", info.Instances),
+			capabilities,
+		})
+	}
+
+	if err := formatter.PrintTable(headers, rows); err != nil {
+		return err
+	}
+
+	cmd.Println()
+	cmd.Printf("Total: %d agent(s) with %d instance(s)\n", len(agentInfos), sumInstances(agentInfos))
+
+	return nil
+}
+
+// runListAgentsViaDaemon lists agents using the daemon client (Task 14)
+func runListAgentsViaDaemon(cmd *cobra.Command, ctx context.Context, daemonClient interface{}) error {
+	// Type assert to the daemon client interface
+	// We use interface{} in the context to avoid circular dependencies
+	type daemonClientInterface interface {
+		ListAgents(ctx context.Context) ([]interface{}, error)
+	}
+
+	// Try to use the client's ListAgents method via reflection or type assertion
+	// For now, we'll need to import the actual client type
+	dclient, ok := daemonClient.(*client.Client)
+	if !ok {
+		// Fall back to local registry if type assertion fails
+		return fmt.Errorf("invalid daemon client type")
+	}
+
+	// Query daemon for all agents
+	agentInfos, err := dclient.ListAgents(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list agents from daemon: %w", err)
+	}
+
+	if attackOutput == "json" {
+		// JSON output format - convert client.AgentInfo to map for JSON encoding
+		type jsonAgent struct {
+			Name        string `json:"name"`
+			Version     string `json:"version"`
+			Description string `json:"description"`
+			Address     string `json:"address"`
+			Status      string `json:"status"`
+		}
+
+		agents := make([]jsonAgent, len(agentInfos))
+		for i, info := range agentInfos {
+			agents[i] = jsonAgent{
+				Name:        info.Name,
+				Version:     info.Version,
+				Description: info.Description,
+				Address:     info.Address,
+				Status:      info.Status,
+			}
 		}
 
 		encoder := json.NewEncoder(cmd.OutOrStdout())
@@ -402,10 +684,30 @@ func runListAgents(cmd *cobra.Command, ctx context.Context) error {
 	cmd.Println("Available Agents:")
 	cmd.Println()
 
-	// TODO: Replace with real agent listing from registry
-	headers := []string{"Name", "Version", "Description", "Capabilities"}
-	rows := [][]string{
-		{"placeholder-agent", "0.1.0", "Placeholder agent", "placeholder"},
+	if len(agentInfos) == 0 {
+		cmd.Println("No agents registered.")
+		cmd.Println()
+		cmd.Println("To register an agent:")
+		cmd.Println("  1. Build your agent using the SDK")
+		cmd.Println("  2. Start it with 'agent serve --port <PORT>'")
+		cmd.Println("  3. It will auto-register with the embedded etcd")
+		return nil
+	}
+
+	// Build table rows from agent info - convert client.AgentInfo format
+	headers := []string{"Name", "Version", "Status", "Address"}
+	rows := make([][]string, 0, len(agentInfos))
+	for _, info := range agentInfos {
+		status := info.Status
+		if status == "" {
+			status = "unknown"
+		}
+		rows = append(rows, []string{
+			info.Name,
+			info.Version,
+			status,
+			info.Address,
+		})
 	}
 
 	if err := formatter.PrintTable(headers, rows); err != nil {
@@ -413,9 +715,18 @@ func runListAgents(cmd *cobra.Command, ctx context.Context) error {
 	}
 
 	cmd.Println()
-	cmd.Println("Note: Agent registry integration is pending. This is a placeholder output.")
+	cmd.Printf("Total: %d agent(s)\n", len(agentInfos))
 
 	return nil
+}
+
+// sumInstances calculates total number of instances across all agents
+func sumInstances(agents []registry.AgentInfo) int {
+	total := 0
+	for _, agent := range agents {
+		total += agent.Instances
+	}
+	return total
 }
 
 // runDryRun validates configuration and displays what would be executed (Task 8.4)
@@ -554,7 +865,7 @@ func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
 		cfg := llm.ProviderConfig{
 			Type:         llm.ProviderAnthropic,
 			APIKey:       apiKey,
-			DefaultModel: "claude-3-5-sonnet-20241022", // Latest Claude model
+			DefaultModel: os.Getenv("ANTHROPIC_MODEL"), // Use env var, provider will use its default if empty
 		}
 
 		provider, err := providers.NewAnthropicProvider(cfg)
@@ -575,7 +886,7 @@ func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
 		cfg := llm.ProviderConfig{
 			Type:         llm.ProviderOpenAI,
 			APIKey:       apiKey,
-			DefaultModel: "gpt-4o", // Latest GPT-4 model
+			DefaultModel: os.Getenv("OPENAI_MODEL"), // Use env var, provider will use its default if empty
 		}
 
 		provider, err := providers.NewOpenAIProvider(cfg)
@@ -596,7 +907,7 @@ func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
 		cfg := llm.ProviderConfig{
 			Type:         llm.ProviderGoogle,
 			APIKey:       apiKey,
-			DefaultModel: "gemini-2.0-flash-exp", // Latest Gemini model
+			DefaultModel: os.Getenv("GOOGLE_MODEL"), // Use env var, provider will use its default if empty
 		}
 
 		provider, err := providers.NewGoogleProvider(cfg)
@@ -617,7 +928,7 @@ func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
 		cfg := llm.ProviderConfig{
 			Type:         "ollama",
 			BaseURL:      ollamaURL,
-			DefaultModel: "llama3.1", // Default Ollama model
+			DefaultModel: os.Getenv("OLLAMA_MODEL"), // Use env var, provider will use its default if empty
 		}
 
 		provider, err := providers.NewOllamaProvider(cfg)
@@ -636,7 +947,7 @@ func initializeLLMComponents() (llm.LLMRegistry, llm.SlotManager, error) {
 		cfg := llm.ProviderConfig{
 			Type:         "ollama",
 			BaseURL:      "http://localhost:11434",
-			DefaultModel: "llama3.1",
+			DefaultModel: os.Getenv("OLLAMA_MODEL"), // Use env var, provider will use its default if empty
 		}
 
 		provider, err := providers.NewOllamaProvider(cfg)

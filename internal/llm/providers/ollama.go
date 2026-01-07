@@ -74,7 +74,15 @@ func (p *OllamaProvider) Complete(ctx context.Context, req llm.CompletionRequest
 
 // CompleteWithTools sends a completion request with tool definitions
 func (p *OllamaProvider) CompleteWithTools(ctx context.Context, req llm.CompletionRequest, tools []llm.ToolDef) (*llm.CompletionResponse, error) {
-	return p.Complete(ctx, req)
+	messages := toSchemaMessages(req.Messages)
+	callOpts := buildCallOptionsWithTools(req, tools)
+
+	resp, err := p.client.GenerateContent(ctx, messages, callOpts...)
+	if err != nil {
+		return nil, llm.TranslateError("ollama", err)
+	}
+
+	return fromLangchainResponse(resp, req.Model), nil
 }
 
 // Stream sends a streaming completion request

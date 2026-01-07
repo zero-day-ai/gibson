@@ -14,7 +14,7 @@ func setupTestController(t *testing.T) MissionController {
 
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	orchestrator := NewMissionOrchestrator(store)
 
 	return NewMissionController(store, service, orchestrator)
@@ -55,7 +55,7 @@ func TestDefaultMissionController_GetAndList(t *testing.T) {
 	require.NoError(t, err)
 
 	// Re-create controller with same store
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	orchestrator := NewMissionOrchestrator(store)
 	controller = NewMissionController(store, service, orchestrator)
 
@@ -75,7 +75,7 @@ func TestDefaultMissionController_GetAndList(t *testing.T) {
 func TestDefaultMissionController_StartAndStop(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	orchestrator := NewMissionOrchestrator(store)
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()
@@ -104,7 +104,7 @@ func TestDefaultMissionController_StartAndStop(t *testing.T) {
 func TestDefaultMissionController_PauseAndResume(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	orchestrator := NewMissionOrchestrator(store)
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()
@@ -128,7 +128,7 @@ func TestDefaultMissionController_PauseAndResume(t *testing.T) {
 func TestDefaultMissionController_Delete(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	orchestrator := NewMissionOrchestrator(store)
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()
@@ -160,7 +160,7 @@ func TestDefaultMissionController_Delete(t *testing.T) {
 func TestDefaultMissionController_GetProgress(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	service := NewMissionService(store)
+	service := NewMissionService(store, nil, nil)
 	orchestrator := NewMissionOrchestrator(store)
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()

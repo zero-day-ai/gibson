@@ -17,6 +17,7 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
 
+	"github.com/zero-day-ai/gibson/internal/util"
 	"github.com/zero-day-ai/sdk/registry"
 )
 
@@ -79,11 +80,10 @@ func NewEmbeddedRegistry(cfg registry.Config) (*EmbeddedRegistry, error) {
 		cfg.TTL = 30
 	}
 
-	// Expand home directory in DataDir
-	dataDir := cfg.DataDir
-	if strings.HasPrefix(dataDir, "~/") {
-		// Simple home expansion - in production would use os.UserHomeDir()
-		dataDir = strings.Replace(dataDir, "~", "/home/anthony", 1)
+	// Expand home directory and environment variables in DataDir
+	dataDir, err := util.ExpandPath(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to expand data directory path: %w", err)
 	}
 
 	// Configure embedded etcd
@@ -170,7 +170,13 @@ func NewEmbeddedRegistry(cfg registry.Config) (*EmbeddedRegistry, error) {
 // started to renew the lease every TTL/3 seconds. If the lease renewal fails
 // (e.g., due to network partition or component crash), the service entry will
 // be automatically removed from etcd when the lease expires.
+//
+// The health status is automatically tracked in metadata. If not provided,
+// the service is registered with "healthy" status.
 func (r *EmbeddedRegistry) Register(ctx context.Context, info registry.ServiceInfo) error {
+	// Ensure health metadata is present
+	ensureHealthMetadata(&info)
+
 	// Serialize ServiceInfo to JSON
 	data, err := json.Marshal(info)
 	if err != nil {

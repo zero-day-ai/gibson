@@ -773,8 +773,6 @@ func TestEmbeddedRegistry_ConcurrentOperations(t *testing.T) {
 // TestEmbeddedRegistry_HomeDirectoryExpansion tests home directory expansion.
 func TestEmbeddedRegistry_HomeDirectoryExpansion(t *testing.T) {
 	// This test verifies that paths starting with ~/ are expanded
-	// Note: The current implementation has a hardcoded home path which should
-	// be replaced with os.UserHomeDir() in production
 
 	port := getTestPort()
 	cfg := registry.Config{
@@ -788,11 +786,8 @@ func TestEmbeddedRegistry_HomeDirectoryExpansion(t *testing.T) {
 	reg, err := NewEmbeddedRegistry(cfg)
 	require.NoError(t, err)
 
-	// Clean up the expanded directory
-	defer func() {
-		reg.Close()
-		os.RemoveAll("/home/anthony/test-gibson-registry")
-	}()
+	// Clean up
+	defer reg.Close()
 
 	// Verify the registry started successfully with home expansion
 	assert.NotNil(t, reg.server)

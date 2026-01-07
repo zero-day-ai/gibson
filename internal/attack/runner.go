@@ -13,6 +13,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -41,6 +42,7 @@ type DefaultAttackRunner struct {
 	payloadFilter   PayloadFilter
 	logger          *slog.Logger
 	tracer          trace.Tracer
+	verboseBus      verbose.VerboseEventBus // optional, may be nil (Phase 5, Task 14)
 }
 
 // RunnerOption is a functional option for configuring the AttackRunner.
@@ -85,6 +87,13 @@ func WithPayloadFilter(filter PayloadFilter) RunnerOption {
 func WithComponentDiscovery(discovery registry.ComponentDiscovery) RunnerOption {
 	return func(r *DefaultAttackRunner) {
 		r.discovery = discovery
+	}
+}
+
+// WithVerboseBus sets the verbose event bus for emitting verbose events (Phase 5, Task 14).
+func WithVerboseBus(bus verbose.VerboseEventBus) RunnerOption {
+	return func(r *DefaultAttackRunner) {
+		r.verboseBus = bus
 	}
 }
 
@@ -166,6 +175,13 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 		"type", targetConfig.Type,
 		"provider", targetConfig.Provider)
 
+	// Emit verbose event: target validated (Phase 5, Task 13)
+	r.emitSystemEvent(ctx, "attack.target.validated", map[string]any{
+		"target_url":  targetConfig.URL,
+		"target_type": string(targetConfig.Type),
+		"provider":    targetConfig.Provider,
+	})
+
 	// Step 2: Select agent
 	selectedAgent, err := r.agentSelector.Select(ctx, opts.AgentName)
 	if err != nil {
@@ -174,6 +190,11 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 	}
 
 	r.logger.Debug("Agent selected", "agent", opts.AgentName)
+
+	// Emit verbose event: agent selected (Phase 5, Task 13)
+	r.emitSystemEvent(ctx, "attack.agent.selected", map[string]any{
+		"agent_name": opts.AgentName,
+	})
 
 	// Step 3: Filter payloads
 	filteredPayloads, err := r.payloadFilter.Filter(ctx, opts)
@@ -184,6 +205,9 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 
 	r.logger.Debug("Payloads filtered", "count", len(filteredPayloads))
 
+	// Emit verbose event: payload filtering complete (Phase 5, Task 14)
+	r.emitPayloadFilterEvent(ctx, opts, len(filteredPayloads))
+
 	// Return early if dry-run mode
 	if opts.DryRun {
 		r.logger.Info("Dry-run mode: attack validation successful")
@@ -192,6 +216,10 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 	}
 
 	// Step 4: Create ephemeral mission
+	r.emitSystemEvent(ctx, "attack.phase.mission_creation", map[string]any{
+		"agent": opts.AgentName,
+	})
+
 	missionObj, err := r.createEphemeralMission(ctx, opts, targetConfig, selectedAgent)
 	if err != nil {
 		r.logger.Error("Failed to create ephemeral mission", "error", err)
@@ -207,6 +235,11 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 	}
 
 	// Step 5: Execute mission through orchestrator
+	r.emitSystemEvent(ctx, "attack.phase.execution", map[string]any{
+		"mission_id": missionObj.ID.String(),
+		"timeout":    opts.Timeout.String(),
+	})
+
 	// Create a cancellable context with timeout if specified
 	execCtx := ctx
 	var cancel context.CancelFunc
@@ -492,6 +525,60 @@ func (r *DefaultAttackRunner) persistMission(
 	}
 
 	return nil
+}
+
+// emitSystemEvent emits a system-level verbose event if verbose bus is available (Phase 5, Task 13).
+func (r *DefaultAttackRunner) emitSystemEvent(ctx context.Context, eventType string, data map[string]any) {
+	if r.verboseBus == nil {
+		return
+	}
+
+	// Create a generic system event
+	event := verbose.VerboseEvent{
+		Type:      verbose.VerboseEventType(eventType),
+		Level:     verbose.LevelVerbose,
+		Timestamp: time.Now(),
+		Payload:   data,
+	}
+
+	// Emit non-blocking (ignore errors since this is optional telemetry)
+	_ = r.verboseBus.Emit(ctx, event)
+}
+
+// emitPayloadFilterEvent emits a verbose event for payload filtering (Phase 5, Task 14).
+func (r *DefaultAttackRunner) emitPayloadFilterEvent(ctx context.Context, opts *AttackOptions, selectedCount int) {
+	if r.verboseBus == nil {
+		return
+	}
+
+	// Build filter criteria description
+	filterCriteria := make([]string, 0)
+	if len(opts.PayloadIDs) > 0 {
+		filterCriteria = append(filterCriteria, fmt.Sprintf("ids=%d", len(opts.PayloadIDs)))
+	}
+	if opts.PayloadCategory != "" {
+		filterCriteria = append(filterCriteria, fmt.Sprintf("category=%s", opts.PayloadCategory))
+	}
+	if len(opts.Techniques) > 0 {
+		filterCriteria = append(filterCriteria, fmt.Sprintf("techniques=%d", len(opts.Techniques)))
+	}
+
+	data := map[string]any{
+		"selected_count":   selectedCount,
+		"filter_criteria":  filterCriteria,
+		"category_filter":  opts.PayloadCategory,
+		"id_filter_count":  len(opts.PayloadIDs),
+		"technique_filter": opts.Techniques,
+	}
+
+	event := verbose.VerboseEvent{
+		Type:      verbose.VerboseEventType("attack.payload.filtered"),
+		Level:     verbose.LevelVerbose,
+		Timestamp: time.Now(),
+		Payload:   data,
+	}
+
+	_ = r.verboseBus.Emit(ctx, event)
 }
 
 // Ensure DefaultAttackRunner implements AttackRunner at compile time.

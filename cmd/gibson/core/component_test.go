@@ -185,9 +185,9 @@ func (m *mockInstaller) Update(ctx context.Context, kind component.ComponentKind
 			Kind:    kind,
 			Version: "1.1.0",
 		},
-		Updated:     true,
-		OldVersion:  "1.0.0",
-		NewVersion:  "1.1.0",
+		Updated:    true,
+		OldVersion: "1.0.0",
+		NewVersion: "1.1.0",
 	}, nil
 }
 
@@ -264,7 +264,6 @@ func (m *mockRegManager) Registry() sdkregistry.Registry {
 func (m *mockRegManager) Status() registry.RegistryStatus {
 	return m.status
 }
-
 
 func TestComponentList(t *testing.T) {
 	now := time.Now()
@@ -685,14 +684,14 @@ func TestComponentUninstall(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name          string
-		kind          component.ComponentKind
-		componentName string
-		opts          UninstallOptions
-		setupDAO      func(*mockComponentDAO)
+		name           string
+		kind           component.ComponentKind
+		componentName  string
+		opts           UninstallOptions
+		setupDAO       func(*mockComponentDAO)
 		setupInstaller func(*mockInstaller)
-		wantErr       bool
-		wantErrMsg    string
+		wantErr        bool
+		wantErrMsg     string
 	}{
 		{
 			name:          "successful uninstall",
@@ -714,14 +713,14 @@ func TestComponentUninstall(t *testing.T) {
 			setupInstaller: func(m *mockInstaller) {},
 		},
 		{
-			name:          "component not found",
-			kind:          component.ComponentKindAgent,
-			componentName: "non-existing",
-			opts:          UninstallOptions{},
-			setupDAO:      func(m *mockComponentDAO) {},
+			name:           "component not found",
+			kind:           component.ComponentKindAgent,
+			componentName:  "non-existing",
+			opts:           UninstallOptions{},
+			setupDAO:       func(m *mockComponentDAO) {},
 			setupInstaller: func(m *mockInstaller) {},
-			wantErr:       true,
-			wantErrMsg:    "component 'non-existing' not found",
+			wantErr:        true,
+			wantErrMsg:     "component 'non-existing' not found",
 		},
 	}
 
@@ -768,14 +767,14 @@ func TestComponentUpdate(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name          string
-		kind          component.ComponentKind
-		componentName string
-		opts          UpdateOptions
-		setupDAO      func(*mockComponentDAO)
+		name           string
+		kind           component.ComponentKind
+		componentName  string
+		opts           UpdateOptions
+		setupDAO       func(*mockComponentDAO)
 		setupInstaller func(*mockInstaller)
-		wantErr       bool
-		wantErrMsg    string
+		wantErr        bool
+		wantErrMsg     string
 	}{
 		{
 			name:          "successful update",
@@ -797,14 +796,14 @@ func TestComponentUpdate(t *testing.T) {
 			setupInstaller: func(m *mockInstaller) {},
 		},
 		{
-			name:          "component not found",
-			kind:          component.ComponentKindAgent,
-			componentName: "non-existing",
-			opts:          UpdateOptions{},
-			setupDAO:      func(m *mockComponentDAO) {},
+			name:           "component not found",
+			kind:           component.ComponentKindAgent,
+			componentName:  "non-existing",
+			opts:           UpdateOptions{},
+			setupDAO:       func(m *mockComponentDAO) {},
 			setupInstaller: func(m *mockInstaller) {},
-			wantErr:       true,
-			wantErrMsg:    "component 'non-existing' not found",
+			wantErr:        true,
+			wantErrMsg:     "component 'non-existing' not found",
 		},
 	}
 
@@ -893,10 +892,10 @@ func TestComponentBuild(t *testing.T) {
 			setupMock: func(m *mockComponentDAO) {
 				m.components = []*component.Component{
 					{
-						ID:       1,
-						Kind:     component.ComponentKindAgent,
-						Name:     "no-repo-path",
-						Version:  "1.0.0",
+						ID:      1,
+						Kind:    component.ComponentKindAgent,
+						Name:    "no-repo-path",
+						Version: "1.0.0",
 						Manifest: &component.Manifest{
 							Build: &component.BuildConfig{},
 						},

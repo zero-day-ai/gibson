@@ -61,7 +61,7 @@ func (dao *TargetDAO) Create(ctx context.Context, target *types.Target) error {
 	_, err = dao.db.ExecContext(ctx, query,
 		target.ID.String(),
 		target.Name,
-		target.Type.String(),
+		target.Type, // Type is now string, not enum
 		target.Provider.String(),
 		target.URL,
 		target.Model,
@@ -147,7 +147,7 @@ func (dao *TargetDAO) List(ctx context.Context, filter *types.TargetFilter) ([]*
 
 	if filter.Type != nil {
 		conditions = append(conditions, "type = ?")
-		args = append(args, filter.Type.String())
+		args = append(args, *filter.Type) // Type is now *string, not *TargetType
 	}
 
 	if filter.Status != nil {
@@ -236,7 +236,7 @@ func (dao *TargetDAO) Update(ctx context.Context, target *types.Target) error {
 
 	result, err := dao.db.ExecContext(ctx, query,
 		target.Name,
-		target.Type.String(),
+		target.Type, // Type is now string, not enum
 		target.Provider.String(),
 		target.URL,
 		target.Model,
@@ -351,8 +351,8 @@ func (dao *TargetDAO) scanTarget(row *sql.Row) (*types.Target, error) {
 		return nil, fmt.Errorf("failed to parse target ID: %w", err)
 	}
 
-	// Parse enums
-	target.Type = types.TargetType(targetType)
+	// Parse enums (Type is now just a string, not an enum)
+	target.Type = targetType
 	target.Provider = types.Provider(provider)
 	target.AuthType = types.AuthType(authType)
 	target.Status = types.TargetStatus(status)
@@ -423,8 +423,8 @@ func (dao *TargetDAO) scanTargetFromRows(rows *sql.Rows) (*types.Target, error) 
 		return nil, fmt.Errorf("failed to parse target ID: %w", err)
 	}
 
-	// Parse enums
-	target.Type = types.TargetType(targetType)
+	// Parse enums (Type is now just a string, not an enum)
+	target.Type = targetType
 	target.Provider = types.Provider(provider)
 	target.AuthType = types.AuthType(authType)
 	target.Status = types.TargetStatus(status)

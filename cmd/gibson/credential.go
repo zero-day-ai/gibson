@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,10 @@ import (
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/crypto"
 	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/gibson/internal/verbose"
 	"golang.org/x/term"
 )
 
@@ -434,12 +438,67 @@ func runCredentialShow(cmd *cobra.Command, args []string) error {
 }
 
 func runCredentialTest(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
 	credName := args[0]
 
 	// Parse global flags
 	flags, err := ParseGlobalFlags(cmd)
 	if err != nil {
 		return internal.WrapError(internal.ExitError, "failed to parse flags", err)
+	}
+
+	// Setup verbose logging
+	verboseLevel := flags.VerbosityLevel()
+	writer, cleanup := internal.SetupVerbose(cmd, verboseLevel, flags.OutputFormat == "json")
+	defer cleanup()
+
+	// Load configuration
+	cfg, err := loadConfiguration(flags)
+	if err != nil {
+		return internal.WrapError(internal.ExitConfigError, "failed to load config", err)
+	}
+
+	// Open database
+	db, err := database.Open(cfg.Database.Path)
+	if err != nil {
+		return internal.WrapError(internal.ExitDatabaseError, "failed to open database", err)
+	}
+	defer db.Close()
+
+	// Get credential
+	dao := database.NewCredentialDAO(db)
+	cred, err := dao.GetByName(ctx, credName)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return internal.NewCLIError(internal.ExitNotFound, fmt.Sprintf("credential not found: %s", credName))
+		}
+		return internal.WrapError(internal.ExitDatabaseError, "failed to get credential", err)
+	}
+
+	// Emit verbose event for validation start (NO SECRETS)
+	if writer != nil {
+		event := verbose.NewVerboseEvent(
+			"credential.validation_started", // Custom event type
+			verbose.LevelVerbose,
+			map[string]interface{}{
+				"credential_name": credName,
+				"credential_type": string(cred.Type),
+				"provider":        cred.Provider,
+			},
+		)
+		writer.Bus().Emit(ctx, event)
+	}
+
+	// Get master key and decrypt credential
+	masterKey, err := loadMasterKey(flags)
+	if err != nil {
+		return internal.WrapError(internal.ExitConfigError, "failed to load master key", err)
+	}
+
+	encryptor := crypto.NewAESGCMEncryptor()
+	credValue, err := encryptor.Decrypt(cred.EncryptedValue, cred.EncryptionIV, cred.KeyDerivationSalt, masterKey)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "failed to decrypt credential", err)
 	}
 
 	// Create formatter
@@ -449,11 +508,153 @@ func runCredentialTest(cmd *cobra.Command, args []string) error {
 	}
 	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
 
-	// TODO: Implement provider-specific credential testing
-	// This would require implementing validation logic for each provider
-	// For now, just return a message indicating the feature is not implemented
+	// Test credential based on provider
+	if cred.Provider == "" {
+		return formatter.PrintError("credential has no provider specified")
+	}
 
-	return formatter.PrintError(fmt.Sprintf("credential testing not yet implemented for: %s", credName))
+	// Create a timeout context for API calls
+	testCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	var testResult string
+	var testErr error
+	testStart := time.Now()
+
+	switch strings.ToLower(cred.Provider) {
+	case "anthropic":
+		testResult, testErr = testAnthropicCredential(testCtx, string(credValue))
+	case "openai":
+		testResult, testErr = testOpenAICredential(testCtx, string(credValue))
+	case "google", "gemini":
+		testResult, testErr = testGoogleCredential(testCtx, string(credValue))
+	case "ollama":
+		testResult = "Ollama uses local models and does not require API credentials"
+		testErr = nil
+	default:
+		return formatter.PrintError(fmt.Sprintf("credential testing not supported for provider: %s", cred.Provider))
+	}
+
+	testDuration := time.Since(testStart)
+
+	// Clear credential from memory
+	for i := range credValue {
+		credValue[i] = 0
+	}
+
+	// Emit verbose event for validation result (NO SECRETS)
+	if writer != nil {
+		if testErr != nil {
+			event := verbose.NewVerboseEvent(
+				"credential.validation_failed", // Custom event type
+				verbose.LevelVerbose,
+				map[string]interface{}{
+					"credential_name": credName,
+					"provider":        cred.Provider,
+					"error":           testErr.Error(),
+					"duration":        testDuration.String(),
+				},
+			)
+			writer.Bus().Emit(ctx, event)
+		} else {
+			event := verbose.NewVerboseEvent(
+				"credential.validation_success", // Custom event type
+				verbose.LevelVerbose,
+				map[string]interface{}{
+					"credential_name": credName,
+					"provider":        cred.Provider,
+					"duration":        testDuration.String(),
+					"result":          testResult,
+				},
+			)
+			writer.Bus().Emit(ctx, event)
+		}
+	}
+
+	if testErr != nil {
+		return formatter.PrintError(fmt.Sprintf("Credential test failed: %s", testErr.Error()))
+	}
+
+	return formatter.PrintSuccess(fmt.Sprintf("Credential test passed: %s", testResult))
+}
+
+// testAnthropicCredential tests an Anthropic API key by calling the models endpoint
+func testAnthropicCredential(ctx context.Context, apiKey string) (string, error) {
+	// Import the anthropic provider to make a minimal API call
+	providerCfg := llm.ProviderConfig{
+		Type:         llm.ProviderAnthropic,
+		APIKey:       apiKey,
+		DefaultModel: "", // Provider will use its default model
+	}
+
+	provider, err := providers.NewProvider(providerCfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to create Anthropic provider: %w", err)
+	}
+
+	// Call Models() which is a lightweight operation
+	models, err := provider.Models(ctx)
+	if err != nil {
+		return "", fmt.Errorf("API call failed: %w", err)
+	}
+
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models returned (unexpected)")
+	}
+
+	return fmt.Sprintf("Successfully validated Anthropic API key (%d models available)", len(models)), nil
+}
+
+// testOpenAICredential tests an OpenAI API key by calling the models endpoint
+func testOpenAICredential(ctx context.Context, apiKey string) (string, error) {
+	providerCfg := llm.ProviderConfig{
+		Type:         llm.ProviderOpenAI,
+		APIKey:       apiKey,
+		DefaultModel: "", // Provider will use its default model
+	}
+
+	provider, err := providers.NewProvider(providerCfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to create OpenAI provider: %w", err)
+	}
+
+	// Call Models() which is a lightweight operation
+	models, err := provider.Models(ctx)
+	if err != nil {
+		return "", fmt.Errorf("API call failed: %w", err)
+	}
+
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models returned (unexpected)")
+	}
+
+	return fmt.Sprintf("Successfully validated OpenAI API key (%d models available)", len(models)), nil
+}
+
+// testGoogleCredential tests a Google/Gemini API key by calling the models endpoint
+func testGoogleCredential(ctx context.Context, apiKey string) (string, error) {
+	providerCfg := llm.ProviderConfig{
+		Type:         llm.ProviderGoogle,
+		APIKey:       apiKey,
+		DefaultModel: "", // Provider will use its default model
+	}
+
+	provider, err := providers.NewProvider(providerCfg)
+	if err != nil {
+		return "", fmt.Errorf("failed to create Google provider: %w", err)
+	}
+
+	// Call Models() which is a lightweight operation
+	models, err := provider.Models(ctx)
+	if err != nil {
+		return "", fmt.Errorf("API call failed: %w", err)
+	}
+
+	if len(models) == 0 {
+		return "", fmt.Errorf("no models returned (unexpected)")
+	}
+
+	return fmt.Sprintf("Successfully validated Google API key (%d models available)", len(models)), nil
 }
 
 func runCredentialRotate(cmd *cobra.Command, args []string) error {

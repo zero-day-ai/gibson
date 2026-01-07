@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/core"
+	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 )
 
 // newLogsCommand creates a logs command for the specified component type.
@@ -44,7 +45,7 @@ func runLogs(cmd *cobra.Command, args []string, cfg Config, flags *LogsFlags) er
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Build logs options
 	opts := core.LogsOptions{
@@ -72,7 +73,7 @@ func runLogs(cmd *cobra.Command, args []string, cfg Config, flags *LogsFlags) er
 		if err != nil {
 			return fmt.Errorf("failed to open log file: %w", err)
 		}
-		defer file.Close()
+		defer internal.CloseWithLog(file, nil, "component log file")
 		return followLogs(cmd, file, logPath)
 	}
 
@@ -88,7 +89,6 @@ func runLogs(cmd *cobra.Command, args []string, cfg Config, flags *LogsFlags) er
 
 	return nil
 }
-
 
 // followLogs streams log output in real-time (like tail -f).
 func followLogs(cmd *cobra.Command, file *os.File, logPath string) error {

@@ -2,38 +2,110 @@ package tool
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/api/gen/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // GRPCToolClient wraps a gRPC connection to implement the Tool interface.
-// This is a placeholder implementation that will be fully implemented after proto code generation.
+// It communicates with external gRPC tools using the ToolService proto definition.
 //
-// The full implementation will include:
+// The client handles:
 // - gRPC connection management
 // - Protocol buffer marshaling/unmarshaling
 // - Schema conversion between JSON Schema and proto definitions
 // - Health check integration with gRPC health protocol
-// - Connection pooling and retry logic
 type GRPCToolClient struct {
-	name        string
-	description string
-	version     string
-	tags        []string
-	// conn *grpc.ClientConn  // Will be added with proto
-	// client ToolServiceClient  // Will be added with proto
+	name         string
+	description  string
+	version      string
+	tags         []string
+	conn         *grpc.ClientConn
+	client       proto.ToolServiceClient
+	inputSchema  schema.JSONSchema
+	outputSchema schema.JSONSchema
 }
 
-// NewGRPCToolClient creates a new GRPCToolClient (placeholder implementation).
-// Full implementation will accept grpc.ClientConn and initialize the proto client.
-func NewGRPCToolClient(name string) *GRPCToolClient {
-	return &GRPCToolClient{
-		name:        name,
-		description: "External gRPC tool (placeholder)",
-		version:     "0.0.0",
-		tags:        []string{"external", "grpc"},
+// NewGRPCToolClient creates a new GRPCToolClient by connecting to a gRPC tool service.
+// It dials the endpoint, creates the client, and fetches the tool descriptor to populate
+// metadata and schemas.
+//
+// Parameters:
+//   - endpoint: gRPC server address (e.g., "localhost:50051")
+//   - opts: Optional gRPC dial options (uses insecure credentials if none provided)
+//
+// Returns error if connection fails or GetDescriptor RPC fails.
+func NewGRPCToolClient(endpoint string, opts ...grpc.DialOption) (*GRPCToolClient, error) {
+	// Use insecure credentials if no options provided
+	if len(opts) == 0 {
+		opts = []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	}
+
+	// Dial the gRPC server
+	// Note: Using deprecated Dial for better compatibility with testing (bufconn)
+	//nolint:staticcheck // Dial provides better blocking behavior for connection establishment
+	conn, err := grpc.Dial(endpoint, opts...)
+	if err != nil {
+		return nil, types.WrapError(ErrToolExecutionFailed, fmt.Sprintf("failed to dial gRPC endpoint %q", endpoint), err)
+	}
+
+	// Create the ToolService client
+	client := proto.NewToolServiceClient(conn)
+
+	// Fetch the tool descriptor
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	descriptor, err := client.GetDescriptor(ctx, &proto.ToolGetDescriptorRequest{})
+	if err != nil {
+		conn.Close()
+		return nil, types.WrapError(ErrToolExecutionFailed, "failed to get tool descriptor", err)
+	}
+
+	// Convert proto schemas to internal schema types
+	inputSchema, err := protoSchemaToInternal(descriptor.GetInputSchema())
+	if err != nil {
+		conn.Close()
+		return nil, types.WrapError(ErrToolExecutionFailed, "failed to parse input schema", err)
+	}
+
+	outputSchema, err := protoSchemaToInternal(descriptor.GetOutputSchema())
+	if err != nil {
+		conn.Close()
+		return nil, types.WrapError(ErrToolExecutionFailed, "failed to parse output schema", err)
+	}
+
+	return &GRPCToolClient{
+		name:         descriptor.GetName(),
+		description:  descriptor.GetDescription(),
+		version:      descriptor.GetVersion(),
+		tags:         descriptor.GetTags(),
+		conn:         conn,
+		client:       client,
+		inputSchema:  inputSchema,
+		outputSchema: outputSchema,
+	}, nil
+}
+
+// protoSchemaToInternal converts a proto JSONSchema to internal schema.JSONSchema.
+// The proto type contains a serialized JSON string that we unmarshal.
+func protoSchemaToInternal(protoSchema *proto.JSONSchema) (schema.JSONSchema, error) {
+	if protoSchema == nil {
+		return schema.NewObjectSchema(nil, nil), nil
+	}
+
+	var result schema.JSONSchema
+	if err := json.Unmarshal([]byte(protoSchema.GetJson()), &result); err != nil {
+		return schema.JSONSchema{}, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
+	}
+
+	return result, nil
 }
 
 // Name returns the unique identifier for this tool
@@ -57,39 +129,77 @@ func (c *GRPCToolClient) Tags() []string {
 }
 
 // InputSchema returns the JSON schema defining valid input parameters.
-// Placeholder: will be populated from proto service definition.
 func (c *GRPCToolClient) InputSchema() schema.JSONSchema {
-	return schema.NewObjectSchema(nil, nil)
+	return c.inputSchema
 }
 
 // OutputSchema returns the JSON schema defining the output structure.
-// Placeholder: will be populated from proto service definition.
 func (c *GRPCToolClient) OutputSchema() schema.JSONSchema {
-	return schema.NewObjectSchema(nil, nil)
+	return c.outputSchema
 }
 
 // Execute runs the tool via gRPC with the given input.
-// Placeholder: will make gRPC call and handle marshaling.
+// It marshals the input to JSON, makes the gRPC call, and unmarshals the output.
 func (c *GRPCToolClient) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	// TODO: Implement after proto generation
-	// 1. Convert input map to proto request
-	// 2. Make gRPC call: response, err := c.client.Execute(ctx, request)
-	// 3. Convert proto response to output map
-	// 4. Handle gRPC errors and wrap appropriately
-	return nil, types.NewError(ErrToolExecutionFailed, "gRPC execution not yet implemented")
+	// Marshal input to JSON
+	inputJSON, err := json.Marshal(input)
+	if err != nil {
+		return nil, types.WrapError(ErrToolInvalidInput, "failed to marshal input to JSON", err)
+	}
+
+	// Create the gRPC request
+	req := &proto.ToolExecuteRequest{
+		InputJson: string(inputJSON),
+	}
+
+	// Make the gRPC call
+	resp, err := c.client.Execute(ctx, req)
+	if err != nil {
+		return nil, types.WrapError(ErrToolExecutionFailed, fmt.Sprintf("gRPC tool %q execution failed", c.name), err)
+	}
+
+	// Check for proto-level error in response
+	if protoErr := resp.GetError(); protoErr != nil {
+		gibsonErr := &types.GibsonError{
+			Code:      types.ErrorCode(protoErr.GetCode()),
+			Message:   protoErr.GetMessage(),
+			Retryable: protoErr.GetRetryable(),
+		}
+		return nil, gibsonErr
+	}
+
+	// Unmarshal output JSON to map
+	var output map[string]any
+	if err := json.Unmarshal([]byte(resp.GetOutputJson()), &output); err != nil {
+		return nil, types.WrapError(ErrToolInvalidOutput, "failed to unmarshal output JSON", err)
+	}
+
+	return output, nil
 }
 
-// Health returns the current health status of this tool.
-// Placeholder: will use gRPC health check protocol.
+// Health returns the current health status of this tool by calling the gRPC Health endpoint.
 func (c *GRPCToolClient) Health(ctx context.Context) types.HealthStatus {
-	// TODO: Implement after proto generation
-	// Use grpc.health.v1.Health service to check tool availability
-	return types.Degraded("gRPC health check not yet implemented")
+	// Make health check call with timeout
+	healthCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	resp, err := c.client.Health(healthCtx, &proto.ToolHealthRequest{})
+	if err != nil {
+		return types.Unhealthy(fmt.Sprintf("gRPC health check failed: %v", err))
+	}
+
+	// Convert proto HealthStatus to internal type
+	return types.HealthStatus{
+		State:     types.HealthState(resp.GetState()),
+		Message:   resp.GetMessage(),
+		CheckedAt: time.UnixMilli(resp.GetCheckedAt()),
+	}
 }
 
-// Close closes the gRPC connection (placeholder)
+// Close closes the underlying gRPC connection.
 func (c *GRPCToolClient) Close() error {
-	// TODO: Implement after proto generation
-	// return c.conn.Close()
+	if c.conn != nil {
+		return c.conn.Close()
+	}
 	return nil
 }

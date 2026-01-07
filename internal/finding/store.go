@@ -895,3 +895,136 @@ func hasCWEMatch(findingCWEs, filterCWEs []string) bool {
 
 // Ensure DBFindingStore implements FindingStore at compile time
 var _ FindingStore = (*DBFindingStore)(nil)
+
+// InMemoryFindingStore is a simple in-memory implementation of FindingStore for testing.
+// This implementation stores findings in memory and does not persist across restarts.
+type InMemoryFindingStore struct {
+	mu       sync.RWMutex
+	findings map[types.ID]EnhancedFinding // findingID -> finding
+}
+
+// NewInMemoryFindingStore creates a new in-memory finding store.
+func NewInMemoryFindingStore() *InMemoryFindingStore {
+	return &InMemoryFindingStore{
+		findings: make(map[types.ID]EnhancedFinding),
+	}
+}
+
+// Store persists an enhanced finding in memory.
+func (s *InMemoryFindingStore) Store(ctx context.Context, finding EnhancedFinding) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	finding.UpdatedAt = time.Now()
+	if finding.CreatedAt.IsZero() {
+		finding.CreatedAt = time.Now()
+	}
+
+	s.findings[finding.ID] = finding
+	return nil
+}
+
+// Get retrieves a finding by ID.
+func (s *InMemoryFindingStore) Get(ctx context.Context, id types.ID) (*EnhancedFinding, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	finding, ok := s.findings[id]
+	if !ok {
+		return nil, fmt.Errorf("finding not found: %s", id)
+	}
+
+	return &finding, nil
+}
+
+// List retrieves findings for a mission with optional filtering.
+func (s *InMemoryFindingStore) List(ctx context.Context, missionID types.ID, filter *FindingFilter) ([]EnhancedFinding, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var results []EnhancedFinding
+	for _, finding := range s.findings {
+		// Filter by mission ID
+		if missionID.String() != "" && finding.MissionID != missionID {
+			continue
+		}
+
+		// Apply filters if provided
+		if filter != nil {
+			if filter.Severity != nil && finding.Severity != *filter.Severity {
+				continue
+			}
+			if filter.Category != nil && finding.Category != string(*filter.Category) {
+				continue
+			}
+			if filter.Status != nil && finding.Status != *filter.Status {
+				continue
+			}
+			if filter.MinRisk != nil && finding.RiskScore < *filter.MinRisk {
+				continue
+			}
+			if filter.MaxRisk != nil && finding.RiskScore > *filter.MaxRisk {
+				continue
+			}
+			if filter.AgentName != nil && finding.AgentName != *filter.AgentName {
+				continue
+			}
+			if filter.SearchText != nil {
+				searchLower := strings.ToLower(*filter.SearchText)
+				if !strings.Contains(strings.ToLower(finding.Title), searchLower) &&
+					!strings.Contains(strings.ToLower(finding.Description), searchLower) {
+					continue
+				}
+			}
+		}
+
+		results = append(results, finding)
+	}
+
+	return results, nil
+}
+
+// Update updates an existing finding.
+func (s *InMemoryFindingStore) Update(ctx context.Context, finding EnhancedFinding) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.findings[finding.ID]; !ok {
+		return fmt.Errorf("finding not found: %s", finding.ID)
+	}
+
+	finding.UpdatedAt = time.Now()
+	s.findings[finding.ID] = finding
+	return nil
+}
+
+// Delete removes a finding from memory.
+func (s *InMemoryFindingStore) Delete(ctx context.Context, id types.ID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.findings[id]; !ok {
+		return fmt.Errorf("finding not found: %s", id)
+	}
+
+	delete(s.findings, id)
+	return nil
+}
+
+// Count returns the total number of findings for a mission.
+func (s *InMemoryFindingStore) Count(ctx context.Context, missionID types.ID) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	count := 0
+	for _, finding := range s.findings {
+		if missionID.String() == "" || finding.MissionID == missionID {
+			count++
+		}
+	}
+
+	return count, nil
+}
+
+// Ensure InMemoryFindingStore implements FindingStore at compile time
+var _ FindingStore = (*InMemoryFindingStore)(nil)

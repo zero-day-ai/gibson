@@ -211,7 +211,7 @@ func TestNewTarget(t *testing.T) {
 		t.Errorf("NewTarget().URL = %v, want %v", target.URL, url)
 	}
 
-	if target.Type != targetType {
+	if target.Type != string(targetType) {
 		t.Errorf("NewTarget().Type = %v, want %v", target.Type, targetType)
 	}
 
@@ -264,7 +264,7 @@ func TestTarget_Validate(t *testing.T) {
 				ID:      ID("invalid-id"),
 				Name:    "Test",
 				URL:     "https://api.example.com",
-				Type:    TargetTypeLLMAPI,
+				Type:    string(TargetTypeLLMAPI),
 				Status:  TargetStatusActive,
 				Timeout: 30,
 			},
@@ -276,7 +276,7 @@ func TestTarget_Validate(t *testing.T) {
 				ID:      NewID(),
 				Name:    "",
 				URL:     "https://api.example.com",
-				Type:    TargetTypeLLMAPI,
+				Type:    string(TargetTypeLLMAPI),
 				Status:  TargetStatusActive,
 				Timeout: 30,
 			},
@@ -288,23 +288,23 @@ func TestTarget_Validate(t *testing.T) {
 				ID:      NewID(),
 				Name:    "Test",
 				URL:     "",
-				Type:    TargetTypeLLMAPI,
+				Type:    string(TargetTypeLLMAPI),
 				Status:  TargetStatusActive,
 				Timeout: 30,
 			},
 			wantErr: true,
 		},
 		{
-			name: "invalid type",
+			name: "custom type is valid (schema-based types)",
 			target: &Target{
 				ID:      NewID(),
 				Name:    "Test",
 				URL:     "https://api.example.com",
-				Type:    TargetType("invalid"),
+				Type:    "custom_type",
 				Status:  TargetStatusActive,
 				Timeout: 30,
 			},
-			wantErr: true,
+			wantErr: false, // Type validation is now schema-based, any string is valid
 		},
 		{
 			name: "invalid status",
@@ -312,7 +312,7 @@ func TestTarget_Validate(t *testing.T) {
 				ID:      NewID(),
 				Name:    "Test",
 				URL:     "https://api.example.com",
-				Type:    TargetTypeLLMAPI,
+				Type:    string(TargetTypeLLMAPI),
 				Status:  TargetStatus("invalid"),
 				Timeout: 30,
 			},
@@ -324,7 +324,7 @@ func TestTarget_Validate(t *testing.T) {
 				ID:       NewID(),
 				Name:     "Test",
 				URL:      "https://api.example.com",
-				Type:     TargetTypeLLMAPI,
+				Type:     string(TargetTypeLLMAPI),
 				Provider: Provider("invalid"),
 				Status:   TargetStatusActive,
 				Timeout:  30,
@@ -337,7 +337,7 @@ func TestTarget_Validate(t *testing.T) {
 				ID:       NewID(),
 				Name:     "Test",
 				URL:      "https://api.example.com",
-				Type:     TargetTypeLLMAPI,
+				Type:     string(TargetTypeLLMAPI),
 				AuthType: AuthType("invalid"),
 				Status:   TargetStatusActive,
 				Timeout:  30,
@@ -350,7 +350,7 @@ func TestTarget_Validate(t *testing.T) {
 				ID:      NewID(),
 				Name:    "Test",
 				URL:     "https://api.example.com",
-				Type:    TargetTypeLLMAPI,
+				Type:    string(TargetTypeLLMAPI),
 				Status:  TargetStatusActive,
 				Timeout: 0,
 			},
@@ -445,7 +445,7 @@ func TestNewTargetFilter(t *testing.T) {
 func TestTargetFilter_Fluent(t *testing.T) {
 	filter := NewTargetFilter().
 		WithProvider(ProviderOpenAI).
-		WithType(TargetTypeLLMAPI).
+		WithType(string(TargetTypeLLMAPI)).
 		WithStatus(TargetStatusActive).
 		WithTags([]string{"test"}).
 		WithLimit(50).
@@ -455,7 +455,7 @@ func TestTargetFilter_Fluent(t *testing.T) {
 		t.Errorf("Filter.Provider = %v, want %v", filter.Provider, ProviderOpenAI)
 	}
 
-	if filter.Type == nil || *filter.Type != TargetTypeLLMAPI {
+	if filter.Type == nil || *filter.Type != string(TargetTypeLLMAPI) {
 		t.Errorf("Filter.Type = %v, want %v", filter.Type, TargetTypeLLMAPI)
 	}
 

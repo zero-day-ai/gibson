@@ -610,7 +610,8 @@ func ExampleMockBuildExecutor() {
 
 	result, err := mock.Build(ctx, config, "my-component", "1.0.0", "0.1.0")
 	if err != nil {
-		panic(err)
+		fmt.Printf("build failed: %v\n", err)
+		return
 	}
 
 	fmt.Printf("Build success: %v\n", result.Success)
@@ -619,7 +620,8 @@ func ExampleMockBuildExecutor() {
 	// Verify the call
 	err = mock.VerifyBuildCalled("my-component", "1.0.0", "0.1.0")
 	if err != nil {
-		panic(err)
+		fmt.Printf("verification failed: %v\n", err)
+		return
 	}
 
 	// Output:

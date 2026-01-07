@@ -1,0 +1,400 @@
+package daemon
+
+import (
+	"context"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/gibson/internal/config"
+	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/types"
+)
+
+// TestListMissions_Empty tests listing missions when none exist
+func TestListMissions_Empty(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// List all missions
+	missions, total, err := d.ListMissions(ctx, false, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, missions)
+	assert.Equal(t, 0, total)
+
+	// List active missions
+	missions, total, err = d.ListMissions(ctx, true, 10, 0)
+	require.NoError(t, err)
+	assert.Empty(t, missions)
+	assert.Equal(t, 0, total)
+}
+
+// TestListMissions_All tests listing all missions
+func TestListMissions_All(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// Create test missions
+	missions := createTestMissions(t, d, 5)
+
+	// List all missions
+	result, total, err := d.ListMissions(ctx, false, 10, 0)
+	require.NoError(t, err)
+	assert.Len(t, result, 5)
+	assert.Equal(t, 5, total)
+
+	// Verify missions are returned in created order (desc by created_at)
+	for i := range result {
+		assert.Equal(t, missions[4-i].ID.String(), result[i].ID)
+	}
+}
+
+// TestListMissions_ActiveOnly tests filtering for active missions
+func TestListMissions_ActiveOnly(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// Create missions with different statuses
+	completedMission := createMission(t, d, "completed", mission.MissionStatusCompleted)
+	runningMission1 := createMission(t, d, "running-1", mission.MissionStatusRunning)
+	failedMission := createMission(t, d, "failed", mission.MissionStatusFailed)
+	runningMission2 := createMission(t, d, "running-2", mission.MissionStatusRunning)
+	pausedMission := createMission(t, d, "paused", mission.MissionStatusPaused)
+
+	// List active missions only
+	result, total, err := d.ListMissions(ctx, true, 10, 0)
+	require.NoError(t, err)
+	assert.Len(t, result, 3) // running-1, running-2, paused
+	assert.Equal(t, 3, total)
+
+	// Verify only running and paused missions are returned
+	activeMissionIDs := make(map[string]bool)
+	for _, m := range result {
+		activeMissionIDs[m.ID] = true
+	}
+
+	assert.True(t, activeMissionIDs[runningMission1.ID.String()])
+	assert.True(t, activeMissionIDs[runningMission2.ID.String()])
+	assert.True(t, activeMissionIDs[pausedMission.ID.String()])
+	assert.False(t, activeMissionIDs[completedMission.ID.String()])
+	assert.False(t, activeMissionIDs[failedMission.ID.String()])
+}
+
+// TestListMissions_Pagination tests pagination with limit and offset
+func TestListMissions_Pagination(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// Create 10 test missions
+	createTestMissions(t, d, 10)
+
+	// Page 1: first 3 missions
+	result, total, err := d.ListMissions(ctx, false, 3, 0)
+	require.NoError(t, err)
+	assert.Len(t, result, 3)
+	assert.Equal(t, 10, total)
+
+	// Page 2: next 3 missions
+	result2, total2, err := d.ListMissions(ctx, false, 3, 3)
+	require.NoError(t, err)
+	assert.Len(t, result2, 3)
+	assert.Equal(t, 10, total2)
+
+	// Page 3: next 3 missions
+	result3, total3, err := d.ListMissions(ctx, false, 3, 6)
+	require.NoError(t, err)
+	assert.Len(t, result3, 3)
+	assert.Equal(t, 10, total3)
+
+	// Page 4: last mission
+	result4, total4, err := d.ListMissions(ctx, false, 3, 9)
+	require.NoError(t, err)
+	assert.Len(t, result4, 1)
+	assert.Equal(t, 10, total4)
+
+	// Verify no duplicate IDs across pages
+	allIDs := make(map[string]bool)
+	for _, m := range append(append(append(result, result2...), result3...), result4...) {
+		assert.False(t, allIDs[m.ID], "duplicate mission ID: %s", m.ID)
+		allIDs[m.ID] = true
+	}
+}
+
+// TestListMissions_PaginationActiveOnly tests pagination with activeOnly filter
+func TestListMissions_PaginationActiveOnly(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// Create 5 running missions and 3 completed missions
+	for i := 0; i < 5; i++ {
+		createMission(t, d, "running", mission.MissionStatusRunning)
+	}
+	for i := 0; i < 3; i++ {
+		createMission(t, d, "completed", mission.MissionStatusCompleted)
+	}
+
+	// Page 1: first 2 active missions
+	result, total, err := d.ListMissions(ctx, true, 2, 0)
+	require.NoError(t, err)
+	assert.Len(t, result, 2)
+	assert.Equal(t, 5, total) // total active missions
+
+	// Page 2: next 2 active missions
+	result2, total2, err := d.ListMissions(ctx, true, 2, 2)
+	require.NoError(t, err)
+	assert.Len(t, result2, 2)
+	assert.Equal(t, 5, total2)
+
+	// Page 3: last active mission
+	result3, total3, err := d.ListMissions(ctx, true, 2, 4)
+	require.NoError(t, err)
+	assert.Len(t, result3, 1)
+	assert.Equal(t, 5, total3)
+}
+
+// TestListMissions_LargeOffset tests behavior with offset beyond total
+func TestListMissions_LargeOffset(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// Create 5 test missions
+	createTestMissions(t, d, 5)
+
+	// Query with offset beyond total
+	result, total, err := d.ListMissions(ctx, false, 10, 100)
+	require.NoError(t, err)
+	assert.Empty(t, result)
+	assert.Equal(t, 5, total)
+}
+
+// TestListMissions_DefaultLimit tests default limit when limit=0
+func TestListMissions_DefaultLimit(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// Create 50 test missions
+	createTestMissions(t, d, 50)
+
+	// Query with limit=0 (should use default of 100)
+	result, total, err := d.ListMissions(ctx, false, 0, 0)
+	require.NoError(t, err)
+	assert.Len(t, result, 50) // All 50 missions returned
+	assert.Equal(t, 50, total)
+}
+
+// TestListMissions_MissionDataFields tests that all fields are correctly populated
+func TestListMissions_MissionDataFields(t *testing.T) {
+	ctx := context.Background()
+	d, cleanup := setupTestDaemon(t)
+	defer cleanup()
+
+	// Create a mission with all fields populated
+	m := &mission.Mission{
+		ID:            types.NewID(),
+		Name:          "test-mission",
+		Description:   "test description",
+		Status:        mission.MissionStatusRunning,
+		TargetID:      types.NewID(),
+		WorkflowID:    types.NewID(),
+		FindingsCount: 5,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+	startTime := time.Now().Add(-1 * time.Hour)
+	m.StartedAt = &startTime
+
+	err := d.missionStore.Save(ctx, m)
+	require.NoError(t, err)
+
+	// List missions
+	result, total, err := d.ListMissions(ctx, false, 10, 0)
+	require.NoError(t, err)
+	assert.Len(t, result, 1)
+	assert.Equal(t, 1, total)
+
+	// Verify all fields
+	missionData := result[0]
+	assert.Equal(t, m.ID.String(), missionData.ID)
+	assert.Equal(t, string(mission.MissionStatusRunning), missionData.Status)
+	assert.Equal(t, int32(5), missionData.FindingCount)
+	assert.True(t, missionData.StartTime.Equal(startTime))
+	assert.True(t, missionData.EndTime.IsZero())
+}
+
+// TestConvertMissionToData tests the mission conversion helper
+func TestConvertMissionToData(t *testing.T) {
+	tests := []struct {
+		name     string
+		mission  *mission.Mission
+		validate func(t *testing.T, data api.MissionData)
+	}{
+		{
+			name: "basic mission with no times",
+			mission: &mission.Mission{
+				ID:         types.NewID(),
+				WorkflowID: types.NewID(),
+				Status:     mission.MissionStatusPending,
+			},
+			validate: func(t *testing.T, data api.MissionData) {
+				assert.NotEmpty(t, data.ID)
+				assert.Equal(t, "pending", data.Status)
+				assert.True(t, data.StartTime.IsZero())
+				assert.True(t, data.EndTime.IsZero())
+				assert.Equal(t, int32(0), data.FindingCount)
+			},
+		},
+		{
+			name: "mission with start time",
+			mission: func() *mission.Mission {
+				m := &mission.Mission{
+					ID:         types.NewID(),
+					WorkflowID: types.NewID(),
+					Status:     mission.MissionStatusRunning,
+				}
+				startTime := time.Now()
+				m.StartedAt = &startTime
+				return m
+			}(),
+			validate: func(t *testing.T, data api.MissionData) {
+				assert.Equal(t, "running", data.Status)
+				assert.False(t, data.StartTime.IsZero())
+				assert.True(t, data.EndTime.IsZero())
+			},
+		},
+		{
+			name: "completed mission with all times",
+			mission: func() *mission.Mission {
+				m := &mission.Mission{
+					ID:            types.NewID(),
+					WorkflowID:    types.NewID(),
+					Status:        mission.MissionStatusCompleted,
+					FindingsCount: 10,
+				}
+				startTime := time.Now().Add(-1 * time.Hour)
+				endTime := time.Now()
+				m.StartedAt = &startTime
+				m.CompletedAt = &endTime
+				return m
+			}(),
+			validate: func(t *testing.T, data api.MissionData) {
+				assert.Equal(t, "completed", data.Status)
+				assert.False(t, data.StartTime.IsZero())
+				assert.False(t, data.EndTime.IsZero())
+				assert.Equal(t, int32(10), data.FindingCount)
+			},
+		},
+		{
+			name: "mission with inline workflow",
+			mission: &mission.Mission{
+				ID:           types.NewID(),
+				WorkflowID:   types.NewID(),
+				WorkflowJSON: `{"nodes": []}`,
+				Status:       mission.MissionStatusPending,
+			},
+			validate: func(t *testing.T, data api.MissionData) {
+				assert.Equal(t, "<inline>", data.WorkflowPath)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := convertMissionToData(tt.mission)
+			tt.validate(t, data)
+		})
+	}
+}
+
+// Helper functions
+
+// setupTestDaemon creates a daemon instance for testing with an in-memory database
+func setupTestDaemon(t *testing.T) (*daemonImpl, func()) {
+	t.Helper()
+
+	// Create temporary database
+	dbPath := t.TempDir() + "/test.db"
+	db, err := database.Open(dbPath)
+	require.NoError(t, err)
+
+	// Run migrations to create tables
+	migrator := database.NewMigrator(db)
+	err = migrator.Migrate(context.Background())
+	require.NoError(t, err)
+
+	// Create daemon config
+	cfg := &config.Config{
+		Database: config.DBConfig{
+			Path: dbPath,
+		},
+	}
+
+	// Create daemon implementation directly (bypass registry/callback setup)
+	d := &daemonImpl{
+		config:       cfg,
+		db:           db,
+		missionStore: mission.NewDBMissionStore(db),
+		logger:       slog.Default(),
+	}
+
+	cleanup := func() {
+		db.Close()
+	}
+
+	return d, cleanup
+}
+
+// createTestMissions creates n test missions with sequential names
+func createTestMissions(t *testing.T, d *daemonImpl, n int) []*mission.Mission {
+	t.Helper()
+
+	missions := make([]*mission.Mission, n)
+	for i := 0; i < n; i++ {
+		missions[i] = createMission(t, d, "test", mission.MissionStatusPending)
+	}
+	return missions
+}
+
+// createMission creates a single test mission with the given status
+func createMission(t *testing.T, d *daemonImpl, namePrefix string, status mission.MissionStatus) *mission.Mission {
+	t.Helper()
+
+	m := &mission.Mission{
+		ID:          types.NewID(),
+		Name:        namePrefix + "-" + types.NewID().String()[:8],
+		Description: "test mission",
+		Status:      status,
+		TargetID:    types.NewID(),
+		WorkflowID:  types.NewID(),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	// Set start time for running/paused missions
+	if status == mission.MissionStatusRunning || status == mission.MissionStatusPaused {
+		startTime := time.Now().Add(-1 * time.Hour)
+		m.StartedAt = &startTime
+	}
+
+	// Set completion time for terminal status missions
+	if status.IsTerminal() {
+		startTime := time.Now().Add(-2 * time.Hour)
+		endTime := time.Now().Add(-1 * time.Hour)
+		m.StartedAt = &startTime
+		m.CompletedAt = &endTime
+	}
+
+	err := d.missionStore.Save(context.Background(), m)
+	require.NoError(t, err)
+
+	return m
+}

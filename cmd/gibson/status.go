@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
-	"github.com/zero-day-ai/gibson/internal/component"
+	internalcomponent "github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/config"
+	"github.com/zero-day-ai/gibson/internal/daemon"
+	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -110,7 +114,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// Create formatter
 	formatter := internal.NewFormatter(format, cmd.OutOrStdout())
 
-	// Collect system status
+	// Check for daemon client in context - use daemon status if available
+	if client := component.GetDaemonClient(ctx); client != nil {
+		if dc, ok := client.(*daemonclient.Client); ok {
+			return showDaemonStatus(cmd, dc, formatter, format, homeDir)
+		}
+	}
+
+	// No daemon client - collect local system status
 	status := collectSystemStatus(ctx, homeDir)
 
 	// Output status
@@ -122,6 +133,110 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	return printTextStatus(formatter, status)
 }
 
+// showDaemonStatus queries the daemon for status and displays it
+func showDaemonStatus(cmd *cobra.Command, client *daemonclient.Client, formatter internal.Formatter, format internal.OutputFormat, homeDir string) error {
+	ctx := cmd.Context()
+
+	// Query daemon for status via gRPC
+	daemonStatus, err := client.Status(ctx)
+	if err != nil {
+		// If we can't reach the daemon, fall back to file-based status
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return showDaemonFileStatus(cmd, formatter, format, homeDir)
+		}
+		return fmt.Errorf("failed to get daemon status: %w", err)
+	}
+
+	// Build system status from daemon response
+	status := SystemStatus{
+		CheckedAt:     time.Now(),
+		OverallHealth: types.Healthy("daemon running"),
+		Registry: RegistryStatus{
+			Type:     daemonStatus.RegistryType,
+			Endpoint: daemonStatus.RegistryAddr,
+			Healthy:  true,
+			Uptime:   daemonStatus.Uptime,
+			Services: int(daemonStatus.AgentCount), // Total components registered
+		},
+		Database:     checkDatabaseStatus(ctx, homeDir),
+		LLMProviders: checkLLMProviders(ctx, homeDir),
+	}
+
+	// Output based on format
+	if format == internal.FormatJSON {
+		return formatter.PrintJSON(status)
+	}
+
+	// Print daemon-specific info at the top
+	fmt.Println()
+	fmt.Println("Daemon:")
+	fmt.Printf("  ✓ Running:      yes\n")
+	fmt.Printf("    PID:          %d\n", daemonStatus.PID)
+	fmt.Printf("    gRPC Address: %s\n", daemonStatus.GRPCAddress)
+	fmt.Printf("    Uptime:       %s\n", daemonStatus.Uptime)
+	fmt.Println()
+
+	// Print the rest of the status
+	return printTextStatus(formatter, status)
+}
+
+// showDaemonFileStatus shows status from daemon files when RPC not available
+func showDaemonFileStatus(cmd *cobra.Command, formatter internal.Formatter, format internal.OutputFormat, homeDir string) error {
+	ctx := cmd.Context()
+
+	// Read daemon info from file
+	infoPath := filepath.Join(homeDir, "daemon.json")
+	info, err := daemon.ReadDaemonInfo(infoPath)
+	if err != nil {
+		// No daemon info - show not running
+		status := SystemStatus{
+			CheckedAt:     time.Now(),
+			OverallHealth: types.Degraded("daemon not running"),
+			Registry: RegistryStatus{
+				Healthy: false,
+				Error:   "daemon not running",
+			},
+			Database:     checkDatabaseStatus(ctx, homeDir),
+			LLMProviders: checkLLMProviders(ctx, homeDir),
+		}
+
+		if format == internal.FormatJSON {
+			return formatter.PrintJSON(status)
+		}
+		return printTextStatus(formatter, status)
+	}
+
+	// Calculate uptime
+	uptime := time.Since(info.StartTime)
+
+	status := SystemStatus{
+		CheckedAt:     time.Now(),
+		OverallHealth: types.Healthy("daemon running"),
+		Registry: RegistryStatus{
+			Type:    "daemon",
+			Healthy: true,
+			Uptime:  formatDuration(uptime),
+		},
+		Database:     checkDatabaseStatus(ctx, homeDir),
+		LLMProviders: checkLLMProviders(ctx, homeDir),
+	}
+
+	// Add daemon-specific info
+	fmt.Println()
+	fmt.Println("Daemon:")
+	fmt.Printf("  ✓ Running:      yes\n")
+	fmt.Printf("    PID:          %d\n", info.PID)
+	fmt.Printf("    gRPC Address: %s\n", info.GRPCAddress)
+	fmt.Printf("    Uptime:       %s\n", formatDuration(uptime))
+	fmt.Printf("    Version:      %s\n", info.Version)
+	fmt.Println()
+
+	if format == internal.FormatJSON {
+		return formatter.PrintJSON(status)
+	}
+	return printTextStatus(formatter, status)
+}
+
 // collectSystemStatus collects status from all subsystems
 func collectSystemStatus(ctx context.Context, homeDir string) SystemStatus {
 	status := SystemStatus{
@@ -129,7 +244,7 @@ func collectSystemStatus(ctx context.Context, homeDir string) SystemStatus {
 	}
 
 	// Check registry
-	status.Registry = checkRegistryStatus(ctx)
+	status.Registry = checkRegistryStatus(ctx, homeDir)
 
 	// Check components
 	status.Components = checkComponentsStatus(homeDir)
@@ -147,38 +262,25 @@ func collectSystemStatus(ctx context.Context, homeDir string) SystemStatus {
 }
 
 // checkRegistryStatus checks the registry status
-func checkRegistryStatus(ctx context.Context) RegistryStatus {
+func checkRegistryStatus(ctx context.Context, homeDir string) RegistryStatus {
 	regStatus := RegistryStatus{
 		Healthy: false,
 	}
 
-	// Get registry manager from context
-	regManager := GetRegistryManager(ctx)
-	if regManager == nil {
-		regStatus.Error = "registry not initialized"
+	// In daemon mode, registry is managed by daemon
+	// Check daemon.json for info
+	infoPath := filepath.Join(homeDir, "daemon.json")
+	info, err := daemon.ReadDaemonInfo(infoPath)
+	if err != nil {
+		regStatus.Error = "daemon not running (no registry available)"
 		return regStatus
 	}
 
-	// Get status from registry manager
-	status := regManager.Status()
-
-	regStatus.Type = status.Type
-	regStatus.Endpoint = status.Endpoint
-	regStatus.Healthy = status.Healthy
-	regStatus.Services = status.Services
-
-	// Calculate uptime if started
-	if !status.StartedAt.IsZero() && status.Healthy {
-		uptime := time.Since(status.StartedAt)
-		regStatus.Uptime = formatDuration(uptime)
-	} else {
-		regStatus.Uptime = "0s"
-	}
-
-	// Set error if unhealthy
-	if !status.Healthy {
-		regStatus.Error = "registry is not running"
-	}
+	// Daemon is running - registry should be available
+	regStatus.Type = "daemon-managed"
+	regStatus.Endpoint = info.GRPCAddress
+	regStatus.Healthy = true
+	regStatus.Uptime = formatDuration(time.Since(info.StartTime))
 
 	return regStatus
 }
@@ -228,7 +330,7 @@ func checkComponentsStatus(homeDir string) ComponentsStatus {
 	}
 
 	// Collect agents
-	for _, comp := range allComponents[component.ComponentKindAgent] {
+	for _, comp := range allComponents[internalcomponent.ComponentKindAgent] {
 		componentStatus.Agents = append(componentStatus.Agents, ComponentInfo{
 			Name:   comp.Name,
 			Status: comp.Status.String(),
@@ -238,7 +340,7 @@ func checkComponentsStatus(homeDir string) ComponentsStatus {
 	}
 
 	// Collect tools
-	for _, comp := range allComponents[component.ComponentKindTool] {
+	for _, comp := range allComponents[internalcomponent.ComponentKindTool] {
 		componentStatus.Tools = append(componentStatus.Tools, ComponentInfo{
 			Name:   comp.Name,
 			Status: comp.Status.String(),
@@ -248,7 +350,7 @@ func checkComponentsStatus(homeDir string) ComponentsStatus {
 	}
 
 	// Collect plugins
-	for _, comp := range allComponents[component.ComponentKindPlugin] {
+	for _, comp := range allComponents[internalcomponent.ComponentKindPlugin] {
 		componentStatus.Plugins = append(componentStatus.Plugins, ComponentInfo{
 			Name:   comp.Name,
 			Status: comp.Status.String(),
@@ -393,17 +495,17 @@ func determineOverallHealth(status SystemStatus) types.HealthStatus {
 
 	runningComponents := 0
 	for _, agent := range status.Components.Agents {
-		if agent.Status == component.ComponentStatusRunning.String() {
+		if agent.Status == internalcomponent.ComponentStatusRunning.String() {
 			runningComponents++
 		}
 	}
 	for _, tool := range status.Components.Tools {
-		if tool.Status == component.ComponentStatusRunning.String() {
+		if tool.Status == internalcomponent.ComponentStatusRunning.String() {
 			runningComponents++
 		}
 	}
 	for _, plugin := range status.Components.Plugins {
-		if plugin.Status == component.ComponentStatusRunning.String() {
+		if plugin.Status == internalcomponent.ComponentStatusRunning.String() {
 			runningComponents++
 		}
 	}

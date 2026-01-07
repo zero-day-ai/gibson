@@ -63,7 +63,15 @@ type HarnessConfig struct {
 	// Used for accessing working, mission, and long-term memory tiers.
 	// The memory manager is expected to be pre-configured for the mission scope.
 	// Optional: if nil, the harness will have limited memory capabilities.
+	// Note: Prefer using MemoryFactory for per-mission memory creation.
 	MemoryManager memory.MemoryManager
+
+	// MemoryFactory creates mission-scoped MemoryManager instances on demand.
+	// When set, this factory is called during harness creation to create a
+	// memory manager scoped to the mission ID from the MissionContext.
+	// If both MemoryFactory and MemoryManager are set, MemoryFactory takes precedence.
+	// Optional: if nil, MemoryManager is used directly (which may also be nil).
+	MemoryFactory func(missionID types.ID) (memory.MemoryManager, error)
 
 	// Tracer for distributed tracing (OpenTelemetry).
 	// Used for creating spans around LLM operations, tool execution, etc.

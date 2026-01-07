@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
@@ -10,6 +11,34 @@ import (
 	"github.com/zero-day-ai/gibson/internal/tool"
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
+
+// CallbackManager provides callback server functionality for agent harness operations.
+// External gRPC agents can connect back to the callback server to access LLM, tools,
+// memory, and other harness operations.
+//
+// This interface is implemented by harness.CallbackManager.
+// Note: The harness parameter uses any to avoid circular imports between registry and harness.
+// The actual implementation expects harness.AgentHarness.
+type CallbackManager interface {
+	// RegisterHarness registers a harness for a task and returns the callback endpoint.
+	// The taskID is used to route callback requests to the correct harness instance.
+	// The harness must implement harness.AgentHarness from internal/harness package.
+	// DEPRECATED: Use RegisterHarnessForMission for new code.
+	RegisterHarness(taskID string, harness any) string
+
+	// RegisterHarnessForMission registers a harness for external agent execution within
+	// a mission context and returns the registration key.
+	// The harness is registered in the CallbackHarnessRegistry keyed by "missionID:agentName".
+	// The harness must implement harness.AgentHarness from internal/harness package.
+	RegisterHarnessForMission(missionID, agentName string, harness any) string
+
+	// UnregisterHarness removes a harness registration after task or mission completion.
+	// Works with both task-based and mission-based registration keys.
+	UnregisterHarness(key string)
+
+	// CallbackEndpoint returns the advertised callback endpoint address.
+	CallbackEndpoint() string
+}
 
 // ComponentDiscovery provides a unified interface for discovering and connecting to
 // agents, tools, and plugins registered in the etcd registry.
@@ -211,6 +240,10 @@ type RegistryAdapter struct {
 
 	// pool manages gRPC connections with automatic health checking
 	pool *GRPCPool
+
+	// callbackManager provides callback server for external agents (optional)
+	// When set, enables external gRPC agents to access harness operations
+	callbackManager CallbackManager
 }
 
 // NewRegistryAdapter creates a new adapter wrapping an etcd registry.
@@ -235,6 +268,35 @@ func NewRegistryAdapter(reg sdkregistry.Registry) *RegistryAdapter {
 		loadBalancer: NewLoadBalancer(reg, StrategyRoundRobin),
 		pool:         NewGRPCPool(),
 	}
+}
+
+// NewRegistryAdapterWithPool creates a new adapter with a custom GRPCPool.
+// This is useful for testing when you need to inject a mock or test pool.
+//
+// Parameters:
+//   - reg: An active registry connection
+//   - pool: A custom GRPCPool (or compatible implementation)
+//
+// Returns a RegistryAdapter ready for component discovery.
+func NewRegistryAdapterWithPool(reg sdkregistry.Registry, pool *GRPCPool) *RegistryAdapter {
+	return &RegistryAdapter{
+		registry:     reg,
+		loadBalancer: NewLoadBalancer(reg, StrategyRoundRobin),
+		pool:         pool,
+	}
+}
+
+// SetCallbackManager configures the callback manager for this adapter.
+// When set, external gRPC agents will receive callback endpoint information
+// and can access harness operations (LLM, tools, memory, etc.) via callbacks.
+//
+// This should be called during Gibson initialization after the callback server
+// is started and before any agent execution occurs.
+//
+// Parameters:
+//   - cm: The callback manager providing harness callback functionality
+func (a *RegistryAdapter) SetCallbackManager(cm CallbackManager) {
+	a.callbackManager = cm
 }
 
 // DiscoverAgent discovers and connects to an agent by name.
@@ -302,20 +364,128 @@ func (a *RegistryAdapter) DiscoverAgent(ctx context.Context, name string) (agent
 
 // DiscoverTool discovers and connects to a tool by name.
 //
-// Note: Tool gRPC client implementation is not yet complete.
-// This method is a placeholder that returns an error.
-// Future implementation will follow the same pattern as DiscoverAgent.
+// This method:
+//  1. Queries registry for tool instances: registry.Discover(ctx, "tool", name)
+//  2. Returns ToolNotFoundError if no instances exist
+//  3. Load-balances to select an instance
+//  4. Gets/creates gRPC connection from pool
+//  5. Returns GRPCToolClient wrapping the connection
+//
+// If the registry is unavailable, returns RegistryUnavailableError.
+// If instances exist but all are unhealthy, returns NoHealthyInstancesError.
+//
+// The returned tool.Tool interface can be used exactly like a local tool:
+//
+//	tool, err := adapter.DiscoverTool(ctx, "nmap")
+//	if err != nil {
+//	    return err
+//	}
+//
+//	result, err := tool.Execute(ctx, input)
 func (a *RegistryAdapter) DiscoverTool(ctx context.Context, name string) (tool.Tool, error) {
-	return nil, fmt.Errorf("tool discovery not yet implemented: %s", name)
+	// Query registry for instances
+	instances, err := a.registry.Discover(ctx, "tool", name)
+	if err != nil {
+		return nil, &RegistryUnavailableError{Cause: err}
+	}
+
+	if len(instances) == 0 {
+		// No instances found - provide helpful error with available tools
+		available, err := a.getAvailableToolNames(ctx)
+		if err != nil {
+			// Failed to list available tools, return simpler error
+			return nil, &ToolNotFoundError{
+				Name:      name,
+				Available: []string{},
+			}
+		}
+		return nil, &ToolNotFoundError{
+			Name:      name,
+			Available: available,
+		}
+	}
+
+	// Load balance to select an instance
+	selected, err := a.loadBalancer.Select(ctx, "tool", name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select tool instance: %w", err)
+	}
+
+	// Get or create gRPC connection
+	conn, err := a.pool.Get(ctx, selected.Endpoint)
+	if err != nil {
+		// Connection failed - this instance may be unhealthy
+		// Try to remove it from the pool and return error
+		_ = a.pool.Remove(selected.Endpoint)
+		return nil, fmt.Errorf("failed to connect to tool %s at %s: %w", name, selected.Endpoint, err)
+	}
+
+	// Create and return GRPCToolClient
+	client := NewGRPCToolClient(conn, *selected)
+	return client, nil
 }
 
 // DiscoverPlugin discovers and connects to a plugin by name.
 //
-// Note: Plugin gRPC client implementation is not yet complete.
-// This method is a placeholder that returns an error.
-// Future implementation will follow the same pattern as DiscoverAgent.
+// This method:
+//  1. Queries registry for plugin instances: registry.Discover(ctx, "plugin", name)
+//  2. Returns PluginNotFoundError if no instances exist
+//  3. Load-balances to select an instance
+//  4. Gets/creates gRPC connection from pool
+//  5. Returns GRPCPluginClient wrapping the connection
+//
+// If the registry is unavailable, returns RegistryUnavailableError.
+// If instances exist but all are unhealthy, returns NoHealthyInstancesError.
+//
+// The returned plugin.Plugin interface can be used exactly like a local plugin:
+//
+//	plugin, err := adapter.DiscoverPlugin(ctx, "mitre-lookup")
+//	if err != nil {
+//	    return err
+//	}
+//
+//	result, err := plugin.Query(ctx, "search", params)
 func (a *RegistryAdapter) DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error) {
-	return nil, fmt.Errorf("plugin discovery not yet implemented: %s", name)
+	// Query registry for instances
+	instances, err := a.registry.Discover(ctx, "plugin", name)
+	if err != nil {
+		return nil, &RegistryUnavailableError{Cause: err}
+	}
+
+	if len(instances) == 0 {
+		// No instances found - provide helpful error with available plugins
+		available, err := a.getAvailablePluginNames(ctx)
+		if err != nil {
+			// Failed to list available plugins, return simpler error
+			return nil, &PluginNotFoundError{
+				Name:      name,
+				Available: []string{},
+			}
+		}
+		return nil, &PluginNotFoundError{
+			Name:      name,
+			Available: available,
+		}
+	}
+
+	// Load balance to select an instance
+	selected, err := a.loadBalancer.Select(ctx, "plugin", name)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select plugin instance: %w", err)
+	}
+
+	// Get or create gRPC connection
+	conn, err := a.pool.Get(ctx, selected.Endpoint)
+	if err != nil {
+		// Connection failed - this instance may be unhealthy
+		// Try to remove it from the pool and return error
+		_ = a.pool.Remove(selected.Endpoint)
+		return nil, fmt.Errorf("failed to connect to plugin %s at %s: %w", name, selected.Endpoint, err)
+	}
+
+	// Create and return GRPCPluginClient
+	client := NewGRPCPluginClient(conn, *selected)
+	return client, nil
 }
 
 // ListAgents returns information about all registered agents.
@@ -461,6 +631,14 @@ func (a *RegistryAdapter) ListPlugins(ctx context.Context) ([]PluginInfo, error)
 // This is a convenience method that combines DiscoverAgent and Execute.
 // It's useful for one-off task delegation without keeping a reference to the agent.
 //
+// If a CallbackManager is configured, this method will:
+//  1. Register the harness with the callback server before execution
+//  2. Pass callback endpoint to the agent via ExecuteWithCallback
+//  3. Unregister the harness after execution (even if execution fails)
+//
+// This enables external gRPC agents to access harness operations (LLM, tools,
+// memory, findings) by connecting back to Gibson Core's callback server.
+//
 // Example:
 //
 //	result, err := adapter.DelegateToAgent(ctx, "davinci", task, harness)
@@ -477,7 +655,102 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 		return agent.Result{}, err
 	}
 
-	// Execute the task
+	// Check if this is a gRPC agent and if callback is enabled
+	grpcAgent, isGRPCAgent := agentClient.(*GRPCAgentClient)
+
+	// Debug: Log callback manager state
+	if isGRPCAgent {
+		if a.callbackManager != nil {
+			// Log callback endpoint when manager is available
+			fmt.Printf("DEBUG: DelegateToAgent using callback endpoint: %s\n", a.callbackManager.CallbackEndpoint())
+		} else {
+			fmt.Printf("DEBUG: DelegateToAgent - callbackManager is nil, skipping callback\n")
+		}
+	}
+
+	if isGRPCAgent && a.callbackManager != nil {
+		// Try to extract mission context from the harness for mission-based registration
+		// The registry adapter works with agent.AgentHarness (minimal interface),
+		// but we need the full harness for context methods and mission-based registration.
+		// We use type assertions to check for the extended interface.
+		var missionPtr, targetPtr any
+		var missionID, agentName string
+
+		// Define local interface to avoid circular import with harness package
+		// This matches the Mission() and Target() methods from harness.AgentHarness
+		type contextProvider interface {
+			Mission() any // Returns harness.MissionContext
+			Target() any  // Returns harness.TargetInfo
+		}
+
+		// Attempt to get context if harness provides it
+		if provider, ok := harness.(contextProvider); ok {
+			mission := provider.Mission()
+			target := provider.Target()
+			missionPtr = &mission
+			targetPtr = &target
+
+			// Extract mission ID and agent name using reflection
+			// The mission is of type harness.MissionContext with fields ID and CurrentAgent
+			missionValue := reflect.ValueOf(mission)
+
+			// Get ID field and convert to string
+			if idField := missionValue.FieldByName("ID"); idField.IsValid() {
+				// ID is of type types.ID which has a String() method
+				if idStringer, ok := idField.Interface().(interface{ String() string }); ok {
+					missionID = idStringer.String()
+				}
+			}
+
+			// Get CurrentAgent field
+			if agentField := missionValue.FieldByName("CurrentAgent"); agentField.IsValid() && agentField.Kind() == reflect.String {
+				agentName = agentField.String()
+			}
+		}
+
+		// Use mission-based registration if we have both mission ID and agent name
+		var registrationKey string
+		if missionID != "" && agentName != "" && a.callbackManager != nil {
+			// Check if callback manager supports mission-based registration
+			type missionRegistrar interface {
+				RegisterHarnessForMission(missionID, agentName string, harness any) string
+			}
+
+			if mr, ok := a.callbackManager.(missionRegistrar); ok {
+				// Use new mission-based registration
+				registrationKey = mr.RegisterHarnessForMission(missionID, agentName, harness)
+			} else {
+				// Fall back to task-based registration
+				taskID := task.ID.String()
+				registrationKey = a.callbackManager.RegisterHarness(taskID, harness)
+			}
+		} else {
+			// Fall back to legacy task-based registration
+			taskID := task.ID.String()
+			registrationKey = a.callbackManager.RegisterHarness(taskID, harness)
+		}
+
+		// Ensure unregistration happens even on failure
+		defer a.callbackManager.UnregisterHarness(registrationKey)
+
+		// Create callback info with endpoint and optional context
+		callbackInfo := &CallbackInfo{
+			Endpoint: a.callbackManager.CallbackEndpoint(),
+			Token:    "", // TODO: Add token support when authentication is implemented
+			Mission:  missionPtr,
+			Target:   targetPtr,
+		}
+
+		// Execute with callback support
+		result, err := grpcAgent.ExecuteWithCallback(ctx, task, callbackInfo)
+		if err != nil {
+			return agent.Result{}, fmt.Errorf("agent execution failed: %w", err)
+		}
+
+		return result, nil
+	}
+
+	// Fall back to standard execution for local agents or when callback is disabled
 	result, err := agentClient.Execute(ctx, task, harness)
 	if err != nil {
 		return agent.Result{}, fmt.Errorf("agent execution failed: %w", err)
@@ -507,6 +780,56 @@ func (a *RegistryAdapter) Close() error {
 // Returns an empty slice if the registry query fails.
 func (a *RegistryAdapter) getAvailableAgentNames(ctx context.Context) ([]string, error) {
 	instances, err := a.registry.DiscoverAll(ctx, "agent")
+	if err != nil {
+		return []string{}, err
+	}
+
+	// Deduplicate by name
+	nameSet := make(map[string]struct{})
+	for _, inst := range instances {
+		nameSet[inst.Name] = struct{}{}
+	}
+
+	// Convert to sorted slice
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
+	}
+
+	return names, nil
+}
+
+// getAvailablePluginNames returns a list of all registered plugin names.
+//
+// This is used to provide helpful error messages when a plugin is not found.
+// Returns an empty slice if the registry query fails.
+func (a *RegistryAdapter) getAvailablePluginNames(ctx context.Context) ([]string, error) {
+	instances, err := a.registry.DiscoverAll(ctx, "plugin")
+	if err != nil {
+		return []string{}, err
+	}
+
+	// Deduplicate by name
+	nameSet := make(map[string]struct{})
+	for _, inst := range instances {
+		nameSet[inst.Name] = struct{}{}
+	}
+
+	// Convert to sorted slice
+	names := make([]string, 0, len(nameSet))
+	for name := range nameSet {
+		names = append(names, name)
+	}
+
+	return names, nil
+}
+
+// getAvailableToolNames returns a list of all registered tool names.
+//
+// This is used to provide helpful error messages when a tool is not found.
+// Returns an empty slice if the registry query fails.
+func (a *RegistryAdapter) getAvailableToolNames(ctx context.Context) ([]string, error) {
+	instances, err := a.registry.DiscoverAll(ctx, "tool")
 	if err != nil {
 		return []string{}, err
 	}
@@ -561,6 +884,38 @@ func (e *AgentNotFoundError) Error() string {
 	return fmt.Sprintf("agent '%s' not found (available: %s)", e.Name, strings.Join(e.Available, ", "))
 }
 
+// ToolNotFoundError is returned when a tool is requested but no instances are registered.
+//
+// This error includes a list of available tools to help with debugging and
+// provides a clear error message.
+//
+// Example usage:
+//
+//	tool, err := adapter.DiscoverTool(ctx, "nonexistent")
+//	if err != nil {
+//	    var notFound *ToolNotFoundError
+//	    if errors.As(err, &notFound) {
+//	        fmt.Printf("Tool '%s' not found\n", notFound.Name)
+//	        fmt.Printf("Available tools: %v\n", notFound.Available)
+//	    }
+//	    return err
+//	}
+type ToolNotFoundError struct {
+	// Name is the requested tool name
+	Name string
+
+	// Available is a list of registered tool names
+	Available []string
+}
+
+// Error implements the error interface.
+func (e *ToolNotFoundError) Error() string {
+	if len(e.Available) == 0 {
+		return fmt.Sprintf("tool '%s' not found (no tools registered)", e.Name)
+	}
+	return fmt.Sprintf("tool '%s' not found (available: %s)", e.Name, strings.Join(e.Available, ", "))
+}
+
 // RegistryUnavailableError is returned when the registry cannot be reached or returns an error.
 //
 // This error wraps the underlying cause for debugging.
@@ -587,6 +942,38 @@ func (e *RegistryUnavailableError) Error() string {
 // Unwrap enables errors.Unwrap to access the underlying error.
 func (e *RegistryUnavailableError) Unwrap() error {
 	return e.Cause
+}
+
+// PluginNotFoundError is returned when a plugin is requested but no instances are registered.
+//
+// This error includes a list of available plugins to help with debugging and
+// provides a clear error message.
+//
+// Example usage:
+//
+//	plugin, err := adapter.DiscoverPlugin(ctx, "nonexistent")
+//	if err != nil {
+//	    var notFound *PluginNotFoundError
+//	    if errors.As(err, &notFound) {
+//	        fmt.Printf("Plugin '%s' not found\n", notFound.Name)
+//	        fmt.Printf("Available plugins: %v\n", notFound.Available)
+//	    }
+//	    return err
+//	}
+type PluginNotFoundError struct {
+	// Name is the requested plugin name
+	Name string
+
+	// Available is a list of registered plugin names
+	Available []string
+}
+
+// Error implements the error interface.
+func (e *PluginNotFoundError) Error() string {
+	if len(e.Available) == 0 {
+		return fmt.Sprintf("plugin '%s' not found (no plugins registered)", e.Name)
+	}
+	return fmt.Sprintf("plugin '%s' not found (available: %s)", e.Name, strings.Join(e.Available, ", "))
 }
 
 // NoHealthyInstancesError is returned when instances exist but all are unhealthy.

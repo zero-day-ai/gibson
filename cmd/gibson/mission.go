@@ -146,7 +146,7 @@ func runMissionList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Call core function
 	result, err := core.MissionList(cc, missionStatusFilter)
@@ -172,7 +172,7 @@ func runMissionShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Call core function
 	result, err := core.MissionShow(cc, missionName)
@@ -197,6 +197,11 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
 	}
 
+	// Setup verbose logging infrastructure
+	jsonOutput := flags.OutputFormat == "json"
+	_, cleanup := internal.SetupVerbose(cmd, flags.VerbosityLevel(), jsonOutput)
+	defer cleanup()
+
 	// Verbose output
 	if flags.IsVerbose() {
 		fmt.Printf("Loading workflow from %s\n", missionWorkflowFile)
@@ -208,6 +213,26 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer cc.Close()
+
+	// TODO (Phase 6): When mission execution is fully implemented, integrate verbose logging here:
+	// - Create orchestrator with verbose.WorkflowVerboseAdapter
+	// - Set up MissionEventBridge for mission events
+	// - Wrap harness factory with verbose.WrapHarnessFactory
+	//
+	// Example:
+	//   ctx := cmd.Context()
+	//   var opts *OrchestratorOptions
+	//   if vw != nil {
+	//       opts = &OrchestratorOptions{
+	//           VerboseBus:   verbose.NewWorkflowVerboseAdapter(vw.Bus()),
+	//           VerboseLevel: flags.VerbosityLevel(),
+	//       }
+	//   }
+	//   bundle, err := createOrchestratorWithOptions(ctx, opts)
+	//   ...
+	//   bridge := verbose.NewMissionEventBridge(bundle.EventEmitter, vw.Bus())
+	//   bridge.Start(ctx)
+	//   defer bridge.Stop()
 
 	// Call core function
 	result, err := core.MissionRun(cc, missionWorkflowFile)
@@ -240,7 +265,7 @@ func runMissionResume(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Call core function
 	result, err := core.MissionResume(cc, missionName)
@@ -266,7 +291,7 @@ func runMissionStop(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Call core function
 	result, err := core.MissionStop(cc, missionName)
@@ -310,7 +335,7 @@ func runMissionDelete(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Call core function
 	result, err := core.MissionDelete(cc, missionName, missionForceDelete)

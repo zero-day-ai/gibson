@@ -71,11 +71,6 @@ func (m *mockComponentDAO) AddComponent(kind component.ComponentKind, name strin
 	}
 }
 
-
-
-
-
-
 // mockSessionDAO is a simple mock for testing that implements database.SessionDAO
 type mockSessionDAO struct{}
 
@@ -425,13 +420,6 @@ func TestExecute_FocusCommand(t *testing.T) {
 		t.Errorf("focused agent = %q, want %q", executor.GetFocusedAgent(), "test-agent")
 	}
 }
-
-
-
-
-
-
-
 
 // TestExecute_SubcommandRouting tests that subcommand-based commands have handlers registered
 func TestExecute_SubcommandRouting(t *testing.T) {

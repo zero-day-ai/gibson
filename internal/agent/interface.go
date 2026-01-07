@@ -7,6 +7,23 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
+// AgentHarness is imported from harness package - it's the canonical interface
+// through which agents interact with the Gibson platform during execution.
+// See internal/harness/harness.go for the full interface definition.
+type AgentHarness interface {
+	// ExecuteTool executes a tool and returns its output
+	ExecuteTool(ctx context.Context, name string, input map[string]any) (map[string]any, error)
+
+	// QueryPlugin queries a plugin for data or executes a plugin method
+	QueryPlugin(ctx context.Context, plugin, method string, params map[string]any) (any, error)
+
+	// DelegateToAgent delegates a task to another agent
+	DelegateToAgent(ctx context.Context, agentName string, task Task) (Result, error)
+
+	// Log writes a structured log message
+	Log(level, message string, fields map[string]any)
+}
+
 // Agent represents an autonomous, LLM-powered component that can execute
 // security testing tasks. Agents are the primary execution units in Gibson,
 // combining LLM reasoning with structured execution.
@@ -43,21 +60,4 @@ type Agent interface {
 
 	// Health returns the current health status of the agent
 	Health(ctx context.Context) types.HealthStatus
-}
-
-// AgentHarness provides capabilities to an executing agent.
-// This is the interface through which agents interact with the Gibson platform.
-// Placeholder - full implementation in Stage 6
-type AgentHarness interface {
-	// ExecuteTool executes a tool and returns its output
-	ExecuteTool(ctx context.Context, name string, input map[string]any) (map[string]any, error)
-
-	// QueryPlugin queries a plugin for data or executes a plugin method
-	QueryPlugin(ctx context.Context, plugin, method string, params map[string]any) (any, error)
-
-	// DelegateToAgent delegates a task to another agent
-	DelegateToAgent(ctx context.Context, agentName string, task Task) (Result, error)
-
-	// Log writes a structured log message
-	Log(level, message string, fields map[string]any)
 }

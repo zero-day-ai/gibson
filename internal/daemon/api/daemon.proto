@@ -1,0 +1,543 @@
+syntax = "proto3";
+
+package gibson.daemon.v1;
+
+option go_package = "github.com/zero-day-ai/gibson/internal/daemon/api;api";
+
+// DaemonService provides the gRPC API for Gibson daemon client communication.
+//
+// This service exposes all daemon functionality including mission execution,
+// agent management, attack operations, and real-time event streaming for the TUI.
+service DaemonService {
+  // Connect establishes a client connection to the daemon.
+  // Returns connection metadata and daemon version info.
+  rpc Connect(ConnectRequest) returns (ConnectResponse);
+
+  // Ping checks if the daemon is responsive.
+  // Used for health checks and connection validation.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // Status returns the current daemon status including uptime,
+  // service endpoints, and component counts.
+  rpc Status(StatusRequest) returns (StatusResponse);
+
+  // RunMission starts a mission and streams execution events.
+  // The stream remains open until the mission completes or is stopped.
+  rpc RunMission(RunMissionRequest) returns (stream MissionEvent);
+
+  // StopMission gracefully stops a running mission.
+  rpc StopMission(StopMissionRequest) returns (StopMissionResponse);
+
+  // ListMissions returns all missions (past and active).
+  rpc ListMissions(ListMissionsRequest) returns (ListMissionsResponse);
+
+  // ListAgents returns all registered agents from the etcd registry.
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+
+  // GetAgentStatus returns the current status of a specific agent.
+  rpc GetAgentStatus(GetAgentStatusRequest) returns (AgentStatusResponse);
+
+  // ListTools returns all registered tools from the etcd registry.
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+
+  // ListPlugins returns all registered plugins from the etcd registry.
+  rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
+
+  // RunAttack executes an attack and streams progress events.
+  // The stream remains open until the attack completes or is stopped.
+  rpc RunAttack(RunAttackRequest) returns (stream AttackEvent);
+
+  // Subscribe establishes an event stream for TUI real-time updates.
+  // Streams mission events, agent events, finding events, etc.
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+
+  // StartComponent starts a component (agent, tool, or plugin) by kind and name.
+  // The component must be installed in the local database.
+  rpc StartComponent(StartComponentRequest) returns (StartComponentResponse);
+
+  // StopComponent stops a running component (agent, tool, or plugin) by kind and name.
+  // If force is true, sends SIGKILL immediately instead of graceful SIGTERM.
+  rpc StopComponent(StopComponentRequest) returns (StopComponentResponse);
+}
+
+// ConnectRequest initiates a client connection to the daemon.
+message ConnectRequest {
+  // client_version is the version of the Gibson CLI client
+  string client_version = 1;
+
+  // client_id is an optional unique identifier for this client
+  string client_id = 2;
+}
+
+// ConnectResponse returns connection metadata.
+message ConnectResponse {
+  // daemon_version is the version of the running daemon
+  string daemon_version = 1;
+
+  // session_id is a unique identifier for this client session
+  string session_id = 2;
+
+  // grpc_address is the address the daemon is listening on
+  string grpc_address = 3;
+}
+
+// PingRequest is an empty health check request.
+message PingRequest {}
+
+// PingResponse confirms the daemon is responsive.
+message PingResponse {
+  // timestamp is the server time when the ping was received
+  int64 timestamp = 1;
+}
+
+// StatusRequest queries daemon status.
+message StatusRequest {}
+
+// StatusResponse returns complete daemon status information.
+message StatusResponse {
+  // running indicates if the daemon is running (always true if responding)
+  bool running = 1;
+
+  // pid is the process ID of the daemon
+  int32 pid = 2;
+
+  // start_time is when the daemon started (Unix timestamp)
+  int64 start_time = 3;
+
+  // uptime is the human-readable uptime string
+  string uptime = 4;
+
+  // grpc_address is the gRPC server address
+  string grpc_address = 5;
+
+  // registry_type is the type of registry (embedded, external)
+  string registry_type = 6;
+
+  // registry_addr is the registry endpoint address
+  string registry_addr = 7;
+
+  // callback_addr is the callback server address
+  string callback_addr = 8;
+
+  // agent_count is the number of registered agents
+  int32 agent_count = 9;
+
+  // mission_count is the total number of missions
+  int32 mission_count = 10;
+
+  // active_mission_count is the number of currently running missions
+  int32 active_mission_count = 11;
+}
+
+// RunMissionRequest starts a mission execution.
+message RunMissionRequest {
+  // workflow_path is the path to the mission workflow YAML file
+  string workflow_path = 1;
+
+  // mission_id is an optional custom mission identifier
+  string mission_id = 2;
+
+  // variables contains workflow variables to override
+  map<string, string> variables = 3;
+}
+
+// MissionEvent represents a mission execution event.
+message MissionEvent {
+  // event_type identifies the type of event
+  string event_type = 1;
+
+  // timestamp is when the event occurred (Unix timestamp)
+  int64 timestamp = 2;
+
+  // mission_id is the unique mission identifier
+  string mission_id = 3;
+
+  // node_id is the workflow node ID (if applicable)
+  string node_id = 4;
+
+  // message is a human-readable event message
+  string message = 5;
+
+  // data contains event-specific data (JSON-encoded)
+  string data = 6;
+
+  // error contains error information if the event represents an error
+  string error = 7;
+}
+
+// StopMissionRequest requests mission termination.
+message StopMissionRequest {
+  // mission_id is the identifier of the mission to stop
+  string mission_id = 1;
+
+  // force indicates whether to force-kill the mission (default: graceful)
+  bool force = 2;
+}
+
+// StopMissionResponse confirms mission stop request.
+message StopMissionResponse {
+  // success indicates if the stop request was accepted
+  bool success = 1;
+
+  // message provides additional context
+  string message = 2;
+}
+
+// ListMissionsRequest queries mission list.
+message ListMissionsRequest {
+  // active_only filters to only running missions
+  bool active_only = 1;
+
+  // limit restricts the number of results
+  int32 limit = 2;
+
+  // offset is the pagination offset
+  int32 offset = 3;
+}
+
+// ListMissionsResponse returns mission list.
+message ListMissionsResponse {
+  // missions is the list of missions
+  repeated MissionInfo missions = 1;
+
+  // total is the total count of missions (for pagination)
+  int32 total = 2;
+}
+
+// MissionInfo describes a mission.
+message MissionInfo {
+  // id is the unique mission identifier
+  string id = 1;
+
+  // workflow_path is the path to the workflow file
+  string workflow_path = 2;
+
+  // status is the mission status (running, completed, failed)
+  string status = 3;
+
+  // start_time is when the mission started (Unix timestamp)
+  int64 start_time = 4;
+
+  // end_time is when the mission ended (Unix timestamp, 0 if running)
+  int64 end_time = 5;
+
+  // finding_count is the number of findings discovered
+  int32 finding_count = 6;
+}
+
+// ListAgentsRequest queries agent registry.
+message ListAgentsRequest {
+  // kind filters by component kind (empty = all agents)
+  string kind = 1;
+}
+
+// ListAgentsResponse returns registered agents.
+message ListAgentsResponse {
+  // agents is the list of registered agents
+  repeated AgentInfo agents = 1;
+}
+
+// AgentInfo describes a registered agent.
+message AgentInfo {
+  // id is the unique agent identifier
+  string id = 1;
+
+  // name is the agent name
+  string name = 2;
+
+  // kind is the component kind (always "agent")
+  string kind = 3;
+
+  // version is the agent version
+  string version = 4;
+
+  // endpoint is the gRPC endpoint for the agent
+  string endpoint = 5;
+
+  // capabilities lists agent capabilities
+  repeated string capabilities = 6;
+
+  // health is the agent health status (healthy, unhealthy)
+  string health = 7;
+
+  // last_seen is when the agent was last seen (Unix timestamp)
+  int64 last_seen = 8;
+}
+
+// GetAgentStatusRequest queries a specific agent.
+message GetAgentStatusRequest {
+  // agent_id is the unique agent identifier
+  string agent_id = 1;
+}
+
+// AgentStatusResponse returns agent status.
+message AgentStatusResponse {
+  // agent is the agent information
+  AgentInfo agent = 1;
+
+  // active indicates if the agent is currently executing a task
+  bool active = 2;
+
+  // current_task describes the active task (if any)
+  string current_task = 3;
+
+  // task_start_time is when the current task started (Unix timestamp)
+  int64 task_start_time = 4;
+}
+
+// ListToolsRequest queries tool registry.
+message ListToolsRequest {}
+
+// ListToolsResponse returns registered tools.
+message ListToolsResponse {
+  // tools is the list of registered tools
+  repeated ToolInfo tools = 1;
+}
+
+// ToolInfo describes a registered tool.
+message ToolInfo {
+  // id is the unique tool identifier
+  string id = 1;
+
+  // name is the tool name
+  string name = 2;
+
+  // version is the tool version
+  string version = 3;
+
+  // endpoint is the gRPC endpoint for the tool
+  string endpoint = 4;
+
+  // description is the tool description
+  string description = 5;
+
+  // health is the tool health status (healthy, unhealthy)
+  string health = 6;
+
+  // last_seen is when the tool was last seen (Unix timestamp)
+  int64 last_seen = 7;
+}
+
+// ListPluginsRequest queries plugin registry.
+message ListPluginsRequest {}
+
+// ListPluginsResponse returns registered plugins.
+message ListPluginsResponse {
+  // plugins is the list of registered plugins
+  repeated PluginInfo plugins = 1;
+}
+
+// PluginInfo describes a registered plugin.
+message PluginInfo {
+  // id is the unique plugin identifier
+  string id = 1;
+
+  // name is the plugin name
+  string name = 2;
+
+  // version is the plugin version
+  string version = 3;
+
+  // endpoint is the gRPC endpoint for the plugin
+  string endpoint = 4;
+
+  // description is the plugin description
+  string description = 5;
+
+  // health is the plugin health status (healthy, unhealthy)
+  string health = 6;
+
+  // last_seen is when the plugin was last seen (Unix timestamp)
+  int64 last_seen = 7;
+}
+
+// RunAttackRequest executes an attack.
+message RunAttackRequest {
+  // target is the target URL or identifier
+  string target = 1;
+
+  // attack_type is the type of attack to execute
+  string attack_type = 2;
+
+  // agent_id is the agent to use (optional, auto-select if empty)
+  string agent_id = 3;
+
+  // payload_filter filters which payloads to use
+  string payload_filter = 4;
+
+  // options contains attack-specific options
+  map<string, string> options = 5;
+}
+
+// AttackEvent represents an attack execution event.
+message AttackEvent {
+  // event_type identifies the type of event
+  string event_type = 1;
+
+  // timestamp is when the event occurred (Unix timestamp)
+  int64 timestamp = 2;
+
+  // attack_id is the unique attack identifier
+  string attack_id = 3;
+
+  // message is a human-readable event message
+  string message = 4;
+
+  // data contains event-specific data (JSON-encoded)
+  string data = 5;
+
+  // error contains error information if the event represents an error
+  string error = 6;
+
+  // finding describes a discovered finding (if applicable)
+  FindingInfo finding = 7;
+}
+
+// FindingInfo describes a discovered vulnerability.
+message FindingInfo {
+  // id is the unique finding identifier
+  string id = 1;
+
+  // title is the finding title
+  string title = 2;
+
+  // severity is the severity level (info, low, medium, high, critical)
+  string severity = 3;
+
+  // category is the finding category
+  string category = 4;
+
+  // description is the detailed finding description
+  string description = 5;
+
+  // technique is the MITRE ATT&CK or ATLAS technique ID
+  string technique = 6;
+
+  // evidence contains supporting evidence
+  string evidence = 7;
+
+  // timestamp is when the finding was discovered (Unix timestamp)
+  int64 timestamp = 8;
+}
+
+// SubscribeRequest establishes an event stream.
+message SubscribeRequest {
+  // event_types filters which event types to receive (empty = all)
+  repeated string event_types = 1;
+
+  // mission_id filters to a specific mission (empty = all)
+  string mission_id = 2;
+}
+
+// Event represents a generic daemon event.
+message Event {
+  // event_type identifies the type of event
+  string event_type = 1;
+
+  // timestamp is when the event occurred (Unix timestamp)
+  int64 timestamp = 2;
+
+  // source is the event source (mission, agent, daemon, etc.)
+  string source = 3;
+
+  // data contains event-specific data (JSON-encoded)
+  string data = 4;
+
+  // Specific event types (only one will be set)
+  oneof event {
+    MissionEvent mission_event = 5;
+    AttackEvent attack_event = 6;
+    AgentEvent agent_event = 7;
+    FindingEvent finding_event = 8;
+  }
+}
+
+// AgentEvent represents an agent lifecycle event.
+message AgentEvent {
+  // event_type identifies the agent event type (registered, unregistered, health_change)
+  string event_type = 1;
+
+  // timestamp is when the event occurred (Unix timestamp)
+  int64 timestamp = 2;
+
+  // agent_id is the agent identifier
+  string agent_id = 3;
+
+  // agent_name is the agent name
+  string agent_name = 4;
+
+  // message is a human-readable message
+  string message = 5;
+
+  // data contains event-specific data (JSON-encoded)
+  string data = 6;
+}
+
+// FindingEvent represents a finding discovery event.
+message FindingEvent {
+  // event_type identifies the finding event type (discovered, updated)
+  string event_type = 1;
+
+  // timestamp is when the event occurred (Unix timestamp)
+  int64 timestamp = 2;
+
+  // finding is the finding information
+  FindingInfo finding = 3;
+
+  // mission_id is the mission that discovered the finding
+  string mission_id = 4;
+}
+
+// StartComponentRequest requests starting a component.
+message StartComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // name is the component name
+  string name = 2;
+}
+
+// StartComponentResponse returns the result of starting a component.
+message StartComponentResponse {
+  // success indicates if the component was started successfully
+  bool success = 1;
+
+  // pid is the process ID of the started component
+  int32 pid = 2;
+
+  // port is the port the component is listening on
+  int32 port = 3;
+
+  // message provides additional context or error information
+  string message = 4;
+
+  // log_path is the path to the component's log file
+  string log_path = 5;
+}
+
+// StopComponentRequest requests stopping a component.
+message StopComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // name is the component name
+  string name = 2;
+
+  // force indicates whether to skip graceful shutdown (SIGKILL instead of SIGTERM)
+  bool force = 3;
+}
+
+// StopComponentResponse returns the result of stopping a component.
+message StopComponentResponse {
+  // success indicates if the component was stopped successfully
+  bool success = 1;
+
+  // stopped_count is the number of instances successfully stopped
+  int32 stopped_count = 2;
+
+  // total_count is the total number of instances that were running
+  int32 total_count = 3;
+
+  // message provides additional context or error information
+  string message = 4;
+}

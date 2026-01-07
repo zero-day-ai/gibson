@@ -22,6 +22,16 @@ export CGO_CFLAGS=-DSQLITE_ENABLE_FTS5
 # Build tags for FTS5 support (always enabled)
 BUILD_TAGS=-tags "fts5"
 
+# Version information (can be overridden at build time)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+# LD flags for version injection
+LDFLAGS=-ldflags "-X github.com/zero-day-ai/gibson/pkg/version.Version=$(VERSION) \
+	-X github.com/zero-day-ai/gibson/pkg/version.GitCommit=$(GIT_COMMIT) \
+	-X github.com/zero-day-ai/gibson/pkg/version.BuildTime=$(BUILD_TIME)"
+
 # Coverage settings
 COVERAGE_FILE=coverage.out
 COVERAGE_THRESHOLD=90
@@ -37,7 +47,7 @@ all: test build
 bin:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BINARY_DIR)
-	$(GOBUILD) $(BUILD_TAGS) -o $(BINARY_DIR)/$(BINARY_NAME) $(MAIN_PACKAGE)
+	$(GOBUILD) $(BUILD_TAGS) $(LDFLAGS) -o $(BINARY_DIR)/$(BINARY_NAME) $(MAIN_PACKAGE)
 	@echo "Build complete: $(BINARY_DIR)/$(BINARY_NAME)"
 
 # Full build (for Docker/CI/CD)
@@ -103,7 +113,7 @@ clean:
 # Install binary to GOPATH/bin
 install: build
 	@echo "Installing $(BINARY_NAME)..."
-	$(GOCMD) install $(BUILD_TAGS) $(MAIN_PACKAGE)
+	$(GOCMD) install $(BUILD_TAGS) $(LDFLAGS) $(MAIN_PACKAGE)
 	@echo "Installed to $(shell go env GOPATH)/bin/$(BINARY_NAME)"
 
 # Download dependencies

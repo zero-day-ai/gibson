@@ -1,0 +1,214 @@
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/harness"
+	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/llm/providers"
+	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/plan"
+)
+
+// Infrastructure holds the daemon's infrastructure components that are shared
+// across different operations (DAG executor, finding store, LLM registry).
+//
+// This struct is embedded in daemonImpl to provide access to these components
+// during mission execution, attack operations, and event streaming.
+type Infrastructure struct {
+	// planExecutor executes workflow DAGs with guardrails and approvals
+	planExecutor *plan.PlanExecutor
+
+	// findingStore persists and retrieves findings
+	findingStore finding.FindingStore
+
+	// llmRegistry manages LLM provider registration and discovery
+	llmRegistry llm.LLMRegistry
+
+	// slotManager resolves slot names to provider configurations
+	slotManager llm.SlotManager
+
+	// memoryManagerFactory creates mission-scoped memory managers
+	memoryManagerFactory *MemoryManagerFactory
+
+	// harnessFactory creates configured AgentHarness instances
+	harnessFactory harness.HarnessFactoryInterface
+}
+
+// newInfrastructure creates and initializes all infrastructure components.
+//
+// This method is called during daemon startup to wire up all the components
+// that are needed for mission execution. It:
+//  1. Creates the finding store backed by the database
+//  2. Creates the LLM registry and registers configured providers
+//  3. Creates the plan executor with the configured components
+//
+// Returns an error if any component fails to initialize.
+func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, error) {
+	d.logger.Info("initializing infrastructure components")
+
+	// Create finding store with caching and tracing
+	findingStore := finding.NewDBFindingStore(
+		d.db,
+		finding.WithCacheSize(1000), // Cache last 1000 findings
+	)
+	d.logger.Info("initialized finding store")
+
+	// Create LLM registry
+	llmRegistry := llm.NewLLMRegistry()
+
+	// Register LLM providers from configuration
+	if err := d.registerLLMProviders(ctx, llmRegistry); err != nil {
+		return nil, fmt.Errorf("failed to register LLM providers: %w", err)
+	}
+	d.logger.Info("initialized LLM registry")
+
+	// Create slot manager with the LLM registry
+	slotManager := NewDaemonSlotManager(llmRegistry, d.logger.With("component", "slot-manager"))
+	d.logger.Info("initialized slot manager")
+
+	// Create memory manager factory with database and config
+	// Use memory config from daemon config, or nil to use defaults
+	var memConfig *memory.MemoryConfig
+	if d.config != nil {
+		// Config.Memory is a struct, not a pointer, so take its address
+		memConfig = &d.config.Memory
+	}
+	memoryFactory, err := NewMemoryManagerFactory(d.db, memConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memory manager factory: %w", err)
+	}
+	d.logger.Info("initialized memory manager factory")
+
+	// Create plan executor with dependencies
+	// TODO: Add executor config to Config struct when implementing
+	planExecutor := plan.NewPlanExecutor(
+		plan.WithExecutorLogger(d.logger.With("component", "plan-executor")),
+	)
+	d.logger.Info("initialized plan executor")
+
+	// Store infrastructure components temporarily so newHarnessFactory can access them
+	infra := &Infrastructure{
+		planExecutor:         planExecutor,
+		findingStore:         findingStore,
+		llmRegistry:          llmRegistry,
+		slotManager:          slotManager,
+		memoryManagerFactory: memoryFactory,
+	}
+	d.infrastructure = infra
+
+	// Create harness factory with all dependencies
+	harnessFactory, err := d.newHarnessFactory(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create harness factory: %w", err)
+	}
+	d.logger.Info("initialized harness factory")
+
+	// Update infrastructure with harness factory
+	infra.harnessFactory = harnessFactory
+
+	return infra, nil
+}
+
+// registerLLMProviders registers all configured LLM providers with the registry.
+//
+// This method reads the LLM configuration and creates provider instances for
+// each configured provider (Anthropic, OpenAI, Ollama, Google). Providers are
+// registered with the LLM registry for slot-based selection during mission execution.
+//
+// Returns an error if any provider fails to initialize or register.
+func (d *daemonImpl) registerLLMProviders(ctx context.Context, registry llm.LLMRegistry) error {
+	d.logger.Debug("registering LLM providers from configuration")
+
+	// TODO: Expand LLMConfig structure to support provider-specific configurations.
+	// Currently using environment variables for API keys.
+
+	// Try to register Anthropic provider from environment
+	provider, err := providers.NewAnthropicProvider(llm.ProviderConfig{
+		Type:         llm.ProviderAnthropic,
+		DefaultModel: os.Getenv("ANTHROPIC_MODEL"), // Use env var, provider will use its default if empty
+		// APIKey will be read from ANTHROPIC_API_KEY environment variable
+	})
+	if err == nil {
+		if regErr := registry.RegisterProvider(provider); regErr != nil {
+			d.logger.Warn("failed to register Anthropic provider", "error", regErr)
+		} else {
+			d.logger.Info("registered Anthropic provider")
+		}
+	} else {
+		d.logger.Debug("Anthropic provider not available", "error", err)
+	}
+
+	// Try to register OpenAI provider from environment
+	openaiProvider, err := providers.NewOpenAIProvider(llm.ProviderConfig{
+		Type:         llm.ProviderOpenAI,
+		DefaultModel: os.Getenv("OPENAI_MODEL"), // Use env var, provider will use its default if empty
+		// APIKey will be read from OPENAI_API_KEY environment variable
+	})
+	if err == nil {
+		if regErr := registry.RegisterProvider(openaiProvider); regErr != nil {
+			d.logger.Warn("failed to register OpenAI provider", "error", regErr)
+		} else {
+			d.logger.Info("registered OpenAI provider")
+		}
+	} else {
+		d.logger.Debug("OpenAI provider not available", "error", err)
+	}
+
+	// TODO: Add Google and Ollama provider registration when config structure is expanded
+
+	// Verify at least one provider is registered
+	if len(registry.ListProviders()) == 0 {
+		d.logger.Warn("no LLM providers registered - missions may fail if they require LLM access")
+	}
+
+	return nil
+}
+
+// checkInfrastructureHealth checks the health of all infrastructure components.
+//
+// This method is called during health checks to verify that all infrastructure
+// components are operational. It checks:
+//  1. Database connectivity (via finding store)
+//  2. LLM provider health
+//  3. Registry health
+//
+// Returns a map of component names to health status strings.
+func (d *daemonImpl) checkInfrastructureHealth(ctx context.Context, infra *Infrastructure) map[string]string {
+	health := make(map[string]string)
+
+	// Check database/finding store
+	// We can test by attempting to count findings for a dummy mission
+	_, err := infra.findingStore.Count(ctx, "health-check-mission-id")
+	if err != nil {
+		health["finding_store"] = fmt.Sprintf("unhealthy: %v", err)
+	} else {
+		health["finding_store"] = "healthy"
+	}
+
+	// Check LLM registry
+	llmHealth := infra.llmRegistry.Health(ctx)
+	if llmHealth.IsHealthy() {
+		health["llm_registry"] = llmHealth.Message
+	} else {
+		health["llm_registry"] = fmt.Sprintf("unhealthy: %s", llmHealth.Message)
+	}
+
+	// Check component registry via registry adapter
+	if d.registryAdapter != nil {
+		// Try to list agents to verify registry is accessible
+		_, err := d.registryAdapter.ListAgents(ctx)
+		if err != nil {
+			health["component_registry"] = fmt.Sprintf("unhealthy: %v", err)
+		} else {
+			health["component_registry"] = "healthy"
+		}
+	} else {
+		health["component_registry"] = "not initialized"
+	}
+
+	return health
+}

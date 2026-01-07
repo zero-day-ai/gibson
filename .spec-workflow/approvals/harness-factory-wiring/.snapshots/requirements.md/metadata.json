@@ -1,0 +1,14 @@
+{
+  "filePath": ".spec-workflow/specs/harness-factory-wiring/requirements.md",
+  "currentVersion": 1,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2026-01-06T20:09:24.474Z",
+      "trigger": "initial",
+      "approvalId": "approval_1767730164463_kvhynznty",
+      "approvalTitle": "Requirements: HarnessFactory Wiring for E2E Agent Execution"
+    }
+  ]
+}

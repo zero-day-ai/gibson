@@ -222,4 +222,3 @@ func runInstallAll(cmd *cobra.Command, args []string, cfg Config, flags *Install
 
 	return nil
 }
-

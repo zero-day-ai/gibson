@@ -44,9 +44,9 @@ func (p *MockProvider) Models(ctx context.Context) ([]llm.ModelInfo, error) {
 	return []llm.ModelInfo{
 		{
 			Name:          "mock-model",
-			ContextWindow: 4096,
-			MaxOutput:     2048,
-			Features:      []string{"chat", "streaming"},
+			ContextWindow: 200000,
+			MaxOutput:     4096,
+			Features:      []string{"chat", "streaming", "tool_use"},
 		},
 	}, nil
 }

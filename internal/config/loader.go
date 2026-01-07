@@ -183,5 +183,12 @@ func applyInterpolation(cfg *Config, interpolated map[string]interface{}) error 
 		}
 	}
 
+	// Apply Daemon config interpolation
+	if daemon, ok := interpolated["daemon"].(map[string]interface{}); ok {
+		if grpcAddr, ok := daemon["grpc_address"].(string); ok {
+			cfg.Daemon.GRPCAddress = interpolateString(grpcAddr)
+		}
+	}
+
 	return nil
 }

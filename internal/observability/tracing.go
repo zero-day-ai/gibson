@@ -6,17 +6,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zero-day-ai/gibson/pkg/version"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+	"google.golang.org/grpc/credentials"
 )
 
 const (
 	defaultBatchTimeout = 5 * time.Second
 	defaultServiceName  = "gibson"
-	defaultVersion      = "0.1.0"
 )
 
 // TracingOption is a functional option for configuring tracing initialization.
@@ -106,7 +107,7 @@ func InitTracing(ctx context.Context, cfg TracingConfig, langfuse *LangfuseConfi
 			ctx,
 			resource.WithAttributes(
 				semconv.ServiceName(serviceName),
-				semconv.ServiceVersion(defaultVersion),
+				semconv.ServiceVersion(version.Version),
 			),
 			resource.WithFromEnv(),      // Include environment variables
 			resource.WithTelemetrySDK(), // Include SDK info
@@ -136,10 +137,30 @@ func InitTracing(ctx context.Context, cfg TracingConfig, langfuse *LangfuseConfi
 		}
 
 	case "otlp":
-		exporter, err = otlptracegrpc.New(ctx,
+		// Build OTLP options based on TLS configuration
+		otlpOpts := []otlptracegrpc.Option{
 			otlptracegrpc.WithEndpoint(cfg.Endpoint),
-			otlptracegrpc.WithInsecure(), // TODO: Make this configurable
-		)
+		}
+
+		// Configure TLS
+		if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+			// Use TLS with client certificate
+			creds, err := credentials.NewClientTLSFromFile(cfg.TLSCertFile, "")
+			if err != nil {
+				return nil, WrapObservabilityError(ErrExporterConnection,
+					"failed to load TLS credentials", err)
+			}
+			otlpOpts = append(otlpOpts, otlptracegrpc.WithTLSCredentials(creds))
+		} else if cfg.InsecureMode {
+			// Use insecure connection (only if explicitly opted in)
+			otlpOpts = append(otlpOpts, otlptracegrpc.WithInsecure())
+		} else {
+			// Default: Use system TLS (no client cert, but verify server)
+			creds := credentials.NewTLS(nil)
+			otlpOpts = append(otlpOpts, otlptracegrpc.WithTLSCredentials(creds))
+		}
+
+		exporter, err = otlptracegrpc.New(ctx, otlpOpts...)
 		if err != nil {
 			return nil, NewExporterConnectionError(cfg.Endpoint, err)
 		}

@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zero-day-ai/gibson/internal/eval"
 	"github.com/zero-day-ai/gibson/internal/harness"
+	"github.com/zero-day-ai/gibson/internal/planning"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
@@ -20,10 +22,14 @@ type MissionOrchestrator interface {
 
 // DefaultMissionOrchestrator implements MissionOrchestrator.
 type DefaultMissionOrchestrator struct {
-	store            MissionStore
-	emitter          EventEmitter
-	workflowExecutor *workflow.WorkflowExecutor
-	harnessFactory   harness.HarnessFactoryInterface
+	store                MissionStore
+	emitter              EventEmitter
+	workflowExecutor     *workflow.WorkflowExecutor
+	harnessFactory       harness.HarnessFactoryInterface
+	missionService       MissionService // For loading workflows from store
+	planningOrchestrator *planning.PlanningOrchestrator
+	evalOptions          *eval.EvalOptions
+	evalCollector        *eval.EvalResultCollector
 }
 
 // OrchestratorOption is a functional option for configuring the orchestrator.
@@ -50,6 +56,20 @@ func WithHarnessFactory(factory harness.HarnessFactoryInterface) OrchestratorOpt
 	}
 }
 
+// WithMissionService sets the mission service for workflow loading.
+func WithMissionService(service MissionService) OrchestratorOption {
+	return func(o *DefaultMissionOrchestrator) {
+		o.missionService = service
+	}
+}
+
+// WithPlanningOrchestrator sets the planning orchestrator for bounded planning.
+func WithPlanningOrchestrator(po *planning.PlanningOrchestrator) OrchestratorOption {
+	return func(o *DefaultMissionOrchestrator) {
+		o.planningOrchestrator = po
+	}
+}
+
 // NewMissionOrchestrator creates a new mission orchestrator.
 func NewMissionOrchestrator(store MissionStore, opts ...OrchestratorOption) *DefaultMissionOrchestrator {
 	o := &DefaultMissionOrchestrator{
@@ -59,6 +79,19 @@ func NewMissionOrchestrator(store MissionStore, opts ...OrchestratorOption) *Def
 
 	for _, opt := range opts {
 		opt(o)
+	}
+
+	// If eval options are set and harness factory exists, wrap it with eval capabilities
+	if o.evalOptions != nil && o.harnessFactory != nil {
+		wrappedFactory, collector, err := wrapFactoryWithEval(o.harnessFactory, o.evalOptions)
+		if err != nil {
+			// Log error but continue - eval is optional
+			// In production, this would use proper logging
+			// For now, we'll just skip eval wrapping on error
+		} else if wrappedFactory != nil {
+			o.harnessFactory = wrappedFactory
+			o.evalCollector = collector
+		}
 	}
 
 	return o
@@ -106,6 +139,19 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 	var workflowResult *workflow.WorkflowResult
 	var workflowErr error
 
+	// Check if planning orchestrator is enabled
+	if o.planningOrchestrator != nil {
+		// Emit event that planning is enabled for this mission
+		o.emitter.Emit(ctx, MissionEvent{
+			Type:      "planning_enabled",
+			MissionID: mission.ID,
+			Timestamp: time.Now(),
+			Payload: map[string]interface{}{
+				"message": "Mission execution will use bounded planning orchestrator",
+			},
+		})
+	}
+
 	// Check if workflow executor is configured
 	if o.workflowExecutor == nil {
 		// TODO: Handle approval workflows
@@ -114,11 +160,58 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 		// For now, just simulate execution without workflow executor
 		time.Sleep(100 * time.Millisecond)
 	} else {
-		// Parse workflow from mission's workflow definition
-		// NOTE: This assumes mission has workflow JSON/YAML. If not available,
-		// we need a WorkflowStore to load by WorkflowID
+		// Parse workflow from mission's workflow definition or load from store
 		var wf *workflow.Workflow
-		if mission.WorkflowJSON != "" {
+
+		// First check if we have a WorkflowID and can load from store
+		if mission.WorkflowID != "" && o.missionService != nil {
+			// Load workflow from store using WorkflowID
+			// Convert WorkflowID to reference string for the config
+			workflowConfig := &MissionWorkflowConfig{
+				Reference: mission.WorkflowID.String(),
+			}
+
+			loadedWorkflow, loadErr := o.missionService.LoadWorkflow(ctx, workflowConfig)
+			if loadErr != nil {
+				result.Status = MissionStatusFailed
+				mission.Status = MissionStatusFailed
+				mission.Error = fmt.Sprintf("failed to load workflow from store: %v", loadErr)
+				completedAt := time.Now()
+				mission.CompletedAt = &completedAt
+				mission.Metrics.Duration = completedAt.Sub(startedAt)
+
+				// Emit mission failed event
+				o.emitter.Emit(ctx, NewFailedEvent(mission.ID, loadErr))
+
+				if updateErr := o.store.Update(ctx, mission); updateErr != nil {
+					return nil, fmt.Errorf("failed to update mission after workflow load error: %w", updateErr)
+				}
+
+				return result, fmt.Errorf("failed to load workflow from store: %w", loadErr)
+			}
+
+			// Type assert to workflow.Workflow
+			var ok bool
+			wf, ok = loadedWorkflow.(*workflow.Workflow)
+			if !ok {
+				result.Status = MissionStatusFailed
+				mission.Status = MissionStatusFailed
+				mission.Error = "loaded workflow has invalid type"
+				completedAt := time.Now()
+				mission.CompletedAt = &completedAt
+				mission.Metrics.Duration = completedAt.Sub(startedAt)
+
+				// Emit mission failed event
+				o.emitter.Emit(ctx, NewFailedEvent(mission.ID, fmt.Errorf("loaded workflow has invalid type")))
+
+				if updateErr := o.store.Update(ctx, mission); updateErr != nil {
+					return nil, fmt.Errorf("failed to update mission after workflow type error: %w", updateErr)
+				}
+
+				return result, fmt.Errorf("loaded workflow has invalid type")
+			}
+		} else if mission.WorkflowJSON != "" {
+			// Fall back to inline workflow JSON/YAML
 			// Check if the workflow content is JSON (starts with '{') or YAML
 			workflowContent := strings.TrimSpace(mission.WorkflowJSON)
 			if strings.HasPrefix(workflowContent, "{") {
@@ -138,6 +231,9 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 				mission.CompletedAt = &completedAt
 				mission.Metrics.Duration = completedAt.Sub(startedAt)
 
+				// Emit mission failed event
+				o.emitter.Emit(ctx, NewFailedEvent(mission.ID, workflowErr))
+
 				if updateErr := o.store.Update(ctx, mission); updateErr != nil {
 					return nil, fmt.Errorf("failed to update mission after workflow parse error: %w", updateErr)
 				}
@@ -145,14 +241,16 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 				return result, fmt.Errorf("failed to parse workflow: %w", workflowErr)
 			}
 		} else {
-			// TODO: Load workflow from WorkflowStore using mission.WorkflowID
-			// For now, return error if no workflow JSON is available
+			// No workflow ID and no inline JSON - cannot proceed
 			result.Status = MissionStatusFailed
 			mission.Status = MissionStatusFailed
-			mission.Error = "workflow definition not available"
+			mission.Error = "workflow definition not available (neither WorkflowID nor WorkflowJSON specified)"
 			completedAt := time.Now()
 			mission.CompletedAt = &completedAt
 			mission.Metrics.Duration = completedAt.Sub(startedAt)
+
+			// Emit mission failed event
+			o.emitter.Emit(ctx, NewFailedEvent(mission.ID, fmt.Errorf("workflow definition not available in mission")))
 
 			if updateErr := o.store.Update(ctx, mission); updateErr != nil {
 				return nil, fmt.Errorf("failed to update mission after workflow missing error: %w", updateErr)
@@ -169,6 +267,9 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 			completedAt := time.Now()
 			mission.CompletedAt = &completedAt
 			mission.Metrics.Duration = completedAt.Sub(startedAt)
+
+			// Emit mission failed event
+			o.emitter.Emit(ctx, NewFailedEvent(mission.ID, fmt.Errorf("harness factory not configured")))
 
 			if updateErr := o.store.Update(ctx, mission); updateErr != nil {
 				return nil, fmt.Errorf("failed to update mission after harness factory error: %w", updateErr)
@@ -202,6 +303,9 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 			mission.CompletedAt = &completedAt
 			mission.Metrics.Duration = completedAt.Sub(startedAt)
 
+			// Emit mission failed event
+			o.emitter.Emit(ctx, NewFailedEvent(mission.ID, err))
+
 			if updateErr := o.store.Update(ctx, mission); updateErr != nil {
 				return nil, fmt.Errorf("failed to update mission after harness creation error: %w", updateErr)
 			}
@@ -220,6 +324,27 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 			}
 		}
 
+		// Emit progress event with completed node information
+		if workflowResult != nil {
+			totalNodes := len(wf.Nodes)
+			completedNodes := workflowResult.NodesExecuted
+			percentComplete := float64(0)
+			if totalNodes > 0 {
+				percentComplete = (float64(completedNodes) / float64(totalNodes)) * 100
+			}
+
+			progress := &MissionProgress{
+				MissionID:       mission.ID,
+				Status:          mission.Status,
+				PercentComplete: percentComplete,
+				CompletedNodes:  completedNodes,
+				TotalNodes:      totalNodes,
+				FindingsCount:   len(result.FindingIDs),
+			}
+
+			o.emitter.Emit(ctx, NewProgressEvent(mission.ID, progress, fmt.Sprintf("Completed %d/%d nodes", completedNodes, totalNodes)))
+		}
+
 		// Check for workflow execution errors or failures
 		if workflowErr != nil || (workflowResult != nil && workflowResult.Status == workflow.WorkflowStatusFailed) {
 			result.Status = MissionStatusFailed
@@ -228,9 +353,15 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 			} else if workflowResult.Error != nil {
 				mission.Error = fmt.Sprintf("workflow failed: %v", workflowResult.Error.Message)
 			}
+
+			// Emit mission failed event
+			o.emitter.Emit(ctx, NewFailedEvent(mission.ID, fmt.Errorf("%s", mission.Error)))
 		} else if workflowResult != nil && workflowResult.Status == workflow.WorkflowStatusCancelled {
 			result.Status = MissionStatusCancelled
 			mission.Error = "workflow execution was cancelled"
+
+			// Emit mission cancelled event
+			o.emitter.Emit(ctx, NewCancelledEvent(mission.ID, mission.Error))
 		}
 	}
 
@@ -299,6 +430,10 @@ func (o *DefaultMissionOrchestrator) executeWithConstraints(
 		case <-ctx.Done():
 			// Parent context cancelled - propagate cancellation
 			cancel()
+
+			// Emit mission cancelled event
+			o.emitter.Emit(context.Background(), NewCancelledEvent(mission.ID, "context cancelled"))
+
 			// Wait for workflow to finish with cancelled context
 			outcome := <-resultChan
 			return outcome.result, ctx.Err()

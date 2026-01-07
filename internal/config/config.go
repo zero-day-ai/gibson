@@ -20,6 +20,8 @@ type Config struct {
 	Metrics      MetricsConfig       `mapstructure:"metrics" yaml:"metrics"`
 	Registration RegistrationConfig  `mapstructure:"registration" yaml:"registration,omitempty"`
 	Registry     RegistryConfig      `mapstructure:"registry" yaml:"registry"`
+	Callback     CallbackConfig      `mapstructure:"callback" yaml:"callback,omitempty"`
+	Daemon       DaemonConfig        `mapstructure:"daemon" yaml:"daemon,omitempty"`
 }
 
 // CoreConfig contains core application settings.
@@ -130,4 +132,13 @@ type TLSConfig struct {
 
 	// CAFile is the path to the certificate authority file
 	CAFile string `mapstructure:"ca_file" yaml:"ca_file"`
+}
+
+// DaemonConfig contains configuration for the Gibson daemon process.
+type DaemonConfig struct {
+	// GRPCAddress is the address for the daemon's gRPC API server.
+	// Clients connect to this address to communicate with the daemon.
+	// Default: "localhost:50002"
+	// Can be overridden via GIBSON_DAEMON_GRPC_ADDR environment variable.
+	GRPCAddress string `mapstructure:"grpc_address" yaml:"grpc_address"`
 }

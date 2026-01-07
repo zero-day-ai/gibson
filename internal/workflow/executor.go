@@ -13,6 +13,13 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// VerboseEventBus is a minimal interface for emitting verbose events.
+// This avoids import cycles with the verbose package.
+// Events are sent as interface{} (any type) to maximize compatibility.
+type VerboseEventBus interface {
+	Emit(ctx context.Context, event interface{}) error
+}
+
 // WorkflowExecutor orchestrates the execution of workflow DAGs.
 // It manages parallel node execution, respects dependencies, enforces
 // parallelism limits, and integrates with guardrails and observability.
@@ -21,6 +28,7 @@ type WorkflowExecutor struct {
 	logger      *slog.Logger
 	tracer      trace.Tracer
 	maxParallel int
+	verboseBus  VerboseEventBus // Optional event bus for verbose logging
 }
 
 // ExecutorOption is a functional option for configuring WorkflowExecutor
@@ -58,6 +66,14 @@ func WithMaxParallel(n int) ExecutorOption {
 		if n > 0 {
 			e.maxParallel = n
 		}
+	}
+}
+
+// WithVerboseEventBus configures the executor to emit verbose events during
+// DAG node execution (start, complete, fail, skip).
+func WithVerboseEventBus(bus VerboseEventBus) ExecutorOption {
+	return func(e *WorkflowExecutor) {
+		e.verboseBus = bus
 	}
 }
 
@@ -217,8 +233,17 @@ func (e *WorkflowExecutor) executeNodeBatch(
 			// Mark node as started
 			state.MarkNodeStarted(n.ID)
 
+			// Emit node started event
+			e.emitNodeEvent(ctx, n, "started", 0, nil)
+
+			// Track node execution time
+			nodeStartTime := time.Now()
+
 			// Execute the node (delegates to node_executor.go)
 			result, err := e.executeNode(ctx, n, state, harness)
+
+			// Calculate node duration
+			nodeDuration := time.Since(nodeStartTime)
 
 			// Update state based on result
 			if err != nil || result.Status == NodeStatusFailed {
@@ -229,6 +254,8 @@ func (e *WorkflowExecutor) executeNodeBatch(
 					nodeErr = err
 				}
 				state.MarkNodeFailed(n.ID, nodeErr)
+				// Emit node failed event
+				e.emitNodeEvent(ctx, n, "failed", nodeDuration, nodeErr)
 			} else if result.Status == NodeStatusSkipped {
 				reason := "node was skipped"
 				if result.Metadata != nil {
@@ -237,14 +264,42 @@ func (e *WorkflowExecutor) executeNodeBatch(
 					}
 				}
 				state.MarkNodeSkipped(n.ID, reason)
+				// Emit node skipped event
+				e.emitNodeEvent(ctx, n, "skipped", nodeDuration, nil)
 			} else {
 				state.MarkNodeCompleted(n.ID, result)
+				// Emit node completed event
+				e.emitNodeEvent(ctx, n, "completed", nodeDuration, nil)
 			}
 		}(node)
 	}
 
 	// Wait for all nodes in batch to complete
 	wg.Wait()
+}
+
+// emitNodeEvent emits a verbose event for a node execution event.
+// If verboseBus is nil, this is a no-op.
+// Events are sent as maps to avoid import cycles with the verbose package.
+func (e *WorkflowExecutor) emitNodeEvent(ctx context.Context, node *WorkflowNode, status string, duration time.Duration, err error) {
+	if e.verboseBus == nil {
+		return
+	}
+
+	// Create event as a map to avoid import cycles
+	nodeData := map[string]interface{}{
+		"node_id":   node.ID,
+		"node_type": string(node.Type),
+		"status":    status,
+		"duration":  duration,
+	}
+
+	if err != nil {
+		nodeData["error"] = err.Error()
+	}
+
+	// Emit to the verbose event bus (adapter will convert to proper format)
+	_ = e.verboseBus.Emit(ctx, nodeData)
 }
 
 // buildWorkflowResult constructs the final WorkflowResult from the execution state.

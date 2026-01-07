@@ -309,11 +309,11 @@ func TestRegisterDefaultCommands(t *testing.T) {
 	// Note: Old hyphenated commands (e.g., agent-start, mission-create) have been removed
 	// in favor of the new subcommand syntax (e.g., /agent start, /mission run)
 	expectedCommands := []string{
-		"agent",     // primary name (has "agents" alias)
-		"tool",      // primary name (has "tools" alias)
-		"plugin",    // primary name (has "plugins" alias)
+		"agent",  // primary name (has "agents" alias)
+		"tool",   // primary name (has "tools" alias)
+		"plugin", // primary name (has "plugins" alias)
 		"attack",
-		"mission",   // primary name (has "missions" alias)
+		"mission", // primary name (has "missions" alias)
 		"focus",
 		"interrupt",
 		"mode",
@@ -383,8 +383,8 @@ func TestRegisterDefaultCommands_SubcommandStructure(t *testing.T) {
 	RegisterDefaultCommands(registry)
 
 	tests := []struct {
-		name               string
-		commandName        string
+		name                string
+		commandName         string
 		expectedSubcommands []string
 	}{
 		{

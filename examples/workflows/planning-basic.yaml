@@ -1,0 +1,120 @@
+# Basic Planning Configuration Example
+# This demonstrates a simple workflow with default planning settings enabled.
+#
+# Planning provides intelligent pre-execution strategy selection and mid-execution
+# adaptation while operating within workflow-defined bounds. The planner can only
+# use components and paths defined in the workflow - it cannot invent arbitrary actions.
+
+name: basic-planning-workflow
+description: Demonstrates basic planning configuration with default settings
+
+# Planning configuration (optional)
+# If omitted entirely, planning is disabled and the workflow executes sequentially.
+# When present, planning is enabled with the specified settings.
+planning:
+  # Budget allocation defines how the total token/cost budget is split across phases.
+  # If omitted, uses defaults: planning=10%, scoring=5%, replanning=5%, execution=80%
+  # All values are percentages and must sum to 100.
+  budget_allocation:
+    planning: 10      # Strategic planning (pre-execution analysis and path selection)
+    scoring: 5        # Step evaluation (assess success after each node completes)
+    replanning: 5     # Mid-execution replanning (reserved for adaptive changes)
+    execution: 80     # Actual workflow execution (agent/tool/plugin invocations)
+
+  # Maximum number of replanning events allowed during execution.
+  # Replanning is triggered when step scoring indicates poor progress or failure.
+  # Set to 0 to disable replanning entirely (execute the initial plan without adaptation).
+  # Default: 3
+  replan_limit: 3
+
+  # Enable querying long-term memory for planning context.
+  # When true, the planner can query successful payloads, past mission outcomes,
+  # and learned patterns to inform strategy selection.
+  # Default: true
+  memory_query: true
+
+  # Maximum time allowed for the strategic planning phase.
+  # If planning exceeds this timeout, it fails and the mission is aborted.
+  # Format: Go duration string (e.g., "30s", "1m", "2m30s")
+  # Default: "30s"
+  planning_timeout: "30s"
+
+# Workflow nodes - the planner operates within these bounds
+nodes:
+  # Phase 1: Reconnaissance
+  - id: recon
+    type: agent
+    name: Initial Reconnaissance
+    description: Gather target information and enumerate attack surface
+    agent: recon-agent
+    timeout: 5m
+    retry:
+      max_retries: 2
+      backoff: exponential
+      initial_delay: 10s
+      max_delay: 2m
+      multiplier: 2.0
+    task:
+      target: ${TARGET}
+      depth: comprehensive
+      techniques:
+        - dns_enumeration
+        - subdomain_discovery
+        - port_scanning
+
+  # Phase 2: Vulnerability Scanning
+  - id: vuln_scan
+    type: agent
+    name: Vulnerability Scanner
+    description: Identify potential vulnerabilities in discovered services
+    agent: vuln-scanner
+    depends_on:
+      - recon
+    timeout: 10m
+    retry:
+      max_retries: 1
+      backoff: constant
+      initial_delay: 30s
+    task:
+      scan_type: comprehensive
+      use_recon_data: true
+
+  # Phase 3: Exploit Selection
+  - id: exploit_selection
+    type: agent
+    name: Exploit Selector
+    description: Analyze vulnerabilities and select appropriate exploits
+    agent: exploit-selector
+    depends_on:
+      - vuln_scan
+    timeout: 5m
+    task:
+      risk_level: low
+      verify_only: true
+
+  # Phase 4: Report Generation
+  - id: generate_report
+    type: tool
+    name: Generate Security Report
+    description: Create comprehensive report with findings and recommendations
+    tool: report-generator
+    depends_on:
+      - exploit_selection
+    timeout: 2m
+    input:
+      format: json
+      include_sections:
+        - executive_summary
+        - vulnerabilities
+        - exploitability_analysis
+        - recommendations
+      include_evidence: true
+
+# Mission-level constraints (optional)
+# These constraints are passed to the planner and enforced during execution.
+# Commented out to show the structure - uncomment to enable.
+#
+# constraints:
+#   max_tokens: 100000      # Maximum total tokens across all LLM calls
+#   max_cost: 5.00          # Maximum cost in dollars
+#   max_duration: 30m       # Maximum total execution time

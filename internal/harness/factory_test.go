@@ -69,13 +69,13 @@ var _ memory.MemoryManager = (*MockMemoryStore)(nil)
 // ────────────────────────────────────────────────────────────────────────────
 
 type MockRegistryAdapter struct {
-	DiscoverAgentFn    func(ctx context.Context, name string) (agent.Agent, error)
-	DiscoverToolFn     func(ctx context.Context, name string) (tool.Tool, error)
-	DiscoverPluginFn   func(ctx context.Context, name string) (plugin.Plugin, error)
-	ListAgentsFn       func(ctx context.Context) ([]registry.AgentInfo, error)
-	ListToolsFn        func(ctx context.Context) ([]registry.ToolInfo, error)
-	ListPluginsFn      func(ctx context.Context) ([]registry.PluginInfo, error)
-	DelegateToAgentFn  func(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error)
+	DiscoverAgentFn   func(ctx context.Context, name string) (agent.Agent, error)
+	DiscoverToolFn    func(ctx context.Context, name string) (tool.Tool, error)
+	DiscoverPluginFn  func(ctx context.Context, name string) (plugin.Plugin, error)
+	ListAgentsFn      func(ctx context.Context) ([]registry.AgentInfo, error)
+	ListToolsFn       func(ctx context.Context) ([]registry.ToolInfo, error)
+	ListPluginsFn     func(ctx context.Context) ([]registry.PluginInfo, error)
+	DelegateToAgentFn func(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error)
 }
 
 func (m *MockRegistryAdapter) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {

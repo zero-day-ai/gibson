@@ -1,0 +1,231 @@
+# Advanced Planning Configuration Example
+# This demonstrates a complex workflow with custom planning constraints optimized
+# for missions requiring deeper analysis and more adaptive replanning.
+#
+# Use this configuration when:
+# - The target is complex or highly defended
+# - You expect to need multiple strategy adjustments
+# - You want more thorough pre-execution planning
+# - Budget constraints are tight and you want careful planning
+
+name: constrained-planning-workflow
+description: Advanced planning configuration for complex, high-value targets
+
+# Custom planning configuration for complex missions
+planning:
+  # Custom budget allocation - more resources for planning and adaptation
+  budget_allocation:
+    planning: 15      # INCREASED: More planning budget for thorough analysis
+                      # Trade-off: Better initial strategy but uses more budget upfront
+                      # Use case: Complex targets, unknown attack surfaces
+
+    scoring: 8        # INCREASED: More scoring for nuanced success evaluation
+                      # Trade-off: Better feedback for replanning but adds overhead
+                      # Use case: When step outcomes are ambiguous
+
+    replanning: 7     # INCREASED: More reserve for adaptive changes
+                      # Trade-off: Better adaptation but less execution budget
+                      # Use case: Expect failures, need strategy pivots
+
+    execution: 70     # DECREASED: Still majority but reduced from default 80%
+                      # Trade-off: Less execution budget but smarter execution
+                      # Use case: Quality over quantity, careful targeted attacks
+
+  # Higher replan limit for adaptive missions
+  # Allows more strategy adjustments during execution.
+  # Trade-off: More adaptive but can burn replanning budget quickly.
+  replan_limit: 5
+
+  # Enable memory query for informed planning
+  # The planner can learn from past missions and successful payloads.
+  memory_query: true
+
+  # Longer timeout for thorough planning
+  # Allows the planner more time to analyze complex targets.
+  # Trade-off: Longer planning phase but better initial strategy.
+  planning_timeout: "45s"
+
+# Mission-level constraints
+# These define hard boundaries for the mission and are enforced by the orchestrator.
+# The planner uses these to allocate budget across phases.
+constraints:
+  # Maximum total token usage across all LLM calls
+  # Planning will distribute this budget across planning phases.
+  max_tokens: 500000
+
+  # Maximum cost in dollars
+  # Planning will stop execution if this threshold is exceeded.
+  max_cost: 10.00
+
+  # Maximum total execution time
+  # Includes planning, scoring, replanning, and execution time.
+  max_duration: 1h
+
+# Workflow nodes - the planner can only select from these components
+nodes:
+  # Phase 1: Deep Reconnaissance
+  - id: deep_recon
+    type: agent
+    name: Deep Reconnaissance
+    description: Comprehensive target analysis with multiple techniques
+    agent: deep-recon-agent
+    timeout: 10m
+    retry:
+      max_retries: 3
+      backoff: exponential
+      initial_delay: 10s
+      max_delay: 2m
+      multiplier: 2.0
+    task:
+      target: ${TARGET}
+      depth: deep
+      passive_techniques:
+        - dns_enumeration
+        - subdomain_discovery
+        - whois_analysis
+        - certificate_transparency
+      active_techniques:
+        - port_scanning
+        - service_detection
+        - banner_grabbing
+
+  # Phase 2: Service Fingerprinting
+  - id: service_fingerprint
+    type: agent
+    name: Service Fingerprinting
+    description: Detailed version detection and service analysis
+    agent: fingerprint-agent
+    depends_on:
+      - deep_recon
+    timeout: 8m
+    retry:
+      max_retries: 2
+      backoff: constant
+      initial_delay: 30s
+    task:
+      aggressive: false
+      verify_versions: true
+
+  # Phase 3: Vulnerability Analysis
+  - id: vuln_analysis
+    type: agent
+    name: Vulnerability Analysis
+    description: Deep vulnerability scanning with CVE correlation
+    agent: vuln-analyzer
+    depends_on:
+      - service_fingerprint
+    timeout: 15m
+    retry:
+      max_retries: 1
+      backoff: constant
+      initial_delay: 1m
+    task:
+      scan_depth: deep
+      include_cve_mapping: true
+      verify_exploitability: true
+
+  # Phase 4: Exploit Research
+  - id: exploit_research
+    type: plugin
+    name: Exploit Database Lookup
+    description: Query exploit databases for applicable exploits
+    plugin: exploit-db
+    method: search_exploits
+    depends_on:
+      - vuln_analysis
+    timeout: 5m
+    params:
+      include_metasploit: true
+      include_exploitdb: true
+      min_reliability: high
+
+  # Phase 5: Decision Point - Exploitability Check
+  - id: check_exploitable
+    type: condition
+    name: Check Exploitability
+    description: Determine if vulnerabilities are exploitable
+    depends_on:
+      - exploit_research
+    condition:
+      expression: findings.exploitable_count > 0
+      true_branch:
+        - safe_exploitation
+      false_branch:
+        - generate_report_no_exploit
+
+  # Phase 6a: Safe Exploitation (Vulnerability Confirmed)
+  - id: safe_exploitation
+    type: agent
+    name: Safe Exploit Verification
+    description: Safely verify exploitability without causing damage
+    agent: safe-exploit-agent
+    timeout: 20m
+    retry:
+      max_retries: 0  # No retries for exploitation
+      backoff: constant
+      initial_delay: 1s
+    task:
+      safe_mode: true
+      verify_only: true
+      no_destructive: true
+      max_severity: critical
+    metadata:
+      requires_approval: false  # Can mark true to require human approval
+
+  # Phase 6b: Report Generation (No Exploitable Vulns)
+  - id: generate_report_no_exploit
+    type: tool
+    name: Generate Vulnerability Report
+    description: Report vulnerabilities without exploitation
+    tool: report-generator
+    timeout: 3m
+    input:
+      format: json
+      status: vulnerabilities_found
+      include_sections:
+        - executive_summary
+        - vulnerabilities
+        - cve_mappings
+        - recommendations
+
+  # Phase 7: Final Report with Exploitation Results
+  - id: generate_final_report
+    type: tool
+    name: Generate Comprehensive Report
+    description: Complete report with exploitation verification
+    tool: report-generator
+    depends_on:
+      - safe_exploitation
+    timeout: 3m
+    input:
+      format: json
+      include_sections:
+        - executive_summary
+        - reconnaissance_summary
+        - vulnerabilities
+        - exploitation_results
+        - risk_analysis
+        - detailed_recommendations
+        - remediation_steps
+      include_evidence: true
+      include_screenshots: true
+      include_payloads: true
+
+  # Phase 8: Notification
+  - id: notify_team
+    type: plugin
+    name: Notify Security Team
+    description: Send findings to security team
+    plugin: notification-service
+    method: send_alert
+    depends_on:
+      - generate_final_report
+      - generate_report_no_exploit
+    timeout: 1m
+    params:
+      recipients:
+        - security-team@example.com
+        - red-team@example.com
+      priority: high
+      include_report: true
+      alert_on_critical: true

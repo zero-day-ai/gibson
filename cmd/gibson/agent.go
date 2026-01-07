@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
+	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	internalcomp "github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 )
@@ -58,7 +59,7 @@ func runAgentLogs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get component DAO: %w", err)
 	}
-	defer db.Close()
+	defer internal.CloseWithLog(db, nil, "component database")
 
 	// Get agent
 	agent, err := dao.GetByName(ctx, internalcomp.ComponentKindAgent, agentName)
@@ -87,7 +88,7 @@ func runAgentLogs(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
-	defer file.Close()
+	defer internal.CloseWithLog(file, nil, "agent log file")
 
 	if logsFollow {
 		// Follow mode: tail -f style

@@ -1,0 +1,330 @@
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+
+	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/harness"
+	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/plugin"
+	"github.com/zero-day-ai/gibson/internal/registry"
+	"github.com/zero-day-ai/gibson/internal/tool"
+	"github.com/zero-day-ai/gibson/internal/types"
+	"go.opentelemetry.io/otel/trace"
+)
+
+// mockComponentDiscovery is a mock implementation of registry.ComponentDiscovery for testing.
+type mockComponentDiscovery struct {
+	agents          []registry.AgentInfo
+	tools           []registry.ToolInfo
+	plugins         []registry.PluginInfo
+	listAgentsFunc  func(ctx context.Context) ([]registry.AgentInfo, error)
+	listToolsFunc   func(ctx context.Context) ([]registry.ToolInfo, error)
+	listPluginsFunc func(ctx context.Context) ([]registry.PluginInfo, error)
+}
+
+func (m *mockComponentDiscovery) ListAgents(ctx context.Context) ([]registry.AgentInfo, error) {
+	if m.listAgentsFunc != nil {
+		return m.listAgentsFunc(ctx)
+	}
+	if m.agents != nil {
+		return m.agents, nil
+	}
+	return []registry.AgentInfo{}, nil
+}
+
+func (m *mockComponentDiscovery) ListTools(ctx context.Context) ([]registry.ToolInfo, error) {
+	if m.listToolsFunc != nil {
+		return m.listToolsFunc(ctx)
+	}
+	if m.tools != nil {
+		return m.tools, nil
+	}
+	return []registry.ToolInfo{}, nil
+}
+
+func (m *mockComponentDiscovery) ListPlugins(ctx context.Context) ([]registry.PluginInfo, error) {
+	if m.listPluginsFunc != nil {
+		return m.listPluginsFunc(ctx)
+	}
+	if m.plugins != nil {
+		return m.plugins, nil
+	}
+	return []registry.PluginInfo{}, nil
+}
+
+// Stub implementations for other ComponentDiscovery interface methods
+func (m *mockComponentDiscovery) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockComponentDiscovery) DiscoverTool(ctx context.Context, name string) (tool.Tool, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockComponentDiscovery) DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockComponentDiscovery) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
+	return agent.Result{}, fmt.Errorf("not implemented in mock")
+}
+
+// mockMissionStore is a mock implementation of mission.MissionStore for testing.
+type mockMissionStore struct {
+	missions       map[types.ID]*mission.Mission
+	saveFunc       func(ctx context.Context, m *mission.Mission) error
+	updateFunc     func(ctx context.Context, m *mission.Mission) error
+	getFunc        func(ctx context.Context, id types.ID) (*mission.Mission, error)
+	listFunc       func(ctx context.Context, filter *mission.MissionFilter) ([]*mission.Mission, error)
+	deleteFunc     func(ctx context.Context, id types.ID) error
+	setStatusFunc  func(ctx context.Context, id types.ID, status mission.MissionStatus) error
+	findByNameFunc func(ctx context.Context, name string) (*mission.Mission, error)
+}
+
+func (m *mockMissionStore) Save(ctx context.Context, missionRecord *mission.Mission) error {
+	if m.saveFunc != nil {
+		return m.saveFunc(ctx, missionRecord)
+	}
+	if m.missions == nil {
+		m.missions = make(map[types.ID]*mission.Mission)
+	}
+	m.missions[missionRecord.ID] = missionRecord
+	return nil
+}
+
+func (m *mockMissionStore) Update(ctx context.Context, missionRecord *mission.Mission) error {
+	if m.updateFunc != nil {
+		return m.updateFunc(ctx, missionRecord)
+	}
+	if m.missions == nil {
+		m.missions = make(map[types.ID]*mission.Mission)
+	}
+	m.missions[missionRecord.ID] = missionRecord
+	return nil
+}
+
+func (m *mockMissionStore) Get(ctx context.Context, id types.ID) (*mission.Mission, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, id)
+	}
+	if missionRecord, ok := m.missions[id]; ok {
+		return missionRecord, nil
+	}
+	return nil, mission.NewNotFoundError(id.String())
+}
+
+func (m *mockMissionStore) List(ctx context.Context, filter *mission.MissionFilter) ([]*mission.Mission, error) {
+	if m.listFunc != nil {
+		return m.listFunc(ctx, filter)
+	}
+	var result []*mission.Mission
+	for _, mission := range m.missions {
+		result = append(result, mission)
+	}
+	return result, nil
+}
+
+func (m *mockMissionStore) Delete(ctx context.Context, id types.ID) error {
+	if m.deleteFunc != nil {
+		return m.deleteFunc(ctx, id)
+	}
+	delete(m.missions, id)
+	return nil
+}
+
+func (m *mockMissionStore) SetStatus(ctx context.Context, id types.ID, status mission.MissionStatus) error {
+	if m.setStatusFunc != nil {
+		return m.setStatusFunc(ctx, id, status)
+	}
+	if missionRecord, ok := m.missions[id]; ok {
+		missionRecord.Status = status
+		return nil
+	}
+	return mission.NewNotFoundError(id.String())
+}
+
+func (m *mockMissionStore) FindByName(ctx context.Context, name string) (*mission.Mission, error) {
+	if m.findByNameFunc != nil {
+		return m.findByNameFunc(ctx, name)
+	}
+	for _, missionRecord := range m.missions {
+		if missionRecord.Name == name {
+			return missionRecord, nil
+		}
+	}
+	return nil, mission.NewNotFoundError(name)
+}
+
+// mockHarnessFactory is a mock implementation of harness.HarnessFactoryInterface for testing.
+type mockHarnessFactory struct {
+	createFunc func(agentName string, missionCtx harness.MissionContext, targetInfo harness.TargetInfo) (harness.AgentHarness, error)
+}
+
+func (m *mockHarnessFactory) Create(agentName string, missionCtx harness.MissionContext, targetInfo harness.TargetInfo) (harness.AgentHarness, error) {
+	if m.createFunc != nil {
+		return m.createFunc(agentName, missionCtx, targetInfo)
+	}
+	// Return a minimal mock harness
+	return &mockAgentHarness{}, nil
+}
+
+// mockAgentHarness is a minimal mock implementation of harness.AgentHarness for testing.
+type mockAgentHarness struct{}
+
+func (m *mockAgentHarness) Complete(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (*llm.CompletionResponse, error) {
+	return &llm.CompletionResponse{}, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) CompleteWithTools(ctx context.Context, slot string, messages []llm.Message, tools []llm.ToolDef, opts ...harness.CompletionOption) (*llm.CompletionResponse, error) {
+	return &llm.CompletionResponse{}, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) Stream(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (<-chan llm.StreamChunk, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) ListTools() []harness.ToolDescriptor {
+	return nil
+}
+
+func (m *mockAgentHarness) QueryPlugin(ctx context.Context, name string, method string, params map[string]any) (any, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) ListPlugins() []harness.PluginDescriptor {
+	return nil
+}
+
+func (m *mockAgentHarness) DelegateToAgent(ctx context.Context, name string, task agent.Task) (agent.Result, error) {
+	return agent.Result{}, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) ListAgents() []harness.AgentDescriptor {
+	return nil
+}
+
+func (m *mockAgentHarness) SubmitFinding(ctx context.Context, finding agent.Finding) error {
+	return fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) GetFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) Memory() memory.MemoryStore {
+	return &mockMemoryStore{}
+}
+
+func (m *mockAgentHarness) Mission() harness.MissionContext {
+	return harness.MissionContext{}
+}
+
+func (m *mockAgentHarness) Target() harness.TargetInfo {
+	return harness.TargetInfo{}
+}
+
+func (m *mockAgentHarness) Tracer() trace.Tracer {
+	return nil
+}
+
+func (m *mockAgentHarness) Logger() *slog.Logger {
+	return slog.Default()
+}
+
+func (m *mockAgentHarness) Metrics() harness.MetricsRecorder {
+	return &mockMetricsRecorder{}
+}
+
+func (m *mockAgentHarness) TokenUsage() *llm.TokenTracker {
+	return nil
+}
+
+// mockMemoryStore is a minimal mock implementation of memory.MemoryStore for testing.
+type mockMemoryStore struct{}
+
+func (m *mockMemoryStore) Working() memory.WorkingMemory {
+	return memory.NewWorkingMemory(100000)
+}
+
+func (m *mockMemoryStore) Mission() memory.MissionMemory {
+	return &mockMissionMemory{}
+}
+
+func (m *mockMemoryStore) LongTerm() memory.LongTermMemory {
+	return &mockLongTermMemory{}
+}
+
+// mockMissionMemory is a minimal mock implementation for testing.
+type mockMissionMemory struct{}
+
+func (m *mockMissionMemory) Store(ctx context.Context, key string, value any, metadata map[string]any) error {
+	return nil
+}
+
+func (m *mockMissionMemory) Retrieve(ctx context.Context, key string) (*memory.MemoryItem, error) {
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *mockMissionMemory) Delete(ctx context.Context, key string) error {
+	return nil
+}
+
+func (m *mockMissionMemory) Search(ctx context.Context, query string, limit int) ([]memory.MemoryResult, error) {
+	return nil, nil
+}
+
+func (m *mockMissionMemory) History(ctx context.Context, limit int) ([]memory.MemoryItem, error) {
+	return nil, nil
+}
+
+func (m *mockMissionMemory) Keys(ctx context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func (m *mockMissionMemory) MissionID() types.ID {
+	return types.NewID()
+}
+
+// mockLongTermMemory is a minimal mock implementation for testing.
+type mockLongTermMemory struct{}
+
+func (m *mockLongTermMemory) Store(ctx context.Context, id string, content string, metadata map[string]any) error {
+	return nil
+}
+
+func (m *mockLongTermMemory) Search(ctx context.Context, query string, topK int, filters map[string]any) ([]memory.MemoryResult, error) {
+	return nil, nil
+}
+
+func (m *mockLongTermMemory) SimilarFindings(ctx context.Context, content string, topK int) ([]memory.MemoryResult, error) {
+	return nil, nil
+}
+
+func (m *mockLongTermMemory) SimilarPatterns(ctx context.Context, pattern string, topK int) ([]memory.MemoryResult, error) {
+	return nil, nil
+}
+
+func (m *mockLongTermMemory) Delete(ctx context.Context, id string) error {
+	return nil
+}
+
+func (m *mockLongTermMemory) Health(ctx context.Context) types.HealthStatus {
+	return types.Healthy("mock")
+}
+
+// mockMetricsRecorder is a minimal mock implementation for testing.
+type mockMetricsRecorder struct{}
+
+func (m *mockMetricsRecorder) RecordCounter(name string, value int64, labels map[string]string)     {}
+func (m *mockMetricsRecorder) RecordGauge(name string, value float64, labels map[string]string)     {}
+func (m *mockMetricsRecorder) RecordHistogram(name string, value float64, labels map[string]string) {}
+func (m *mockMetricsRecorder) RecordDuration(name string, d any, labels map[string]string)          {}

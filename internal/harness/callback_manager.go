@@ -1,0 +1,350 @@
+package harness
+
+import (
+	"context"
+	"log/slog"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// CallbackConfig contains configuration for the callback server.
+// This is a simplified version that doesn't import from internal/config
+// to avoid import cycles.
+type CallbackConfig struct {
+	// ListenAddress is the address the callback server listens on (e.g., "0.0.0.0:50001")
+	ListenAddress string
+
+	// AdvertiseAddress is the address sent to agents as the callback endpoint
+	// (e.g., "gibson:50001" for Docker networking)
+	// If empty, ListenAddress is used
+	AdvertiseAddress string
+
+	// Enabled controls whether the callback server is started
+	Enabled bool
+}
+
+// CallbackManager coordinates the lifecycle of the CallbackServer and provides
+// a clean API for registering harnesses and getting callback endpoints.
+//
+// The manager wraps the existing CallbackServer and provides:
+//   - Background goroutine lifecycle management for the gRPC server
+//   - Thread-safe harness registration/unregistration via CallbackHarnessRegistry
+//   - Advertise address resolution for Docker/K8s environments
+//   - Graceful shutdown handling
+//
+// For external agents (running as separate gRPC services), the manager uses
+// a CallbackHarnessRegistry keyed by "missionID:agentName" to route callbacks
+// to the correct harness instance.
+//
+// Usage:
+//
+//	manager := NewCallbackManager(config, logger)
+//	if err := manager.Start(ctx); err != nil {
+//	    log.Fatal(err)
+//	}
+//	defer manager.Stop()
+//
+//	// Register harness before external agent execution
+//	key := manager.RegisterHarnessForMission(missionID, agentName, harness)
+//	defer manager.UnregisterHarness(key)
+//
+//	// Pass callback endpoint to agent in gRPC request
+//	agent.Execute(ctx, task, manager.CallbackEndpoint())
+type CallbackManager struct {
+	server       *CallbackServer
+	registry     *CallbackHarnessRegistry
+	config       CallbackConfig
+	logger       *slog.Logger
+	serverCtx    context.Context
+	serverCancel context.CancelFunc
+	serverErrCh  chan error
+	startOnce    sync.Once
+	stopOnce     sync.Once
+	mu           sync.RWMutex
+	running      bool
+}
+
+// NewCallbackManager creates a new callback manager with the given configuration.
+//
+// Parameters:
+//   - cfg: Callback server configuration (listen/advertise addresses)
+//   - logger: Structured logger for manager events
+//
+// Returns:
+//   - *CallbackManager: A new manager instance ready to be started
+//
+// The manager does not start the server automatically. Call Start() to begin
+// accepting connections.
+func NewCallbackManager(cfg CallbackConfig, logger *slog.Logger) *CallbackManager {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	// Extract port from listen address
+	// Format is either ":port" or "host:port"
+	port := 50001 // default
+	if cfg.ListenAddress != "" {
+		// Extract port from address string
+		parts := strings.Split(cfg.ListenAddress, ":")
+		if len(parts) >= 2 {
+			if p, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+				port = p
+			}
+		}
+	}
+
+	// Create registry for mission-based harness lookup
+	registry := NewCallbackHarnessRegistry()
+
+	// Create server
+	server := NewCallbackServer(logger, port)
+
+	return &CallbackManager{
+		server:      server,
+		registry:    registry,
+		config:      cfg,
+		logger:      logger.With("component", "callback_manager"),
+		serverErrCh: make(chan error, 1),
+		running:     false,
+	}
+}
+
+// Start starts the callback server in a background goroutine.
+//
+// This method is safe to call multiple times - subsequent calls are no-ops.
+// The server will run until Stop() is called or the provided context is cancelled.
+//
+// Parameters:
+//   - ctx: Context for server lifetime (cancellation triggers graceful shutdown)
+//
+// Returns:
+//   - error: Non-nil if server fails to start (e.g., port already in use)
+//
+// The method returns immediately after starting the server goroutine. Use the
+// serverErrCh to monitor for runtime errors.
+//
+// Example:
+//
+//	ctx, cancel := context.WithCancel(context.Background())
+//	defer cancel()
+//
+//	if err := manager.Start(ctx); err != nil {
+//	    log.Fatalf("Failed to start callback server: %v", err)
+//	}
+func (m *CallbackManager) Start(ctx context.Context) error {
+	var startErr error
+
+	m.startOnce.Do(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		// Create a cancellable context for the server
+		m.serverCtx, m.serverCancel = context.WithCancel(ctx)
+
+		m.logger.Info("starting callback server",
+			"listen_address", m.config.ListenAddress,
+			"advertise_address", m.CallbackEndpoint(),
+		)
+
+		// Start server in background goroutine
+		go func() {
+			// Server.Start() is blocking, so we run it in a goroutine
+			if err := m.server.Start(m.serverCtx); err != nil {
+				// Only log non-cancellation errors
+				if m.serverCtx.Err() == nil {
+					m.logger.Error("callback server error", "error", err)
+					m.serverErrCh <- err
+				}
+			}
+		}()
+
+		m.running = true
+		m.logger.Info("callback server started", "endpoint", m.CallbackEndpoint())
+	})
+
+	return startErr
+}
+
+// Stop gracefully stops the callback server.
+//
+// This method blocks until the server has fully shut down. It is safe to call
+// multiple times - subsequent calls are no-ops.
+//
+// All active harness registrations are implicitly unregistered when the server
+// stops. Agents attempting to make callbacks after Stop() will receive connection
+// errors.
+//
+// Example:
+//
+//	defer manager.Stop()  // Ensure cleanup on exit
+func (m *CallbackManager) Stop() {
+	m.stopOnce.Do(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		if !m.running {
+			return
+		}
+
+		m.logger.Info("stopping callback server")
+
+		// Cancel server context to trigger graceful shutdown
+		if m.serverCancel != nil {
+			m.serverCancel()
+		}
+
+		// Call server's Stop() method for immediate graceful shutdown
+		m.server.Stop()
+
+		m.running = false
+		m.logger.Info("callback server stopped")
+	})
+}
+
+// RegisterHarnessForMission registers a harness for external agent execution
+// within a mission context and returns the registration key.
+//
+// This method is used for external agents (running as separate gRPC services)
+// that need to make harness operations through the callback server. The
+// harness is registered in the CallbackHarnessRegistry keyed by
+// "missionID:agentName" to support concurrent execution of the same agent
+// in different missions.
+//
+// Parameters:
+//   - missionID: Unique identifier for the mission
+//   - agentName: Name of the external agent being executed
+//   - harness: The harness instance that will handle callbacks
+//
+// Returns:
+//   - string: The registration key in the format "missionID:agentName"
+//
+// The harness must be registered BEFORE the agent execution request is sent,
+// otherwise callbacks will fail with "no harness found" errors.
+//
+// Always unregister the harness after agent completion to prevent memory leaks:
+//
+//	key := manager.RegisterHarnessForMission(missionID, agentName, harness)
+//	defer manager.UnregisterHarness(key)
+//	// Execute external agent...
+//
+// Thread-safe: Multiple goroutines can register different harnesses concurrently.
+//
+// Example:
+//
+//	key := callbackMgr.RegisterHarnessForMission("mission-123", "recon-agent", harness)
+//	defer callbackMgr.UnregisterHarness(key)
+//	result, err := grpcClient.Execute(ctx, task, callbackMgr.CallbackEndpoint())
+func (m *CallbackManager) RegisterHarnessForMission(missionID, agentName string, harness any) string {
+	// Type assert to AgentHarness - the registry.CallbackManager interface uses any to avoid
+	// circular imports, but the actual harness must implement AgentHarness
+	h, ok := harness.(AgentHarness)
+	if !ok {
+		m.logger.Error("harness does not implement AgentHarness",
+			"mission_id", missionID,
+			"agent_name", agentName,
+		)
+		return ""
+	}
+	key := m.registry.Register(missionID, agentName, h)
+	m.logger.Debug("registered harness for mission agent",
+		"mission_id", missionID,
+		"agent_name", agentName,
+		"registry_key", key,
+	)
+	return key
+}
+
+// RegisterHarness registers a harness for a specific task and returns the
+// callback endpoint that should be passed to the agent.
+//
+// DEPRECATED: This method is maintained for backwards compatibility with
+// the legacy task-based registration. New code should use
+// RegisterHarnessForMission for external agents.
+//
+// Parameters:
+//   - taskID: Unique identifier for the agent task
+//   - harness: The harness instance that will handle callbacks for this task.
+//     Must implement AgentHarness interface; accepts any to satisfy registry.CallbackManager interface.
+//
+// Returns:
+//   - string: The callback endpoint address (e.g., "gibson:50001")
+//
+// The harness must be registered BEFORE the agent execution request is sent,
+// otherwise callbacks will fail with "no active harness for task" errors.
+//
+// Always unregister the harness after task completion to prevent memory leaks:
+//
+//	endpoint := manager.RegisterHarness(taskID, harness)
+//	defer manager.UnregisterHarness(taskID)
+//
+// Thread-safe: Multiple goroutines can register different harnesses concurrently.
+func (m *CallbackManager) RegisterHarness(taskID string, harness any) string {
+	// Type assert to AgentHarness - the registry.CallbackManager interface uses any
+	// to avoid circular imports, but we need the actual AgentHarness type
+	h, ok := harness.(AgentHarness)
+	if !ok {
+		m.logger.Error("harness does not implement AgentHarness interface", "task_id", taskID)
+		return m.CallbackEndpoint()
+	}
+	m.server.RegisterHarness(taskID, h)
+	m.logger.Debug("registered harness for task", "task_id", taskID)
+	return m.CallbackEndpoint()
+}
+
+// UnregisterHarness removes a harness registration when a task completes.
+//
+// Parameters:
+//   - taskID: The task ID that was used in RegisterHarness()
+//
+// This method should be called in a defer block immediately after RegisterHarness()
+// to ensure cleanup happens even if the agent execution fails:
+//
+//	endpoint := manager.RegisterHarness(taskID, harness)
+//	defer manager.UnregisterHarness(taskID)
+//	result, err := agent.Execute(ctx, task, endpoint)
+//
+// Thread-safe: Safe to call from multiple goroutines.
+func (m *CallbackManager) UnregisterHarness(taskID string) {
+	m.server.UnregisterHarness(taskID)
+	m.logger.Debug("unregistered harness for task", "task_id", taskID)
+}
+
+// CallbackEndpoint returns the advertised callback endpoint address.
+//
+// Returns:
+//   - string: The address agents should connect to (e.g., "gibson:50001")
+//
+// The returned address is determined by the CallbackConfig:
+//   - If AdvertiseAddress is set, that value is returned
+//   - Otherwise, ListenAddress is returned
+//
+// This allows the internal bind address to differ from the externally reachable
+// address, which is critical in containerized environments:
+//
+//	config := CallbackConfig{
+//	    ListenAddress:    "0.0.0.0:50001",      // Bind to all interfaces
+//	    AdvertiseAddress: "gibson:50001",       // Docker service name
+//	}
+//
+// Agents running in Docker can resolve "gibson" via Docker's DNS, but the server
+// must bind to 0.0.0.0 to accept connections from other containers.
+func (m *CallbackManager) CallbackEndpoint() string {
+	if m.config.AdvertiseAddress != "" {
+		return m.config.AdvertiseAddress
+	}
+	return m.config.ListenAddress
+}
+
+// IsRunning returns whether the callback server is currently running.
+//
+// Returns:
+//   - bool: true if the server is running, false otherwise
+//
+// This method is thread-safe and can be used to check server status before
+// attempting to register harnesses.
+func (m *CallbackManager) IsRunning() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.running
+}

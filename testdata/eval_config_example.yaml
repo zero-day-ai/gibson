@@ -1,0 +1,57 @@
+# Example Evaluation Configuration for Gibson
+# This file demonstrates the YAML configuration format for the evaluation system.
+
+# Scorers define which evaluation metrics to apply and their configuration
+scorers:
+  # Tool Correctness Scorer - evaluates if the right tools were called
+  - name: tool_correctness
+    enabled: true
+    options:
+      # Whether tool call order matters
+      order_matters: true
+      # Tolerance for comparing numeric arguments (0.0 = exact match)
+      numeric_tolerance: 0.001
+
+  # Trajectory Scorer - evaluates the execution path
+  - name: trajectory
+    enabled: true
+    options:
+      # Mode: exact_match | subset_match | ordered_subset
+      mode: ordered_subset
+      # Penalty per extra step (0.0 - 1.0)
+      penalize_extra: 0.05
+
+  # Finding Accuracy Scorer - evaluates discovered vulnerabilities
+  - name: finding_accuracy
+    enabled: true
+    options:
+      # Weight findings by severity (critical=4, high=3, medium=2, low=1, info=0.5)
+      match_by_severity: true
+      # Require category to match in addition to title/ID
+      match_by_category: false
+      # Minimum similarity for fuzzy title matching (0.0 - 1.0)
+      fuzzy_title_threshold: 0.8
+
+# Thresholds define when to issue warnings or fail evaluation
+thresholds:
+  # Warning threshold: scores below this trigger warnings (0.0 - 1.0)
+  warning: 0.5
+  # Critical threshold: scores below this fail the evaluation (0.0 - 1.0)
+  critical: 0.2
+
+# Export controls where evaluation results are sent
+export:
+  # Export to Langfuse observability platform
+  langfuse: true
+  # Export via OpenTelemetry
+  otel: false
+  # Export to JSONL file (set path or empty string to disable)
+  jsonl: "./eval_results.jsonl"
+
+# Ground truth file containing expected outputs for validation
+# Format: JSON with task_id -> expected_output mappings
+ground_truth: "./testdata/ground_truth.json"
+
+# Expected tools file containing expected tool call sequences (optional)
+# Format: JSON with task_id -> []ToolCall mappings
+expected_tools: "./testdata/expected_tools.json"

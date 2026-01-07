@@ -93,7 +93,7 @@ func NewHarnessFactory(config HarnessConfig) (*DefaultHarnessFactory, error) {
 //   - Fresh token usage tracker scoped to mission + agent
 //   - Logger with "agent", "mission_id", and "mission_name" attributes
 //   - All registries from factory configuration
-//   - Memory manager from factory configuration
+//   - Memory manager (created via MemoryFactory if set, otherwise from config)
 //   - Finding store from factory configuration
 //   - Metrics recorder from factory configuration
 //   - Tracer from factory configuration
@@ -121,6 +121,22 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		slog.String("mission_name", missionCtx.Name),
 	)
 
+	// Get memory store - either from factory (per-mission) or static config
+	memoryStore := f.config.MemoryManager
+	if f.config.MemoryFactory != nil {
+		// Create mission-scoped memory manager using the factory
+		mm, err := f.config.MemoryFactory(missionCtx.ID)
+		if err != nil {
+			logger.Warn("failed to create memory manager via factory, using nil",
+				slog.String("error", err.Error()),
+				slog.String("mission_id", missionCtx.ID.String()),
+			)
+			// Continue with nil memory - harness will have limited memory capabilities
+		} else {
+			memoryStore = mm
+		}
+	}
+
 	// Create self-referential factory for child harness creation during delegation
 	selfFactory := func(ctx context.Context, childMissionCtx MissionContext, childTarget TargetInfo) (AgentHarness, error) {
 		childAgentName := childMissionCtx.CurrentAgent
@@ -137,7 +153,7 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		toolRegistry:        f.config.ToolRegistry,
 		pluginRegistry:      f.config.PluginRegistry,
 		registryAdapter:     f.config.RegistryAdapter,
-		memoryStore:         f.config.MemoryManager,
+		memoryStore:         memoryStore,
 		findingStore:        f.config.FindingStore,
 		factory:             selfFactory,
 		missionCtx:          updatedMissionCtx,

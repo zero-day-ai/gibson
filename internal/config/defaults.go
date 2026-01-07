@@ -67,6 +67,14 @@ func DefaultConfig() *Config {
 				CAFile:   "",
 			},
 		},
+		Callback: CallbackConfig{
+			Enabled:          true,
+			ListenAddress:    "0.0.0.0:50001",
+			AdvertiseAddress: "",
+		},
+		Daemon: DaemonConfig{
+			GRPCAddress: "localhost:50002",
+		},
 	}
 }
 

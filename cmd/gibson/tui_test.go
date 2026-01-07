@@ -19,7 +19,8 @@ func TestIsInteractive(t *testing.T) {
 
 func TestIsTerminalInteractive(t *testing.T) {
 	// Same as isInteractive, just testing it doesn't panic
-	result := isTerminalInteractive()
+	// Note: isTerminalInteractive was renamed to isInteractive
+	result := isInteractive()
 	_ = result
 }
 

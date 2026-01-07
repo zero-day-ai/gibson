@@ -54,19 +54,19 @@ func (p *AnthropicProvider) Name() string {
 func (p *AnthropicProvider) Models(ctx context.Context) ([]llm.ModelInfo, error) {
 	models := []llm.ModelInfo{
 		{
-			Name:          "claude-3-5-sonnet-20241022",
+			Name:          "claude-sonnet-4-5-20250929",
 			ContextWindow: 200000,
 			MaxOutput:     8192,
 			Features:      []string{"chat", "streaming", "tools", "vision"},
 		},
 		{
-			Name:          "claude-3-opus-20240229",
+			Name:          "claude-opus-4-20250514",
 			ContextWindow: 200000,
 			MaxOutput:     4096,
 			Features:      []string{"chat", "streaming", "tools", "vision"},
 		},
 		{
-			Name:          "claude-3-sonnet-20240229",
+			Name:          "claude-sonnet-4-20250514",
 			ContextWindow: 200000,
 			MaxOutput:     4096,
 			Features:      []string{"chat", "streaming", "tools", "vision"},
@@ -96,8 +96,15 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req llm.CompletionRequ
 
 // CompleteWithTools sends a completion request with tool definitions
 func (p *AnthropicProvider) CompleteWithTools(ctx context.Context, req llm.CompletionRequest, tools []llm.ToolDef) (*llm.CompletionResponse, error) {
-	// TODO: Implement tool support
-	return p.Complete(ctx, req)
+	messages := toSchemaMessages(req.Messages)
+	callOpts := buildCallOptionsWithTools(req, tools)
+
+	resp, err := p.client.GenerateContent(ctx, messages, callOpts...)
+	if err != nil {
+		return nil, llm.TranslateError("anthropic", err)
+	}
+
+	return fromLangchainResponse(resp, req.Model), nil
 }
 
 // Stream sends a streaming completion request

@@ -253,18 +253,45 @@ gibson init
 
 This creates `~/.gibson/` with the default configuration, database, and embedded etcd registry for component discovery.
 
-### 2. Quick Attack
+### 2. Create a Target
 
-Run a single-agent attack against a target:
+Define a target to attack:
 
 ```bash
-gibson attack https://api.example.com/v1/chat \
-  --agent prompt-injector \
-  --goal "Discover the system prompt" \
-  --timeout 30m
+# Create an HTTP API target
+gibson target add my-api \
+  --type http_api \
+  --connection '{"url":"https://api.example.com/v1/chat"}' \
+  --description "Production chat API"
+
+# Or create a Kubernetes target
+gibson target add my-k8s \
+  --type kubernetes \
+  --connection '{"cluster":"minikube","namespace":"default"}' \
+  --description "Local development cluster"
 ```
 
-### 3. Mission-Based Testing
+### 3. Run an Attack
+
+Run a single-agent attack against your target:
+
+```bash
+# Attack using stored target
+gibson attack \
+  --agent prompt-injector \
+  --target my-api \
+  --goal "Discover the system prompt" \
+  --timeout 30m
+
+# Or attack with inline target definition
+gibson attack \
+  --agent prompt-injector \
+  --type http_api \
+  --connection '{"url":"https://api.example.com/v1/chat"}' \
+  --goal "Quick injection test"
+```
+
+### 4. Mission-Based Testing
 
 For comprehensive testing, create a workflow:
 
@@ -306,10 +333,10 @@ Run the mission:
 
 ```bash
 gibson mission run -f mission-workflow.yaml \
-  --target https://api.example.com/v1/chat
+  --target my-api
 ```
 
-### 4. Manage Agents
+### 5. Manage Agents
 
 ```bash
 # List installed agents
@@ -331,7 +358,7 @@ gibson agent status
 gibson agent logs scanner
 ```
 
-### 5. Manage Tools
+### 6. Manage Tools
 
 ```bash
 # List installed tools
@@ -648,14 +675,27 @@ Commands:
 ### Attack Command
 
 ```bash
-gibson attack [URL] [flags]
+gibson attack [flags]
 
 Flags:
-  --agent string      Agent to use for the attack
-  --goal string       Attack goal/objective
-  --timeout duration  Maximum attack duration (default 30m)
-  --output string     Output format (json, sarif, csv, html)
-  --verbose          Enable verbose output
+  --agent string        Agent to use for the attack (required)
+  --target string       Stored target name or ID
+  --type string         Target type (for inline targets: http_api, kubernetes, smart_contract, etc.)
+  --connection string   Connection parameters as JSON (for inline targets)
+  --goal string         Attack goal/objective
+  --timeout duration    Maximum attack duration (default 30m)
+  --output string       Output format (json, sarif, csv, html)
+  --verbose             Enable verbose output
+
+Examples:
+  # Attack using stored target
+  gibson attack --agent prompt-injector --target my-api
+
+  # Attack with inline HTTP target
+  gibson attack --agent prompt-injector --type http_api --connection '{"url":"https://api.example.com"}'
+
+  # Attack Kubernetes cluster
+  gibson attack --agent k8skiller --type kubernetes --connection '{"cluster":"prod","namespace":"ml-pipeline"}'
 ```
 
 ### Agent Commands
@@ -722,6 +762,38 @@ gibson finding list                   # List all findings
 gibson finding show [ID]              # Show finding details
 gibson finding export [FORMAT]        # Export findings (json, sarif, csv, html)
 ```
+
+### Target Commands
+
+```bash
+gibson target add [NAME] [flags]      # Create a new target
+gibson target list                    # List all targets
+gibson target show [NAME]             # Show target details
+gibson target update [NAME] [flags]   # Update a target
+gibson target delete [NAME]           # Delete a target
+
+Flags for 'target add':
+  --type string         Target type (http_api, kubernetes, smart_contract, etc.)
+  --connection string   Connection parameters as JSON
+  --interactive        Interactive mode - prompts for connection fields
+  --description string  Target description
+  --tags string        Comma-separated tags
+
+Examples:
+  # Create HTTP API target
+  gibson target add my-api --type http_api --connection '{"url":"https://api.example.com"}'
+
+  # Create Kubernetes target
+  gibson target add prod-k8s --type kubernetes --connection '{"cluster":"production","namespace":"ml-pipeline"}'
+
+  # Create target interactively
+  gibson target add test-k8s --type kubernetes --interactive
+
+  # Create smart contract target
+  gibson target add my-contract --type smart_contract --connection '{"chain":"ethereum","address":"0x..."}'
+```
+
+See [Schema-Based Targets Documentation](docs/SCHEMA_BASED_TARGETS.md) for detailed information about target types, schemas, and migration guide.
 
 * * *
 

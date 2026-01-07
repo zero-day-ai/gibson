@@ -175,9 +175,15 @@ func buildTLSConfig(tlsCfg *registry.TLSConfig) (*tls.Config, error) {
 // (e.g., due to network partition or component crash), the service entry will
 // be automatically removed from etcd when the lease expires.
 //
+// The health status is automatically tracked in metadata. If not provided,
+// the service is registered with "healthy" status.
+//
 // This implementation is identical to EmbeddedRegistry.Register, ensuring
 // consistent behavior across registry modes.
 func (r *ExternalRegistry) Register(ctx context.Context, info registry.ServiceInfo) error {
+	// Ensure health metadata is present
+	ensureHealthMetadata(&info)
+
 	// Serialize ServiceInfo to JSON
 	data, err := json.Marshal(info)
 	if err != nil {

@@ -452,8 +452,18 @@ func (a *ExploitAgent) Health(ctx context.Context) types.HealthStatus {
 // Test Helper - Mock Registry Adapter
 // ────────────────────────────────────────────────────────────────────────────
 
-// mockRegistryAdapter provides agent discovery for delegation tests
-type mockRegistryAdapter struct{}
+// mockRegistryAdapter provides agent, tool, and plugin discovery for tests
+type mockRegistryAdapter struct {
+	tools   map[string]tool.Tool
+	plugins map[string]plugin.Plugin
+}
+
+func newMockRegistryAdapter() *mockRegistryAdapter {
+	return &mockRegistryAdapter{
+		tools:   make(map[string]tool.Tool),
+		plugins: make(map[string]plugin.Plugin),
+	}
+}
 
 func (m *mockRegistryAdapter) DiscoverAgent(ctx context.Context, name string) (agent.Agent, error) {
 	switch name {
@@ -467,23 +477,63 @@ func (m *mockRegistryAdapter) DiscoverAgent(ctx context.Context, name string) (a
 }
 
 func (m *mockRegistryAdapter) DiscoverTool(ctx context.Context, name string) (tool.Tool, error) {
-	return nil, types.NewError("NOT_IMPLEMENTED", "DiscoverTool not implemented")
+	if m.tools == nil {
+		return nil, types.NewError("NOT_IMPLEMENTED", "DiscoverTool not implemented")
+	}
+	t, ok := m.tools[name]
+	if !ok {
+		return nil, &registry.ToolNotFoundError{Name: name, Available: []string{}}
+	}
+	return t, nil
 }
 
 func (m *mockRegistryAdapter) DiscoverPlugin(ctx context.Context, name string) (plugin.Plugin, error) {
-	return nil, types.NewError("NOT_IMPLEMENTED", "DiscoverPlugin not implemented")
+	if m.plugins == nil {
+		return nil, types.NewError("NOT_IMPLEMENTED", "DiscoverPlugin not implemented")
+	}
+	p, ok := m.plugins[name]
+	if !ok {
+		return nil, &registry.PluginNotFoundError{Name: name, Available: []string{}}
+	}
+	return p, nil
 }
 
 func (m *mockRegistryAdapter) ListAgents(ctx context.Context) ([]registry.AgentInfo, error) {
-	return nil, types.NewError("NOT_IMPLEMENTED", "ListAgents not implemented")
+	return []registry.AgentInfo{}, nil
 }
 
 func (m *mockRegistryAdapter) ListTools(ctx context.Context) ([]registry.ToolInfo, error) {
-	return nil, types.NewError("NOT_IMPLEMENTED", "ListTools not implemented")
+	if m.tools == nil {
+		return []registry.ToolInfo{}, nil
+	}
+	result := make([]registry.ToolInfo, 0, len(m.tools))
+	for name, t := range m.tools {
+		result = append(result, registry.ToolInfo{
+			Name:        name,
+			Version:     t.Version(),
+			Description: t.Description(),
+			Instances:   1,
+			Endpoints:   []string{"mock://localhost:50051"},
+		})
+	}
+	return result, nil
 }
 
 func (m *mockRegistryAdapter) ListPlugins(ctx context.Context) ([]registry.PluginInfo, error) {
-	return nil, types.NewError("NOT_IMPLEMENTED", "ListPlugins not implemented")
+	if m.plugins == nil {
+		return []registry.PluginInfo{}, nil
+	}
+	result := make([]registry.PluginInfo, 0, len(m.plugins))
+	for name, p := range m.plugins {
+		result = append(result, registry.PluginInfo{
+			Name:        name,
+			Version:     p.Version(),
+			Description: "",
+			Instances:   1,
+			Endpoints:   []string{"mock://localhost:50052"},
+		})
+	}
+	return result, nil
 }
 
 func (m *mockRegistryAdapter) DelegateToAgent(ctx context.Context, name string, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
@@ -1473,4 +1523,255 @@ func (p *toolCallingMockProvider) Stream(ctx context.Context, req llm.Completion
 
 func (p *toolCallingMockProvider) Health(ctx context.Context) types.HealthStatus {
 	return types.Healthy("Tool calling mock provider ready")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
+// Tests for gRPC Component Discovery (Task 5: Harness Wiring)
+// ────────────────────────────────────────────────────────────────────────────
+
+// mockTool implements tool.Tool for testing
+type mockDiscoveryTool struct {
+	name         string
+	description  string
+	version      string
+	tags         []string
+	inputSchema  schema.JSONSchema
+	outputSchema schema.JSONSchema
+	executeFn    func(ctx context.Context, input map[string]any) (map[string]any, error)
+}
+
+func (m *mockDiscoveryTool) Name() string                    { return m.name }
+func (m *mockDiscoveryTool) Description() string             { return m.description }
+func (m *mockDiscoveryTool) Version() string                 { return m.version }
+func (m *mockDiscoveryTool) Tags() []string                  { return m.tags }
+func (m *mockDiscoveryTool) InputSchema() schema.JSONSchema  { return m.inputSchema }
+func (m *mockDiscoveryTool) OutputSchema() schema.JSONSchema { return m.outputSchema }
+func (m *mockDiscoveryTool) Health(ctx context.Context) types.HealthStatus {
+	return types.Healthy("ok")
+}
+func (m *mockDiscoveryTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
+	if m.executeFn != nil {
+		return m.executeFn(ctx, input)
+	}
+	return map[string]any{"result": "success"}, nil
+}
+
+// mockDiscoveryPlugin implements plugin.Plugin for testing
+type mockDiscoveryPlugin struct {
+	name    string
+	version string
+	methods []plugin.MethodDescriptor
+	queryFn func(ctx context.Context, method string, params map[string]any) (any, error)
+}
+
+func (m *mockDiscoveryPlugin) Name() string                       { return m.name }
+func (m *mockDiscoveryPlugin) Version() string                    { return m.version }
+func (m *mockDiscoveryPlugin) Methods() []plugin.MethodDescriptor { return m.methods }
+func (m *mockDiscoveryPlugin) Initialize(ctx context.Context, cfg plugin.PluginConfig) error {
+	return nil
+}
+func (m *mockDiscoveryPlugin) Shutdown(ctx context.Context) error {
+	return nil
+}
+func (m *mockDiscoveryPlugin) Health(ctx context.Context) types.HealthStatus {
+	return types.Healthy("ok")
+}
+func (m *mockDiscoveryPlugin) Query(ctx context.Context, method string, params map[string]any) (any, error) {
+	if m.queryFn != nil {
+		return m.queryFn(ctx, method, params)
+	}
+	return map[string]any{"result": "success"}, nil
+}
+
+// TestCallTool_RemoteTool tests discovering and calling a remote tool
+func TestCallTool_RemoteTool(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a mock remote tool
+	remoteTool := &mockDiscoveryTool{
+		name:        "remote_tool",
+		version:     "1.0.0",
+		description: "A remote test tool",
+		executeFn: func(ctx context.Context, input map[string]any) (map[string]any, error) {
+			return map[string]any{"status": "remote_success"}, nil
+		},
+	}
+
+	// Setup test harness
+	h, config, _ := setupTestHarness(t, []string{})
+
+	// Get the default harness to access its registry adapter
+	defaultHarness := h.(*DefaultAgentHarness)
+
+	// Create mock registry adapter with remote tool and inject it
+	mockAdapter := newMockRegistryAdapter()
+	mockAdapter.tools["remote_tool"] = remoteTool
+	defaultHarness.registryAdapter = mockAdapter
+
+	// Call the remote tool (should be discovered)
+	result, err := h.CallTool(ctx, "remote_tool", map[string]any{"test": "input"})
+	require.NoError(t, err)
+	assert.Equal(t, "remote_success", result["status"])
+
+	// Verify metrics were recorded
+	assert.NotNil(t, config.Metrics)
+}
+
+// TestCallTool_LocalTakesPrecedence tests that local tools take precedence over remote
+func TestCallTool_LocalTakesPrecedence(t *testing.T) {
+	ctx := context.Background()
+
+	// Create local tool
+	localTool := &mockDiscoveryTool{
+		name:    "shared_tool",
+		version: "1.0.0",
+		executeFn: func(ctx context.Context, input map[string]any) (map[string]any, error) {
+			return map[string]any{"source": "local"}, nil
+		},
+	}
+
+	// Create remote tool with same name
+	remoteTool := &mockDiscoveryTool{
+		name:    "shared_tool",
+		version: "2.0.0",
+		executeFn: func(ctx context.Context, input map[string]any) (map[string]any, error) {
+			return map[string]any{"source": "remote"}, nil
+		},
+	}
+
+	// Setup test harness
+	h, _, _ := setupTestHarness(t, []string{})
+
+	// Register local tool
+	defaultHarness := h.(*DefaultAgentHarness)
+	err := defaultHarness.toolRegistry.RegisterInternal(localTool)
+	require.NoError(t, err)
+
+	// Create mock registry adapter with remote tool
+	mockAdapter := newMockRegistryAdapter()
+	mockAdapter.tools["shared_tool"] = remoteTool
+	defaultHarness.registryAdapter = mockAdapter
+
+	// Call the tool - local should be used
+	result, err := h.CallTool(ctx, "shared_tool", map[string]any{})
+	require.NoError(t, err)
+	assert.Equal(t, "local", result["source"])
+}
+
+// TestQueryPlugin_RemotePlugin tests discovering and querying a remote plugin
+func TestQueryPlugin_RemotePlugin(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a mock remote plugin
+	remotePlugin := &mockDiscoveryPlugin{
+		name:    "remote_plugin",
+		version: "1.0.0",
+		methods: []plugin.MethodDescriptor{
+			{Name: "remote_method", Description: "Remote method"},
+		},
+		queryFn: func(ctx context.Context, method string, params map[string]any) (any, error) {
+			return map[string]any{"status": "remote_success", "method": method}, nil
+		},
+	}
+
+	// Setup test harness
+	h, _, _ := setupTestHarness(t, []string{})
+
+	// Get the default harness and inject mock registry adapter
+	defaultHarness := h.(*DefaultAgentHarness)
+	mockAdapter := newMockRegistryAdapter()
+	mockAdapter.plugins["remote_plugin"] = remotePlugin
+	defaultHarness.registryAdapter = mockAdapter
+
+	// Query the remote plugin (should be discovered)
+	result, err := h.QueryPlugin(ctx, "remote_plugin", "remote_method", map[string]any{"param": "value"})
+	require.NoError(t, err)
+	resultMap := result.(map[string]any)
+	assert.Equal(t, "remote_success", resultMap["status"])
+	assert.Equal(t, "remote_method", resultMap["method"])
+}
+
+// TestListTools_CombinesLocalAndRemote tests that ListTools combines local and remote tools
+func TestListTools_CombinesLocalAndRemote(t *testing.T) {
+	// Create remote tool
+	remoteTool := &mockDiscoveryTool{
+		name:        "remote_tool",
+		version:     "2.0.0",
+		description: "Remote tool",
+		tags:        []string{"remote"},
+	}
+
+	// Setup test harness (already has local tools from setupTestHarness)
+	h, _, _ := setupTestHarness(t, []string{})
+
+	// Get initial tool count (local tools)
+	initialTools := h.ListTools()
+	initialCount := len(initialTools)
+
+	// Inject mock registry adapter with remote tool
+	defaultHarness := h.(*DefaultAgentHarness)
+	mockAdapter := newMockRegistryAdapter()
+	mockAdapter.tools["remote_tool"] = remoteTool
+	defaultHarness.registryAdapter = mockAdapter
+
+	// List tools - should include both local and remote
+	tools := h.ListTools()
+
+	// Should have at least one more tool (the remote one)
+	assert.Greater(t, len(tools), initialCount)
+
+	// Find remote tool
+	var foundRemote bool
+	for _, tool := range tools {
+		if tool.Name == "remote_tool" {
+			foundRemote = true
+			assert.Equal(t, "2.0.0", tool.Version)
+			break
+		}
+	}
+	assert.True(t, foundRemote, "remote_tool not found")
+}
+
+// TestListPlugins_CombinesLocalAndRemote tests that ListPlugins combines local and remote plugins
+func TestListPlugins_CombinesLocalAndRemote(t *testing.T) {
+	// Create remote plugin
+	remotePlugin := &mockDiscoveryPlugin{
+		name:    "remote_plugin",
+		version: "2.0.0",
+		methods: []plugin.MethodDescriptor{
+			{Name: "method2"},
+		},
+	}
+
+	// Setup test harness (already has local plugins from setupTestHarness)
+	h, _, _ := setupTestHarness(t, []string{})
+
+	// Get initial plugin count (local plugins)
+	initialPlugins := h.ListPlugins()
+	initialCount := len(initialPlugins)
+
+	// Inject mock registry adapter with remote plugin
+	defaultHarness := h.(*DefaultAgentHarness)
+	mockAdapter := newMockRegistryAdapter()
+	mockAdapter.plugins["remote_plugin"] = remotePlugin
+	defaultHarness.registryAdapter = mockAdapter
+
+	// List plugins - should include both local and remote
+	plugins := h.ListPlugins()
+
+	// Should have at least one more plugin (the remote one)
+	assert.Greater(t, len(plugins), initialCount)
+
+	// Find remote plugin
+	var foundRemote bool
+	for _, p := range plugins {
+		if p.Name == "remote_plugin" {
+			foundRemote = true
+			assert.Equal(t, "2.0.0", p.Version)
+			assert.True(t, p.IsExternal) // Remote plugins should be marked as external
+			break
+		}
+	}
+	assert.True(t, foundRemote, "remote_plugin not found")
 }

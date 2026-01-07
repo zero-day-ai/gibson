@@ -1,0 +1,132 @@
+package harness
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net"
+
+	pb "github.com/zero-day-ai/sdk/api/gen/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
+)
+
+// CallbackServer wraps the gRPC server and HarnessCallbackService.
+// It provides a simple way to start and stop the callback server that
+// standalone agents connect to for harness operations.
+type CallbackServer struct {
+	server  *grpc.Server
+	service *HarnessCallbackService
+	logger  *slog.Logger
+	port    int
+}
+
+// NewCallbackServer creates a new callback server with the given logger.
+// This creates a server with task-based harness registration (legacy mode).
+func NewCallbackServer(logger *slog.Logger, port int) *CallbackServer {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return &CallbackServer{
+		service: NewHarnessCallbackService(logger),
+		logger:  logger.With("component", "callback_server"),
+		port:    port,
+	}
+}
+
+// NewCallbackServerWithRegistry creates a new callback server with the given
+// logger and harness registry.
+//
+// The registry enables mission-based harness lookup for external agents,
+// allowing the same agent to run concurrently in different missions without
+// conflicts.
+//
+// Parameters:
+//   - logger: Structured logger for server events
+//   - port: The port to listen on for gRPC connections
+//   - registry: The harness registry for mission-based lookups
+//
+// Returns:
+//   - *CallbackServer: A new server instance ready to be started
+func NewCallbackServerWithRegistry(logger *slog.Logger, port int, registry *CallbackHarnessRegistry) *CallbackServer {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	return &CallbackServer{
+		service: NewHarnessCallbackServiceWithRegistry(logger, registry),
+		logger:  logger.With("component", "callback_server"),
+		port:    port,
+	}
+}
+
+// Service returns the underlying HarnessCallbackService for registering harnesses.
+func (s *CallbackServer) Service() *HarnessCallbackService {
+	return s.service
+}
+
+// Start starts the gRPC server on the configured port.
+// This is a blocking call that runs until Stop() is called or an error occurs.
+func (s *CallbackServer) Start(ctx context.Context) error {
+	// Create TCP listener
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
+	if err != nil {
+		return fmt.Errorf("failed to listen on port %d: %w", s.port, err)
+	}
+
+	// Create gRPC server with default options
+	s.server = grpc.NewServer()
+
+	// Register HarnessCallbackService
+	pb.RegisterHarnessCallbackServiceServer(s.server, s.service)
+
+	// Register health service
+	healthServer := health.NewServer()
+	grpc_health_v1.RegisterHealthServer(s.server, healthServer)
+	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+
+	// Register reflection service for debugging
+	reflection.Register(s.server)
+
+	s.logger.Info("callback server starting", "port", s.port)
+
+	// Start serving in a goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		if err := s.server.Serve(listener); err != nil {
+			errCh <- err
+		}
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case <-ctx.Done():
+		s.logger.Info("callback server shutting down")
+		s.server.GracefulStop()
+		return ctx.Err()
+	case err := <-errCh:
+		return fmt.Errorf("server error: %w", err)
+	}
+}
+
+// Stop gracefully stops the gRPC server.
+func (s *CallbackServer) Stop() {
+	if s.server != nil {
+		s.logger.Info("stopping callback server")
+		s.server.GracefulStop()
+	}
+}
+
+// RegisterHarness registers a harness for a specific task ID.
+// This should be called before executing an agent task.
+func (s *CallbackServer) RegisterHarness(taskID string, harness AgentHarness) {
+	s.service.RegisterHarness(taskID, harness)
+}
+
+// UnregisterHarness removes a harness registration when a task completes.
+func (s *CallbackServer) UnregisterHarness(taskID string) {
+	s.service.UnregisterHarness(taskID)
+}

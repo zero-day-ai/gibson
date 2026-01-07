@@ -122,8 +122,16 @@ func (m *StreamManager) Connect(ctx context.Context, agentName string, conn *grp
 		return "", fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// Create stream client (panics on error - intentional design decision from StreamClient)
-	client := NewStreamClient(m.ctx, conn, agentName, session.ID)
+	// Create stream client
+	client, err := NewStreamClient(m.ctx, conn, agentName, session.ID)
+	if err != nil {
+		// Clean up session on failure
+		session.Status = database.AgentStatusFailed
+		now := time.Now()
+		session.EndedAt = &now
+		_ = m.sessionDAO.UpdateSession(ctx, session)
+		return "", fmt.Errorf("failed to create stream client: %w", err)
+	}
 
 	// Start the stream with the task
 	if err := client.Start(taskJSON, mode); err != nil {

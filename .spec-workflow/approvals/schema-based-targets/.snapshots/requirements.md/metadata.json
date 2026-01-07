@@ -1,0 +1,14 @@
+{
+  "filePath": ".spec-workflow/specs/schema-based-targets/requirements.md",
+  "currentVersion": 1,
+  "snapshots": [
+    {
+      "version": 1,
+      "filename": "snapshot-001.json",
+      "timestamp": "2026-01-06T23:42:05.375Z",
+      "trigger": "initial",
+      "approvalId": "approval_1767742925370_gzn8kqmsf",
+      "approvalTitle": "Requirements: Schema-Based Target Types"
+    }
+  ]
+}

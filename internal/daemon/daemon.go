@@ -1,0 +1,481 @@
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/zero-day-ai/gibson/internal/attack"
+	"github.com/zero-day-ai/gibson/internal/config"
+	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/harness"
+	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/payload"
+	"github.com/zero-day-ai/gibson/internal/registry"
+	"github.com/zero-day-ai/gibson/internal/workflow"
+)
+
+// daemonImpl is the concrete implementation of the Daemon interface.
+//
+// It manages the lifecycle of all Gibson daemon services and coordinates
+// their startup, operation, and shutdown. The daemon owns:
+//   - Registry manager (embedded etcd or external etcd client)
+//   - Callback manager (harness callback server for agents)
+//   - PID and info files for client discovery
+//
+// The daemon is not yet a full implementation - it will be extended in future
+// phases with:
+//   - gRPC API server for client commands (Phase 3, tasks 9-11)
+//   - Mission manager for orchestration
+//   - Event bus for TUI streaming
+type daemonImpl struct {
+	// config is the loaded Gibson configuration
+	config *config.Config
+
+	// logger is the structured logger for daemon operations
+	logger *slog.Logger
+
+	// registry manages service discovery (etcd)
+	registry *registry.Manager
+
+	// registryAdapter provides component discovery and listing
+	registryAdapter registry.ComponentDiscovery
+
+	// callback manages the harness callback server
+	callback *harness.CallbackManager
+
+	// eventBus manages event distribution to subscribers
+	eventBus *EventBus
+
+	// db is the database connection
+	db *database.DB
+
+	// missionStore provides access to mission persistence
+	missionStore mission.MissionStore
+
+	// infrastructure holds shared components (DAG executor, finding store, LLM registry)
+	infrastructure *Infrastructure
+
+	// missionManager manages mission lifecycle and execution
+	missionManager *missionManager
+
+	// missionsMu protects access to activeMissions map
+	missionsMu sync.RWMutex
+
+	// activeMissions tracks currently running missions by mission ID
+	// The value is a context.CancelFunc that can be called to stop the mission
+	activeMissions map[string]context.CancelFunc
+
+	// grpcServer is the gRPC server for client connections (added in Phase 3)
+	grpcServer interface{}
+
+	// grpcAddr is the address the gRPC server listens on (added in Phase 3)
+	grpcAddr string
+
+	// attackRunner executes ad-hoc attacks
+	attackRunner attack.AttackRunner
+
+	// pidFile is the path to the PID file (~/.gibson/daemon.pid)
+	pidFile string
+
+	// infoFile is the path to the daemon info file (~/.gibson/daemon.json)
+	infoFile string
+
+	// startTime tracks when the daemon started
+	startTime time.Time
+}
+
+// New creates a new daemon instance with the provided configuration.
+//
+// This function initializes the daemon structure and prepares service managers
+// but does not start any services. Call Start() to begin daemon operations.
+//
+// Parameters:
+//   - cfg: The loaded Gibson configuration
+//   - homeDir: The Gibson home directory (typically ~/.gibson)
+//
+// Returns:
+//   - Daemon: A new daemon instance ready to be started
+//   - error: Non-nil if initialization fails
+//
+// Example usage:
+//
+//	cfg, err := config.Load()
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	daemon, err := New(cfg, os.Getenv("GIBSON_HOME"))
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+func New(cfg *config.Config, homeDir string) (Daemon, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config cannot be nil")
+	}
+
+	if homeDir == "" {
+		return nil, fmt.Errorf("home directory cannot be empty")
+	}
+
+	// Setup logger
+	logger := slog.Default().With("component", "daemon")
+
+	// Initialize registry manager
+	regMgr := registry.NewManager(cfg.Registry)
+
+	// Initialize callback manager
+	callbackMgr := harness.NewCallbackManager(harness.CallbackConfig{
+		ListenAddress:    cfg.Callback.ListenAddress,
+		AdvertiseAddress: cfg.Callback.AdvertiseAddress,
+		Enabled:          cfg.Callback.Enabled,
+	}, logger)
+
+	// Open database connection
+	db, err := database.Open(cfg.Database.Path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Initialize mission store
+	missionStore := mission.NewDBMissionStore(db)
+
+	// Initialize event bus
+	eventBus := NewEventBus(logger, WithEventBufferSize(100))
+
+	// Determine gRPC address from config, environment variable, or default
+	grpcAddr := cfg.Daemon.GRPCAddress
+	if grpcAddr == "" {
+		grpcAddr = "localhost:50002"
+	}
+	// Environment variable takes precedence
+	if envAddr := os.Getenv("GIBSON_DAEMON_GRPC_ADDR"); envAddr != "" {
+		grpcAddr = envAddr
+	}
+
+	return &daemonImpl{
+		config:          cfg,
+		logger:          logger,
+		registry:        regMgr,
+		registryAdapter: nil, // Created in Start() after registry is available
+		callback:        callbackMgr,
+		eventBus:        eventBus,
+		db:              db,
+		missionStore:    missionStore,
+		activeMissions:  make(map[string]context.CancelFunc),
+		grpcServer:      nil,      // Created in Start()
+		grpcAddr:        grpcAddr, // Configurable via config file or environment variable
+		attackRunner:    nil,      // Created in Start() after registry is available
+		pidFile:         filepath.Join(homeDir, "daemon.pid"),
+		infoFile:        filepath.Join(homeDir, "daemon.json"),
+		startTime:       time.Time{}, // Set when Start() is called
+	}, nil
+}
+
+// Start begins the daemon process and all managed services.
+//
+// This method performs the following operations:
+// 1. Check for existing daemon (prevent multiple instances)
+// 2. Start registry manager
+// 3. Start callback server
+// 4. Write PID and daemon.json files
+// 5. Block until context cancellation or shutdown signal
+//
+// Parameters:
+//   - ctx: Context for daemon lifetime (cancellation triggers shutdown)
+//
+// Returns:
+//   - error: Non-nil if startup fails or daemon already running
+func (d *daemonImpl) Start(ctx context.Context) error {
+	d.logger.Info("starting Gibson daemon",
+		"registry_type", d.config.Registry.Type,
+		"callback_enabled", d.config.Callback.Enabled,
+	)
+
+	// Check if daemon is already running
+	running, pid, err := CheckPIDFile(d.pidFile)
+	if err != nil {
+		return fmt.Errorf("failed to check for existing daemon: %w", err)
+	}
+	if running {
+		return fmt.Errorf("daemon already running (PID %d)", pid)
+	}
+
+	// Clean up stale PID file if present
+	if pid > 0 && !running {
+		d.logger.Warn("removing stale PID file", "stale_pid", pid)
+		if err := RemovePIDFile(d.pidFile); err != nil {
+			return fmt.Errorf("failed to remove stale PID file: %w", err)
+		}
+	}
+
+	// Record start time
+	d.startTime = time.Now()
+
+	// Start registry manager
+	d.logger.Info("starting registry manager")
+	if err := d.registry.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start registry: %w", err)
+	}
+
+	// Initialize registry adapter now that registry is started
+	regAdapter := registry.NewRegistryAdapter(d.registry.Registry())
+	d.registryAdapter = regAdapter
+	d.logger.Info("initialized registry adapter")
+
+	// Wire callback manager to registry adapter for external agent callback support
+	regAdapter.SetCallbackManager(d.callback)
+	d.logger.Info("wired callback manager to registry adapter")
+
+	// Initialize infrastructure components FIRST (DAG executor, finding store, LLM registry, harness factory)
+	// This must happen before creating the orchestrator because the orchestrator needs the harness factory
+	d.logger.Info("initializing infrastructure components")
+	infra, err := d.newInfrastructure(ctx)
+	if err != nil {
+		d.stopServices(ctx)
+		return fmt.Errorf("failed to initialize infrastructure: %w", err)
+	}
+	d.infrastructure = infra
+	d.logger.Info("infrastructure components initialized")
+
+	// Initialize attack runner with required dependencies
+	// Create orchestrator with full configuration including harness factory and workflow executor
+	d.logger.Info("initializing attack runner")
+	orchestrator := mission.NewMissionOrchestrator(
+		d.missionStore,
+		mission.WithHarnessFactory(d.infrastructure.harnessFactory),
+		mission.WithWorkflowExecutor(workflow.NewWorkflowExecutor(
+			workflow.WithLogger(d.logger.With("component", "workflow-executor")),
+		)),
+		mission.WithEventEmitter(mission.NewDefaultEventEmitter()),
+	)
+	payloadRegistry := payload.NewPayloadRegistryWithDefaults(d.db)
+
+	d.attackRunner = attack.NewAttackRunner(
+		orchestrator,
+		d.registryAdapter,
+		payloadRegistry,
+		d.missionStore,
+		d.infrastructure.findingStore,
+		attack.WithLogger(d.logger),
+	)
+	d.logger.Info("initialized attack runner")
+
+	// Start callback server
+	if d.config.Callback.Enabled {
+		d.logger.Info("starting callback server")
+		if err := d.callback.Start(ctx); err != nil {
+			// Stop registry on callback start failure
+			d.registry.Stop(ctx)
+			return fmt.Errorf("failed to start callback server: %w", err)
+		}
+	}
+
+	// Start gRPC server
+	d.logger.Info("starting gRPC server", "address", d.grpcAddr)
+	if err := d.startGRPCServer(ctx); err != nil {
+		// Stop services on gRPC start failure
+		d.stopServices(ctx)
+		return fmt.Errorf("failed to start gRPC server: %w", err)
+	}
+
+	// Write PID file
+	pid = os.Getpid()
+	d.logger.Info("writing PID file", "pid", pid, "path", d.pidFile)
+	if err := WritePIDFile(d.pidFile, pid); err != nil {
+		// Stop services on PID file write failure
+		d.stopServices(ctx)
+		return fmt.Errorf("failed to write PID file: %w", err)
+	}
+
+	// Write daemon info file for client discovery
+	regStatus := d.registry.Status()
+	info := &DaemonInfo{
+		PID:         pid,
+		StartTime:   d.startTime,
+		GRPCAddress: d.grpcAddr,
+		Version:     "0.1.0", // TODO: Get from version package
+	}
+	d.logger.Info("writing daemon info file", "path", d.infoFile)
+	if err := WriteDaemonInfo(d.infoFile, info); err != nil {
+		// Stop services and remove PID file on info file write failure
+		RemovePIDFile(d.pidFile)
+		d.stopServices(ctx)
+		return fmt.Errorf("failed to write daemon info file: %w", err)
+	}
+
+	d.logger.Info("daemon started successfully",
+		"pid", pid,
+		"registry_endpoint", regStatus.Endpoint,
+		"callback_endpoint", d.callback.CallbackEndpoint(),
+	)
+
+	// Block until context cancellation or shutdown signal
+	d.logger.Info("daemon running (press Ctrl+C to stop)")
+	<-ctx.Done()
+	d.logger.Info("shutdown signal received, stopping daemon")
+	return d.Stop(context.Background())
+}
+
+// Stop gracefully shuts down the daemon and all managed services.
+//
+// This method performs the following operations:
+// 1. Stop callback server (no new agent callbacks)
+// 2. Stop registry manager (etcd shutdown)
+// 3. Remove PID and daemon.json files
+//
+// The method is idempotent and safe to call multiple times.
+//
+// Parameters:
+//   - ctx: Context with timeout for shutdown operations
+//
+// Returns:
+//   - error: Non-nil if shutdown encounters errors
+func (d *daemonImpl) Stop(ctx context.Context) error {
+	d.logger.Info("stopping Gibson daemon")
+
+	// Stop services
+	d.stopServices(ctx)
+
+	// Clean up state files
+	d.logger.Info("removing daemon state files")
+	if err := RemovePIDFile(d.pidFile); err != nil {
+		d.logger.Warn("failed to remove PID file", "error", err)
+	}
+	if err := RemoveDaemonInfo(d.infoFile); err != nil {
+		d.logger.Warn("failed to remove daemon info file", "error", err)
+	}
+
+	d.logger.Info("daemon stopped successfully")
+	return nil
+}
+
+// stopServices stops all daemon services.
+//
+// This is a helper method used by Stop() and error cleanup paths.
+// It stops services in reverse order of startup to ensure clean shutdown.
+func (d *daemonImpl) stopServices(ctx context.Context) {
+	// Stop all running missions first
+	d.missionsMu.Lock()
+	if len(d.activeMissions) > 0 {
+		d.logger.Info("stopping active missions", "count", len(d.activeMissions))
+		for missionID, cancel := range d.activeMissions {
+			d.logger.Info("cancelling mission", "mission_id", missionID)
+			cancel()
+		}
+		// Clear the map
+		d.activeMissions = make(map[string]context.CancelFunc)
+	}
+	d.missionsMu.Unlock()
+
+	// Stop gRPC server (no new client connections)
+	if d.grpcServer != nil {
+		d.logger.Info("stopping gRPC server")
+		// Type assert to *grpc.Server and call GracefulStop
+		if srv, ok := d.grpcServer.(interface{ GracefulStop() }); ok {
+			srv.GracefulStop()
+		}
+		d.grpcServer = nil
+	}
+
+	// Stop callback server (no new callbacks)
+	if d.config.Callback.Enabled && d.callback.IsRunning() {
+		d.logger.Info("stopping callback server")
+		d.callback.Stop()
+	}
+
+	// Close event bus (no more event subscriptions)
+	if d.eventBus != nil {
+		d.logger.Info("closing event bus")
+		if err := d.eventBus.Close(); err != nil {
+			d.logger.Warn("error closing event bus", "error", err)
+		}
+	}
+
+	// Stop registry last (agents may still be deregistering)
+	d.logger.Info("stopping registry manager")
+	if err := d.registry.Stop(ctx); err != nil {
+		d.logger.Warn("error stopping registry", "error", err)
+	}
+
+	// Close database connection
+	if d.db != nil {
+		d.logger.Info("closing database connection")
+		if err := d.db.Close(); err != nil {
+			d.logger.Warn("error closing database", "error", err)
+		}
+	}
+}
+
+// status returns the current daemon status and health information.
+//
+// This is the internal status method that returns the daemon.DaemonStatus type.
+// For the gRPC API implementation, see Status() in grpc.go.
+//
+// Returns:
+//   - *DaemonStatus: Complete daemon status information
+//   - error: Non-nil if status check fails
+func (d *daemonImpl) status() (*DaemonStatus, error) {
+	// Read PID file to check if daemon is running
+	running, pid, err := CheckPIDFile(d.pidFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check daemon status: %w", err)
+	}
+
+	// Calculate uptime
+	var uptime string
+	if running && !d.startTime.IsZero() {
+		duration := time.Since(d.startTime)
+		uptime = formatDuration(duration)
+	}
+
+	// Get registry status
+	regStatus := d.registry.Status()
+
+	// Query mission counts from database
+	totalMissions, activeMissions := d.queryMissionCounts(context.Background())
+
+	// Build status struct
+	status := &DaemonStatus{
+		Running:      running,
+		PID:          pid,
+		StartTime:    d.startTime,
+		Uptime:       uptime,
+		GRPCAddress:  d.grpcAddr,
+		RegistryType: regStatus.Type,
+		RegistryAddr: regStatus.Endpoint,
+		CallbackAddr: d.callback.CallbackEndpoint(),
+		AgentCount:   regStatus.Services, // TODO: Break down by kind in future
+		MissionCount: totalMissions,
+		ActiveCount:  activeMissions,
+	}
+
+	return status, nil
+}
+
+// formatDuration formats a duration into a human-readable string.
+//
+// Examples:
+//   - 1h 30m 45s
+//   - 2m 15s
+//   - 45s
+func formatDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/core"
+	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
 
@@ -75,12 +76,26 @@ func runStatus(cmd *cobra.Command, args []string, cfg Config, flags *StatusFlags
 		componentName = args[0]
 	}
 
+	// TODO (Task 25): Check for daemon client in context
+	// When daemon is fully implemented, list and status handlers should
+	// query the registry via daemon instead of local registry manager.
+	//
+	// Example implementation:
+	//   ctx := cmd.Context()
+	//   if daemonClient := GetDaemonClient(ctx); daemonClient != nil {
+	//       // Query daemon for component status
+	//       return queryComponentStatusViaDaemon(cmd, daemonClient, cfg, componentName, flags)
+	//   }
+	//
+	// For now, we continue with local registry queries for backward compatibility.
+	// Note: install/build operations should remain local (file operations).
+
 	// Build command context
 	cc, err := buildCommandContext(cmd)
 	if err != nil {
 		return err
 	}
-	defer cc.Close()
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Build status options
 	opts := core.StatusOptions{

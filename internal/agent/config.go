@@ -5,7 +5,11 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/types"
+	sdktypes "github.com/zero-day-ai/sdk/types"
 )
+
+// TargetSchema is an alias for SDK's TargetSchema type
+type TargetSchema = sdktypes.TargetSchema
 
 // AgentConfig holds agent initialization configuration.
 // This is provided when creating or initializing an agent instance.
@@ -94,7 +98,8 @@ type AgentDescriptor struct {
 	Version        string                    `json:"version"`
 	Description    string                    `json:"description"`
 	Capabilities   []string                  `json:"capabilities"`
-	TargetTypes    []component.TargetType    `json:"target_types"`
+	TargetTypes    []component.TargetType    `json:"target_types"`    // Deprecated: use TargetSchemas
+	TargetSchemas  []TargetSchema            `json:"target_schemas"`  // New: schema-based target definitions
 	TechniqueTypes []component.TechniqueType `json:"technique_types"`
 	Slots          []SlotDefinition          `json:"slots"`
 	IsExternal     bool                      `json:"is_external"` // True if agent runs via gRPC
@@ -136,6 +141,45 @@ func (d AgentDescriptor) RequiresSlot(slotName string) bool {
 		}
 	}
 	return false
+}
+
+// SupportsTargetType checks if the agent supports a given target type.
+// It first checks the new TargetSchemas field. If that's empty (for backward
+// compatibility), it falls back to checking the deprecated TargetTypes field.
+// An empty TargetSchemas list means the agent accepts any target type.
+func (d AgentDescriptor) SupportsTargetType(targetType string) bool {
+	// If TargetSchemas is populated, use it for validation
+	if len(d.TargetSchemas) > 0 {
+		for _, schema := range d.TargetSchemas {
+			if schema.Type == targetType {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Fall back to deprecated TargetTypes for backward compatibility
+	if len(d.TargetTypes) > 0 {
+		for _, tt := range d.TargetTypes {
+			if string(tt) == targetType {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Empty lists mean the agent accepts any target type
+	return true
+}
+
+// GetTargetSchema returns the schema for a given target type, or nil if not found
+func (d AgentDescriptor) GetTargetSchema(targetType string) *TargetSchema {
+	for i := range d.TargetSchemas {
+		if d.TargetSchemas[i].Type == targetType {
+			return &d.TargetSchemas[i]
+		}
+	}
+	return nil
 }
 
 // GetSlot retrieves a slot definition by name

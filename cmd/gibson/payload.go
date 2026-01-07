@@ -557,7 +557,8 @@ func runPayloadCreate(cmd *cobra.Command, args []string) error {
 
 	// Check if file-based creation
 	if createPayloadFromFile == "" {
-		return fmt.Errorf("interactive payload creation is not yet implemented. Use --from-file flag")
+		// Interactive payload creation wizard
+		return runInteractivePayloadCreation(ctx, cmd)
 	}
 
 	// Read payload from file
@@ -617,6 +618,145 @@ func runPayloadCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runInteractivePayloadCreation creates a payload interactively via prompts
+func runInteractivePayloadCreation(ctx context.Context, cmd *cobra.Command) error {
+	var p payload.Payload
+	var err error
+
+	fmt.Fprintf(cmd.OutOrStdout(), "=== Interactive Payload Creation ===\n\n")
+
+	// Prompt for name
+	fmt.Fprintf(cmd.OutOrStdout(), "Payload Name: ")
+	p.Name, err = readLine()
+	if err != nil {
+		return fmt.Errorf("failed to read name: %w", err)
+	}
+	if p.Name == "" {
+		return fmt.Errorf("name cannot be empty")
+	}
+
+	// Prompt for description
+	fmt.Fprintf(cmd.OutOrStdout(), "Description: ")
+	p.Description, err = readLine()
+	if err != nil {
+		return fmt.Errorf("failed to read description: %w", err)
+	}
+
+	// Prompt for category
+	fmt.Fprintf(cmd.OutOrStdout(), "\nAvailable categories:\n")
+	categories := payload.AllCategories()
+	for i, cat := range categories {
+		fmt.Fprintf(cmd.OutOrStdout(), "  %d. %s\n", i+1, cat)
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Select category (1-%d): ", len(categories))
+	categoryIdx, err := readInt()
+	if err != nil || categoryIdx < 1 || categoryIdx > len(categories) {
+		return fmt.Errorf("invalid category selection")
+	}
+	p.Categories = []payload.PayloadCategory{categories[categoryIdx-1]}
+
+	// Prompt for severity
+	fmt.Fprintf(cmd.OutOrStdout(), "\nSeverity levels: critical, high, medium, low, info\n")
+	fmt.Fprintf(cmd.OutOrStdout(), "Severity: ")
+	severityStr, err := readLine()
+	if err != nil {
+		return fmt.Errorf("failed to read severity: %w", err)
+	}
+	p.Severity = agent.FindingSeverity(severityStr)
+	if !isValidSeverity(p.Severity) {
+		p.Severity = agent.SeverityMedium // Default
+		fmt.Fprintf(cmd.OutOrStdout(), "Invalid severity, using default: medium\n")
+	}
+
+	// Prompt for template
+	fmt.Fprintf(cmd.OutOrStdout(), "\nPayload Template (press Enter then Ctrl+D when done):\n")
+	p.Template, err = readMultiLine()
+	if err != nil {
+		return fmt.Errorf("failed to read template: %w", err)
+	}
+	if p.Template == "" {
+		return fmt.Errorf("template cannot be empty")
+	}
+
+	// Add a basic success indicator
+	p.SuccessIndicators = []payload.SuccessIndicator{
+		{
+			Type:        payload.IndicatorContains,
+			Value:       "success",
+			Description: "Response contains success indicator",
+			Weight:      1.0,
+		},
+	}
+
+	// Save the payload
+	homeDir, err := getGibsonHome()
+	if err != nil {
+		return fmt.Errorf("failed to get Gibson home: %w", err)
+	}
+
+	dbPath := homeDir + "/gibson.db"
+	db, err := database.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer db.Close()
+
+	store := payload.NewPayloadStore(db)
+
+	// Generate ID and timestamps
+	p.ID = types.NewID()
+	now := time.Now()
+	p.CreatedAt = now
+	p.UpdatedAt = now
+	p.Version = "1.0.0"
+	p.BuiltIn = false
+	p.Enabled = true
+
+	// Validate and save
+	if err := validatePayload(&p); err != nil {
+		return fmt.Errorf("payload validation failed: %w", err)
+	}
+
+	if err := store.Save(ctx, &p); err != nil {
+		return fmt.Errorf("failed to save payload: %w", err)
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "\nSuccessfully created payload: %s (ID: %s)\n", p.Name, p.ID.String())
+
+	return nil
+}
+
+// readLine reads a single line from stdin
+func readLine() (string, error) {
+	var line string
+	_, err := fmt.Scanln(&line)
+	if err != nil && err.Error() != "unexpected newline" {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
+// readInt reads an integer from stdin
+func readInt() (int, error) {
+	var num int
+	_, err := fmt.Scanf("%d\n", &num)
+	return num, err
+}
+
+// readMultiLine reads multiple lines from stdin until EOF
+func readMultiLine() (string, error) {
+	var lines []string
+	var line string
+	for {
+		n, err := fmt.Scanln(&line)
+		if err != nil || n == 0 {
+			break
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
 // loadPayloadFromFile loads a payload from a YAML or JSON file
 func loadPayloadFromFile(filePath string) (*payload.Payload, error) {
 	// Read file
@@ -637,7 +777,7 @@ func loadPayloadFromFile(filePath string) (*payload.Payload, error) {
 			return nil, fmt.Errorf("failed to parse JSON: %w", err)
 		}
 	} else {
-		// Try JSON first, then YAML
+		// Try JSON first, then JSON
 		if err := json.Unmarshal(data, p); err != nil {
 			if err := yaml.Unmarshal(data, p); err != nil {
 				return nil, fmt.Errorf("failed to parse file as JSON or YAML")

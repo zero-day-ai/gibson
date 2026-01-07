@@ -512,19 +512,15 @@ func (e *Executor) handleComponentRouter(kind component.ComponentKind) func(cont
 			if len(subArgs) == 0 {
 				return errorResult(fmt.Sprintf("usage: /%s start <name>", kind)), nil
 			}
-			result, err = core.ComponentStart(cc, kind, subArgs[0])
-			if err == nil {
-				return e.formatComponentStartResult(result)
-			}
+			// Component start now requires daemon
+			return errorResult("Component start/stop now requires daemon. Use 'gibson daemon start' then 'gibson agent start <name>' from CLI."), nil
 
 		case "stop":
 			if len(subArgs) == 0 {
 				return errorResult(fmt.Sprintf("usage: /%s stop <name>", kind)), nil
 			}
-			result, err = core.ComponentStop(cc, kind, subArgs[0])
-			if err == nil {
-				return formatCoreResult(result), nil
-			}
+			// Component stop now requires daemon
+			return errorResult("Component start/stop now requires daemon. Use 'gibson daemon start' then 'gibson agent stop <name>' from CLI."), nil
 
 		case "status":
 			name := ""

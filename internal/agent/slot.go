@@ -42,8 +42,8 @@ func NewSlotDefinition(name, description string, required bool) SlotDefinition {
 		Description: description,
 		Required:    required,
 		Default: SlotConfig{
-			Provider:    "anthropic",
-			Model:       "claude-3-sonnet-20240229",
+			Provider:    "", // Resolved at runtime based on available providers
+			Model:       "", // Resolved at runtime based on available providers
 			Temperature: 0.7,
 			MaxTokens:   4096,
 		},

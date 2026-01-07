@@ -68,7 +68,7 @@ func Example_targetFilter() {
 	filter := types.NewTargetFilter().
 		WithProvider(types.ProviderOpenAI).
 		WithStatus(types.TargetStatusActive).
-		WithType(types.TargetTypeLLMAPI).
+		WithType(string(types.TargetTypeLLMAPI)).
 		WithTags([]string{"production"}).
 		WithLimit(50).
 		WithOffset(0)

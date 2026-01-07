@@ -157,24 +157,33 @@ type DefaultGraphRAGStore struct {
 //
 // Returns a GraphRAGStore ready for use, or an error if initialization fails.
 func NewGraphRAGStore(config GraphRAGConfig, emb embedder.Embedder) (GraphRAGStore, error) {
-	// Apply defaults and validate config
+	// Apply defaults
 	config.ApplyDefaults()
-	if err := config.Validate(); err != nil {
-		return nil, NewConfigError("invalid GraphRAG configuration", err)
-	}
 
 	// Validate embedder
 	if emb == nil {
 		return nil, NewConfigError("embedder cannot be nil", nil)
 	}
 
-	// Create provider (using factory pattern to avoid import cycles)
-	// NOTE: The actual provider factory is in internal/graphrag/provider/factory.go
-	// For now, we'll use a noop provider as placeholder
-	// Real implementation will use: provider.NewProvider(config)
-	var provider GraphRAGProvider
-	// TODO: Replace with real provider factory when available
-	provider = nil // Will be set by factory
+	// Check if GraphRAG is enabled
+	// If enabled, we cannot create a provider here due to import cycles
+	// Return a descriptive error directing users to NewGraphRAGStoreWithProvider
+	if config.Enabled {
+		return nil, NewConfigError(
+			"GraphRAG is enabled but requires provider injection to avoid import cycles",
+			nil,
+		).WithContext("solution", "Use NewGraphRAGStoreWithProvider() and inject provider created via provider.NewProvider()").
+			WithContext("provider_type", config.Provider).
+			WithContext("neo4j_uri", config.Neo4j.URI)
+	}
+
+	// GraphRAG is disabled - validate config and create noop provider
+	if err := config.Validate(); err != nil {
+		return nil, NewConfigError("invalid GraphRAG configuration", err)
+	}
+
+	// Create noop provider for disabled GraphRAG
+	provider := &noopProvider{}
 
 	// Create query processor
 	processor, err := NewQueryProcessorFromConfig(config, emb)
@@ -553,6 +562,82 @@ func (s *DefaultGraphRAGStore) Close() error {
 		return s.provider.Close()
 	}
 	return nil
+}
+
+// noopProvider is a minimal inline noop provider implementation.
+// Used when GraphRAG is disabled to avoid import cycles with provider package.
+// For enabled GraphRAG, use NewGraphRAGStoreWithProvider() with provider.NewProvider().
+type noopProvider struct{}
+
+func (n *noopProvider) Initialize(ctx context.Context) error                          { return nil }
+func (n *noopProvider) StoreNode(ctx context.Context, node GraphNode) error           { return nil }
+func (n *noopProvider) StoreRelationship(ctx context.Context, rel Relationship) error { return nil }
+func (n *noopProvider) QueryNodes(ctx context.Context, query NodeQuery) ([]GraphNode, error) {
+	return []GraphNode{}, nil
+}
+func (n *noopProvider) QueryRelationships(ctx context.Context, query RelQuery) ([]Relationship, error) {
+	return []Relationship{}, nil
+}
+func (n *noopProvider) TraverseGraph(ctx context.Context, startID string, maxHops int, filters TraversalFilters) ([]GraphNode, error) {
+	return []GraphNode{}, nil
+}
+func (n *noopProvider) VectorSearch(ctx context.Context, embedding []float64, topK int, filters map[string]any) ([]VectorResult, error) {
+	return []VectorResult{}, nil
+}
+func (n *noopProvider) Health(ctx context.Context) types.HealthStatus {
+	return types.Healthy("noop provider (GraphRAG disabled)")
+}
+func (n *noopProvider) Close() error { return nil }
+
+// NewGraphRAGStoreWithProvider creates a new GraphRAGStore with an injected provider.
+// This is the recommended constructor when GraphRAG is enabled, as it allows
+// external creation of the provider via provider.NewProvider() to avoid import cycles.
+//
+// Usage:
+//
+//	import "github.com/zero-day-ai/gibson/internal/graphrag/provider"
+//
+//	prov, err := provider.NewProvider(config)
+//	if err != nil {
+//	    return err
+//	}
+//	store, err := NewGraphRAGStoreWithProvider(config, embedder, prov)
+//
+// Parameters:
+//   - config: GraphRAG configuration
+//   - emb: Embedder for generating embeddings
+//   - prov: Pre-created GraphRAGProvider (from provider.NewProvider)
+//
+// Returns a GraphRAGStore ready for use, or an error if initialization fails.
+func NewGraphRAGStoreWithProvider(config GraphRAGConfig, emb embedder.Embedder, prov GraphRAGProvider) (GraphRAGStore, error) {
+	// Apply defaults and validate config
+	config.ApplyDefaults()
+	if err := config.Validate(); err != nil {
+		return nil, NewConfigError("invalid GraphRAG configuration", err)
+	}
+
+	// Validate embedder
+	if emb == nil {
+		return nil, NewConfigError("embedder cannot be nil", nil)
+	}
+
+	// Validate provider
+	if prov == nil {
+		return nil, NewConfigError("provider cannot be nil", nil)
+	}
+
+	// Create query processor
+	processor, err := NewQueryProcessorFromConfig(config, emb)
+	if err != nil {
+		return nil, NewConfigError("failed to create query processor", err)
+	}
+
+	return &DefaultGraphRAGStore{
+		provider:  prov,
+		processor: processor,
+		embedder:  emb,
+		config:    config,
+	}, nil
 }
 
 // Helper functions for converting between types

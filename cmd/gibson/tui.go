@@ -74,6 +74,24 @@ func isInteractive() bool {
 
 // launchTUI initializes and runs the TUI application.
 func launchTUI(ctx context.Context) error {
+	// TODO (Task 26): Check for daemon client in context
+	// When daemon is fully implemented, TUI should:
+	// 1. Get daemon client from context if available
+	// 2. If no daemon running, offer to start it or show helpful message
+	// 3. Subscribe to daemon events via client.Subscribe() for real-time updates
+	//
+	// Example implementation:
+	//   if daemonClient := component.GetDaemonClient(ctx); daemonClient != nil {
+	//       // Connect to daemon for real-time updates
+	//       return launchTUIWithDaemon(ctx, daemonClient)
+	//   } else {
+	//       // Show helpful message or offer to start daemon
+	//       fmt.Println("Daemon not running. Start with: gibson daemon start")
+	//       return fmt.Errorf("daemon required for TUI")
+	//   }
+	//
+	// For now, TUI continues to embed services locally for backward compatibility.
+
 	// Load configuration
 	cfg, err := loadTUIConfig()
 	if err != nil {
@@ -237,7 +255,8 @@ func initializeDependencies(ctx context.Context, cfg *config.Config) (tui.AppCon
 	if appConfig.ComponentDAO != nil {
 		gitOps := git.NewDefaultGitOperations()
 		builder := build.NewDefaultBuildExecutor()
-		installer := comp.NewDefaultInstaller(gitOps, builder, appConfig.ComponentDAO)
+		lifecycle := comp.NewLifecycleManager(appConfig.ComponentDAO, nil)
+		installer := comp.NewDefaultInstaller(gitOps, builder, appConfig.ComponentDAO, lifecycle)
 		appConfig.Installer = installer
 	}
 

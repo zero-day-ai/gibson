@@ -157,17 +157,52 @@ func (m *MockComponentDAO) Delete(ctx context.Context, kind ComponentKind, name 
 	return args.Error(0)
 }
 
+// MockLifecycleManager is a mock implementation of LifecycleManager for testing
+type MockLifecycleManager struct {
+	mock.Mock
+}
+
+func NewMockLifecycleManager() *MockLifecycleManager {
+	return &MockLifecycleManager{}
+}
+
+func (m *MockLifecycleManager) StartComponent(ctx context.Context, comp *Component) (int, error) {
+	args := m.Called(ctx, comp)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockLifecycleManager) StopComponent(ctx context.Context, comp *Component) error {
+	args := m.Called(ctx, comp)
+	return args.Error(0)
+}
+
+func (m *MockLifecycleManager) RestartComponent(ctx context.Context, comp *Component) (int, error) {
+	args := m.Called(ctx, comp)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockLifecycleManager) GetStatus(ctx context.Context, comp *Component) (ComponentStatus, error) {
+	args := m.Called(ctx, comp)
+	return args.Get(0).(ComponentStatus), args.Error(1)
+}
+
+func (m *MockLifecycleManager) IsRunning(name string) bool {
+	args := m.Called(name)
+	return args.Bool(0)
+}
+
 // Helper functions for tests
 
 func setupTestInstaller(t *testing.T) (*DefaultInstaller, *MockGitOperations, *MockBuildExecutor, *MockComponentDAO, string) {
 	mockGit := new(MockGitOperations)
 	mockBuilder := new(MockBuildExecutor)
 	mockDAO := NewMockComponentDAO()
+	mockLifecycle := NewMockLifecycleManager()
 
 	// Create temporary home directory
 	tmpDir := t.TempDir()
 
-	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO)
+	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO, mockLifecycle)
 	installer.homeDir = tmpDir
 
 	return installer, mockGit, mockBuilder, mockDAO, tmpDir
@@ -437,8 +472,9 @@ func TestNewDefaultInstaller(t *testing.T) {
 	mockGit := new(MockGitOperations)
 	mockBuilder := new(MockBuildExecutor)
 	mockDAO := NewMockComponentDAO()
+	mockLifecycle := NewMockLifecycleManager()
 
-	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO)
+	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO, mockLifecycle)
 
 	assert.NotNil(t, installer)
 	assert.Equal(t, mockGit, installer.git)

@@ -19,6 +19,9 @@ import (
 // the registry. It automatically creates connections on-demand, monitors connection
 // health, and recreates failed connections.
 //
+// The pool integrates with CircuitBreaker to prevent cascading failures. When an
+// endpoint fails repeatedly, the circuit opens and requests are blocked temporarily.
+//
 // All operations are thread-safe and can be called concurrently.
 //
 // Example usage:
@@ -49,6 +52,9 @@ type GRPCPool struct {
 
 	// opts are the dial options used when creating new connections
 	opts []grpc.DialOption
+
+	// circuitBreaker tracks endpoint health and prevents requests to failing endpoints
+	circuitBreaker *CircuitBreaker
 }
 
 // NewGRPCPool creates a new gRPC connection pool.
@@ -61,6 +67,9 @@ type GRPCPool struct {
 // This is suitable for local/development environments. For production, provide
 // TLS credentials via dial options.
 //
+// The pool includes a circuit breaker with default configuration to prevent
+// cascading failures from unhealthy endpoints.
+//
 // Example with custom options:
 //
 //	pool := NewGRPCPool(
@@ -72,17 +81,32 @@ type GRPCPool struct {
 //	)
 func NewGRPCPool(opts ...grpc.DialOption) *GRPCPool {
 	return &GRPCPool{
-		conns: make(map[string]*grpc.ClientConn),
-		opts:  opts,
+		conns:          make(map[string]*grpc.ClientConn),
+		opts:           opts,
+		circuitBreaker: NewCircuitBreaker(DefaultCircuitBreakerConfig()),
+	}
+}
+
+// NewGRPCPoolWithCircuitBreaker creates a new gRPC connection pool with custom circuit breaker config.
+//
+// This allows fine-tuning of circuit breaker behavior (failure threshold, timeout, etc.).
+func NewGRPCPoolWithCircuitBreaker(config CircuitBreakerConfig, opts ...grpc.DialOption) *GRPCPool {
+	return &GRPCPool{
+		conns:          make(map[string]*grpc.ClientConn),
+		opts:           opts,
+		circuitBreaker: NewCircuitBreaker(config),
 	}
 }
 
 // Get retrieves or creates a gRPC client connection to the specified endpoint.
 //
-// This method first checks if a healthy connection already exists in the pool.
-// If the connection exists and is in READY or IDLE state, it is returned immediately.
-// If the connection exists but is in a bad state (TRANSIENT_FAILURE, SHUTDOWN),
-// it is closed and a new connection is created.
+// This method first checks the circuit breaker to ensure the endpoint is healthy.
+// If the circuit is open (too many failures), the request is rejected immediately.
+//
+// If the circuit allows the request, this method checks if a healthy connection
+// already exists in the pool. If the connection exists and is in READY or IDLE state,
+// it is returned immediately. If the connection exists but is in a bad state
+// (TRANSIENT_FAILURE, SHUTDOWN), it is closed and a new connection is created.
 //
 // Connection states:
 //   - READY: Connection is established and ready for RPCs
@@ -96,6 +120,7 @@ func NewGRPCPool(opts ...grpc.DialOption) *GRPCPool {
 //
 // Returns an error if:
 //   - The endpoint is empty
+//   - The circuit breaker is open (endpoint unhealthy)
 //   - Connection cannot be established
 //   - Context is canceled during dial
 //
@@ -104,6 +129,11 @@ func NewGRPCPool(opts ...grpc.DialOption) *GRPCPool {
 func (p *GRPCPool) Get(ctx context.Context, endpoint string) (*grpc.ClientConn, error) {
 	if endpoint == "" {
 		return nil, fmt.Errorf("endpoint cannot be empty")
+	}
+
+	// Check circuit breaker before attempting connection
+	if err := p.circuitBreaker.Allow(endpoint); err != nil {
+		return nil, err
 	}
 
 	// Fast path: check for existing healthy connection with read lock
@@ -120,11 +150,13 @@ func (p *GRPCPool) Get(ctx context.Context, endpoint string) (*grpc.ClientConn, 
 		// will either succeed or fail quickly
 		switch state {
 		case connectivity.Ready, connectivity.Idle, connectivity.Connecting:
+			// Connection is healthy - record success for circuit breaker
+			p.circuitBreaker.RecordSuccess(endpoint)
 			return conn, nil
 
 		case connectivity.TransientFailure, connectivity.Shutdown:
-			// Connection is in bad state - need to recreate
-			// Close and remove the bad connection
+			// Connection is in bad state - record failure and recreate
+			p.circuitBreaker.RecordFailure(endpoint, fmt.Errorf("connection in %s state", state))
 			_ = p.Remove(endpoint)
 		}
 	}
@@ -139,9 +171,11 @@ func (p *GRPCPool) Get(ctx context.Context, endpoint string) (*grpc.ClientConn, 
 		state := conn.GetState()
 		switch state {
 		case connectivity.Ready, connectivity.Idle, connectivity.Connecting:
+			p.circuitBreaker.RecordSuccess(endpoint)
 			return conn, nil
 		case connectivity.TransientFailure, connectivity.Shutdown:
-			// Still bad, close it
+			// Still bad, close it and record failure
+			p.circuitBreaker.RecordFailure(endpoint, fmt.Errorf("connection in %s state", state))
 			_ = conn.Close()
 			delete(p.conns, endpoint)
 		}
@@ -159,11 +193,16 @@ func (p *GRPCPool) Get(ctx context.Context, endpoint string) (*grpc.ClientConn, 
 
 	conn, err := grpc.NewClient(endpoint, dialOpts...)
 	if err != nil {
+		// Connection creation failed - record failure for circuit breaker
+		p.circuitBreaker.RecordFailure(endpoint, err)
 		return nil, fmt.Errorf("failed to create gRPC client for %s: %w", endpoint, err)
 	}
 
 	// Store in pool
 	p.conns[endpoint] = conn
+
+	// Record success - connection created successfully
+	p.circuitBreaker.RecordSuccess(endpoint)
 
 	return conn, nil
 }
@@ -253,4 +292,26 @@ func (p *GRPCPool) Len() int {
 	defer p.mu.RUnlock()
 
 	return len(p.conns)
+}
+
+// CircuitBreakerStats returns statistics about circuit breaker states.
+//
+// This is useful for monitoring dashboards and health checks to understand
+// which endpoints are healthy, degraded, or failing.
+func (p *GRPCPool) CircuitBreakerStats() CircuitBreakerStats {
+	return p.circuitBreaker.Stats()
+}
+
+// ResetCircuit resets the circuit breaker for a specific endpoint.
+//
+// This is useful for manual recovery after fixing an endpoint issue.
+func (p *GRPCPool) ResetCircuit(endpoint string) {
+	p.circuitBreaker.Reset(endpoint)
+}
+
+// GetCircuitState returns the current circuit breaker state for an endpoint.
+//
+// This is useful for health checks and status displays.
+func (p *GRPCPool) GetCircuitState(endpoint string) CircuitState {
+	return p.circuitBreaker.GetState(endpoint)
 }

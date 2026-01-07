@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -15,7 +16,6 @@ import (
 )
 
 // GRPCAgentClient implements the Agent interface for gRPC-based agents.
-// This is a placeholder for Stage 7 (gRPC integration).
 //
 // External agents allow extending Gibson with agents written in any language
 // that implements the Gibson agent gRPC protocol. This enables:
@@ -23,110 +23,250 @@ import (
 // - Legacy tool integration
 // - Third-party agent development
 // - Distributed agent execution
+//
+// This client wraps a gRPC connection to a remote agent and translates between
+// Gibson's internal Agent interface and the gRPC protocol. It fetches metadata
+// from the agent via GetDescriptor and GetSlotSchema RPCs.
 type GRPCAgentClient struct {
-	name        string
-	version     string
-	description string
-	conn        *grpc.ClientConn
-	client      proto.AgentServiceClient
+	conn   *grpc.ClientConn
+	client proto.AgentServiceClient
+
+	// Cached descriptor from GetDescriptor RPC
+	// This avoids repeated gRPC calls for static metadata
+	descriptor *AgentDescriptor
 }
 
-// NewGRPCAgentClient creates a new gRPC agent client
-// Full implementation in Stage 7
-func NewGRPCAgentClient(address string) (*GRPCAgentClient, error) {
+// NewGRPCAgentClient creates a new gRPC agent client connected to the specified address.
+//
+// This method establishes a gRPC connection and fetches the agent's descriptor
+// to populate metadata (name, version, capabilities, etc.). The descriptor and
+// slot information are cached to avoid repeated RPC calls.
+//
+// Parameters:
+//   - address: The agent's gRPC endpoint (e.g., "localhost:50051")
+//   - opts: Optional gRPC dial options (credentials, keepalive, interceptors, etc.)
+//
+// Returns an error if:
+//   - The connection cannot be established
+//   - The GetDescriptor RPC fails
+//   - The GetSlotSchema RPC fails
+//   - The descriptor or schemas cannot be parsed
+//
+// Example:
+//
+//	client, err := NewGRPCAgentClient(
+//	    "localhost:50051",
+//	    grpc.WithTransportCredentials(insecure.NewCredentials()),
+//	)
+func NewGRPCAgentClient(address string, opts ...grpc.DialOption) (*GRPCAgentClient, error) {
+	// Add default options if none provided
+	if len(opts) == 0 {
+		opts = []grpc.DialOption{
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		}
+	}
+
 	// Establish gRPC connection
-	conn, err := grpc.NewClient(
-		address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	// Note: Using deprecated Dial for better compatibility with testing (bufconn)
+	//nolint:staticcheck // Dial provides better blocking behavior for connection establishment
+	conn, err := grpc.Dial(address, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
+		return nil, fmt.Errorf("failed to dial gRPC endpoint %s: %w", address, err)
 	}
 
 	client := proto.NewAgentServiceClient(conn)
 
-	return &GRPCAgentClient{
-		name:        "grpc-agent",
-		version:     "0.1.0",
-		description: "External gRPC agent",
-		conn:        conn,
-		client:      client,
-	}, nil
+	// Create the agent client
+	agentClient := &GRPCAgentClient{
+		conn:   conn,
+		client: client,
+	}
+
+	// Fetch descriptor to populate metadata
+	// Use a background context with timeout for fetching metadata
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := agentClient.fetchDescriptor(ctx); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to fetch agent descriptor: %w", err)
+	}
+
+	// Fetch slots to complete the descriptor
+	if err := agentClient.fetchSlots(ctx); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to fetch agent slots: %w", err)
+	}
+
+	return agentClient, nil
 }
 
 // Name returns the unique identifier for this agent
 func (c *GRPCAgentClient) Name() string {
-	return c.name
+	if c.descriptor != nil {
+		return c.descriptor.Name
+	}
+	return ""
 }
 
 // Version returns the semantic version of this agent
 func (c *GRPCAgentClient) Version() string {
-	return c.version
+	if c.descriptor != nil {
+		return c.descriptor.Version
+	}
+	return ""
 }
 
 // Description returns a human-readable description
 func (c *GRPCAgentClient) Description() string {
-	return c.description
+	if c.descriptor != nil {
+		return c.descriptor.Description
+	}
+	return ""
 }
 
 // Capabilities returns the list of capabilities
 func (c *GRPCAgentClient) Capabilities() []string {
-	// Will be populated from gRPC metadata in Stage 7
+	if c.descriptor != nil {
+		return c.descriptor.Capabilities
+	}
 	return []string{}
 }
 
 // TargetTypes returns the types of targets this agent supports
 func (c *GRPCAgentClient) TargetTypes() []component.TargetType {
-	// Will be populated from gRPC metadata in Stage 7
+	if c.descriptor != nil {
+		return c.descriptor.TargetTypes
+	}
 	return []component.TargetType{}
 }
 
 // TechniqueTypes returns the types of techniques this agent supports
 func (c *GRPCAgentClient) TechniqueTypes() []component.TechniqueType {
-	// Will be populated from gRPC metadata in Stage 7
+	if c.descriptor != nil {
+		return c.descriptor.TechniqueTypes
+	}
 	return []component.TechniqueType{}
 }
 
 // LLMSlots returns the LLM slot requirements
 func (c *GRPCAgentClient) LLMSlots() []SlotDefinition {
-	// Will be populated from gRPC metadata in Stage 7
+	if c.descriptor != nil && c.descriptor.Slots != nil {
+		return c.descriptor.Slots
+	}
 	return []SlotDefinition{}
 }
 
-// Execute runs the agent via gRPC
+// Execute runs the agent via gRPC.
+//
+// This method serializes the task to JSON and sends an Execute RPC to the remote
+// agent. The result is received via gRPC and unmarshaled back to a Result struct.
+//
+// Note: The harness parameter is currently not used for standard execution.
+// For harness callbacks (LLM access, tool execution, etc.), use the registry's
+// GRPCAgentClient.ExecuteWithCallback() method instead, which provides callback
+// endpoint configuration.
+//
+// Parameters:
+//   - ctx: Context for request cancellation and timeouts
+//   - task: The task to execute
+//   - harness: Agent harness (not used in this implementation)
+//
+// Returns:
+//   - Result with success/failure status and any findings
+//   - Error only if the result could not be unmarshaled (execution errors are in Result.Error)
 func (c *GRPCAgentClient) Execute(ctx context.Context, task Task, harness AgentHarness) (Result, error) {
-	// Full implementation in Stage 7
-	// This will:
-	// 1. Serialize task to protobuf
-	// 2. Send gRPC ExecuteTask request
-	// 3. Stream responses
-	// 4. Handle harness callbacks via bidirectional streaming
-	// 5. Return final result
+	// Marshal task to JSON
+	taskJSON, err := json.Marshal(task)
+	if err != nil {
+		result := NewResult(task.ID)
+		result.Fail(fmt.Errorf("failed to marshal task: %w", err))
+		return result, nil
+	}
 
-	result := NewResult(task.ID)
-	result.Fail(fmt.Errorf("gRPC agent execution not yet implemented (Stage 7)"))
+	// Send Execute RPC
+	timeoutMs := int64(task.Timeout.Milliseconds())
+	req := &proto.AgentExecuteRequest{
+		TaskJson:  string(taskJSON),
+		TimeoutMs: timeoutMs,
+	}
+
+	resp, err := c.client.Execute(ctx, req)
+	if err != nil {
+		result := NewResult(task.ID)
+		result.Fail(fmt.Errorf("gRPC agent execution failed: %w", err))
+		return result, nil
+	}
+
+	// Check for errors in response
+	if resp.Error != nil {
+		result := NewResult(task.ID)
+		result.Fail(fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message))
+		return result, nil
+	}
+
+	// Unmarshal result from JSON
+	var result Result
+	if err := json.Unmarshal([]byte(resp.ResultJson), &result); err != nil {
+		return Result{}, fmt.Errorf("failed to unmarshal result: %w", err)
+	}
+
 	return result, nil
 }
 
-// Initialize initializes the gRPC agent
+// Initialize initializes the gRPC agent.
+//
+// For gRPC agents, this is typically a no-op since the remote agent manages
+// its own initialization. The agent's GetDescriptor and GetSlotSchema RPCs
+// are called during NewGRPCAgentClient() to populate metadata.
+//
+// This method is provided for interface compatibility and could be extended
+// in the future to send an Initialize RPC if needed.
 func (c *GRPCAgentClient) Initialize(ctx context.Context, cfg AgentConfig) error {
-	// Full implementation in Stage 7
-	// This will send an Initialize gRPC request
+	// gRPC agents manage their own initialization
+	// Descriptor and slots are fetched during NewGRPCAgentClient()
 	return nil
 }
 
-// Shutdown cleanly shuts down the gRPC connection
+// Shutdown cleanly shuts down the gRPC connection.
+//
+// This closes the underlying gRPC connection to the agent. After shutdown,
+// the client should not be used for further operations.
 func (c *GRPCAgentClient) Shutdown(ctx context.Context) error {
-	// Full implementation in Stage 7
-	// This will close the gRPC connection
+	if c.conn != nil {
+		return c.conn.Close()
+	}
 	return nil
 }
 
-// Health checks the health of the gRPC agent
+// Health checks the health of the gRPC agent.
+//
+// This sends a Health RPC to the remote agent to check its status.
+// If the RPC fails, the agent is considered unhealthy.
+//
+// Returns a HealthStatus with one of three states:
+//   - healthy: Agent is operational
+//   - degraded: Agent is partially operational
+//   - unhealthy: Agent is not operational or unreachable
 func (c *GRPCAgentClient) Health(ctx context.Context) types.HealthStatus {
-	// Full implementation in Stage 7
-	// This will send a Health gRPC request
-	return types.Unhealthy("gRPC health check not yet implemented (Stage 7)")
+	req := &proto.AgentHealthRequest{}
+
+	resp, err := c.client.Health(ctx, req)
+	if err != nil {
+		return types.Unhealthy(fmt.Sprintf("gRPC health check failed: %v", err))
+	}
+
+	// Convert proto health status to internal type
+	switch resp.State {
+	case "healthy":
+		return types.Healthy(resp.Message)
+	case "degraded":
+		return types.Degraded(resp.Message)
+	case "unhealthy":
+		return types.Unhealthy(resp.Message)
+	default:
+		return types.Unhealthy("unknown health status")
+	}
 }
 
 // Close closes the gRPC connection
@@ -153,7 +293,10 @@ func (c *GRPCAgentClient) StreamExecute(ctx context.Context, task Task, sessionI
 	}
 
 	// Create the StreamClient, which internally establishes the bidirectional stream
-	streamClient := NewStreamClient(ctx, c.conn, c.name, sessionID)
+	streamClient, err := NewStreamClient(ctx, c.conn, c.Name(), sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stream client: %w", err)
+	}
 
 	// Marshal the task to JSON
 	taskJSON, err := json.Marshal(task)
@@ -177,4 +320,115 @@ func (c *GRPCAgentClient) SupportsStreaming() bool {
 	// For now, assume all gRPC agents support streaming
 	// In the future, this could check agent capabilities via GetDescriptor
 	return c.conn != nil
+}
+
+// fetchDescriptor retrieves the agent descriptor from the remote agent via gRPC.
+//
+// This is called during NewGRPCAgentClient() to populate metadata. The result is
+// cached in c.descriptor to avoid repeated RPC calls.
+// Note: Slots are fetched separately via fetchSlots()
+func (c *GRPCAgentClient) fetchDescriptor(ctx context.Context) error {
+	if c.descriptor != nil {
+		return nil
+	}
+
+	req := &proto.AgentGetDescriptorRequest{}
+	resp, err := c.client.GetDescriptor(ctx, req)
+	if err != nil {
+		return fmt.Errorf("GetDescriptor RPC failed: %w", err)
+	}
+
+	// Convert proto descriptor to internal type
+	// Note: Slots field is nil initially and populated by fetchSlots()
+	c.descriptor = &AgentDescriptor{
+		Name:           resp.Name,
+		Version:        resp.Version,
+		Description:    resp.Description,
+		Capabilities:   resp.Capabilities,
+		TargetTypes:    convertTargetTypes(resp.TargetTypes),
+		TechniqueTypes: convertTechniqueTypes(resp.TechniqueTypes),
+		Slots:          nil, // Populated by fetchSlots()
+		IsExternal:     true,
+	}
+
+	return nil
+}
+
+// fetchSlots retrieves the agent's slot definitions from the remote agent via gRPC.
+//
+// This is called during NewGRPCAgentClient() after fetchDescriptor(). The result is
+// cached in c.descriptor.Slots to avoid repeated RPC calls.
+func (c *GRPCAgentClient) fetchSlots(ctx context.Context) error {
+	if c.descriptor == nil {
+		return fmt.Errorf("descriptor not loaded - call fetchDescriptor first")
+	}
+
+	if c.descriptor.Slots != nil {
+		return nil // Already fetched
+	}
+
+	req := &proto.AgentGetSlotSchemaRequest{}
+	resp, err := c.client.GetSlotSchema(ctx, req)
+	if err != nil {
+		return fmt.Errorf("GetSlotSchema RPC failed: %w", err)
+	}
+
+	// Convert proto slots to internal type
+	c.descriptor.Slots = convertSlots(resp.Slots)
+	return nil
+}
+
+// convertTargetTypes converts proto target types to internal component.TargetType
+func convertTargetTypes(protoTypes []string) []component.TargetType {
+	result := make([]component.TargetType, len(protoTypes))
+	for i, t := range protoTypes {
+		result[i] = component.TargetType(t)
+	}
+	return result
+}
+
+// convertTechniqueTypes converts proto technique types to internal component.TechniqueType
+func convertTechniqueTypes(protoTypes []string) []component.TechniqueType {
+	result := make([]component.TechniqueType, len(protoTypes))
+	for i, t := range protoTypes {
+		result[i] = component.TechniqueType(t)
+	}
+	return result
+}
+
+// convertSlots converts proto slot definitions to internal SlotDefinition
+func convertSlots(protoSlots []*proto.AgentSlotDefinition) []SlotDefinition {
+	if protoSlots == nil {
+		return []SlotDefinition{}
+	}
+
+	result := make([]SlotDefinition, len(protoSlots))
+	for i, ps := range protoSlots {
+		slot := SlotDefinition{
+			Name:        ps.Name,
+			Description: ps.Description,
+			Required:    ps.Required,
+		}
+
+		// Handle optional DefaultConfig
+		if ps.DefaultConfig != nil {
+			slot.Default = SlotConfig{
+				Provider:    ps.DefaultConfig.Provider,
+				Model:       ps.DefaultConfig.Model,
+				Temperature: ps.DefaultConfig.Temperature,
+				MaxTokens:   int(ps.DefaultConfig.MaxTokens),
+			}
+		}
+
+		// Handle optional Constraints
+		if ps.Constraints != nil {
+			slot.Constraints = SlotConstraints{
+				MinContextWindow: int(ps.Constraints.MinContextWindow),
+				RequiredFeatures: ps.Constraints.RequiredFeatures,
+			}
+		}
+
+		result[i] = slot
+	}
+	return result
 }

@@ -10,25 +10,18 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
+	"github.com/zero-day-ai/gibson/cmd/gibson/mode"
 	"github.com/zero-day-ai/gibson/internal/config"
+	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
+	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/registry"
-	"golang.org/x/term"
 )
 
-// GetRegistryManager retrieves the registry manager from the context.
-// This is a convenience wrapper around component.GetRegistryManager.
-func GetRegistryManager(ctx context.Context) *registry.Manager {
-	return component.GetRegistryManager(ctx)
-}
-
-// Mode flags for TUI vs headless operation
-var (
-	printMode bool // Force headless/print mode
-	tuiMode   bool // Force TUI mode
-)
-
-// Global registry manager for cleanup
+// Global registry manager for cleanup (legacy - only used if daemon owns registry)
 var globalRegistryManager *registry.Manager
+
+// Global callback manager for cleanup (legacy - only used if daemon owns callback)
+var globalCallbackManager *harness.CallbackManager
 
 var rootCmd = &cobra.Command{
 	Use:   "gibson",
@@ -36,13 +29,12 @@ var rootCmd = &cobra.Command{
 	Long: `Gibson is an autonomous AI security testing platform for
 red-teaming LLM systems, RAG pipelines, and AI agents.
 
-When run without a subcommand in an interactive terminal, Gibson
-launches the TUI dashboard. Use --print to force headless mode.`,
+Use 'gibson ui' to launch the interactive dashboard.`,
 	PersistentPreRunE:  loadConfig,
-	PersistentPostRunE: shutdownRegistry,
+	PersistentPostRunE: shutdown,
 	SilenceUsage:       true,
 	SilenceErrors:      true,
-	RunE:               runRootCmd,
+	// No RunE - shows help by default when no subcommand is given
 }
 
 // Execute runs the root command with signal handling
@@ -77,78 +69,114 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 		configFile = config.DefaultConfigPath(homeDir)
 	}
 
-	// For init, version, and help commands, skip config loading since config may not exist yet
-	// Note: status command now needs registry, so we don't skip it
-	if cmd.Name() == "init" || cmd.Name() == "version" || cmd.Name() == "help" {
+	// Get command mode to determine initialization strategy
+	cmdMode := mode.GetMode(cmd.CommandPath())
+
+	// Standalone mode: just load config file, no services
+	if cmdMode == mode.Standalone {
+		// For standalone commands, we may not even need the config
+		// But load it if it exists for consistency
+		if _, err := os.Stat(configFile); err == nil {
+			loader := config.NewConfigLoader(config.NewValidator())
+			if _, err := loader.LoadWithDefaults(configFile); err != nil {
+				// Don't fail for standalone commands
+				if flags.IsVerbose() {
+					cmd.PrintErrf("Warning: failed to load config: %v\n", err)
+				}
+			}
+		}
 		return nil
 	}
 
-	// Check if config exists
-	if _, err := os.Stat(configFile); err != nil {
-		if os.IsNotExist(err) {
-			// Config doesn't exist - commands should handle this gracefully
-			if flags.IsVerbose() {
-				cmd.PrintErrf("Config file not found at %s (run 'gibson init' to create)\n", configFile)
-			}
-			// For now, continue without registry for commands that don't strictly need it
-			return nil
+	// Daemon mode: daemon commands handle their own initialization
+	// Don't start any services here - let daemon.go handle it
+	if cmdMode == mode.Daemon {
+		return nil
+	}
+
+	// Client mode: connect to existing daemon
+	if cmdMode == mode.Client {
+		// Connect to daemon using the client library
+		client, err := daemonclient.ConnectOrFail(cmd.Context())
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("failed to access config file: %w", err)
+
+		// Store client in context for subcommands
+		ctx := component.WithDaemonClient(cmd.Context(), client)
+		cmd.SetContext(ctx)
+
+		if flags.IsVerbose() {
+			cmd.PrintErrf("Connected to daemon\n")
+		}
+
+		return nil
 	}
 
-	// Load the configuration
-	loader := config.NewConfigLoader(config.NewValidator())
-	cfg, err := loader.LoadWithDefaults(configFile)
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	// Initialize registry manager
-	regManager := registry.NewManager(cfg.Registry)
-	if err := regManager.Start(cmd.Context()); err != nil {
-		return fmt.Errorf("failed to start registry: %w", err)
-	}
-
-	// Store manager globally for cleanup
-	globalRegistryManager = regManager
-
-	// Store manager in context for subcommands using the shared key
-	ctx := component.WithRegistryManager(cmd.Context(), regManager)
-	cmd.SetContext(ctx)
-
-	if flags.IsVerbose() {
-		status := regManager.Status()
-		cmd.PrintErrf("Registry started: %s (%s)\n", status.Type, status.Endpoint)
-	}
-
-	return nil
+	// This should never happen (all modes should be handled above)
+	return fmt.Errorf("unknown command mode: %v", cmdMode)
 }
 
-// shutdownRegistry gracefully shuts down the registry when Gibson exits
-func shutdownRegistry(cmd *cobra.Command, args []string) error {
-	if globalRegistryManager != nil {
-		// Use a background context with timeout for shutdown
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
+// shutdown gracefully shuts down resources when Gibson exits.
+// The shutdown behavior depends on the command mode:
+// - Daemon mode: stop registry and callback manager (owned by daemon)
+// - Client mode: close daemon client connection
+// - Standalone mode: no cleanup needed
+func shutdown(cmd *cobra.Command, args []string) error {
+	// Get command mode to determine cleanup strategy
+	cmdMode := mode.GetMode(cmd.CommandPath())
 
-		if err := globalRegistryManager.Stop(ctx); err != nil {
-			// Log error but don't fail - we're shutting down anyway
+	// For daemon mode or if we own the registry (legacy direct start),
+	// shut down services
+	if cmdMode == mode.Daemon || globalRegistryManager != nil {
+		// Stop callback manager first
+		if globalCallbackManager != nil {
 			if globalFlags.IsVerbose() {
-				cmd.PrintErrf("Warning: failed to stop registry cleanly: %v\n", err)
+				cmd.PrintErrf("Stopping callback server...\n")
+			}
+			globalCallbackManager.Stop()
+			globalCallbackManager = nil
+		}
+
+		// Then stop registry manager
+		if globalRegistryManager != nil {
+			// Use a background context with timeout for shutdown
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			if err := globalRegistryManager.Stop(ctx); err != nil {
+				// Log error but don't fail - we're shutting down anyway
+				if globalFlags.IsVerbose() {
+					cmd.PrintErrf("Warning: failed to stop registry cleanly: %v\n", err)
+				}
+			}
+			globalRegistryManager = nil
+		}
+	}
+
+	// For client mode, close daemon client connection
+	if cmdMode == mode.Client {
+		if client := component.GetDaemonClient(cmd.Context()); client != nil {
+			// Type assert to *daemonclient.Client
+			if dc, ok := client.(*daemonclient.Client); ok {
+				if err := dc.Close(); err != nil {
+					// Log error but don't fail - we're shutting down anyway
+					if globalFlags.IsVerbose() {
+						cmd.PrintErrf("Warning: failed to close daemon client: %v\n", err)
+					}
+				}
 			}
 		}
-		globalRegistryManager = nil
 	}
+
+	// Standalone mode: no cleanup needed
+
 	return nil
 }
 
 func init() {
 	// Register global flags
 	RegisterGlobalFlags(rootCmd)
-
-	// Register TUI/print mode flags
-	rootCmd.PersistentFlags().BoolVar(&printMode, "print", false, "Force headless/print mode (no TUI)")
-	rootCmd.PersistentFlags().BoolVar(&tuiMode, "tui", false, "Force TUI mode even if not interactive")
 
 	// Add subcommands
 	rootCmd.AddCommand(initCmd)
@@ -166,41 +194,9 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(completionCmd)
 	rootCmd.AddCommand(tuiCmd)
+	rootCmd.AddCommand(daemonCmd)
 }
 
-// runRootCmd handles the root command when run without subcommands.
-// By default, it launches the TUI if in an interactive terminal.
-func runRootCmd(cmd *cobra.Command, args []string) error {
-	// Determine mode based on flags and environment
-	if printMode {
-		// Force headless mode - show status summary
-		return runStatusSummary(cmd)
-	}
-
-	if tuiMode || isTerminalInteractive() {
-		// Launch TUI
-		return launchTUI(cmd.Context())
-	}
-
-	// Non-interactive without --tui, show help
-	return cmd.Help()
-}
-
-// isTerminalInteractive checks if stdin is a terminal.
-func isTerminalInteractive() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
-}
-
-// runStatusSummary prints a status summary in headless mode.
-func runStatusSummary(cmd *cobra.Command) error {
-	cmd.Println("Gibson - Autonomous LLM Red-Teaming Framework")
-	cmd.Println("Version: v0.1.0 (Stage 15 - TUI)")
-	cmd.Println("")
-	cmd.Println("Run 'gibson status' for system status")
-	cmd.Println("Run 'gibson --tui' to launch the interactive dashboard")
-	cmd.Println("Run 'gibson help' for available commands")
-	return nil
-}
 
 var versionCmd = &cobra.Command{
 	Use:   "version",

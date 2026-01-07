@@ -6,7 +6,7 @@ Successfully implemented the Registry and Slot Management components for the Gib
 ## Implemented Components
 
 ### Task 3.1: LLM Registry (`registry.go`)
-**File:** `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/registry.go`
+**File:** `<gibson-root>/internal/llm/registry.go`
 
 #### Features:
 - **LLMRegistry Interface**: Defines contract for provider management
@@ -30,7 +30,7 @@ Successfully implemented the Registry and Slot Management components for the Gib
 - `ErrLLMProviderNotFound`: Provider doesn't exist
 
 ### Task 3.2: Slot Manager (`slot.go`)
-**File:** `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/slot.go`
+**File:** `<gibson-root>/internal/llm/slot.go`
 
 #### Features:
 - **SlotManager Interface**: Slot resolution and validation
@@ -58,7 +58,7 @@ Successfully implemented the Registry and Slot Management components for the Gib
 - `ErrInvalidSlotConfig`: Empty provider/model, constraint violations
 
 ### Task 3.3: Token Tracker (`tracker.go`)
-**File:** `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/tracker.go`
+**File:** `<gibson-root>/internal/llm/tracker.go`
 
 #### Features:
 - **UsageScope**: Hierarchical tracking (Mission → Agent → Slot)
@@ -181,15 +181,15 @@ Our implementation is complete and correct - once the pre-existing issues are re
 ## Files Created/Modified
 
 ### Created:
-- `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/registry.go` (167 lines)
-- `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/registry_test.go` (414 lines)
-- `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/slot.go` (168 lines)
-- `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/slot_test.go` (469 lines)
-- `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/tracker.go` (357 lines)
-- `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/tracker_test.go` (594 lines)
+- `<gibson-root>/internal/llm/registry.go` (167 lines)
+- `<gibson-root>/internal/llm/registry_test.go` (414 lines)
+- `<gibson-root>/internal/llm/slot.go` (168 lines)
+- `<gibson-root>/internal/llm/slot_test.go` (469 lines)
+- `<gibson-root>/internal/llm/tracker.go` (357 lines)
+- `<gibson-root>/internal/llm/tracker_test.go` (594 lines)
 
 ### Modified:
-- `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/llm/errors.go` (added new error codes)
+- `<gibson-root>/internal/llm/errors.go` (added new error codes)
 
 **Total Lines of Code:** ~2,169 lines (implementation + tests)
 **Test to Code Ratio:** ~1.3:1 (comprehensive testing)

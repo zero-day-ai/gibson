@@ -8,6 +8,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
+	"golang.org/x/sync/errgroup"
 )
 
 // LLMCaller defines the interface for calling LLM completions.
@@ -159,8 +160,8 @@ func (lc *LLMFindingClassifier) Classify(ctx context.Context, finding agent.Find
 	return classification, nil
 }
 
-// BulkClassify classifies multiple findings sequentially.
-// Note: This could be optimized with batch API calls if the LLM provider supports it.
+// BulkClassify classifies multiple findings concurrently with controlled parallelism.
+// Uses errgroup with a limit of 5 concurrent requests to balance throughput and resource usage.
 func (lc *LLMFindingClassifier) BulkClassify(ctx context.Context, findings []agent.Finding) ([]*Classification, error) {
 	if len(findings) == 0 {
 		return []*Classification{}, nil
@@ -175,14 +176,30 @@ func (lc *LLMFindingClassifier) BulkClassify(ctx context.Context, findings []age
 
 	results := make([]*Classification, len(findings))
 
-	// Classify each finding sequentially
-	// TODO: Optimize with batch API calls or concurrent requests
-	for i, finding := range findings {
-		classification, err := lc.Classify(ctx, finding)
-		if err != nil {
-			return nil, fmt.Errorf("failed to classify finding %d: %w", i, err)
-		}
-		results[i] = classification
+	// Create errgroup with concurrency limit
+	g, groupCtx := errgroup.WithContext(ctx)
+	g.SetLimit(5) // Process up to 5 findings concurrently
+
+	// Classify each finding concurrently
+	for i := range findings {
+		// Capture loop variables
+		idx := i
+		finding := findings[i]
+
+		g.Go(func() error {
+			classification, err := lc.Classify(groupCtx, finding)
+			if err != nil {
+				return fmt.Errorf("failed to classify finding %d: %w", idx, err)
+			}
+			results[idx] = classification
+			return nil
+		})
+	}
+
+	// Wait for all classifications to complete
+	if err := g.Wait(); err != nil {
+		// Return partial results on error
+		return nil, err
 	}
 
 	return results, nil

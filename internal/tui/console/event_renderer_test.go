@@ -76,7 +76,10 @@ func TestEventRenderer_RenderOutput(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentJSON, _ := json.Marshal(tt.content)
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("failed to marshal content: %v", err)
+			}
 			lines := renderer.RenderOutput(contentJSON, ts)
 
 			if len(lines) != tt.wantCount {
@@ -132,7 +135,10 @@ func TestEventRenderer_RenderToolCall(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentJSON, _ := json.Marshal(tt.content)
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("failed to marshal content: %v", err)
+			}
 			lines := renderer.RenderToolCall(contentJSON, ts)
 
 			if len(lines) < tt.wantMinLines {
@@ -197,7 +203,10 @@ func TestEventRenderer_RenderToolResult(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentJSON, _ := json.Marshal(tt.content)
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("failed to marshal content: %v", err)
+			}
 			lines := renderer.RenderToolResult(contentJSON, ts)
 
 			if len(lines) < tt.wantMinLines {
@@ -266,7 +275,10 @@ func TestEventRenderer_RenderFinding(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentJSON, _ := json.Marshal(tt.content)
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("failed to marshal content: %v", err)
+			}
 			lines := renderer.RenderFinding(contentJSON, ts)
 
 			if len(lines) < 2 {
@@ -338,7 +350,10 @@ func TestEventRenderer_RenderStatus(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentJSON, _ := json.Marshal(tt.content)
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("failed to marshal content: %v", err)
+			}
 			lines := renderer.RenderStatus(contentJSON, ts)
 
 			if len(lines) < 1 {
@@ -390,7 +405,10 @@ func TestEventRenderer_RenderSteeringAck(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentJSON, _ := json.Marshal(tt.content)
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("failed to marshal content: %v", err)
+			}
 			lines := renderer.RenderSteeringAck(contentJSON, ts)
 
 			if len(lines) < 1 {
@@ -436,7 +454,10 @@ func TestEventRenderer_RenderError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			contentJSON, _ := json.Marshal(tt.content)
+			contentJSON, err := json.Marshal(tt.content)
+			if err != nil {
+				t.Fatalf("failed to marshal content: %v", err)
+			}
 			lines := renderer.RenderError(contentJSON, ts)
 
 			if len(lines) < 1 {

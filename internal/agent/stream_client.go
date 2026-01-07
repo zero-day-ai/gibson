@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -35,9 +36,8 @@ type StreamClient struct {
 
 // NewStreamClient creates a new stream client for the given agent.
 // The returned client is ready to start streaming after calling Start().
-// Note: This function panics if the gRPC stream cannot be created.
-// This is intentional as stream creation failure is a programming error.
-func NewStreamClient(ctx context.Context, conn *grpc.ClientConn, agentName string, sessionID types.ID) *StreamClient {
+// Returns an error if the gRPC stream cannot be created.
+func NewStreamClient(ctx context.Context, conn *grpc.ClientConn, agentName string, sessionID types.ID) (*StreamClient, error) {
 	clientCtx, cancel := context.WithCancel(ctx)
 
 	// Create the bidirectional stream
@@ -45,7 +45,7 @@ func NewStreamClient(ctx context.Context, conn *grpc.ClientConn, agentName strin
 	stream, err := client.StreamExecute(clientCtx)
 	if err != nil {
 		cancel()
-		panic(fmt.Sprintf("failed to create stream: %v", err))
+		return nil, fmt.Errorf("failed to create stream: %w", err)
 	}
 
 	c := &StreamClient{
@@ -65,7 +65,7 @@ func NewStreamClient(ctx context.Context, conn *grpc.ClientConn, agentName strin
 	go c.sendLoop()
 	go c.recvLoop()
 
-	return c
+	return c, nil
 }
 
 // Start initiates agent execution with the given task and mode.
@@ -410,11 +410,16 @@ func (c *StreamClient) protoToEvent(msg *proto.AgentMessage) (*database.StreamEv
 // emitErrorEvent emits an error event to the event channel.
 // This is used for internal errors that should be surfaced to consumers.
 func (c *StreamClient) emitErrorEvent(err error) {
-	content, _ := json.Marshal(map[string]any{
+	content, marshalErr := json.Marshal(map[string]any{
 		"code":    "INTERNAL_ERROR",
 		"message": err.Error(),
 		"fatal":   false,
 	})
+	if marshalErr != nil {
+		// If marshaling fails, use a simple fallback error message
+		slog.Error("failed to marshal error event content", "error", marshalErr, "original_error", err)
+		content = []byte(fmt.Sprintf(`{"code":"INTERNAL_ERROR","message":"error marshaling failed: %s","fatal":false}`, err.Error()))
+	}
 
 	event := &database.StreamEvent{
 		ID:        types.NewID(),

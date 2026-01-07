@@ -60,7 +60,7 @@ func createTestTargetForExecution(t *testing.T, ctx context.Context, db *databas
 	target := &types.Target{
 		ID:           types.NewID(),
 		Name:         "test-target-" + types.NewID().String()[:8],
-		Type:         types.TargetTypeLLMChat,
+		Type:         string(types.TargetTypeLLMChat),
 		Provider:     types.ProviderOpenAI,
 		URL:          "https://api.openai.com/v1/chat/completions",
 		Model:        "gpt-4",
@@ -306,15 +306,15 @@ func TestExecutionStore_List(t *testing.T) {
 	exec2 := createTestExecution(payload2, target2)
 	exec2.Success = false
 	exec2.Status = ExecutionStatusFailed
-	exec2.TargetType = types.TargetTypeRAG       // Different type
-	exec2.TargetProvider = types.ProviderAnthropic  // Different provider
+	exec2.TargetType = types.TargetTypeRAG         // Different type
+	exec2.TargetProvider = types.ProviderAnthropic // Different provider
 	exec2.ConfidenceScore = 0.5
 
 	exec3 := createTestExecution(payload1, target1)
 	exec3.Success = true
 	exec3.Status = ExecutionStatusCompleted
-	exec3.TargetType = types.TargetTypeAgent     // Different type
-	exec3.TargetProvider = types.ProviderGoogle  // Different provider
+	exec3.TargetType = types.TargetTypeAgent    // Different type
+	exec3.TargetProvider = types.ProviderGoogle // Different provider
 	exec3.ConfidenceScore = 0.7
 
 	require.NoError(t, store.Save(ctx, exec1))

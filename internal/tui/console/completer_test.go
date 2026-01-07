@@ -696,15 +696,15 @@ func TestCompleterComplete_Subcommands(t *testing.T) {
 		wantNone []string // None of these should be present
 	}{
 		{
-			name:    "mission with space shows subcommands not top-level commands",
-			input:   "/mission ",
-			wantAny: []string{"list", "show", "run", "resume", "stop", "delete"},
+			name:     "mission with space shows subcommands not top-level commands",
+			input:    "/mission ",
+			wantAny:  []string{"list", "show", "run", "resume", "stop", "delete"},
 			wantNone: []string{"/mission", "/agent", "/clear"},
 		},
 		{
-			name:    "agent with space shows subcommands",
-			input:   "/agent ",
-			wantAny: []string{"list", "show", "start", "stop", "status"},
+			name:     "agent with space shows subcommands",
+			input:    "/agent ",
+			wantAny:  []string{"list", "show", "start", "stop", "status"},
 			wantNone: []string{"/agent", "/mission"},
 		},
 	}

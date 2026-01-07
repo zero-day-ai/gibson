@@ -71,9 +71,10 @@ import (
 // YAMLWorkflow represents the top-level structure of a workflow YAML file.
 // This structure maps directly to the YAML format for workflow definitions.
 type YAMLWorkflow struct {
-	Name        string     `yaml:"name"`
-	Description string     `yaml:"description"`
-	Nodes       []YAMLNode `yaml:"nodes"`
+	Name        string          `yaml:"name"`
+	Description string          `yaml:"description"`
+	Nodes       []YAMLNode      `yaml:"nodes"`
+	Planning    *PlanningConfig `yaml:"planning,omitempty"`
 }
 
 // YAMLNode represents a node definition in YAML format.
@@ -200,6 +201,15 @@ func ParseWorkflow(data []byte) (*Workflow, error) {
 	// Calculate entry and exit points
 	wf.EntryPoints = calculateEntryPoints(wf)
 	wf.ExitPoints = calculateExitPoints(wf)
+
+	// Copy planning configuration if present
+	if yamlWf.Planning != nil {
+		wf.Planning = yamlWf.Planning
+		// Validate planning configuration
+		if err := wf.Planning.Validate(); err != nil {
+			return nil, fmt.Errorf("invalid planning configuration: %w", err)
+		}
+	}
 
 	return wf, nil
 }

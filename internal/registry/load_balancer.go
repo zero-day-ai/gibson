@@ -25,7 +25,6 @@ const (
 	StrategyRandom LoadBalanceStrategy = "random"
 
 	// StrategyLeastConnection selects the instance with fewest active connections
-	// Note: Currently unimplemented, falls back to RoundRobin
 	StrategyLeastConnection LoadBalanceStrategy = "least_connection"
 )
 
@@ -118,9 +117,7 @@ func (lb *LoadBalancer) Select(ctx context.Context, kind, name string) (*sdkregi
 	case StrategyRandom:
 		selected = lb.selectRandom(instances)
 	case StrategyLeastConnection:
-		// TODO: Implement least-connection tracking
-		// For now, fall back to round-robin
-		selected = lb.selectRoundRobin(kind, name, instances)
+		selected = lb.selectLeastConnection(instances)
 	default:
 		// Unknown strategy - default to round-robin
 		selected = lb.selectRoundRobin(kind, name, instances)
@@ -179,6 +176,50 @@ func (lb *LoadBalancer) selectRoundRobin(kind, name string, instances []sdkregis
 func (lb *LoadBalancer) selectRandom(instances []sdkregistry.ServiceInfo) *sdkregistry.ServiceInfo {
 	index := rand.Intn(len(instances))
 	return &instances[index]
+}
+
+// selectLeastConnection implements least-connection selection.
+//
+// Selects the instance with the fewest active connections.
+// This strategy is useful for load balancing when connection durations vary significantly.
+func (lb *LoadBalancer) selectLeastConnection(instances []sdkregistry.ServiceInfo) *sdkregistry.ServiceInfo {
+	lb.connMutex.RLock()
+	defer lb.connMutex.RUnlock()
+
+	var selected *sdkregistry.ServiceInfo
+	minConnections := -1
+
+	for i := range instances {
+		endpoint := instances[i].Endpoint
+		count := lb.connCounts[endpoint]
+
+		// Select if this is the first instance or has fewer connections
+		if minConnections == -1 || count < minConnections {
+			minConnections = count
+			selected = &instances[i]
+		}
+	}
+
+	return selected
+}
+
+// IncrementConnections increments the connection count for an instance.
+// This should be called when a new connection is established.
+func (lb *LoadBalancer) IncrementConnections(endpoint string) {
+	lb.connMutex.Lock()
+	defer lb.connMutex.Unlock()
+	lb.connCounts[endpoint]++
+}
+
+// DecrementConnections decrements the connection count for an instance.
+// This should be called when a connection is closed.
+func (lb *LoadBalancer) DecrementConnections(endpoint string) {
+	lb.connMutex.Lock()
+	defer lb.connMutex.Unlock()
+
+	if count, exists := lb.connCounts[endpoint]; exists && count > 0 {
+		lb.connCounts[endpoint]--
+	}
 }
 
 // Strategy returns the current load balancing strategy.

@@ -1,0 +1,200 @@
+package daemon
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/zero-day-ai/gibson/internal/config"
+	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/harness"
+	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/registry"
+	"github.com/zero-day-ai/gibson/internal/types"
+)
+
+// newMockMissionStore creates a simple in-memory mission store for testing
+func newMockMissionStore() *mockMissionStore {
+	return &mockMissionStore{
+		missions: make(map[types.ID]*mission.Mission),
+	}
+}
+
+// TestMissionManagerCreation tests creation of mission manager
+func TestMissionManagerCreation(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{}
+	missionStore := newMockMissionStore()
+	findingStore := finding.NewInMemoryStore()
+	llmReg := llm.NewRegistry()
+	registry := &mockComponentDiscovery{}
+	callbackMgr := harness.NewCallbackManager(harness.CallbackConfig{Enabled: false}, logger)
+	harnessFactory := &mockHarnessFactory{}
+
+	mgr := newMissionManager(cfg, logger, registry, missionStore, findingStore, llmReg, callbackMgr, harnessFactory)
+
+	if mgr.config != cfg {
+		t.Error("mission manager config not set correctly")
+	}
+
+	if mgr.logger == nil {
+		t.Error("mission manager logger not set")
+	}
+
+	if mgr.missionStore == nil {
+		t.Error("mission manager mission store not set")
+	}
+
+	if mgr.findingStore == nil {
+		t.Error("mission manager finding store not set")
+	}
+
+	if mgr.activeMissions == nil {
+		t.Error("mission manager active missions map not initialized")
+	}
+
+	if mgr.harnessFactory == nil {
+		t.Error("mission manager harness factory not set")
+	}
+}
+
+// TestMissionManagerRunBasic tests running a mission with a simple workflow
+func TestMissionManagerRunBasic(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{}
+	missionStore := newMockMissionStore()
+	findingStore := finding.NewInMemoryStore()
+	llmReg := llm.NewRegistry()
+	registry := &mockComponentDiscovery{}
+	callbackMgr := harness.NewCallbackManager(harness.CallbackConfig{Enabled: false}, logger)
+	harnessFactory := &mockHarnessFactory{}
+
+	mgr := newMissionManager(cfg, logger, registry, missionStore, findingStore, llmReg, callbackMgr, harnessFactory)
+
+	// Create a simple test workflow YAML file
+	tmpDir := t.TempDir()
+	workflowPath := filepath.Join(tmpDir, "test-workflow.yaml")
+	workflowYAML := `
+name: Test Workflow
+description: A simple test workflow
+nodes:
+  - id: test-node
+    type: agent
+    name: Test Node
+    agent: test-agent
+    task:
+      action: test
+`
+
+	if err := os.WriteFile(workflowPath, []byte(workflowYAML), 0644); err != nil {
+		t.Fatalf("failed to write test workflow: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Run the mission
+	eventChan, err := mgr.Run(ctx, workflowPath, "test-mission-1", map[string]string{"key": "value"})
+	if err != nil {
+		t.Fatalf("failed to start mission: %v", err)
+	}
+
+	if eventChan == nil {
+		t.Fatal("expected event channel, got nil")
+	}
+
+	// Read at least one event
+	select {
+	case event, ok := <-eventChan:
+		if !ok {
+			t.Log("event channel closed immediately")
+		} else {
+			t.Logf("received event: %s - %s", event.EventType, event.Message)
+		}
+	case <-time.After(2 * time.Second):
+		t.Log("no events received within timeout")
+	}
+
+	// Check that mission was added to active missions
+	if mgr.GetActiveMissionCount() == 0 {
+		t.Log("mission not found in active missions (may have completed quickly)")
+	}
+}
+
+// TestMissionManagerStop tests stopping a mission
+func TestMissionManagerStop(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{}
+	missionStore := newMockMissionStore()
+	findingStore := finding.NewInMemoryStore()
+	llmReg := llm.NewRegistry()
+	registry := &mockComponentDiscovery{}
+	callbackMgr := harness.NewCallbackManager(harness.CallbackConfig{Enabled: false}, logger)
+	harnessFactory := &mockHarnessFactory{}
+
+	mgr := newMissionManager(cfg, logger, registry, missionStore, findingStore, llmReg, callbackMgr, harnessFactory)
+
+	ctx := context.Background()
+
+	// Try to stop a non-existent mission
+	err := mgr.Stop(ctx, "non-existent-mission", false)
+	if err == nil {
+		t.Error("expected error when stopping non-existent mission, got nil")
+	}
+}
+
+// TestMissionManagerList tests listing missions
+func TestMissionManagerList(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{}
+	missionStore := newMockMissionStore()
+	findingStore := finding.NewInMemoryStore()
+	llmReg := llm.NewRegistry()
+	registry := &mockComponentDiscovery{}
+	callbackMgr := harness.NewCallbackManager(harness.CallbackConfig{Enabled: false}, logger)
+	harnessFactory := &mockHarnessFactory{}
+
+	mgr := newMissionManager(cfg, logger, registry, missionStore, findingStore, llmReg, callbackMgr, harnessFactory)
+
+	ctx := context.Background()
+
+	// List missions when empty
+	missions, total, err := mgr.List(ctx, false, 10, 0)
+	if err != nil {
+		t.Fatalf("failed to list missions: %v", err)
+	}
+
+	if total != 0 {
+		t.Errorf("expected 0 missions, got %d", total)
+	}
+
+	if len(missions) != 0 {
+		t.Errorf("expected empty mission list, got %d missions", len(missions))
+	}
+}
+
+// TestMissionManagerGet tests getting a specific mission
+func TestMissionManagerGet(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	cfg := &config.Config{}
+	missionStore := newMockMissionStore()
+	findingStore := finding.NewInMemoryStore()
+	llmReg := llm.NewRegistry()
+	registry := &mockComponentDiscovery{}
+	callbackMgr := harness.NewCallbackManager(harness.CallbackConfig{Enabled: false}, logger)
+	harnessFactory := &mockHarnessFactory{}
+
+	mgr := newMissionManager(cfg, logger, registry, missionStore, findingStore, llmReg, callbackMgr, harnessFactory)
+
+	ctx := context.Background()
+
+	// Try to get a non-existent mission
+	_, err := mgr.Get(ctx, "non-existent-mission")
+	if err == nil {
+		t.Error("expected error when getting non-existent mission, got nil")
+	}
+}

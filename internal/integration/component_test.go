@@ -220,100 +220,100 @@ func TestAgentLifecycle(t *testing.T) {
 	t.Skip("Legacy AgentRegistry removed - use registry.ComponentDiscovery instead")
 
 	/*
-	// This test is disabled - legacy code preserved below for reference
-	ctx := context.Background()
-	registry := agent.NewAgentRegistry()
+		// This test is disabled - legacy code preserved below for reference
+		ctx := context.Background()
+		registry := agent.NewAgentRegistry()
 
-	// Step 1: Register an agent
-	t.Run("RegisterAgent", func(t *testing.T) {
-		factory := func(cfg agent.AgentConfig) (agent.Agent, error) {
-			return newMockAgent("recon", "1.0.0"), nil
-		}
+		// Step 1: Register an agent
+		t.Run("RegisterAgent", func(t *testing.T) {
+			factory := func(cfg agent.AgentConfig) (agent.Agent, error) {
+				return newMockAgent("recon", "1.0.0"), nil
+			}
 
-		err := registry.RegisterInternal("recon", factory)
-		require.NoError(t, err, "should register agent successfully")
+			err := registry.RegisterInternal("recon", factory)
+			require.NoError(t, err, "should register agent successfully")
 
-		// Verify agent is registered
-		agents := registry.List()
-		assert.Len(t, agents, 1, "should have 1 agent registered")
-		assert.Equal(t, "recon", agents[0].Name, "agent name should match")
-		assert.False(t, agents[0].IsExternal, "should be internal agent")
+			// Verify agent is registered
+			agents := registry.List()
+			assert.Len(t, agents, 1, "should have 1 agent registered")
+			assert.Equal(t, "recon", agents[0].Name, "agent name should match")
+			assert.False(t, agents[0].IsExternal, "should be internal agent")
 
-		t.Logf("Registered agent: %s v%s", agents[0].Name, agents[0].Version)
-	})
+			t.Logf("Registered agent: %s v%s", agents[0].Name, agents[0].Version)
+		})
 
-	// Step 2: Create agent instance
-	t.Run("CreateInstance", func(t *testing.T) {
-		cfg := agent.NewAgentConfig("recon").
-			WithSetting("max_depth", 5).
-			WithTimeout(10 * time.Minute)
+		// Step 2: Create agent instance
+		t.Run("CreateInstance", func(t *testing.T) {
+			cfg := agent.NewAgentConfig("recon").
+				WithSetting("max_depth", 5).
+				WithTimeout(10 * time.Minute)
 
-		agentInstance, err := registry.Create("recon", cfg)
-		require.NoError(t, err, "should create agent instance")
-		require.NotNil(t, agentInstance, "agent instance should not be nil")
+			agentInstance, err := registry.Create("recon", cfg)
+			require.NoError(t, err, "should create agent instance")
+			require.NotNil(t, agentInstance, "agent instance should not be nil")
 
-		// Initialize the agent
-		err = agentInstance.Initialize(ctx, cfg)
-		require.NoError(t, err, "should initialize agent")
+			// Initialize the agent
+			err = agentInstance.Initialize(ctx, cfg)
+			require.NoError(t, err, "should initialize agent")
 
-		// Check capabilities
-		caps := agentInstance.Capabilities()
-		assert.NotEmpty(t, caps, "agent should have capabilities")
-		assert.Contains(t, caps, "reconnaissance", "should have reconnaissance capability")
+			// Check capabilities
+			caps := agentInstance.Capabilities()
+			assert.NotEmpty(t, caps, "agent should have capabilities")
+			assert.Contains(t, caps, "reconnaissance", "should have reconnaissance capability")
 
-		t.Logf("Created agent instance with capabilities: %v", caps)
-	})
+			t.Logf("Created agent instance with capabilities: %v", caps)
+		})
 
-	// Step 3: Execute task
-	t.Run("ExecuteTask", func(t *testing.T) {
-		task := agent.NewTask(
-			"scan-target",
-			"Scan the target for vulnerabilities",
-			map[string]any{"target": "https://example.com"},
-		).WithTimeout(5 * time.Minute)
+		// Step 3: Execute task
+		t.Run("ExecuteTask", func(t *testing.T) {
+			task := agent.NewTask(
+				"scan-target",
+				"Scan the target for vulnerabilities",
+				map[string]any{"target": "https://example.com"},
+			).WithTimeout(5 * time.Minute)
 
-		// Create harness for task execution
-		harness := agent.NewDelegationHarness(registry)
+			// Create harness for task execution
+			harness := agent.NewDelegationHarness(registry)
 
-		// Execute via delegation
-		result, err := registry.DelegateToAgent(ctx, "recon", task, harness)
-		require.NoError(t, err, "task execution should succeed")
-		assert.Equal(t, agent.ResultStatusCompleted, result.Status, "task should be completed")
-		assert.NotEmpty(t, result.Output, "should have output")
+			// Execute via delegation
+			result, err := registry.DelegateToAgent(ctx, "recon", task, harness)
+			require.NoError(t, err, "task execution should succeed")
+			assert.Equal(t, agent.ResultStatusCompleted, result.Status, "task should be completed")
+			assert.NotEmpty(t, result.Output, "should have output")
 
-		// Check findings
-		assert.Greater(t, len(result.Findings), 0, "should have at least one finding")
-		assert.Equal(t, agent.SeverityInfo, result.Findings[0].Severity, "first finding should be info")
+			// Check findings
+			assert.Greater(t, len(result.Findings), 0, "should have at least one finding")
+			assert.Equal(t, agent.SeverityInfo, result.Findings[0].Severity, "first finding should be info")
 
-		t.Logf("Task executed: status=%s, findings=%d, duration=%v",
-			result.Status, len(result.Findings), result.Metrics.Duration)
-	})
+			t.Logf("Task executed: status=%s, findings=%d, duration=%v",
+				result.Status, len(result.Findings), result.Metrics.Duration)
+		})
 
-	// Step 4: Check descriptor
-	t.Run("GetDescriptor", func(t *testing.T) {
-		desc, err := registry.GetDescriptor("recon")
-		require.NoError(t, err, "should get descriptor")
+		// Step 4: Check descriptor
+		t.Run("GetDescriptor", func(t *testing.T) {
+			desc, err := registry.GetDescriptor("recon")
+			require.NoError(t, err, "should get descriptor")
 
-		assert.Equal(t, "recon", desc.Name, "name should match")
-		assert.Contains(t, desc.TargetTypes, component.TargetTypeLLMAPI, "should support LLM API targets")
-		assert.Contains(t, desc.TechniqueTypes, component.TechniqueReconnaissance, "should support reconnaissance")
-		assert.NotEmpty(t, desc.Slots, "should have LLM slots")
+			assert.Equal(t, "recon", desc.Name, "name should match")
+			assert.Contains(t, desc.TargetTypes, component.TargetTypeLLMAPI, "should support LLM API targets")
+			assert.Contains(t, desc.TechniqueTypes, component.TechniqueReconnaissance, "should support reconnaissance")
+			assert.NotEmpty(t, desc.Slots, "should have LLM slots")
 
-		t.Logf("Descriptor: %d capabilities, %d target types, %d technique types, %d slots",
-			len(desc.Capabilities), len(desc.TargetTypes), len(desc.TechniqueTypes), len(desc.Slots))
-	})
+			t.Logf("Descriptor: %d capabilities, %d target types, %d technique types, %d slots",
+				len(desc.Capabilities), len(desc.TargetTypes), len(desc.TechniqueTypes), len(desc.Slots))
+		})
 
-	// Step 5: Unregister agent
-	t.Run("UnregisterAgent", func(t *testing.T) {
-		err := registry.Unregister("recon")
-		require.NoError(t, err, "should unregister agent successfully")
+		// Step 5: Unregister agent
+		t.Run("UnregisterAgent", func(t *testing.T) {
+			err := registry.Unregister("recon")
+			require.NoError(t, err, "should unregister agent successfully")
 
-		// Verify agent is removed
-		agents := registry.List()
-		assert.Len(t, agents, 0, "should have 0 agents registered")
+			// Verify agent is removed
+			agents := registry.List()
+			assert.Len(t, agents, 0, "should have 0 agents registered")
 
-		t.Logf("Agent unregistered successfully")
-	})
+			t.Logf("Agent unregistered successfully")
+		})
 	*/
 }
 
@@ -322,104 +322,104 @@ func TestMixedComponents(t *testing.T) {
 	t.Skip("Legacy AgentRegistry removed - use registry.ComponentDiscovery instead")
 
 	/*
-	// This test is disabled - legacy code preserved below for reference
-	ctx := context.Background()
+		// This test is disabled - legacy code preserved below for reference
+		ctx := context.Background()
 
-	t.Run("MixedTools", func(t *testing.T) {
-		registry := tool.NewToolRegistry()
+		t.Run("MixedTools", func(t *testing.T) {
+			registry := tool.NewToolRegistry()
 
-		// Register internal tool
-		internalTool := newMockTool("internal-tool", "1.0.0")
-		err := registry.RegisterInternal(internalTool)
-		require.NoError(t, err, "should register internal tool")
+			// Register internal tool
+			internalTool := newMockTool("internal-tool", "1.0.0")
+			err := registry.RegisterInternal(internalTool)
+			require.NoError(t, err, "should register internal tool")
 
-		// Register external tool
-		externalTool := newMockExternalTool("external-tool", "2.0.0")
-		err = registry.RegisterExternal("external-tool", externalTool)
-		require.NoError(t, err, "should register external tool")
+			// Register external tool
+			externalTool := newMockExternalTool("external-tool", "2.0.0")
+			err = registry.RegisterExternal("external-tool", externalTool)
+			require.NoError(t, err, "should register external tool")
 
-		// List all tools
-		tools := registry.List()
-		assert.Len(t, tools, 2, "should have 2 tools")
+			// List all tools
+			tools := registry.List()
+			assert.Len(t, tools, 2, "should have 2 tools")
 
-		// Count internal vs external
-		internalCount := 0
-		externalCount := 0
-		for _, tool := range tools {
-			if tool.IsExternal {
-				externalCount++
-			} else {
-				internalCount++
+			// Count internal vs external
+			internalCount := 0
+			externalCount := 0
+			for _, tool := range tools {
+				if tool.IsExternal {
+					externalCount++
+				} else {
+					internalCount++
+				}
 			}
-		}
-		assert.Equal(t, 1, internalCount, "should have 1 internal tool")
-		assert.Equal(t, 1, externalCount, "should have 1 external tool")
+			assert.Equal(t, 1, internalCount, "should have 1 internal tool")
+			assert.Equal(t, 1, externalCount, "should have 1 external tool")
 
-		// Execute both tools
-		_, err = registry.Execute(ctx, "internal-tool", map[string]any{"message": "internal"})
-		require.NoError(t, err, "internal tool should execute")
+			// Execute both tools
+			_, err = registry.Execute(ctx, "internal-tool", map[string]any{"message": "internal"})
+			require.NoError(t, err, "internal tool should execute")
 
-		_, err = registry.Execute(ctx, "external-tool", map[string]any{"message": "external"})
-		require.NoError(t, err, "external tool should execute")
+			_, err = registry.Execute(ctx, "external-tool", map[string]any{"message": "external"})
+			require.NoError(t, err, "external tool should execute")
 
-		t.Logf("Mixed tools test passed: %d internal, %d external", internalCount, externalCount)
-	})
+			t.Logf("Mixed tools test passed: %d internal, %d external", internalCount, externalCount)
+		})
 
-	t.Run("MixedPlugins", func(t *testing.T) {
-		registry := plugin.NewPluginRegistry()
+		t.Run("MixedPlugins", func(t *testing.T) {
+			registry := plugin.NewPluginRegistry()
 
-		// Register internal plugin
-		internalPlugin := newMockPlugin("internal-db", "1.0.0")
-		err := registry.Register(internalPlugin, plugin.PluginConfig{Name: "internal-db"})
-		require.NoError(t, err, "should register internal plugin")
+			// Register internal plugin
+			internalPlugin := newMockPlugin("internal-db", "1.0.0")
+			err := registry.Register(internalPlugin, plugin.PluginConfig{Name: "internal-db"})
+			require.NoError(t, err, "should register internal plugin")
 
-		// Register external plugin
-		externalPlugin := newMockExternalPlugin("external-api", "2.0.0")
-		err = registry.RegisterExternal("external-api", externalPlugin, plugin.PluginConfig{Name: "external-api"})
-		require.NoError(t, err, "should register external plugin")
+			// Register external plugin
+			externalPlugin := newMockExternalPlugin("external-api", "2.0.0")
+			err = registry.RegisterExternal("external-api", externalPlugin, plugin.PluginConfig{Name: "external-api"})
+			require.NoError(t, err, "should register external plugin")
 
-		// List all plugins
-		plugins := registry.List()
-		assert.Len(t, plugins, 2, "should have 2 plugins")
+			// List all plugins
+			plugins := registry.List()
+			assert.Len(t, plugins, 2, "should have 2 plugins")
 
-		// Verify both are running
-		for _, p := range plugins {
-			assert.Equal(t, plugin.PluginStatusRunning, p.Status, "plugin should be running")
-		}
-
-		t.Logf("Mixed plugins test passed: %d plugins running", len(plugins))
-	})
-
-	t.Run("MixedAgents", func(t *testing.T) {
-		// registry := agent.NewAgentRegistry()
-
-		// Register internal agent
-		internalFactory := func(cfg agent.AgentConfig) (agent.Agent, error) {
-			return newMockAgent("internal-agent", "1.0.0"), nil
-		}
-		err := registry.RegisterInternal("internal-agent", internalFactory)
-		require.NoError(t, err, "should register internal agent")
-
-		// Register external agent
-		externalAgent := newMockExternalAgent("external-agent", "2.0.0")
-		err = registry.RegisterExternal("external-agent", externalAgent)
-		require.NoError(t, err, "should register external agent")
-
-		// List all agents
-		agents := registry.List()
-		assert.Len(t, agents, 2, "should have 2 agents")
-
-		// Verify internal vs external flags
-		for _, a := range agents {
-			if a.Name == "internal-agent" {
-				assert.False(t, a.IsExternal, "internal-agent should not be external")
-			} else if a.Name == "external-agent" {
-				assert.True(t, a.IsExternal, "external-agent should be external")
+			// Verify both are running
+			for _, p := range plugins {
+				assert.Equal(t, plugin.PluginStatusRunning, p.Status, "plugin should be running")
 			}
-		}
 
-		t.Logf("Mixed agents test passed: %d agents registered", len(agents))
-	})
+			t.Logf("Mixed plugins test passed: %d plugins running", len(plugins))
+		})
+
+		t.Run("MixedAgents", func(t *testing.T) {
+			// registry := agent.NewAgentRegistry()
+
+			// Register internal agent
+			internalFactory := func(cfg agent.AgentConfig) (agent.Agent, error) {
+				return newMockAgent("internal-agent", "1.0.0"), nil
+			}
+			err := registry.RegisterInternal("internal-agent", internalFactory)
+			require.NoError(t, err, "should register internal agent")
+
+			// Register external agent
+			externalAgent := newMockExternalAgent("external-agent", "2.0.0")
+			err = registry.RegisterExternal("external-agent", externalAgent)
+			require.NoError(t, err, "should register external agent")
+
+			// List all agents
+			agents := registry.List()
+			assert.Len(t, agents, 2, "should have 2 agents")
+
+			// Verify internal vs external flags
+			for _, a := range agents {
+				if a.Name == "internal-agent" {
+					assert.False(t, a.IsExternal, "internal-agent should not be external")
+				} else if a.Name == "external-agent" {
+					assert.True(t, a.IsExternal, "external-agent should be external")
+				}
+			}
+
+			t.Logf("Mixed agents test passed: %d agents registered", len(agents))
+		})
 	*/
 }
 
@@ -428,105 +428,105 @@ func TestConcurrentComponentOperations(t *testing.T) {
 	t.Skip("Legacy AgentRegistry removed - use registry.ComponentDiscovery instead")
 
 	/*
-	// This test is disabled - legacy code preserved below for reference
-	ctx := context.Background()
+		// This test is disabled - legacy code preserved below for reference
+		ctx := context.Background()
 
-	t.Run("ConcurrentToolOps", func(t *testing.T) {
-		registry := tool.NewToolRegistry()
+		t.Run("ConcurrentToolOps", func(t *testing.T) {
+			registry := tool.NewToolRegistry()
 
-		// Register initial tools
-		for i := 0; i < 5; i++ {
-			mockTool := newMockTool(fmt.Sprintf("tool-%d", i), "1.0.0")
-			err := registry.RegisterInternal(mockTool)
+			// Register initial tools
+			for i := 0; i < 5; i++ {
+				mockTool := newMockTool(fmt.Sprintf("tool-%d", i), "1.0.0")
+				err := registry.RegisterInternal(mockTool)
+				require.NoError(t, err)
+			}
+
+			var wg sync.WaitGroup
+			concurrency := 20
+
+			// Concurrent executions
+			wg.Add(concurrency)
+			for i := 0; i < concurrency; i++ {
+				go func(idx int) {
+					defer wg.Done()
+					toolName := fmt.Sprintf("tool-%d", idx%5)
+					_, err := registry.Execute(ctx, toolName, map[string]any{"message": fmt.Sprintf("concurrent-%d", idx)})
+					assert.NoError(t, err, "concurrent execution should succeed")
+				}(i)
+			}
+			wg.Wait()
+
+			// Verify metrics
+			for i := 0; i < 5; i++ {
+				metrics, err := registry.Metrics(fmt.Sprintf("tool-%d", i))
+				require.NoError(t, err)
+				assert.Greater(t, metrics.TotalCalls, int64(0), "should have executed calls")
+			}
+
+			t.Logf("Concurrent tool operations test passed with %d goroutines", concurrency)
+		})
+
+		t.Run("ConcurrentPluginOps", func(t *testing.T) {
+			registry := plugin.NewPluginRegistry()
+
+			// Register plugin
+			mockPlugin := newMockPlugin("concurrent-db", "1.0.0")
+			err := registry.Register(mockPlugin, plugin.PluginConfig{Name: "concurrent-db"})
 			require.NoError(t, err)
-		}
 
-		var wg sync.WaitGroup
-		concurrency := 20
+			var wg sync.WaitGroup
+			concurrency := 20
 
-		// Concurrent executions
-		wg.Add(concurrency)
-		for i := 0; i < concurrency; i++ {
-			go func(idx int) {
-				defer wg.Done()
-				toolName := fmt.Sprintf("tool-%d", idx%5)
-				_, err := registry.Execute(ctx, toolName, map[string]any{"message": fmt.Sprintf("concurrent-%d", idx)})
-				assert.NoError(t, err, "concurrent execution should succeed")
-			}(i)
-		}
-		wg.Wait()
+			// Concurrent queries
+			wg.Add(concurrency)
+			for i := 0; i < concurrency; i++ {
+				go func(idx int) {
+					defer wg.Done()
+					_, err := registry.Query(ctx, "concurrent-db", "query", map[string]any{"id": idx})
+					assert.NoError(t, err, "concurrent query should succeed")
+				}(i)
+			}
+			wg.Wait()
 
-		// Verify metrics
-		for i := 0; i < 5; i++ {
-			metrics, err := registry.Metrics(fmt.Sprintf("tool-%d", i))
+			// Verify plugin is still healthy
+			health := registry.Health(ctx)
+			assert.True(t, health.IsHealthy(), "registry should still be healthy")
+
+			t.Logf("Concurrent plugin operations test passed with %d goroutines", concurrency)
+		})
+
+		t.Run("ConcurrentAgentOps", func(t *testing.T) {
+			// registry := agent.NewAgentRegistry()
+
+			// Register agent
+			factory := func(cfg agent.AgentConfig) (agent.Agent, error) {
+				return newMockAgent("concurrent-agent", "1.0.0"), nil
+			}
+			err := registry.RegisterInternal("concurrent-agent", factory)
 			require.NoError(t, err)
-			assert.Greater(t, metrics.TotalCalls, int64(0), "should have executed calls")
-		}
 
-		t.Logf("Concurrent tool operations test passed with %d goroutines", concurrency)
-	})
+			var wg sync.WaitGroup
+			concurrency := 10
 
-	t.Run("ConcurrentPluginOps", func(t *testing.T) {
-		registry := plugin.NewPluginRegistry()
+			// Concurrent task executions
+			wg.Add(concurrency)
+			for i := 0; i < concurrency; i++ {
+				go func(idx int) {
+					defer wg.Done()
+					task := agent.NewTask(
+						fmt.Sprintf("task-%d", idx),
+						"Concurrent test task",
+						map[string]any{"id": idx},
+					)
+					harness := agent.NewDelegationHarness(registry)
+					_, err := registry.DelegateToAgent(ctx, "concurrent-agent", task, harness)
+					assert.NoError(t, err, "concurrent task should succeed")
+				}(i)
+			}
+			wg.Wait()
 
-		// Register plugin
-		mockPlugin := newMockPlugin("concurrent-db", "1.0.0")
-		err := registry.Register(mockPlugin, plugin.PluginConfig{Name: "concurrent-db"})
-		require.NoError(t, err)
-
-		var wg sync.WaitGroup
-		concurrency := 20
-
-		// Concurrent queries
-		wg.Add(concurrency)
-		for i := 0; i < concurrency; i++ {
-			go func(idx int) {
-				defer wg.Done()
-				_, err := registry.Query(ctx, "concurrent-db", "query", map[string]any{"id": idx})
-				assert.NoError(t, err, "concurrent query should succeed")
-			}(i)
-		}
-		wg.Wait()
-
-		// Verify plugin is still healthy
-		health := registry.Health(ctx)
-		assert.True(t, health.IsHealthy(), "registry should still be healthy")
-
-		t.Logf("Concurrent plugin operations test passed with %d goroutines", concurrency)
-	})
-
-	t.Run("ConcurrentAgentOps", func(t *testing.T) {
-		// registry := agent.NewAgentRegistry()
-
-		// Register agent
-		factory := func(cfg agent.AgentConfig) (agent.Agent, error) {
-			return newMockAgent("concurrent-agent", "1.0.0"), nil
-		}
-		err := registry.RegisterInternal("concurrent-agent", factory)
-		require.NoError(t, err)
-
-		var wg sync.WaitGroup
-		concurrency := 10
-
-		// Concurrent task executions
-		wg.Add(concurrency)
-		for i := 0; i < concurrency; i++ {
-			go func(idx int) {
-				defer wg.Done()
-				task := agent.NewTask(
-					fmt.Sprintf("task-%d", idx),
-					"Concurrent test task",
-					map[string]any{"id": idx},
-				)
-				harness := agent.NewDelegationHarness(registry)
-				_, err := registry.DelegateToAgent(ctx, "concurrent-agent", task, harness)
-				assert.NoError(t, err, "concurrent task should succeed")
-			}(i)
-		}
-		wg.Wait()
-
-		t.Logf("Concurrent agent operations test passed with %d goroutines", concurrency)
-	})
+			t.Logf("Concurrent agent operations test passed with %d goroutines", concurrency)
+		})
 	*/
 }
 
@@ -535,83 +535,83 @@ func TestComponentInteraction(t *testing.T) {
 	t.Skip("Legacy AgentRegistry removed - use registry.ComponentDiscovery instead")
 
 	/*
-	// This test is disabled - legacy code preserved below for reference
-	ctx := context.Background()
+		// This test is disabled - legacy code preserved below for reference
+		ctx := context.Background()
 
-	// Create all registries
-	toolRegistry := tool.NewToolRegistry()
-	pluginRegistry := plugin.NewPluginRegistry()
-	agentRegistry := agent.NewAgentRegistry()
+		// Create all registries
+		toolRegistry := tool.NewToolRegistry()
+		pluginRegistry := plugin.NewPluginRegistry()
+		agentRegistry := agent.NewAgentRegistry()
 
-	// Register components
-	t.Run("Setup", func(t *testing.T) {
-		// Register tool
-		mockTool := newMockTool("validator", "1.0.0")
-		err := toolRegistry.RegisterInternal(mockTool)
-		require.NoError(t, err)
+		// Register components
+		t.Run("Setup", func(t *testing.T) {
+			// Register tool
+			mockTool := newMockTool("validator", "1.0.0")
+			err := toolRegistry.RegisterInternal(mockTool)
+			require.NoError(t, err)
 
-		// Register plugin
-		mockPlugin := newMockPlugin("data-source", "1.0.0")
-		err = pluginRegistry.Register(mockPlugin, plugin.PluginConfig{Name: "data-source"})
-		require.NoError(t, err)
+			// Register plugin
+			mockPlugin := newMockPlugin("data-source", "1.0.0")
+			err = pluginRegistry.Register(mockPlugin, plugin.PluginConfig{Name: "data-source"})
+			require.NoError(t, err)
 
-		// Register agent
-		factory := func(cfg agent.AgentConfig) (agent.Agent, error) {
-			return newMockAgent("orchestrator", "1.0.0"), nil
-		}
-		err = agentRegistry.RegisterInternal("orchestrator", factory)
-		require.NoError(t, err)
+			// Register agent
+			factory := func(cfg agent.AgentConfig) (agent.Agent, error) {
+				return newMockAgent("orchestrator", "1.0.0"), nil
+			}
+			err = agentRegistry.RegisterInternal("orchestrator", factory)
+			require.NoError(t, err)
 
-		t.Logf("All components registered")
-	})
+			t.Logf("All components registered")
+		})
 
-	// Test component interaction
-	t.Run("Integration", func(t *testing.T) {
-		// Create harness with tool and plugin executors
-		harness := agent.NewDelegationHarness(agentRegistry).
-			WithToolExecutor(&mockToolExecutor{registry: toolRegistry}).
-			WithPluginExecutor(&mockPluginExecutor{registry: pluginRegistry})
+		// Test component interaction
+		t.Run("Integration", func(t *testing.T) {
+			// Create harness with tool and plugin executors
+			harness := agent.NewDelegationHarness(agentRegistry).
+				WithToolExecutor(&mockToolExecutor{registry: toolRegistry}).
+				WithPluginExecutor(&mockPluginExecutor{registry: pluginRegistry})
 
-		// Execute task that uses tools and plugins
-		task := agent.NewTask(
-			"integrated-task",
-			"Task that uses tools and plugins",
-			map[string]any{"complexity": "high"},
-		)
+			// Execute task that uses tools and plugins
+			task := agent.NewTask(
+				"integrated-task",
+				"Task that uses tools and plugins",
+				map[string]any{"complexity": "high"},
+			)
 
-		result, err := agentRegistry.DelegateToAgent(ctx, "orchestrator", task, harness)
-		require.NoError(t, err, "integrated task should succeed")
-		assert.Equal(t, agent.ResultStatusCompleted, result.Status, "task should complete")
+			result, err := agentRegistry.DelegateToAgent(ctx, "orchestrator", task, harness)
+			require.NoError(t, err, "integrated task should succeed")
+			assert.Equal(t, agent.ResultStatusCompleted, result.Status, "task should complete")
 
-		t.Logf("Integration test passed: task completed successfully")
-	})
+			t.Logf("Integration test passed: task completed successfully")
+		})
 
-	// Test health across all components
-	t.Run("OverallHealth", func(t *testing.T) {
-		toolHealth := toolRegistry.Health(ctx)
-		pluginHealth := pluginRegistry.Health(ctx)
-		agentHealth := agentRegistry.Health(ctx)
+		// Test health across all components
+		t.Run("OverallHealth", func(t *testing.T) {
+			toolHealth := toolRegistry.Health(ctx)
+			pluginHealth := pluginRegistry.Health(ctx)
+			agentHealth := agentRegistry.Health(ctx)
 
-		assert.True(t, toolHealth.IsHealthy(), "tools should be healthy")
-		assert.True(t, pluginHealth.IsHealthy(), "plugins should be healthy")
-		assert.True(t, agentHealth.IsHealthy(), "agents should be healthy")
+			assert.True(t, toolHealth.IsHealthy(), "tools should be healthy")
+			assert.True(t, pluginHealth.IsHealthy(), "plugins should be healthy")
+			assert.True(t, agentHealth.IsHealthy(), "agents should be healthy")
 
-		t.Logf("Overall health check passed")
-	})
+			t.Logf("Overall health check passed")
+		})
 
-	// Cleanup
-	t.Run("Cleanup", func(t *testing.T) {
-		err := toolRegistry.Unregister("validator")
-		require.NoError(t, err)
+		// Cleanup
+		t.Run("Cleanup", func(t *testing.T) {
+			err := toolRegistry.Unregister("validator")
+			require.NoError(t, err)
 
-		err = pluginRegistry.Shutdown(ctx)
-		require.NoError(t, err)
+			err = pluginRegistry.Shutdown(ctx)
+			require.NoError(t, err)
 
-		err = agentRegistry.Unregister("orchestrator")
-		require.NoError(t, err)
+			err = agentRegistry.Unregister("orchestrator")
+			require.NoError(t, err)
 
-		t.Logf("All components cleaned up")
-	})
+			t.Logf("All components cleaned up")
+		})
 	*/
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -182,4 +184,31 @@ func IsVerbose() bool {
 	}
 
 	return false
+}
+
+// CloseWithLog attempts to close the provided resource and logs any error
+// at warning level. This is intended for use in defer statements to ensure
+// cleanup errors are not silently ignored.
+//
+// The name parameter should describe the resource being closed (e.g., "file",
+// "connection", "database"). If logger is nil, slog.Default() is used.
+//
+// Example usage:
+//
+//	defer internal.CloseWithLog(file, logger, "config file")
+//	defer internal.CloseWithLog(conn, logger, "gRPC connection")
+func CloseWithLog(closer io.Closer, logger *slog.Logger, name string) {
+	if closer == nil {
+		return
+	}
+
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	if err := closer.Close(); err != nil {
+		logger.Warn("failed to close resource",
+			"resource", name,
+			"error", err)
+	}
 }

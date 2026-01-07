@@ -22,7 +22,7 @@ The integration tests in `integration_test.go` provide end-to-end validation of 
 ### Run All Integration Tests
 
 ```bash
-cd /home/anthony/Code/zero-day.ai/opensource/gibson
+cd <gibson-root>
 go test -tags integration,fts5 -v ./internal/component/
 ```
 

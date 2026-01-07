@@ -273,13 +273,13 @@ func TestAttackWithAgentFailure(t *testing.T) {
 
 // mockAgentGRPCServer simulates a gRPC agent server for testing
 type mockAgentGRPCServer struct {
-	endpoint     string
-	listener     net.Listener
-	regClient    sdkregistry.Registry
-	serviceInfo  sdkregistry.ServiceInfo
-	callCount    int
-	ctx          context.Context
-	cancelFunc   context.CancelFunc
+	endpoint    string
+	listener    net.Listener
+	regClient   sdkregistry.Registry
+	serviceInfo sdkregistry.ServiceInfo
+	callCount   int
+	ctx         context.Context
+	cancelFunc  context.CancelFunc
 }
 
 func startMockAgentServer(t *testing.T, ctx context.Context, registryEndpoint string, port int) (*mockAgentGRPCServer, sdkregistry.ServiceInfo) {

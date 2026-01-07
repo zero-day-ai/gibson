@@ -565,7 +565,7 @@ func TestAllComponentsIntegrate(t *testing.T) {
 		_, err = db.Conn().Exec(insertTargetSQL,
 			target.ID.String(),
 			target.Name,
-			target.Type.String(),
+			target.Type,
 			target.Provider,
 			target.URL,
 			target.Model,

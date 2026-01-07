@@ -309,7 +309,7 @@ nodes:
 `,
 			// FIXME: This should pass once mission run command is updated to handle targets properly
 			// See TODO in mission.go:334
-			wantError: true,
+			wantError:    true,
 			checkMission: nil,
 		},
 		{

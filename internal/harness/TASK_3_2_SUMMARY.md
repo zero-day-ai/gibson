@@ -5,7 +5,7 @@ Updated the `DefaultAgentHarness` implementation to use the new `RegistryAdapter
 
 ## Files Modified
 
-### 1. `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/harness/implementation.go`
+### 1. `<gibson-root>/internal/harness/implementation.go`
 
 #### Changes Made:
 
@@ -112,7 +112,7 @@ Updated the `DefaultAgentHarness` implementation to use the new `RegistryAdapter
    }
    ```
 
-### 2. `/home/anthony/Code/zero-day.ai/opensource/gibson/internal/harness/factory.go`
+### 2. `<gibson-root>/internal/harness/factory.go`
 
 #### Changes Made:
 

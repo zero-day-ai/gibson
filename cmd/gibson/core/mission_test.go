@@ -17,19 +17,19 @@ import (
 
 // mockMissionStore implements mission.MissionStore for testing
 type mockMissionStore struct {
-	missions        []*mission.Mission
-	saveFn          func(ctx context.Context, m *mission.Mission) error
-	getFn           func(ctx context.Context, id types.ID) (*mission.Mission, error)
-	getByNameFn     func(ctx context.Context, name string) (*mission.Mission, error)
-	listFn          func(ctx context.Context, filter *mission.MissionFilter) ([]*mission.Mission, error)
-	updateFn        func(ctx context.Context, m *mission.Mission) error
-	updateStatusFn  func(ctx context.Context, id types.ID, status mission.MissionStatus) error
+	missions         []*mission.Mission
+	saveFn           func(ctx context.Context, m *mission.Mission) error
+	getFn            func(ctx context.Context, id types.ID) (*mission.Mission, error)
+	getByNameFn      func(ctx context.Context, name string) (*mission.Mission, error)
+	listFn           func(ctx context.Context, filter *mission.MissionFilter) ([]*mission.Mission, error)
+	updateFn         func(ctx context.Context, m *mission.Mission) error
+	updateStatusFn   func(ctx context.Context, id types.ID, status mission.MissionStatus) error
 	updateProgressFn func(ctx context.Context, id types.ID, progress float64) error
-	deleteFn        func(ctx context.Context, id types.ID) error
-	getByTargetFn   func(ctx context.Context, targetID types.ID) ([]*mission.Mission, error)
-	getActiveFn     func(ctx context.Context) ([]*mission.Mission, error)
+	deleteFn         func(ctx context.Context, id types.ID) error
+	getByTargetFn    func(ctx context.Context, targetID types.ID) ([]*mission.Mission, error)
+	getActiveFn      func(ctx context.Context) ([]*mission.Mission, error)
 	saveCheckpointFn func(ctx context.Context, missionID types.ID, checkpoint *mission.MissionCheckpoint) error
-	countFn         func(ctx context.Context, filter *mission.MissionFilter) (int, error)
+	countFn          func(ctx context.Context, filter *mission.MissionFilter) (int, error)
 }
 
 func (m *mockMissionStore) Save(ctx context.Context, mission *mission.Mission) error {
@@ -201,22 +201,22 @@ func TestMissionList(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "mission1",
-						Status:      mission.MissionStatusRunning,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "mission1",
+						Status:     mission.MissionStatusRunning,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 					{
-						ID:          types.NewID(),
-						Name:        "mission2",
-						Status:      mission.MissionStatusCompleted,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "mission2",
+						Status:     mission.MissionStatusCompleted,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -228,22 +228,22 @@ func TestMissionList(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "mission1",
-						Status:      mission.MissionStatusRunning,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "mission1",
+						Status:     mission.MissionStatusRunning,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 					{
-						ID:          types.NewID(),
-						Name:        "mission2",
-						Status:      mission.MissionStatusCompleted,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "mission2",
+						Status:     mission.MissionStatusCompleted,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -255,22 +255,22 @@ func TestMissionList(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "mission1",
-						Status:      mission.MissionStatusRunning,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "mission1",
+						Status:     mission.MissionStatusRunning,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 					{
-						ID:          types.NewID(),
-						Name:        "mission2",
-						Status:      mission.MissionStatusCompleted,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "mission2",
+						Status:     mission.MissionStatusCompleted,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -367,11 +367,11 @@ func TestMissionShow(t *testing.T) {
 	workflowID := types.NewID()
 
 	tests := []struct {
-		name       string
+		name        string
 		missionName string
-		setupMock  func(*mockMissionStore)
-		wantErr    bool
-		wantErrMsg string
+		setupMock   func(*mockMissionStore)
+		wantErr     bool
+		wantErrMsg  string
 	}{
 		{
 			name:        "existing mission",
@@ -379,13 +379,13 @@ func TestMissionShow(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "test-mission",
-						Status:      mission.MissionStatusRunning,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "test-mission",
+						Status:     mission.MissionStatusRunning,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -592,13 +592,13 @@ func TestMissionResume(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "test-mission",
-						Status:      mission.MissionStatusPending,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "test-mission",
+						Status:     mission.MissionStatusPending,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -609,13 +609,13 @@ func TestMissionResume(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "completed-mission",
-						Status:      mission.MissionStatusCompleted,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "completed-mission",
+						Status:     mission.MissionStatusCompleted,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -627,13 +627,13 @@ func TestMissionResume(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "failed-mission",
-						Status:      mission.MissionStatusFailed,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "failed-mission",
+						Status:     mission.MissionStatusFailed,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -645,13 +645,13 @@ func TestMissionResume(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "cancelled-mission",
-						Status:      mission.MissionStatusCancelled,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "cancelled-mission",
+						Status:     mission.MissionStatusCancelled,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -730,13 +730,13 @@ func TestMissionStop(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "running-mission",
-						Status:      mission.MissionStatusRunning,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "running-mission",
+						Status:     mission.MissionStatusRunning,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -747,13 +747,13 @@ func TestMissionStop(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "pending-mission",
-						Status:      mission.MissionStatusPending,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "pending-mission",
+						Status:     mission.MissionStatusPending,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -835,13 +835,13 @@ func TestMissionDelete(t *testing.T) {
 				missionID := types.NewID()
 				m.missions = []*mission.Mission{
 					{
-						ID:          missionID,
-						Name:        "completed-mission",
-						Status:      mission.MissionStatusCompleted,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         missionID,
+						Name:       "completed-mission",
+						Status:     mission.MissionStatusCompleted,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 				// Mock Delete to check terminal state
@@ -865,13 +865,13 @@ func TestMissionDelete(t *testing.T) {
 			setupMock: func(m *mockMissionStore) {
 				m.missions = []*mission.Mission{
 					{
-						ID:          types.NewID(),
-						Name:        "test-mission",
-						Status:      mission.MissionStatusCompleted,
-						TargetID:    targetID,
-						WorkflowID:  workflowID,
-						CreatedAt:   now,
-						UpdatedAt:   now,
+						ID:         types.NewID(),
+						Name:       "test-mission",
+						Status:     mission.MissionStatusCompleted,
+						TargetID:   targetID,
+						WorkflowID: workflowID,
+						CreatedAt:  now,
+						UpdatedAt:  now,
 					},
 				}
 			},
@@ -989,7 +989,7 @@ func TestIsValidMissionStatus(t *testing.T) {
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
 		(len(s) > 0 && len(substr) > 0 && fmt.Sprintf("%s", s) != "" &&
-		len(s) >= len(substr) && s[:len(substr)] == substr) ||
+			len(s) >= len(substr) && s[:len(substr)] == substr) ||
 		(len(s) > len(substr) && s[len(s)-len(substr):] == substr) ||
 		(len(s) > len(substr) && findSubstring(s, substr)))
 }

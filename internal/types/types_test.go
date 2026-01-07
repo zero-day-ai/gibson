@@ -3,7 +3,6 @@ package types
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -346,7 +345,7 @@ func TestTargetEntityIntegration(t *testing.T) {
 			wantErr: false,
 			validate: func(t *testing.T, target *Target) {
 				assert.Equal(t, "Test LLM", target.Name)
-				assert.Equal(t, TargetTypeLLMAPI, target.Type)
+				assert.Equal(t, string(TargetTypeLLMAPI), target.Type)
 				assert.Equal(t, ProviderOpenAI, target.Provider)
 				assert.Equal(t, "gpt-4", target.Model)
 				assert.NotNil(t, target.CredentialID)
@@ -367,29 +366,40 @@ func TestTargetEntityIntegration(t *testing.T) {
 			},
 		},
 		{
-			name: "target with empty URL fails validation",
+			name: "target with empty URL and no Connection fails validation",
 			setupTarget: func() *Target {
-				target := NewTarget("Valid Name", "", TargetTypeLLMChat)
+				// Create target without URL and without Connection
+				target := &Target{
+					ID:      NewID(),
+					Name:    "Valid Name",
+					URL:     "",
+					Type:    string(TargetTypeLLMChat),
+					Status:  TargetStatusActive,
+					Timeout: 30,
+				}
 				return target
 			},
 			wantErr: true,
 			validate: func(t *testing.T, target *Target) {
 				err := target.Validate()
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "URL cannot be empty")
+				assert.Contains(t, err.Error(), "Connection")
 			},
 		},
 		{
-			name: "target with invalid type fails validation",
+			name: "target with Connection but no URL is valid",
 			setupTarget: func() *Target {
-				target := NewTarget("Valid", "https://api.example.com", "invalid_type")
+				// New schema-based targets use Connection map instead of URL
+				target := NewTargetWithConnection("Valid", string(TargetTypeLLMChat), map[string]any{
+					"url": "https://api.example.com",
+				})
 				return target
 			},
-			wantErr: true,
+			wantErr: false,
 			validate: func(t *testing.T, target *Target) {
 				err := target.Validate()
-				assert.Error(t, err)
-				assert.Contains(t, strings.ToLower(err.Error()), "invalid target type")
+				assert.NoError(t, err)
+				assert.Equal(t, "https://api.example.com", target.GetURL())
 			},
 		},
 		{

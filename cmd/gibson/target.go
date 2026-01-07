@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/gibson/internal/verbose"
 )
 
 var targetCmd = &cobra.Command{
@@ -30,11 +32,24 @@ var targetListCmd = &cobra.Command{
 }
 
 var targetAddCmd = &cobra.Command{
-	Use:   "add URL",
+	Use:   "add NAME",
 	Short: "Add a new target",
-	Long:  `Add a new target with auto-detection of settings from URL`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runTargetAdd,
+	Long: `Add a new target with schema-based connection parameters.
+
+Examples:
+  # Add HTTP API target
+  gibson target add my-api --type http_api --connection '{"url":"https://api.example.com/v1/chat"}'
+
+  # Add Kubernetes cluster target
+  gibson target add prod-k8s --type kubernetes --connection '{"cluster":"prod","namespace":"default"}'
+
+  # Add smart contract target
+  gibson target add my-contract --type smart_contract --connection '{"chain":"ethereum","address":"0x..."}'
+
+  # Interactive mode (prompts for required fields)
+  gibson target add my-target --type http_api --interactive`,
+	Args: cobra.ExactArgs(1),
+	RunE: runTargetAdd,
 }
 
 var targetShowCmd = &cobra.Command{
@@ -65,16 +80,24 @@ var targetDeleteCmd = &cobra.Command{
 var (
 	listStatusFilter   string
 	listProviderFilter string
+	listOutputFormat   string
 )
 
 // Flags for target add
 var (
-	addName       string
-	addType       string
-	addProvider   string
-	addCredential string
-	addModel      string
-	addTimeout    int
+	addType        string
+	addConnection  string
+	addInteractive bool
+	addProvider    string
+	addCredential  string
+	addDescription string
+	addTags        string
+	addTimeout     int
+)
+
+// Flags for target show
+var (
+	showOutputFormat string
 )
 
 // Flags for target delete
@@ -86,15 +109,21 @@ func init() {
 	// List command flags
 	targetListCmd.Flags().StringVar(&listStatusFilter, "status", "", "Filter by status (active, inactive, error)")
 	targetListCmd.Flags().StringVar(&listProviderFilter, "provider", "", "Filter by provider (openai, anthropic, google, azure, ollama, custom)")
+	targetListCmd.Flags().StringVarP(&listOutputFormat, "output", "o", "table", "Output format (table, json)")
 
 	// Add command flags
-	targetAddCmd.Flags().StringVar(&addName, "name", "", "Human-readable name for the target (required)")
-	targetAddCmd.Flags().StringVar(&addType, "type", "llm_api", "Target type (llm_chat, llm_api, rag, agent, embedding, multimodal)")
-	targetAddCmd.Flags().StringVar(&addProvider, "provider", "", "Provider (openai, anthropic, google, azure, ollama, custom)")
+	targetAddCmd.Flags().StringVar(&addType, "type", "", "Target type (http_api, kubernetes, smart_contract, etc.) - required")
+	targetAddCmd.Flags().StringVar(&addConnection, "connection", "", "Connection parameters as JSON - required unless --interactive")
+	targetAddCmd.Flags().BoolVar(&addInteractive, "interactive", false, "Prompt for connection fields based on schema")
+	targetAddCmd.Flags().StringVar(&addProvider, "provider", "", "Provider hint (optional)")
 	targetAddCmd.Flags().StringVar(&addCredential, "credential", "", "Credential name to use for authentication")
-	targetAddCmd.Flags().StringVar(&addModel, "model", "", "Model identifier (e.g., gpt-4, claude-3)")
+	targetAddCmd.Flags().StringVar(&addDescription, "description", "", "Target description")
+	targetAddCmd.Flags().StringVar(&addTags, "tags", "", "Comma-separated tags")
 	targetAddCmd.Flags().IntVar(&addTimeout, "timeout", 30, "Request timeout in seconds")
-	targetAddCmd.MarkFlagRequired("name")
+	targetAddCmd.MarkFlagRequired("type")
+
+	// Show command flags
+	targetShowCmd.Flags().StringVarP(&showOutputFormat, "output", "o", "text", "Output format (text, json)")
 
 	// Delete command flags
 	targetDeleteCmd.Flags().BoolVar(&deleteForce, "force", false, "Skip confirmation prompt")
@@ -110,6 +139,11 @@ func init() {
 // runTargetList executes the target list command
 func runTargetList(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
+
+	// Validate output format
+	if listOutputFormat != "table" && listOutputFormat != "json" {
+		return fmt.Errorf("invalid output format: %s (must be 'table' or 'json')", listOutputFormat)
+	}
 
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
@@ -152,22 +186,39 @@ func runTargetList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(targets) == 0 {
-		cmd.Println("No targets found.")
+		if listOutputFormat == "json" {
+			cmd.Println("[]")
+		} else {
+			cmd.Println("No targets found.")
+		}
 		return nil
 	}
 
-	// Display results in table format
+	// Output based on format
+	switch listOutputFormat {
+	case "json":
+		return outputTargetListJSON(cmd, targets)
+	default:
+		return outputTargetListTable(cmd, targets)
+	}
+}
+
+// outputTargetListTable displays targets in table format
+func outputTargetListTable(cmd *cobra.Command, targets []*types.Target) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tTYPE\tPROVIDER\tSTATUS\tURL")
-	fmt.Fprintln(w, "----\t----\t--------\t------\t---")
+	fmt.Fprintln(w, "NAME\tTYPE\tPROVIDER\tSTATUS\tCONNECTION")
+	fmt.Fprintln(w, "----\t----\t--------\t------\t----------")
 
 	for _, target := range targets {
+		// Extract key connection parameter summary
+		connectionSummary := extractConnectionSummary(target)
+
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			target.Name,
 			target.Type,
 			target.Provider,
 			target.Status,
-			target.URL,
+			connectionSummary,
 		)
 	}
 
@@ -175,33 +226,52 @@ func runTargetList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// outputTargetListJSON displays targets in JSON format
+func outputTargetListJSON(cmd *cobra.Command, targets []*types.Target) error {
+	encoder := json.NewEncoder(cmd.OutOrStdout())
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(targets)
+}
+
+// extractConnectionSummary extracts key connection info for display
+func extractConnectionSummary(target *types.Target) string {
+	// For now, just show URL since Connection field hasn't been added yet
+	// When Connection is added, this will be extended to handle different target types
+	if target.URL != "" {
+		return truncateString(target.URL, 50)
+	}
+	return "N/A"
+}
+
 // runTargetAdd executes the target add command
 func runTargetAdd(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
-	targetURL := args[0]
+	targetName := args[0]
 
-	// Validate URL format
-	parsedURL, err := url.Parse(targetURL)
-	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
+	// Validate required flags
+	if !addInteractive && addConnection == "" {
+		return fmt.Errorf("either --connection or --interactive is required")
 	}
 
-	if parsedURL.Scheme == "" {
-		return fmt.Errorf("URL must include scheme (http:// or https://)")
+	// Parse connection parameters
+	var connection map[string]any
+	var err error
+
+	if addInteractive {
+		connection, err = promptForConnection(cmd, addType)
+		if err != nil {
+			return fmt.Errorf("interactive input failed: %w", err)
+		}
+	} else {
+		if err := json.Unmarshal([]byte(addConnection), &connection); err != nil {
+			return fmt.Errorf("invalid JSON in --connection: %w", err)
+		}
 	}
 
-	if parsedURL.Host == "" {
-		return fmt.Errorf("URL must include host")
-	}
-
-	// Auto-detect provider if not specified
-	if addProvider == "" {
-		addProvider = detectProvider(parsedURL)
-	}
-
-	// Auto-detect model if not specified
-	if addModel == "" {
-		addModel = detectModel(parsedURL, addProvider)
+	// Validate connection against schema if available
+	if err := validateConnectionAgainstSchema(cmd, addType, connection); err != nil {
+		// Don't fail, just warn if schema not found or validation fails
+		cmd.Printf("Warning: %v\n", err)
 	}
 
 	// Get Gibson home directory
@@ -221,33 +291,44 @@ func runTargetAdd(cmd *cobra.Command, args []string) error {
 	dao := database.NewTargetDAO(db)
 
 	// Check if target name already exists
-	exists, err := dao.ExistsByName(ctx, addName)
+	exists, err := dao.ExistsByName(ctx, targetName)
 	if err != nil {
 		return fmt.Errorf("failed to check target name: %w", err)
 	}
 	if exists {
-		return fmt.Errorf("target with name '%s' already exists", addName)
+		return fmt.Errorf("target with name '%s' already exists", targetName)
 	}
 
-	// Create target
-	target := types.NewTarget(addName, targetURL, types.TargetType(addType))
+	// Extract URL from connection for backward compatibility
+	targetURL := ""
+	if urlVal, ok := connection["url"].(string); ok {
+		targetURL = urlVal
+	}
+
+	// Create target with connection map
+	// Note: For now, we still use the old NewTarget but will migrate to Connection-based approach
+	target := types.NewTarget(targetName, targetURL, types.TargetType(addType))
 	target.Provider = types.Provider(addProvider)
-	target.Model = addModel
 	target.Timeout = addTimeout
+	target.Description = addDescription
 
-	// Validate target type
-	if !target.Type.IsValid() {
-		return fmt.Errorf("invalid target type: %s", addType)
+	// Parse tags if provided
+	if addTags != "" {
+		target.Tags = strings.Split(addTags, ",")
+		for i := range target.Tags {
+			target.Tags[i] = strings.TrimSpace(target.Tags[i])
+		}
 	}
 
-	// Validate provider
-	if !target.Provider.IsValid() {
-		return fmt.Errorf("invalid provider: %s", addProvider)
+	// Store connection parameters in Config field for now
+	// TODO: Once Connection field is added to Target, use that instead
+	if target.Config == nil {
+		target.Config = make(map[string]interface{})
 	}
+	target.Config["connection"] = connection
 
 	// Handle credential if specified
 	if addCredential != "" {
-		// Look up credential by name
 		credDAO := database.NewCredentialDAO(db)
 		cred, err := credDAO.GetByName(ctx, addCredential)
 		if err != nil {
@@ -281,10 +362,140 @@ func runTargetAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+
+// promptForConnection prompts the user for connection fields based on target type schema
+func promptForConnection(cmd *cobra.Command, targetType string) (map[string]any, error) {
+	connection := make(map[string]any)
+	reader := bufio.NewReader(os.Stdin)
+
+	// Try to get schema for the target type
+	// For now, provide basic prompts for common types
+	// TODO: When built-in schemas are available, use them to generate prompts
+
+	switch targetType {
+	case "http_api", "llm_api", "llm_chat":
+		cmd.Print("Enter URL: ")
+		url, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		connection["url"] = strings.TrimSpace(url)
+
+		cmd.Print("Enter method (default: POST): ")
+		method, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		method = strings.TrimSpace(method)
+		if method != "" {
+			connection["method"] = method
+		} else {
+			connection["method"] = "POST"
+		}
+
+	case "kubernetes":
+		cmd.Print("Enter cluster name or kubeconfig context: ")
+		cluster, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		connection["cluster"] = strings.TrimSpace(cluster)
+
+		cmd.Print("Enter namespace (default: default): ")
+		namespace, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		namespace = strings.TrimSpace(namespace)
+		if namespace != "" {
+			connection["namespace"] = namespace
+		} else {
+			connection["namespace"] = "default"
+		}
+
+		cmd.Print("Enter kubeconfig path (optional): ")
+		kubeconfig, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		kubeconfig = strings.TrimSpace(kubeconfig)
+		if kubeconfig != "" {
+			connection["kubeconfig"] = kubeconfig
+		}
+
+	case "smart_contract":
+		cmd.Print("Enter blockchain chain (ethereum, polygon, arbitrum, base, solana): ")
+		chain, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		connection["chain"] = strings.TrimSpace(chain)
+
+		cmd.Print("Enter contract address: ")
+		address, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		connection["address"] = strings.TrimSpace(address)
+
+		cmd.Print("Enter RPC URL (optional): ")
+		rpcURL, err := reader.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		rpcURL = strings.TrimSpace(rpcURL)
+		if rpcURL != "" {
+			connection["rpc_url"] = rpcURL
+		}
+
+	default:
+		return nil, fmt.Errorf("interactive mode not yet supported for target type '%s'. Please use --connection flag", targetType)
+	}
+
+	return connection, nil
+}
+
+// validateConnectionAgainstSchema validates connection parameters against the target type schema
+func validateConnectionAgainstSchema(cmd *cobra.Command, targetType string, connection map[string]any) error {
+	// TODO: Once SDK built-in schemas are available via import, use them here
+	// For now, perform basic validation
+
+	switch targetType {
+	case "http_api", "llm_api", "llm_chat":
+		if _, ok := connection["url"]; !ok {
+			return fmt.Errorf("connection validation: 'url' is required for type '%s'", targetType)
+		}
+
+	case "kubernetes":
+		if _, ok := connection["cluster"]; !ok {
+			return fmt.Errorf("connection validation: 'cluster' is required for type '%s'", targetType)
+		}
+
+	case "smart_contract":
+		if _, ok := connection["chain"]; !ok {
+			return fmt.Errorf("connection validation: 'chain' is required for type '%s'", targetType)
+		}
+		if _, ok := connection["address"]; !ok {
+			return fmt.Errorf("connection validation: 'address' is required for type '%s'", targetType)
+		}
+
+	default:
+		// Unknown target type - warn but allow
+		cmd.Printf("Warning: no schema registered for type '%s', skipping validation\n", targetType)
+	}
+
+	return nil
+}
+
 // runTargetShow executes the target show command
 func runTargetShow(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	targetName := args[0]
+
+	// Validate output format
+	if showOutputFormat != "text" && showOutputFormat != "json" {
+		return fmt.Errorf("invalid output format: %s (must be 'text' or 'json')", showOutputFormat)
+	}
 
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
@@ -307,7 +518,17 @@ func runTargetShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get target: %w", err)
 	}
 
-	// Display target details
+	// Output based on format
+	switch showOutputFormat {
+	case "json":
+		return outputTargetShowJSON(cmd, target)
+	default:
+		return outputTargetShowText(cmd, target)
+	}
+}
+
+// outputTargetShowText displays target in human-readable text format
+func outputTargetShowText(cmd *cobra.Command, target *types.Target) error {
 	cmd.Printf("Target: %s\n", target.Name)
 	cmd.Printf("ID: %s\n", target.ID)
 	cmd.Printf("Type: %s\n", target.Type)
@@ -333,14 +554,16 @@ func runTargetShow(cmd *cobra.Command, args []string) error {
 
 	if len(target.Headers) > 0 {
 		cmd.Println("\nCustom Headers:")
-		for k, v := range target.Headers {
+		maskedHeaders := maskSensitiveMapValues(target.Headers)
+		for k, v := range maskedHeaders {
 			cmd.Printf("  %s: %s\n", k, v)
 		}
 	}
 
 	if len(target.Config) > 0 {
 		cmd.Println("\nConfiguration:")
-		configJSON, _ := json.MarshalIndent(target.Config, "  ", "  ")
+		maskedConfig := maskSensitiveConfig(target.Config)
+		configJSON, _ := json.MarshalIndent(maskedConfig, "  ", "  ")
 		cmd.Printf("  %s\n", string(configJSON))
 	}
 
@@ -354,10 +577,110 @@ func runTargetShow(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// outputTargetShowJSON displays target in JSON format with sensitive fields masked
+func outputTargetShowJSON(cmd *cobra.Command, target *types.Target) error {
+	// Create a copy of the target with masked sensitive fields
+	maskedTarget := *target
+	maskedTarget.Headers = maskSensitiveMapValues(target.Headers)
+	maskedTarget.Config = maskSensitiveConfig(target.Config)
+
+	encoder := json.NewEncoder(cmd.OutOrStdout())
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(maskedTarget)
+}
+
+// maskSensitiveMapValues masks sensitive values in string maps
+func maskSensitiveMapValues(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+
+	result := make(map[string]string, len(m))
+	for k, v := range m {
+		if isSensitiveKey(k) {
+			result[k] = maskValue(v)
+		} else {
+			result[k] = v
+		}
+	}
+	return result
+}
+
+// maskSensitiveConfig masks sensitive values in config map
+func maskSensitiveConfig(config map[string]interface{}) map[string]interface{} {
+	if config == nil {
+		return nil
+	}
+
+	result := make(map[string]interface{}, len(config))
+	for k, v := range config {
+		if isSensitiveKey(k) {
+			// Mask string values
+			if strVal, ok := v.(string); ok {
+				result[k] = maskValue(strVal)
+			} else {
+				result[k] = "[REDACTED]"
+			}
+		} else {
+			// Recursively mask nested maps
+			if mapVal, ok := v.(map[string]interface{}); ok {
+				result[k] = maskSensitiveConfig(mapVal)
+			} else {
+				result[k] = v
+			}
+		}
+	}
+	return result
+}
+
+// isSensitiveKey checks if a key name indicates sensitive data
+func isSensitiveKey(key string) bool {
+	keyLower := strings.ToLower(key)
+	sensitivePatterns := []string{
+		"api_key", "apikey", "api-key",
+		"token", "access_token", "bearer_token",
+		"password", "passwd", "pwd",
+		"secret", "client_secret",
+		"authorization", "auth",
+		"credential", "credentials",
+		"private_key", "privatekey",
+	}
+
+	for _, pattern := range sensitivePatterns {
+		if strings.Contains(keyLower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// maskValue masks a sensitive value, showing only first/last characters
+func maskValue(value string) string {
+	if len(value) == 0 {
+		return ""
+	}
+	if len(value) <= 8 {
+		return "********"
+	}
+	// Show first 4 and last 4 characters
+	return value[:4] + "..." + value[len(value)-4:]
+}
+
 // runTargetTest executes the target test command
 func runTargetTest(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	targetName := args[0]
+
+	// Parse global flags for verbose logging
+	flags, err := ParseGlobalFlags(cmd)
+	if err != nil {
+		return fmt.Errorf("failed to parse flags: %w", err)
+	}
+
+	// Setup verbose logging
+	verboseLevel := flags.VerbosityLevel()
+	writer, cleanup := internal.SetupVerbose(cmd, verboseLevel, flags.OutputFormat == "json")
+	defer cleanup()
 
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
@@ -380,7 +703,40 @@ func runTargetTest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get target: %w", err)
 	}
 
+	// Emit verbose event for provider detection
+	if writer != nil && target.URL != "" {
+		// Parse URL to detect provider
+		parsedURL, _ := url.Parse(target.URL)
+		if parsedURL != nil {
+			detectedProvider := detectProvider(parsedURL)
+			event := verbose.NewVerboseEvent(
+				"target.provider_detected", // Custom event type
+				verbose.LevelVerbose,
+				map[string]interface{}{
+					"target_name": target.Name,
+					"target_url":  truncateString(target.URL, 100),
+					"provider":    detectedProvider,
+				},
+			)
+			writer.Bus().Emit(ctx, event)
+		}
+	}
+
 	cmd.Printf("Testing connectivity to %s...\n", target.Name)
+
+	// Emit verbose event for connectivity check start
+	if writer != nil {
+		event := verbose.NewVerboseEvent(
+			"target.connectivity_check", // Custom event type
+			verbose.LevelVerbose,
+			map[string]interface{}{
+				"target_name": target.Name,
+				"target_url":  truncateString(target.URL, 100),
+				"timeout":     target.Timeout,
+			},
+		)
+		writer.Bus().Emit(ctx, event)
+	}
 
 	// Create HTTP client with timeout
 	client := &http.Client{
@@ -406,17 +762,46 @@ func runTargetTest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		cmd.Printf("Failed: %v\n", err)
 
+		// Emit verbose event for failed check
+		if writer != nil {
+			event := verbose.NewVerboseEvent(
+				"target.connectivity_failed", // Custom event type
+				verbose.LevelVerbose,
+				map[string]interface{}{
+					"target_name": target.Name,
+					"error":       err.Error(),
+					"duration":    duration.String(),
+				},
+			)
+			writer.Bus().Emit(ctx, event)
+		}
+
 		// Update target status to error
 		target.Status = types.TargetStatusError
 		dao.Update(ctx, target)
 
 		return fmt.Errorf("connectivity test failed")
 	}
-	defer resp.Body.Close()
+	defer internal.CloseWithLog(resp.Body, nil, "HTTP response body")
 
 	// Check response
 	if resp.StatusCode >= 200 && resp.StatusCode < 500 {
 		cmd.Printf("Success: Connected in %v (Status: %d)\n", duration, resp.StatusCode)
+
+		// Emit verbose event for successful check
+		if writer != nil {
+			event := verbose.NewVerboseEvent(
+				"target.connectivity_success", // Custom event type
+				verbose.LevelVerbose,
+				map[string]interface{}{
+					"target_name":   target.Name,
+					"status_code":   resp.StatusCode,
+					"duration":      duration.String(),
+					"response_time": duration.Milliseconds(),
+				},
+			)
+			writer.Bus().Emit(ctx, event)
+		}
 
 		// Update target status to active
 		if target.Status != types.TargetStatusActive {
