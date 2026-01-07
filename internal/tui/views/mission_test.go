@@ -80,6 +80,37 @@ func (m *MockMissionStore) Count(ctx context.Context, filter *mission.MissionFil
 	return len(m.missions), nil
 }
 
+func (m *MockMissionStore) GetByNameAndStatus(ctx context.Context, name string, status mission.MissionStatus) (*mission.Mission, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if len(m.missions) > 0 {
+		return m.missions[0], nil
+	}
+	return nil, nil
+}
+
+func (m *MockMissionStore) ListByName(ctx context.Context, name string, limit int) ([]*mission.Mission, error) {
+	return m.missions, m.err
+}
+
+func (m *MockMissionStore) GetLatestByName(ctx context.Context, name string) (*mission.Mission, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if len(m.missions) > 0 {
+		return m.missions[0], nil
+	}
+	return nil, nil
+}
+
+func (m *MockMissionStore) IncrementRunNumber(ctx context.Context, name string) (int, error) {
+	if m.err != nil {
+		return 0, m.err
+	}
+	return 1, nil
+}
+
 func TestNewMissionView(t *testing.T) {
 	ctx := context.Background()
 	mockStore := &MockMissionStore{}

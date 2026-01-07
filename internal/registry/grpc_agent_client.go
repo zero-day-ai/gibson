@@ -414,8 +414,8 @@ func (c *GRPCAgentClient) fetchDescriptor(ctx context.Context) (*agent.AgentDesc
 		Version:        resp.Version,
 		Description:    resp.Description,
 		Capabilities:   resp.Capabilities,
-		TargetTypes:    convertTargetTypes(resp.TargetTypes),        // Deprecated, for backward compat
-		TargetSchemas:  convertTargetSchemas(resp.TargetSchemas),    // New schema-based targets
+		TargetTypes:    convertTargetTypes(resp.TargetTypes),     // Deprecated, for backward compat
+		TargetSchemas:  convertTargetSchemas(resp.TargetSchemas), // New schema-based targets
 		TechniqueTypes: convertTechniqueTypes(resp.TechniqueTypes),
 		Slots:          nil, // Populated by fetchSlots()
 		IsExternal:     true,

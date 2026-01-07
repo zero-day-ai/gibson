@@ -10,6 +10,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/plan"
 )
 
@@ -36,6 +37,9 @@ type Infrastructure struct {
 
 	// harnessFactory creates configured AgentHarness instances
 	harnessFactory harness.HarnessFactoryInterface
+
+	// runLinker manages relationships between mission runs with the same name
+	runLinker mission.MissionRunLinker
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -109,6 +113,11 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 
 	// Update infrastructure with harness factory
 	infra.harnessFactory = harnessFactory
+
+	// Create mission run linker
+	runLinker := mission.NewMissionRunLinker(d.missionStore)
+	infra.runLinker = runLinker
+	d.logger.Info("initialized mission run linker")
 
 	return infra, nil
 }

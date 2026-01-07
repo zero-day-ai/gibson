@@ -510,7 +510,7 @@ func TestIntegration_RegistryAdapter(t *testing.T) {
 		// Discover should fail for gRPC client creation since endpoint doesn't exist
 		// But we can test that discovery attempt is made
 		_, err := adapter.DiscoverAgent(ctx, "adapter-test")
-		_  = err // Use the variable to avoid unused error
+		_ = err // Use the variable to avoid unused error
 		// Will fail because gRPC connection can't be established to non-existent endpoint
 		// This is expected behavior since the endpoint doesn't actually exist
 	})

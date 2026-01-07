@@ -163,6 +163,12 @@ type Daemon interface {
 	// In-flight operations are given time to complete based on context timeout.
 	Stop(ctx context.Context) error
 
+	// SetOnRegistryReady sets a callback that will be called after the registry
+	// is started but before other services. This is used by the CLI to set up
+	// verbose logging after etcd is initialized, avoiding conflicts with etcd's
+	// internal logging during startup.
+	SetOnRegistryReady(fn func())
+
 	// Note: Status() method moved to api.DaemonInterface for gRPC integration.
 	// The daemon implements api.DaemonInterface.Status() which returns api.DaemonStatus.
 	// For internal status queries, use the daemon's status() private method.

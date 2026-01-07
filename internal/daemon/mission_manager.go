@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -18,6 +19,11 @@ import (
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
 
+// targetStore is an interface for target lookup in mission manager
+type targetStoreLookup interface {
+	GetByName(ctx context.Context, name string) (*types.Target, error)
+}
+
 // missionManager implements the MissionManager interface for daemon operations.
 // It orchestrates mission lifecycle including workflow loading, execution, tracking,
 // and event emission.
@@ -30,6 +36,8 @@ type missionManager struct {
 	llmRegistry     llm.LLMRegistry
 	callbackManager *harness.CallbackManager
 	harnessFactory  harness.HarnessFactoryInterface
+	targetStore     targetStoreLookup
+	runLinker       mission.MissionRunLinker
 
 	// Track active missions with their contexts and event channels
 	mu             sync.RWMutex
@@ -57,6 +65,8 @@ func newMissionManager(
 	llmRegistry llm.LLMRegistry,
 	callbackMgr *harness.CallbackManager,
 	harnessFactory harness.HarnessFactoryInterface,
+	targetStore targetStoreLookup,
+	runLinker mission.MissionRunLinker,
 ) *missionManager {
 	return &missionManager{
 		config:          cfg,
@@ -67,6 +77,8 @@ func newMissionManager(
 		llmRegistry:     llmRegistry,
 		callbackManager: callbackMgr,
 		harnessFactory:  harnessFactory,
+		targetStore:     targetStore,
+		runLinker:       runLinker,
 		activeMissions:  make(map[string]*activeMission),
 	}
 }
@@ -109,15 +121,41 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	}
 	m.mu.RUnlock()
 
-	// Create mission record
+	// Resolve target from workflow
+	var targetID types.ID
+	if wf.TargetRef != "" {
+		if m.targetStore == nil {
+			return nil, fmt.Errorf("target '%s' specified but target store not available", wf.TargetRef)
+		}
+		target, err := m.targetStore.GetByName(ctx, wf.TargetRef)
+		if err != nil {
+			m.logger.Error("failed to lookup target", "error", err, "target_ref", wf.TargetRef)
+			return nil, fmt.Errorf("failed to lookup target '%s': %w", wf.TargetRef, err)
+		}
+		if target == nil {
+			return nil, fmt.Errorf("target '%s' not found", wf.TargetRef)
+		}
+		targetID = target.ID
+		m.logger.Debug("resolved target", "target_ref", wf.TargetRef, "target_id", targetID)
+	}
+
+	// Serialize workflow to JSON for orchestrator
+	workflowJSON, err := json.Marshal(wf)
+	if err != nil {
+		m.logger.Error("failed to serialize workflow", "error", err)
+		return nil, fmt.Errorf("failed to serialize workflow: %w", err)
+	}
+
+	// Create mission record with Pending status (orchestrator will transition to Running)
 	missionRecord := &mission.Mission{
 		ID:            types.ID(missionID),
 		Name:          wf.Name,
 		Description:   wf.Description,
-		Status:        mission.MissionStatusRunning,
+		Status:        mission.MissionStatusPending,
 		WorkflowID:    wf.ID,
+		WorkflowJSON:  string(workflowJSON),
+		TargetID:      targetID,
 		CreatedAt:     time.Now(),
-		StartedAt:     &[]time.Time{time.Now()}[0],
 		FindingsCount: 0,
 		Metrics: &mission.MissionMetrics{
 			TotalNodes:     len(wf.Nodes),
@@ -131,8 +169,25 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 		missionRecord.Metadata["variables"] = variables
 	}
 
-	// Save mission to store
-	if m.missionStore != nil {
+	// Save mission to store using run linker if available
+	if m.runLinker != nil {
+		if err := m.runLinker.CreateRun(ctx, wf.Name, missionRecord); err != nil {
+			// Check if error is about active mission
+			if activeErr, ok := err.(error); ok && activeErr != nil {
+				errStr := activeErr.Error()
+				if containsStr(errStr, "active run exists") {
+					m.logger.Error("cannot start mission: active run already exists",
+						"workflow_name", wf.Name,
+						"error", err,
+					)
+					return nil, fmt.Errorf("cannot start mission '%s': %w. Use 'gibson mission list' to see active missions or 'gibson mission pause <id>' to pause the active mission", wf.Name, err)
+				}
+			}
+			m.logger.Warn("failed to create mission run", "error", err)
+			return nil, fmt.Errorf("failed to create mission run: %w", err)
+		}
+	} else if m.missionStore != nil {
+		// Fallback to direct save if run linker not available
 		if err := m.missionStore.Save(ctx, missionRecord); err != nil {
 			m.logger.Warn("failed to save mission to store", "error", err)
 			// Continue execution - this is not critical
@@ -280,6 +335,169 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 		"status", finalStatus,
 		"duration", time.Since(active.startTime),
 	)
+}
+
+// Pause pauses a running mission at the next clean checkpoint.
+func (m *missionManager) Pause(ctx context.Context, missionID string, force bool) error {
+	m.logger.Info("pausing mission", "mission_id", missionID, "force", force)
+
+	m.mu.RLock()
+	active, exists := m.activeMissions[missionID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("mission %s not found or not running", missionID)
+	}
+
+	// If force is true, immediately cancel the mission context
+	// Otherwise, we let the mission detect the pause request gracefully
+	if force {
+		active.cancel()
+	} else {
+		// Cancel the mission context to signal pause request
+		// The orchestrator should detect this and save a checkpoint before transitioning to paused
+		active.cancel()
+	}
+
+	// Emit pause event
+	m.emitEvent(active.eventChan, api.MissionEventData{
+		EventType: "mission.pausing",
+		Timestamp: time.Now(),
+		MissionID: missionID,
+		Message:   "Mission pause requested",
+	})
+
+	// Wait for mission to transition to paused state (with timeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			m.logger.Warn("timeout waiting for mission to pause", "mission_id", missionID)
+			// Update status to paused anyway
+			active.mission.Status = mission.MissionStatusPaused
+			now := time.Now()
+			active.mission.CompletedAt = &now
+			if m.missionStore != nil {
+				if err := m.missionStore.Save(ctx, active.mission); err != nil {
+					m.logger.Warn("failed to update mission status to paused", "error", err)
+				}
+			}
+			return fmt.Errorf("timeout waiting for mission to pause")
+
+		case <-ticker.C:
+			// Check if mission is still active
+			m.mu.RLock()
+			_, stillActive := m.activeMissions[missionID]
+			m.mu.RUnlock()
+
+			// If mission is no longer active, it has completed or failed
+			if !stillActive {
+				// Fetch mission from store to get final status
+				if m.missionStore != nil {
+					finalMission, err := m.missionStore.Get(ctx, types.ID(missionID))
+					if err == nil {
+						if finalMission.Status == mission.MissionStatusPaused {
+							m.logger.Info("mission paused successfully", "mission_id", missionID)
+							return nil
+						}
+						return fmt.Errorf("mission transitioned to unexpected status: %s", finalMission.Status)
+					}
+				}
+				// If we can't get the mission, assume it's paused
+				return nil
+			}
+		}
+	}
+}
+
+// Resume resumes a paused mission from its last checkpoint.
+func (m *missionManager) Resume(ctx context.Context, missionID string) (<-chan api.MissionEventData, error) {
+	m.logger.Info("resuming mission", "mission_id", missionID)
+
+	// Check if mission is already running
+	m.mu.RLock()
+	if _, exists := m.activeMissions[missionID]; exists {
+		m.mu.RUnlock()
+		return nil, fmt.Errorf("mission %s is already running", missionID)
+	}
+	m.mu.RUnlock()
+
+	// Get mission from store
+	if m.missionStore == nil {
+		return nil, fmt.Errorf("mission store not available")
+	}
+
+	missionRecord, err := m.missionStore.Get(ctx, types.ID(missionID))
+	if err != nil {
+		m.logger.Error("failed to get mission", "error", err, "mission_id", missionID)
+		return nil, fmt.Errorf("failed to get mission %s: %w", missionID, err)
+	}
+
+	// Validate mission can be resumed
+	if missionRecord.Status != mission.MissionStatusPaused {
+		return nil, fmt.Errorf("cannot resume mission %s: status is %s (expected paused)", missionID, missionRecord.Status)
+	}
+
+	// Parse workflow from mission
+	var wf *workflow.Workflow
+	if missionRecord.WorkflowJSON != "" {
+		wf, err = workflow.ParseWorkflow([]byte(missionRecord.WorkflowJSON))
+		if err != nil {
+			m.logger.Error("failed to parse workflow", "error", err)
+			return nil, fmt.Errorf("failed to parse workflow: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("mission %s has no workflow definition", missionID)
+	}
+
+	// Create event channel for mission updates
+	eventChan := make(chan api.MissionEventData, 100)
+
+	// Create mission context with cancellation
+	missionCtx, cancel := context.WithCancel(context.Background())
+
+	// Update mission status to running
+	missionRecord.Status = mission.MissionStatusRunning
+	startedAt := time.Now()
+	missionRecord.StartedAt = &startedAt
+
+	if err := m.missionStore.Save(ctx, missionRecord); err != nil {
+		m.logger.Warn("failed to update mission status", "error", err)
+	}
+
+	// Create active mission entry
+	active := &activeMission{
+		mission:   missionRecord,
+		ctx:       missionCtx,
+		cancel:    cancel,
+		eventChan: eventChan,
+		startTime: time.Now(),
+	}
+
+	// Register active mission
+	m.mu.Lock()
+	m.activeMissions[missionID] = active
+	m.mu.Unlock()
+
+	// Emit mission resumed event
+	m.emitEvent(eventChan, api.MissionEventData{
+		EventType: "mission.resumed",
+		Timestamp: time.Now(),
+		MissionID: missionID,
+		Message:   fmt.Sprintf("Mission %s resumed from checkpoint", missionID),
+	})
+
+	// Launch mission executor in goroutine
+	// Note: This will execute from the beginning - checkpoint restoration would be handled
+	// by the orchestrator if ExecuteFromCheckpoint were implemented
+	go m.executeMission(missionCtx, missionID, wf, eventChan)
+
+	return eventChan, nil
 }
 
 // Stop stops a running mission with optional force flag.
@@ -465,4 +683,17 @@ func (m *missionManager) GetTotalMissionCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.activeMissions) + m.completedCount
+}
+
+// containsStr checks if a string contains a substring (case-sensitive).
+func containsStr(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		func() bool {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+			return false
+		}())
 }

@@ -476,7 +476,9 @@ type MissionEvent struct {
 	// data contains event-specific data (JSON-encoded)
 	Data string `protobuf:"bytes,6,opt,name=data,proto3" json:"data,omitempty"`
 	// error contains error information if the event represents an error
-	Error         string `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	Error string `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	// result contains typed operation metrics (for mission.completed events)
+	Result        *OperationResult `protobuf:"bytes,8,opt,name=result,proto3" json:"result,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -558,6 +560,13 @@ func (x *MissionEvent) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *MissionEvent) GetResult() *OperationResult {
+	if x != nil {
+		return x.Result
+	}
+	return nil
 }
 
 // StopMissionRequest requests mission termination.
@@ -678,7 +687,11 @@ type ListMissionsRequest struct {
 	// limit restricts the number of results
 	Limit int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
 	// offset is the pagination offset
-	Offset        int32 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	Offset int32 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	// status_filter filters missions by status (running, completed, failed, cancelled)
+	StatusFilter string `protobuf:"bytes,4,opt,name=status_filter,json=statusFilter,proto3" json:"status_filter,omitempty"`
+	// name_pattern filters missions by name using glob pattern matching
+	NamePattern   string `protobuf:"bytes,5,opt,name=name_pattern,json=namePattern,proto3" json:"name_pattern,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -732,6 +745,20 @@ func (x *ListMissionsRequest) GetOffset() int32 {
 		return x.Offset
 	}
 	return 0
+}
+
+func (x *ListMissionsRequest) GetStatusFilter() string {
+	if x != nil {
+		return x.StatusFilter
+	}
+	return ""
+}
+
+func (x *ListMissionsRequest) GetNamePattern() string {
+	if x != nil {
+		return x.NamePattern
+	}
+	return ""
 }
 
 // ListMissionsResponse returns mission list.
@@ -1578,7 +1605,9 @@ type RunAttackRequest struct {
 	// payload_filter filters which payloads to use
 	PayloadFilter string `protobuf:"bytes,4,opt,name=payload_filter,json=payloadFilter,proto3" json:"payload_filter,omitempty"`
 	// options contains attack-specific options
-	Options       map[string]string `protobuf:"bytes,5,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Options map[string]string `protobuf:"bytes,5,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// target_name is the name of a stored target to look up from the database
+	TargetName    string `protobuf:"bytes,6,opt,name=target_name,json=targetName,proto3" json:"target_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1648,6 +1677,13 @@ func (x *RunAttackRequest) GetOptions() map[string]string {
 	return nil
 }
 
+func (x *RunAttackRequest) GetTargetName() string {
+	if x != nil {
+		return x.TargetName
+	}
+	return ""
+}
+
 // AttackEvent represents an attack execution event.
 type AttackEvent struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1664,7 +1700,9 @@ type AttackEvent struct {
 	// error contains error information if the event represents an error
 	Error string `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`
 	// finding describes a discovered finding (if applicable)
-	Finding       *FindingInfo `protobuf:"bytes,7,opt,name=finding,proto3" json:"finding,omitempty"`
+	Finding *FindingInfo `protobuf:"bytes,7,opt,name=finding,proto3" json:"finding,omitempty"`
+	// result contains typed operation metrics (for attack.completed events)
+	Result        *OperationResult `protobuf:"bytes,8,opt,name=result,proto3" json:"result,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1744,6 +1782,13 @@ func (x *AttackEvent) GetError() string {
 func (x *AttackEvent) GetFinding() *FindingInfo {
 	if x != nil {
 		return x.Finding
+	}
+	return nil
+}
+
+func (x *AttackEvent) GetResult() *OperationResult {
+	if x != nil {
+		return x.Result
 	}
 	return nil
 }
@@ -2503,6 +2548,757 @@ func (x *StopComponentResponse) GetMessage() string {
 	return ""
 }
 
+// OperationResult represents the unified result of a long-running operation (attack or mission).
+// This provides typed metrics instead of JSON-encoded strings.
+type OperationResult struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// status of the operation ("success", "failed", "timeout", "cancelled")
+	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	// duration_ms is the total duration in milliseconds
+	DurationMs int64 `protobuf:"varint,2,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// started_at is the Unix timestamp (milliseconds) when the operation started
+	StartedAt int64 `protobuf:"varint,3,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	// completed_at is the Unix timestamp (milliseconds) when the operation completed
+	CompletedAt int64 `protobuf:"varint,4,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
+	// turns_used is the number of agent turns/iterations executed
+	TurnsUsed int32 `protobuf:"varint,5,opt,name=turns_used,json=turnsUsed,proto3" json:"turns_used,omitempty"`
+	// tokens_used is the total LLM tokens consumed
+	TokensUsed int64 `protobuf:"varint,6,opt,name=tokens_used,json=tokensUsed,proto3" json:"tokens_used,omitempty"`
+	// nodes_executed is the number of workflow nodes that ran successfully
+	NodesExecuted int32 `protobuf:"varint,7,opt,name=nodes_executed,json=nodesExecuted,proto3" json:"nodes_executed,omitempty"`
+	// nodes_failed is the number of workflow nodes that failed
+	NodesFailed int32 `protobuf:"varint,8,opt,name=nodes_failed,json=nodesFailed,proto3" json:"nodes_failed,omitempty"`
+	// findings_count is the total number of findings discovered
+	FindingsCount int32 `protobuf:"varint,9,opt,name=findings_count,json=findingsCount,proto3" json:"findings_count,omitempty"`
+	// critical_count is the number of critical severity findings
+	CriticalCount int32 `protobuf:"varint,10,opt,name=critical_count,json=criticalCount,proto3" json:"critical_count,omitempty"`
+	// high_count is the number of high severity findings
+	HighCount int32 `protobuf:"varint,11,opt,name=high_count,json=highCount,proto3" json:"high_count,omitempty"`
+	// medium_count is the number of medium severity findings
+	MediumCount int32 `protobuf:"varint,12,opt,name=medium_count,json=mediumCount,proto3" json:"medium_count,omitempty"`
+	// low_count is the number of low severity findings
+	LowCount int32 `protobuf:"varint,13,opt,name=low_count,json=lowCount,proto3" json:"low_count,omitempty"`
+	// error_message contains the error message if status == "failed"
+	ErrorMessage string `protobuf:"bytes,14,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	// error_code contains a machine-readable error code if status == "failed"
+	ErrorCode     string `protobuf:"bytes,15,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OperationResult) Reset() {
+	*x = OperationResult{}
+	mi := &file_daemon_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OperationResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OperationResult) ProtoMessage() {}
+
+func (x *OperationResult) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OperationResult.ProtoReflect.Descriptor instead.
+func (*OperationResult) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *OperationResult) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *OperationResult) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *OperationResult) GetStartedAt() int64 {
+	if x != nil {
+		return x.StartedAt
+	}
+	return 0
+}
+
+func (x *OperationResult) GetCompletedAt() int64 {
+	if x != nil {
+		return x.CompletedAt
+	}
+	return 0
+}
+
+func (x *OperationResult) GetTurnsUsed() int32 {
+	if x != nil {
+		return x.TurnsUsed
+	}
+	return 0
+}
+
+func (x *OperationResult) GetTokensUsed() int64 {
+	if x != nil {
+		return x.TokensUsed
+	}
+	return 0
+}
+
+func (x *OperationResult) GetNodesExecuted() int32 {
+	if x != nil {
+		return x.NodesExecuted
+	}
+	return 0
+}
+
+func (x *OperationResult) GetNodesFailed() int32 {
+	if x != nil {
+		return x.NodesFailed
+	}
+	return 0
+}
+
+func (x *OperationResult) GetFindingsCount() int32 {
+	if x != nil {
+		return x.FindingsCount
+	}
+	return 0
+}
+
+func (x *OperationResult) GetCriticalCount() int32 {
+	if x != nil {
+		return x.CriticalCount
+	}
+	return 0
+}
+
+func (x *OperationResult) GetHighCount() int32 {
+	if x != nil {
+		return x.HighCount
+	}
+	return 0
+}
+
+func (x *OperationResult) GetMediumCount() int32 {
+	if x != nil {
+		return x.MediumCount
+	}
+	return 0
+}
+
+func (x *OperationResult) GetLowCount() int32 {
+	if x != nil {
+		return x.LowCount
+	}
+	return 0
+}
+
+func (x *OperationResult) GetErrorMessage() string {
+	if x != nil {
+		return x.ErrorMessage
+	}
+	return ""
+}
+
+func (x *OperationResult) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
+// PauseMissionRequest requests pausing a running mission.
+type PauseMissionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// mission_id is the unique identifier of the mission to pause
+	MissionId string `protobuf:"bytes,1,opt,name=mission_id,json=missionId,proto3" json:"mission_id,omitempty"`
+	// force indicates whether to pause immediately without waiting for a clean checkpoint boundary
+	// If false (default), waits for the current node to complete before pausing
+	Force         bool `protobuf:"varint,2,opt,name=force,proto3" json:"force,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseMissionRequest) Reset() {
+	*x = PauseMissionRequest{}
+	mi := &file_daemon_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseMissionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseMissionRequest) ProtoMessage() {}
+
+func (x *PauseMissionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseMissionRequest.ProtoReflect.Descriptor instead.
+func (*PauseMissionRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *PauseMissionRequest) GetMissionId() string {
+	if x != nil {
+		return x.MissionId
+	}
+	return ""
+}
+
+func (x *PauseMissionRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+// PauseMissionResponse confirms the mission pause request.
+type PauseMissionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the pause request was accepted
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// checkpoint_id is the ID of the checkpoint created during pause
+	CheckpointId string `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	// message provides additional context about the pause operation
+	Message       string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseMissionResponse) Reset() {
+	*x = PauseMissionResponse{}
+	mi := &file_daemon_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseMissionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseMissionResponse) ProtoMessage() {}
+
+func (x *PauseMissionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseMissionResponse.ProtoReflect.Descriptor instead.
+func (*PauseMissionResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *PauseMissionResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *PauseMissionResponse) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *PauseMissionResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// ResumeMissionRequest requests resuming a paused mission.
+type ResumeMissionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// mission_id is the unique identifier of the mission to resume
+	MissionId string `protobuf:"bytes,1,opt,name=mission_id,json=missionId,proto3" json:"mission_id,omitempty"`
+	// checkpoint_id optionally specifies a specific checkpoint to resume from
+	// If empty, resumes from the latest checkpoint
+	CheckpointId  string `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeMissionRequest) Reset() {
+	*x = ResumeMissionRequest{}
+	mi := &file_daemon_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeMissionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeMissionRequest) ProtoMessage() {}
+
+func (x *ResumeMissionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeMissionRequest.ProtoReflect.Descriptor instead.
+func (*ResumeMissionRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *ResumeMissionRequest) GetMissionId() string {
+	if x != nil {
+		return x.MissionId
+	}
+	return ""
+}
+
+func (x *ResumeMissionRequest) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+// GetMissionHistoryRequest queries mission execution history by name.
+type GetMissionHistoryRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the mission name to query history for
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// limit restricts the number of results (default: 100)
+	Limit int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// offset is the pagination offset (default: 0)
+	Offset        int32 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMissionHistoryRequest) Reset() {
+	*x = GetMissionHistoryRequest{}
+	mi := &file_daemon_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMissionHistoryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMissionHistoryRequest) ProtoMessage() {}
+
+func (x *GetMissionHistoryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMissionHistoryRequest.ProtoReflect.Descriptor instead.
+func (*GetMissionHistoryRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *GetMissionHistoryRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GetMissionHistoryRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *GetMissionHistoryRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+// GetMissionHistoryResponse returns mission execution history.
+type GetMissionHistoryResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// runs contains all mission runs for the requested name
+	Runs []*MissionRun `protobuf:"bytes,1,rep,name=runs,proto3" json:"runs,omitempty"`
+	// total is the total count of runs (for pagination)
+	Total         int32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMissionHistoryResponse) Reset() {
+	*x = GetMissionHistoryResponse{}
+	mi := &file_daemon_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMissionHistoryResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMissionHistoryResponse) ProtoMessage() {}
+
+func (x *GetMissionHistoryResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMissionHistoryResponse.ProtoReflect.Descriptor instead.
+func (*GetMissionHistoryResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *GetMissionHistoryResponse) GetRuns() []*MissionRun {
+	if x != nil {
+		return x.Runs
+	}
+	return nil
+}
+
+func (x *GetMissionHistoryResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// MissionRun represents a single execution instance of a mission.
+type MissionRun struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// mission_id is the unique identifier for this run
+	MissionId string `protobuf:"bytes,1,opt,name=mission_id,json=missionId,proto3" json:"mission_id,omitempty"`
+	// run_number is the sequential run number for this mission name
+	RunNumber int32 `protobuf:"varint,2,opt,name=run_number,json=runNumber,proto3" json:"run_number,omitempty"`
+	// status is the final status of this run (running, completed, failed, cancelled, paused)
+	Status string `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	// created_at is when this run was created (Unix timestamp)
+	CreatedAt int64 `protobuf:"varint,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// completed_at is when this run completed (Unix timestamp, 0 if not completed)
+	CompletedAt int64 `protobuf:"varint,5,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
+	// findings_count is the number of findings discovered in this run
+	FindingsCount int32 `protobuf:"varint,6,opt,name=findings_count,json=findingsCount,proto3" json:"findings_count,omitempty"`
+	// previous_run_id is the ID of the previous run (if any)
+	PreviousRunId string `protobuf:"bytes,7,opt,name=previous_run_id,json=previousRunId,proto3" json:"previous_run_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MissionRun) Reset() {
+	*x = MissionRun{}
+	mi := &file_daemon_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MissionRun) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MissionRun) ProtoMessage() {}
+
+func (x *MissionRun) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MissionRun.ProtoReflect.Descriptor instead.
+func (*MissionRun) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *MissionRun) GetMissionId() string {
+	if x != nil {
+		return x.MissionId
+	}
+	return ""
+}
+
+func (x *MissionRun) GetRunNumber() int32 {
+	if x != nil {
+		return x.RunNumber
+	}
+	return 0
+}
+
+func (x *MissionRun) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *MissionRun) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *MissionRun) GetCompletedAt() int64 {
+	if x != nil {
+		return x.CompletedAt
+	}
+	return 0
+}
+
+func (x *MissionRun) GetFindingsCount() int32 {
+	if x != nil {
+		return x.FindingsCount
+	}
+	return 0
+}
+
+func (x *MissionRun) GetPreviousRunId() string {
+	if x != nil {
+		return x.PreviousRunId
+	}
+	return ""
+}
+
+// GetMissionCheckpointsRequest queries checkpoints for a mission.
+type GetMissionCheckpointsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// mission_id is the unique identifier of the mission to query checkpoints for
+	MissionId     string `protobuf:"bytes,1,opt,name=mission_id,json=missionId,proto3" json:"mission_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMissionCheckpointsRequest) Reset() {
+	*x = GetMissionCheckpointsRequest{}
+	mi := &file_daemon_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMissionCheckpointsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMissionCheckpointsRequest) ProtoMessage() {}
+
+func (x *GetMissionCheckpointsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMissionCheckpointsRequest.ProtoReflect.Descriptor instead.
+func (*GetMissionCheckpointsRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *GetMissionCheckpointsRequest) GetMissionId() string {
+	if x != nil {
+		return x.MissionId
+	}
+	return ""
+}
+
+// GetMissionCheckpointsResponse returns all checkpoints for a mission.
+type GetMissionCheckpointsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// checkpoints contains all checkpoints for the requested mission
+	Checkpoints   []*CheckpointInfo `protobuf:"bytes,1,rep,name=checkpoints,proto3" json:"checkpoints,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetMissionCheckpointsResponse) Reset() {
+	*x = GetMissionCheckpointsResponse{}
+	mi := &file_daemon_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetMissionCheckpointsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetMissionCheckpointsResponse) ProtoMessage() {}
+
+func (x *GetMissionCheckpointsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetMissionCheckpointsResponse.ProtoReflect.Descriptor instead.
+func (*GetMissionCheckpointsResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *GetMissionCheckpointsResponse) GetCheckpoints() []*CheckpointInfo {
+	if x != nil {
+		return x.Checkpoints
+	}
+	return nil
+}
+
+// CheckpointInfo provides metadata about a mission checkpoint.
+type CheckpointInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// checkpoint_id is the unique identifier for this checkpoint
+	CheckpointId string `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	// created_at is when this checkpoint was created (Unix timestamp)
+	CreatedAt int64 `protobuf:"varint,2,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// completed_nodes is the number of nodes that had completed at checkpoint time
+	CompletedNodes int32 `protobuf:"varint,3,opt,name=completed_nodes,json=completedNodes,proto3" json:"completed_nodes,omitempty"`
+	// total_nodes is the total number of nodes in the workflow
+	TotalNodes int32 `protobuf:"varint,4,opt,name=total_nodes,json=totalNodes,proto3" json:"total_nodes,omitempty"`
+	// findings_count is the number of findings at checkpoint time
+	FindingsCount int32 `protobuf:"varint,5,opt,name=findings_count,json=findingsCount,proto3" json:"findings_count,omitempty"`
+	// version is the checkpoint format version
+	Version       int32 `protobuf:"varint,6,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckpointInfo) Reset() {
+	*x = CheckpointInfo{}
+	mi := &file_daemon_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckpointInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckpointInfo) ProtoMessage() {}
+
+func (x *CheckpointInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckpointInfo.ProtoReflect.Descriptor instead.
+func (*CheckpointInfo) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *CheckpointInfo) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *CheckpointInfo) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *CheckpointInfo) GetCompletedNodes() int32 {
+	if x != nil {
+		return x.CompletedNodes
+	}
+	return 0
+}
+
+func (x *CheckpointInfo) GetTotalNodes() int32 {
+	if x != nil {
+		return x.TotalNodes
+	}
+	return 0
+}
+
+func (x *CheckpointInfo) GetFindingsCount() int32 {
+	if x != nil {
+		return x.FindingsCount
+	}
+	return 0
+}
+
+func (x *CheckpointInfo) GetVersion() int32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
 var File_daemon_proto protoreflect.FileDescriptor
 
 const file_daemon_proto_rawDesc = "" +
@@ -2542,7 +3338,7 @@ const file_daemon_proto_rawDesc = "" +
 	"\tvariables\x18\x03 \x03(\v22.gibson.daemon.v1.RunMissionRequest.VariablesEntryR\tvariables\x1a<\n" +
 	"\x0eVariablesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc7\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x82\x02\n" +
 	"\fMissionEvent\x12\x1d\n" +
 	"\n" +
 	"event_type\x18\x01 \x01(\tR\teventType\x12\x1c\n" +
@@ -2552,19 +3348,22 @@ const file_daemon_proto_rawDesc = "" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x12\x18\n" +
 	"\amessage\x18\x05 \x01(\tR\amessage\x12\x12\n" +
 	"\x04data\x18\x06 \x01(\tR\x04data\x12\x14\n" +
-	"\x05error\x18\a \x01(\tR\x05error\"I\n" +
+	"\x05error\x18\a \x01(\tR\x05error\x129\n" +
+	"\x06result\x18\b \x01(\v2!.gibson.daemon.v1.OperationResultR\x06result\"I\n" +
 	"\x12StopMissionRequest\x12\x1d\n" +
 	"\n" +
 	"mission_id\x18\x01 \x01(\tR\tmissionId\x12\x14\n" +
 	"\x05force\x18\x02 \x01(\bR\x05force\"I\n" +
 	"\x13StopMissionResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage\"d\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\xac\x01\n" +
 	"\x13ListMissionsRequest\x12\x1f\n" +
 	"\vactive_only\x18\x01 \x01(\bR\n" +
 	"activeOnly\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x03 \x01(\x05R\x06offset\"g\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\x12#\n" +
+	"\rstatus_filter\x18\x04 \x01(\tR\fstatusFilter\x12!\n" +
+	"\fname_pattern\x18\x05 \x01(\tR\vnamePattern\"g\n" +
 	"\x14ListMissionsResponse\x129\n" +
 	"\bmissions\x18\x01 \x03(\v2\x1d.gibson.daemon.v1.MissionInfoR\bmissions\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\x05R\x05total\"\xb9\x01\n" +
@@ -2618,17 +3417,19 @@ const file_daemon_proto_rawDesc = "" +
 	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12 \n" +
 	"\vdescription\x18\x05 \x01(\tR\vdescription\x12\x16\n" +
 	"\x06health\x18\x06 \x01(\tR\x06health\x12\x1b\n" +
-	"\tlast_seen\x18\a \x01(\x03R\blastSeen\"\x94\x02\n" +
+	"\tlast_seen\x18\a \x01(\x03R\blastSeen\"\xb5\x02\n" +
 	"\x10RunAttackRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x1f\n" +
 	"\vattack_type\x18\x02 \x01(\tR\n" +
 	"attackType\x12\x19\n" +
 	"\bagent_id\x18\x03 \x01(\tR\aagentId\x12%\n" +
 	"\x0epayload_filter\x18\x04 \x01(\tR\rpayloadFilter\x12I\n" +
-	"\aoptions\x18\x05 \x03(\v2/.gibson.daemon.v1.RunAttackRequest.OptionsEntryR\aoptions\x1a:\n" +
+	"\aoptions\x18\x05 \x03(\v2/.gibson.daemon.v1.RunAttackRequest.OptionsEntryR\aoptions\x12\x1f\n" +
+	"\vtarget_name\x18\x06 \x01(\tR\n" +
+	"targetName\x1a:\n" +
 	"\fOptionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe4\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9f\x02\n" +
 	"\vAttackEvent\x12\x1d\n" +
 	"\n" +
 	"event_type\x18\x01 \x01(\tR\teventType\x12\x1c\n" +
@@ -2637,7 +3438,8 @@ const file_daemon_proto_rawDesc = "" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x12\x12\n" +
 	"\x04data\x18\x05 \x01(\tR\x04data\x12\x14\n" +
 	"\x05error\x18\x06 \x01(\tR\x05error\x127\n" +
-	"\afinding\x18\a \x01(\v2\x1d.gibson.daemon.v1.FindingInfoR\afinding\"\xe5\x01\n" +
+	"\afinding\x18\a \x01(\v2\x1d.gibson.daemon.v1.FindingInfoR\afinding\x129\n" +
+	"\x06result\x18\b \x01(\v2!.gibson.daemon.v1.OperationResultR\x06result\"\xe5\x01\n" +
 	"\vFindingInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12\x1a\n" +
@@ -2699,7 +3501,75 @@ const file_daemon_proto_rawDesc = "" +
 	"\rstopped_count\x18\x02 \x01(\x05R\fstoppedCount\x12\x1f\n" +
 	"\vtotal_count\x18\x03 \x01(\x05R\n" +
 	"totalCount\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage2\xd5\t\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"\x87\x04\n" +
+	"\x0fOperationResult\x12\x16\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x12\x1f\n" +
+	"\vduration_ms\x18\x02 \x01(\x03R\n" +
+	"durationMs\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x03 \x01(\x03R\tstartedAt\x12!\n" +
+	"\fcompleted_at\x18\x04 \x01(\x03R\vcompletedAt\x12\x1d\n" +
+	"\n" +
+	"turns_used\x18\x05 \x01(\x05R\tturnsUsed\x12\x1f\n" +
+	"\vtokens_used\x18\x06 \x01(\x03R\n" +
+	"tokensUsed\x12%\n" +
+	"\x0enodes_executed\x18\a \x01(\x05R\rnodesExecuted\x12!\n" +
+	"\fnodes_failed\x18\b \x01(\x05R\vnodesFailed\x12%\n" +
+	"\x0efindings_count\x18\t \x01(\x05R\rfindingsCount\x12%\n" +
+	"\x0ecritical_count\x18\n" +
+	" \x01(\x05R\rcriticalCount\x12\x1d\n" +
+	"\n" +
+	"high_count\x18\v \x01(\x05R\thighCount\x12!\n" +
+	"\fmedium_count\x18\f \x01(\x05R\vmediumCount\x12\x1b\n" +
+	"\tlow_count\x18\r \x01(\x05R\blowCount\x12#\n" +
+	"\rerror_message\x18\x0e \x01(\tR\ferrorMessage\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x0f \x01(\tR\terrorCode\"J\n" +
+	"\x13PauseMissionRequest\x12\x1d\n" +
+	"\n" +
+	"mission_id\x18\x01 \x01(\tR\tmissionId\x12\x14\n" +
+	"\x05force\x18\x02 \x01(\bR\x05force\"o\n" +
+	"\x14PauseMissionResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"Z\n" +
+	"\x14ResumeMissionRequest\x12\x1d\n" +
+	"\n" +
+	"mission_id\x18\x01 \x01(\tR\tmissionId\x12#\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\"\\\n" +
+	"\x18GetMissionHistoryRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x03 \x01(\x05R\x06offset\"c\n" +
+	"\x19GetMissionHistoryResponse\x120\n" +
+	"\x04runs\x18\x01 \x03(\v2\x1c.gibson.daemon.v1.MissionRunR\x04runs\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"\xf3\x01\n" +
+	"\n" +
+	"MissionRun\x12\x1d\n" +
+	"\n" +
+	"mission_id\x18\x01 \x01(\tR\tmissionId\x12\x1d\n" +
+	"\n" +
+	"run_number\x18\x02 \x01(\x05R\trunNumber\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x04 \x01(\x03R\tcreatedAt\x12!\n" +
+	"\fcompleted_at\x18\x05 \x01(\x03R\vcompletedAt\x12%\n" +
+	"\x0efindings_count\x18\x06 \x01(\x05R\rfindingsCount\x12&\n" +
+	"\x0fprevious_run_id\x18\a \x01(\tR\rpreviousRunId\"=\n" +
+	"\x1cGetMissionCheckpointsRequest\x12\x1d\n" +
+	"\n" +
+	"mission_id\x18\x01 \x01(\tR\tmissionId\"c\n" +
+	"\x1dGetMissionCheckpointsResponse\x12B\n" +
+	"\vcheckpoints\x18\x01 \x03(\v2 .gibson.daemon.v1.CheckpointInfoR\vcheckpoints\"\xdf\x01\n" +
+	"\x0eCheckpointInfo\x12#\n" +
+	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x02 \x01(\x03R\tcreatedAt\x12'\n" +
+	"\x0fcompleted_nodes\x18\x03 \x01(\x05R\x0ecompletedNodes\x12\x1f\n" +
+	"\vtotal_nodes\x18\x04 \x01(\x05R\n" +
+	"totalNodes\x12%\n" +
+	"\x0efindings_count\x18\x05 \x01(\x05R\rfindingsCount\x12\x18\n" +
+	"\aversion\x18\x06 \x01(\x05R\aversion2\xf7\f\n" +
 	"\rDaemonService\x12N\n" +
 	"\aConnect\x12 .gibson.daemon.v1.ConnectRequest\x1a!.gibson.daemon.v1.ConnectResponse\x12E\n" +
 	"\x04Ping\x12\x1d.gibson.daemon.v1.PingRequest\x1a\x1e.gibson.daemon.v1.PingResponse\x12K\n" +
@@ -2716,7 +3586,11 @@ const file_daemon_proto_rawDesc = "" +
 	"\tRunAttack\x12\".gibson.daemon.v1.RunAttackRequest\x1a\x1d.gibson.daemon.v1.AttackEvent0\x01\x12J\n" +
 	"\tSubscribe\x12\".gibson.daemon.v1.SubscribeRequest\x1a\x17.gibson.daemon.v1.Event0\x01\x12c\n" +
 	"\x0eStartComponent\x12'.gibson.daemon.v1.StartComponentRequest\x1a(.gibson.daemon.v1.StartComponentResponse\x12`\n" +
-	"\rStopComponent\x12&.gibson.daemon.v1.StopComponentRequest\x1a'.gibson.daemon.v1.StopComponentResponseB7Z5github.com/zero-day-ai/gibson/internal/daemon/api;apib\x06proto3"
+	"\rStopComponent\x12&.gibson.daemon.v1.StopComponentRequest\x1a'.gibson.daemon.v1.StopComponentResponse\x12]\n" +
+	"\fPauseMission\x12%.gibson.daemon.v1.PauseMissionRequest\x1a&.gibson.daemon.v1.PauseMissionResponse\x12Y\n" +
+	"\rResumeMission\x12&.gibson.daemon.v1.ResumeMissionRequest\x1a\x1e.gibson.daemon.v1.MissionEvent0\x01\x12l\n" +
+	"\x11GetMissionHistory\x12*.gibson.daemon.v1.GetMissionHistoryRequest\x1a+.gibson.daemon.v1.GetMissionHistoryResponse\x12x\n" +
+	"\x15GetMissionCheckpoints\x12..gibson.daemon.v1.GetMissionCheckpointsRequest\x1a/.gibson.daemon.v1.GetMissionCheckpointsResponseB7Z5github.com/zero-day-ai/gibson/internal/daemon/api;apib\x06proto3"
 
 var (
 	file_daemon_proto_rawDescOnce sync.Once
@@ -2730,93 +3604,115 @@ func file_daemon_proto_rawDescGZIP() []byte {
 	return file_daemon_proto_rawDescData
 }
 
-var file_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 47)
 var file_daemon_proto_goTypes = []any{
-	(*ConnectRequest)(nil),         // 0: gibson.daemon.v1.ConnectRequest
-	(*ConnectResponse)(nil),        // 1: gibson.daemon.v1.ConnectResponse
-	(*PingRequest)(nil),            // 2: gibson.daemon.v1.PingRequest
-	(*PingResponse)(nil),           // 3: gibson.daemon.v1.PingResponse
-	(*StatusRequest)(nil),          // 4: gibson.daemon.v1.StatusRequest
-	(*StatusResponse)(nil),         // 5: gibson.daemon.v1.StatusResponse
-	(*RunMissionRequest)(nil),      // 6: gibson.daemon.v1.RunMissionRequest
-	(*MissionEvent)(nil),           // 7: gibson.daemon.v1.MissionEvent
-	(*StopMissionRequest)(nil),     // 8: gibson.daemon.v1.StopMissionRequest
-	(*StopMissionResponse)(nil),    // 9: gibson.daemon.v1.StopMissionResponse
-	(*ListMissionsRequest)(nil),    // 10: gibson.daemon.v1.ListMissionsRequest
-	(*ListMissionsResponse)(nil),   // 11: gibson.daemon.v1.ListMissionsResponse
-	(*MissionInfo)(nil),            // 12: gibson.daemon.v1.MissionInfo
-	(*ListAgentsRequest)(nil),      // 13: gibson.daemon.v1.ListAgentsRequest
-	(*ListAgentsResponse)(nil),     // 14: gibson.daemon.v1.ListAgentsResponse
-	(*AgentInfo)(nil),              // 15: gibson.daemon.v1.AgentInfo
-	(*GetAgentStatusRequest)(nil),  // 16: gibson.daemon.v1.GetAgentStatusRequest
-	(*AgentStatusResponse)(nil),    // 17: gibson.daemon.v1.AgentStatusResponse
-	(*ListToolsRequest)(nil),       // 18: gibson.daemon.v1.ListToolsRequest
-	(*ListToolsResponse)(nil),      // 19: gibson.daemon.v1.ListToolsResponse
-	(*ToolInfo)(nil),               // 20: gibson.daemon.v1.ToolInfo
-	(*ListPluginsRequest)(nil),     // 21: gibson.daemon.v1.ListPluginsRequest
-	(*ListPluginsResponse)(nil),    // 22: gibson.daemon.v1.ListPluginsResponse
-	(*PluginInfo)(nil),             // 23: gibson.daemon.v1.PluginInfo
-	(*RunAttackRequest)(nil),       // 24: gibson.daemon.v1.RunAttackRequest
-	(*AttackEvent)(nil),            // 25: gibson.daemon.v1.AttackEvent
-	(*FindingInfo)(nil),            // 26: gibson.daemon.v1.FindingInfo
-	(*SubscribeRequest)(nil),       // 27: gibson.daemon.v1.SubscribeRequest
-	(*Event)(nil),                  // 28: gibson.daemon.v1.Event
-	(*AgentEvent)(nil),             // 29: gibson.daemon.v1.AgentEvent
-	(*FindingEvent)(nil),           // 30: gibson.daemon.v1.FindingEvent
-	(*StartComponentRequest)(nil),  // 31: gibson.daemon.v1.StartComponentRequest
-	(*StartComponentResponse)(nil), // 32: gibson.daemon.v1.StartComponentResponse
-	(*StopComponentRequest)(nil),   // 33: gibson.daemon.v1.StopComponentRequest
-	(*StopComponentResponse)(nil),  // 34: gibson.daemon.v1.StopComponentResponse
-	nil,                            // 35: gibson.daemon.v1.RunMissionRequest.VariablesEntry
-	nil,                            // 36: gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	(*ConnectRequest)(nil),                // 0: gibson.daemon.v1.ConnectRequest
+	(*ConnectResponse)(nil),               // 1: gibson.daemon.v1.ConnectResponse
+	(*PingRequest)(nil),                   // 2: gibson.daemon.v1.PingRequest
+	(*PingResponse)(nil),                  // 3: gibson.daemon.v1.PingResponse
+	(*StatusRequest)(nil),                 // 4: gibson.daemon.v1.StatusRequest
+	(*StatusResponse)(nil),                // 5: gibson.daemon.v1.StatusResponse
+	(*RunMissionRequest)(nil),             // 6: gibson.daemon.v1.RunMissionRequest
+	(*MissionEvent)(nil),                  // 7: gibson.daemon.v1.MissionEvent
+	(*StopMissionRequest)(nil),            // 8: gibson.daemon.v1.StopMissionRequest
+	(*StopMissionResponse)(nil),           // 9: gibson.daemon.v1.StopMissionResponse
+	(*ListMissionsRequest)(nil),           // 10: gibson.daemon.v1.ListMissionsRequest
+	(*ListMissionsResponse)(nil),          // 11: gibson.daemon.v1.ListMissionsResponse
+	(*MissionInfo)(nil),                   // 12: gibson.daemon.v1.MissionInfo
+	(*ListAgentsRequest)(nil),             // 13: gibson.daemon.v1.ListAgentsRequest
+	(*ListAgentsResponse)(nil),            // 14: gibson.daemon.v1.ListAgentsResponse
+	(*AgentInfo)(nil),                     // 15: gibson.daemon.v1.AgentInfo
+	(*GetAgentStatusRequest)(nil),         // 16: gibson.daemon.v1.GetAgentStatusRequest
+	(*AgentStatusResponse)(nil),           // 17: gibson.daemon.v1.AgentStatusResponse
+	(*ListToolsRequest)(nil),              // 18: gibson.daemon.v1.ListToolsRequest
+	(*ListToolsResponse)(nil),             // 19: gibson.daemon.v1.ListToolsResponse
+	(*ToolInfo)(nil),                      // 20: gibson.daemon.v1.ToolInfo
+	(*ListPluginsRequest)(nil),            // 21: gibson.daemon.v1.ListPluginsRequest
+	(*ListPluginsResponse)(nil),           // 22: gibson.daemon.v1.ListPluginsResponse
+	(*PluginInfo)(nil),                    // 23: gibson.daemon.v1.PluginInfo
+	(*RunAttackRequest)(nil),              // 24: gibson.daemon.v1.RunAttackRequest
+	(*AttackEvent)(nil),                   // 25: gibson.daemon.v1.AttackEvent
+	(*FindingInfo)(nil),                   // 26: gibson.daemon.v1.FindingInfo
+	(*SubscribeRequest)(nil),              // 27: gibson.daemon.v1.SubscribeRequest
+	(*Event)(nil),                         // 28: gibson.daemon.v1.Event
+	(*AgentEvent)(nil),                    // 29: gibson.daemon.v1.AgentEvent
+	(*FindingEvent)(nil),                  // 30: gibson.daemon.v1.FindingEvent
+	(*StartComponentRequest)(nil),         // 31: gibson.daemon.v1.StartComponentRequest
+	(*StartComponentResponse)(nil),        // 32: gibson.daemon.v1.StartComponentResponse
+	(*StopComponentRequest)(nil),          // 33: gibson.daemon.v1.StopComponentRequest
+	(*StopComponentResponse)(nil),         // 34: gibson.daemon.v1.StopComponentResponse
+	(*OperationResult)(nil),               // 35: gibson.daemon.v1.OperationResult
+	(*PauseMissionRequest)(nil),           // 36: gibson.daemon.v1.PauseMissionRequest
+	(*PauseMissionResponse)(nil),          // 37: gibson.daemon.v1.PauseMissionResponse
+	(*ResumeMissionRequest)(nil),          // 38: gibson.daemon.v1.ResumeMissionRequest
+	(*GetMissionHistoryRequest)(nil),      // 39: gibson.daemon.v1.GetMissionHistoryRequest
+	(*GetMissionHistoryResponse)(nil),     // 40: gibson.daemon.v1.GetMissionHistoryResponse
+	(*MissionRun)(nil),                    // 41: gibson.daemon.v1.MissionRun
+	(*GetMissionCheckpointsRequest)(nil),  // 42: gibson.daemon.v1.GetMissionCheckpointsRequest
+	(*GetMissionCheckpointsResponse)(nil), // 43: gibson.daemon.v1.GetMissionCheckpointsResponse
+	(*CheckpointInfo)(nil),                // 44: gibson.daemon.v1.CheckpointInfo
+	nil,                                   // 45: gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	nil,                                   // 46: gibson.daemon.v1.RunAttackRequest.OptionsEntry
 }
 var file_daemon_proto_depIdxs = []int32{
-	35, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
-	12, // 1: gibson.daemon.v1.ListMissionsResponse.missions:type_name -> gibson.daemon.v1.MissionInfo
-	15, // 2: gibson.daemon.v1.ListAgentsResponse.agents:type_name -> gibson.daemon.v1.AgentInfo
-	15, // 3: gibson.daemon.v1.AgentStatusResponse.agent:type_name -> gibson.daemon.v1.AgentInfo
-	20, // 4: gibson.daemon.v1.ListToolsResponse.tools:type_name -> gibson.daemon.v1.ToolInfo
-	23, // 5: gibson.daemon.v1.ListPluginsResponse.plugins:type_name -> gibson.daemon.v1.PluginInfo
-	36, // 6: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
-	26, // 7: gibson.daemon.v1.AttackEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
-	7,  // 8: gibson.daemon.v1.Event.mission_event:type_name -> gibson.daemon.v1.MissionEvent
-	25, // 9: gibson.daemon.v1.Event.attack_event:type_name -> gibson.daemon.v1.AttackEvent
-	29, // 10: gibson.daemon.v1.Event.agent_event:type_name -> gibson.daemon.v1.AgentEvent
-	30, // 11: gibson.daemon.v1.Event.finding_event:type_name -> gibson.daemon.v1.FindingEvent
-	26, // 12: gibson.daemon.v1.FindingEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
-	0,  // 13: gibson.daemon.v1.DaemonService.Connect:input_type -> gibson.daemon.v1.ConnectRequest
-	2,  // 14: gibson.daemon.v1.DaemonService.Ping:input_type -> gibson.daemon.v1.PingRequest
-	4,  // 15: gibson.daemon.v1.DaemonService.Status:input_type -> gibson.daemon.v1.StatusRequest
-	6,  // 16: gibson.daemon.v1.DaemonService.RunMission:input_type -> gibson.daemon.v1.RunMissionRequest
-	8,  // 17: gibson.daemon.v1.DaemonService.StopMission:input_type -> gibson.daemon.v1.StopMissionRequest
-	10, // 18: gibson.daemon.v1.DaemonService.ListMissions:input_type -> gibson.daemon.v1.ListMissionsRequest
-	13, // 19: gibson.daemon.v1.DaemonService.ListAgents:input_type -> gibson.daemon.v1.ListAgentsRequest
-	16, // 20: gibson.daemon.v1.DaemonService.GetAgentStatus:input_type -> gibson.daemon.v1.GetAgentStatusRequest
-	18, // 21: gibson.daemon.v1.DaemonService.ListTools:input_type -> gibson.daemon.v1.ListToolsRequest
-	21, // 22: gibson.daemon.v1.DaemonService.ListPlugins:input_type -> gibson.daemon.v1.ListPluginsRequest
-	24, // 23: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
-	27, // 24: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
-	31, // 25: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
-	33, // 26: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
-	1,  // 27: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
-	3,  // 28: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
-	5,  // 29: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
-	7,  // 30: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
-	9,  // 31: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
-	11, // 32: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
-	14, // 33: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
-	17, // 34: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
-	19, // 35: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
-	22, // 36: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
-	25, // 37: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
-	28, // 38: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
-	32, // 39: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
-	34, // 40: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
-	27, // [27:41] is the sub-list for method output_type
-	13, // [13:27] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	45, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	35, // 1: gibson.daemon.v1.MissionEvent.result:type_name -> gibson.daemon.v1.OperationResult
+	12, // 2: gibson.daemon.v1.ListMissionsResponse.missions:type_name -> gibson.daemon.v1.MissionInfo
+	15, // 3: gibson.daemon.v1.ListAgentsResponse.agents:type_name -> gibson.daemon.v1.AgentInfo
+	15, // 4: gibson.daemon.v1.AgentStatusResponse.agent:type_name -> gibson.daemon.v1.AgentInfo
+	20, // 5: gibson.daemon.v1.ListToolsResponse.tools:type_name -> gibson.daemon.v1.ToolInfo
+	23, // 6: gibson.daemon.v1.ListPluginsResponse.plugins:type_name -> gibson.daemon.v1.PluginInfo
+	46, // 7: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	26, // 8: gibson.daemon.v1.AttackEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
+	35, // 9: gibson.daemon.v1.AttackEvent.result:type_name -> gibson.daemon.v1.OperationResult
+	7,  // 10: gibson.daemon.v1.Event.mission_event:type_name -> gibson.daemon.v1.MissionEvent
+	25, // 11: gibson.daemon.v1.Event.attack_event:type_name -> gibson.daemon.v1.AttackEvent
+	29, // 12: gibson.daemon.v1.Event.agent_event:type_name -> gibson.daemon.v1.AgentEvent
+	30, // 13: gibson.daemon.v1.Event.finding_event:type_name -> gibson.daemon.v1.FindingEvent
+	26, // 14: gibson.daemon.v1.FindingEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
+	41, // 15: gibson.daemon.v1.GetMissionHistoryResponse.runs:type_name -> gibson.daemon.v1.MissionRun
+	44, // 16: gibson.daemon.v1.GetMissionCheckpointsResponse.checkpoints:type_name -> gibson.daemon.v1.CheckpointInfo
+	0,  // 17: gibson.daemon.v1.DaemonService.Connect:input_type -> gibson.daemon.v1.ConnectRequest
+	2,  // 18: gibson.daemon.v1.DaemonService.Ping:input_type -> gibson.daemon.v1.PingRequest
+	4,  // 19: gibson.daemon.v1.DaemonService.Status:input_type -> gibson.daemon.v1.StatusRequest
+	6,  // 20: gibson.daemon.v1.DaemonService.RunMission:input_type -> gibson.daemon.v1.RunMissionRequest
+	8,  // 21: gibson.daemon.v1.DaemonService.StopMission:input_type -> gibson.daemon.v1.StopMissionRequest
+	10, // 22: gibson.daemon.v1.DaemonService.ListMissions:input_type -> gibson.daemon.v1.ListMissionsRequest
+	13, // 23: gibson.daemon.v1.DaemonService.ListAgents:input_type -> gibson.daemon.v1.ListAgentsRequest
+	16, // 24: gibson.daemon.v1.DaemonService.GetAgentStatus:input_type -> gibson.daemon.v1.GetAgentStatusRequest
+	18, // 25: gibson.daemon.v1.DaemonService.ListTools:input_type -> gibson.daemon.v1.ListToolsRequest
+	21, // 26: gibson.daemon.v1.DaemonService.ListPlugins:input_type -> gibson.daemon.v1.ListPluginsRequest
+	24, // 27: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
+	27, // 28: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
+	31, // 29: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
+	33, // 30: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
+	36, // 31: gibson.daemon.v1.DaemonService.PauseMission:input_type -> gibson.daemon.v1.PauseMissionRequest
+	38, // 32: gibson.daemon.v1.DaemonService.ResumeMission:input_type -> gibson.daemon.v1.ResumeMissionRequest
+	39, // 33: gibson.daemon.v1.DaemonService.GetMissionHistory:input_type -> gibson.daemon.v1.GetMissionHistoryRequest
+	42, // 34: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:input_type -> gibson.daemon.v1.GetMissionCheckpointsRequest
+	1,  // 35: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
+	3,  // 36: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
+	5,  // 37: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
+	7,  // 38: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
+	9,  // 39: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
+	11, // 40: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
+	14, // 41: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
+	17, // 42: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
+	19, // 43: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
+	22, // 44: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
+	25, // 45: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
+	28, // 46: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
+	32, // 47: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
+	34, // 48: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
+	37, // 49: gibson.daemon.v1.DaemonService.PauseMission:output_type -> gibson.daemon.v1.PauseMissionResponse
+	7,  // 50: gibson.daemon.v1.DaemonService.ResumeMission:output_type -> gibson.daemon.v1.MissionEvent
+	40, // 51: gibson.daemon.v1.DaemonService.GetMissionHistory:output_type -> gibson.daemon.v1.GetMissionHistoryResponse
+	43, // 52: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:output_type -> gibson.daemon.v1.GetMissionCheckpointsResponse
+	35, // [35:53] is the sub-list for method output_type
+	17, // [17:35] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_daemon_proto_init() }
@@ -2836,7 +3732,7 @@ func file_daemon_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_daemon_proto_rawDesc), len(file_daemon_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   37,
+			NumMessages:   47,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

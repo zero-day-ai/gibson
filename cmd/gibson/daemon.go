@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -10,10 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/daemon"
-	"github.com/zero-day-ai/gibson/internal/verbose"
 )
 
 var daemonCmd = &cobra.Command{
@@ -229,11 +228,6 @@ func runDaemonStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse flags: %w", err)
 	}
 
-	// Setup verbose logging if enabled
-	verboseLevel := flags.VerbosityLevel()
-	writer, cleanup := internal.SetupVerbose(cmd, verboseLevel, flags.OutputFormat == "json")
-	defer cleanup()
-
 	// Get Gibson home directory
 	homeDir := flags.HomeDir
 	if homeDir == "" {
@@ -274,25 +268,23 @@ func runDaemonStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("daemon already running (PID %d)", pid)
 	}
 
+	// Set up verbose logging if requested - simple approach using slog directly
+	// This avoids the complex VerboseWriter/VerboseAwareHandler system
+	if flags.IsVerbose() {
+		level := slog.LevelInfo
+		if flags.DebugVerbose {
+			level = slog.LevelDebug
+		}
+		handler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: level,
+		})
+		slog.SetDefault(slog.New(handler))
+	}
+
 	// Create daemon instance
 	d, err := daemon.New(cfg, homeDir)
 	if err != nil {
 		return fmt.Errorf("failed to create daemon: %w", err)
-	}
-
-	// Emit daemon started event
-	if writer != nil {
-		event := verbose.NewVerboseEvent(
-			verbose.EventDaemonStarted,
-			verbose.LevelVerbose,
-			verbose.DaemonStartedData{
-				Version:       "0.1.0", // TODO: Get from build info
-				ConfigPath:    configFile,
-				DataDir:       homeDir,
-				ListenAddress: cfg.Daemon.GRPCAddress,
-			},
-		)
-		writer.Bus().Emit(cmd.Context(), event)
 	}
 
 	// Start daemon (always runs in foreground, blocks until stopped)

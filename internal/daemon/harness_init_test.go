@@ -85,8 +85,8 @@ func TestNewHarnessFactory_WithoutRegistryAdapter(t *testing.T) {
 
 	// Create daemon with minimal infrastructure (no registry adapter)
 	d := &daemonImpl{
-		logger:         logger,
-		db:             db,
+		logger:          logger,
+		db:              db,
 		registryAdapter: nil, // No registry adapter
 	}
 

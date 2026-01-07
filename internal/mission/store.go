@@ -49,6 +49,18 @@ type MissionStore interface {
 
 	// Count returns the total number of missions matching the filter
 	Count(ctx context.Context, filter *MissionFilter) (int, error)
+
+	// GetByNameAndStatus retrieves a mission by name and status
+	GetByNameAndStatus(ctx context.Context, name string, status MissionStatus) (*Mission, error)
+
+	// ListByName retrieves all missions with the given name, ordered by run number descending
+	ListByName(ctx context.Context, name string, limit int) ([]*Mission, error)
+
+	// GetLatestByName retrieves the most recent mission with the given name
+	GetLatestByName(ctx context.Context, name string) (*Mission, error)
+
+	// IncrementRunNumber atomically increments and returns the next run number for a mission name
+	IncrementRunNumber(ctx context.Context, name string) (int, error)
 }
 
 // MissionFilter provides filtering options for mission queries.
@@ -164,13 +176,21 @@ func (s *DBMissionStore) Save(ctx context.Context, mission *Mission) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	// Convert PreviousRunID to string pointer for SQL
+	var previousRunIDStr *string
+	if mission.PreviousRunID != nil {
+		s := mission.PreviousRunID.String()
+		previousRunIDStr = &s
+	}
+
 	query := `
 		INSERT INTO missions (
 			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
 			created_at, started_at, completed_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err = s.db.ExecContext(ctx, query,
@@ -189,6 +209,9 @@ func (s *DBMissionStore) Save(ctx context.Context, mission *Mission) error {
 		mission.FindingsCount,
 		agentAssignmentsJSON,
 		metadataJSON,
+		mission.RunNumber,
+		previousRunIDStr,
+		timePtr(mission.CheckpointAt),
 		mission.CreatedAt,
 		timePtr(mission.StartedAt),
 		timePtr(mission.CompletedAt),
@@ -209,6 +232,7 @@ func (s *DBMissionStore) Get(ctx context.Context, id types.ID) (*Mission, error)
 			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE id = ?
@@ -233,6 +257,7 @@ func (s *DBMissionStore) GetByName(ctx context.Context, name string) (*Mission, 
 			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE name = ?
@@ -302,6 +327,7 @@ func (s *DBMissionStore) List(ctx context.Context, filter *MissionFilter) ([]*Mi
 			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 	`
@@ -510,6 +536,7 @@ func (s *DBMissionStore) GetActive(ctx context.Context) ([]*Mission, error) {
 			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE status IN (?, ?)
@@ -623,6 +650,9 @@ func (s *DBMissionStore) scanMission(scanner interface {
 		errorStr            sql.NullString
 		agentAssignmentsStr sql.NullString
 		metadataStr         sql.NullString
+		runNumber           sql.NullInt64
+		previousRunIDStr    sql.NullString
+		checkpointAt        sql.NullTime
 		startedAt           sql.NullTime
 		completedAt         sql.NullTime
 	)
@@ -643,6 +673,9 @@ func (s *DBMissionStore) scanMission(scanner interface {
 		&m.FindingsCount,
 		&agentAssignmentsStr,
 		&metadataStr,
+		&runNumber,
+		&previousRunIDStr,
+		&checkpointAt,
 		&m.CreatedAt,
 		&startedAt,
 		&completedAt,
@@ -686,6 +719,24 @@ func (s *DBMissionStore) scanMission(scanner interface {
 
 	if completedAt.Valid {
 		m.CompletedAt = &completedAt.Time
+	}
+
+	if checkpointAt.Valid {
+		m.CheckpointAt = &checkpointAt.Time
+	}
+
+	// Parse run number
+	if runNumber.Valid {
+		m.RunNumber = int(runNumber.Int64)
+	}
+
+	// Parse previous run ID
+	if previousRunIDStr.Valid && previousRunIDStr.String != "" {
+		prevID, err := types.ParseID(previousRunIDStr.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse previous run ID: %w", err)
+		}
+		m.PreviousRunID = &prevID
 	}
 
 	// Unmarshal JSON fields
@@ -807,6 +858,109 @@ func timePtr(t *time.Time) interface{} {
 		return nil
 	}
 	return *t
+}
+
+// GetByNameAndStatus retrieves a mission by name and status.
+func (s *DBMissionStore) GetByNameAndStatus(ctx context.Context, name string, status MissionStatus) (*Mission, error) {
+	query := `
+		SELECT
+			id, name, description, status, target_id, workflow_id, workflow_json,
+			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
+			created_at, started_at, completed_at, updated_at
+		FROM missions
+		WHERE name = ? AND status = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`
+
+	row := s.db.QueryRowContext(ctx, query, name, string(status))
+	mission, err := s.scanMission(row)
+	if err == sql.ErrNoRows {
+		return nil, NewNotFoundError(fmt.Sprintf("%s (status=%s)", name, status))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mission by name and status: %w", err)
+	}
+
+	return mission, nil
+}
+
+// ListByName retrieves all missions with the given name, ordered by run number descending.
+func (s *DBMissionStore) ListByName(ctx context.Context, name string, limit int) ([]*Mission, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `
+		SELECT
+			id, name, description, status, target_id, workflow_id, workflow_json,
+			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
+			created_at, started_at, completed_at, updated_at
+		FROM missions
+		WHERE name = ?
+		ORDER BY run_number DESC
+		LIMIT ?
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, name, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list missions by name: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanMissions(rows)
+}
+
+// GetLatestByName retrieves the most recent mission with the given name.
+func (s *DBMissionStore) GetLatestByName(ctx context.Context, name string) (*Mission, error) {
+	query := `
+		SELECT
+			id, name, description, status, target_id, workflow_id, workflow_json,
+			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
+			created_at, started_at, completed_at, updated_at
+		FROM missions
+		WHERE name = ?
+		ORDER BY run_number DESC
+		LIMIT 1
+	`
+
+	row := s.db.QueryRowContext(ctx, query, name)
+	mission, err := s.scanMission(row)
+	if err == sql.ErrNoRows {
+		return nil, NewNotFoundError(name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get latest mission by name: %w", err)
+	}
+
+	return mission, nil
+}
+
+// IncrementRunNumber atomically increments and returns the next run number for a mission name.
+// This method uses the run_number column added in migration 11.
+func (s *DBMissionStore) IncrementRunNumber(ctx context.Context, name string) (int, error) {
+	// Query the maximum run number for this mission name
+	// Using the run_number column directly (not metadata JSON)
+	query := `
+		SELECT COALESCE(MAX(run_number), 0)
+		FROM missions
+		WHERE name = ?
+	`
+
+	var maxRunNumber int
+	err := s.db.QueryRowContext(ctx, query, name).Scan(&maxRunNumber)
+	if err != nil && err != sql.ErrNoRows {
+		return 0, fmt.Errorf("failed to get max run number: %w", err)
+	}
+
+	// Next run number is max + 1
+	return maxRunNumber + 1, nil
 }
 
 // Ensure DBMissionStore implements MissionStore at compile time.

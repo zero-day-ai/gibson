@@ -323,6 +323,7 @@ func runAttackViaDaemon(cmd *cobra.Command, daemonClient interface{}) error {
 	// Convert AttackOptions to client.AttackOptions
 	clientOpts := client.AttackOptions{
 		Target:     opts.TargetURL,
+		TargetName: opts.TargetName,
 		AttackType: opts.AgentName,
 		MaxDepth:   opts.MaxTurns,
 		Timeout:    opts.Timeout,
@@ -340,8 +341,11 @@ func runAttackViaDaemon(cmd *cobra.Command, daemonClient interface{}) error {
 		return internal.WrapError(attack.ExitError, "failed to start attack via daemon", err)
 	}
 
-	// Stream events from daemon
+	// Stream events from daemon and collect result data
 	findingCount := 0
+	var resultDuration time.Duration
+	var resultTurns int
+	var resultStatus string
 	for event := range eventChan {
 		if opts.Verbose {
 			cmd.Printf("[%s] %s: %s\n", event.Timestamp.Format("15:04:05"), event.Type, event.Message)
@@ -350,15 +354,22 @@ func runAttackViaDaemon(cmd *cobra.Command, daemonClient interface{}) error {
 		// Check for finding events
 		if event.Type == "finding" || event.Severity != "" {
 			findingCount++
-			// Note: In the future, we'll convert event.Data to a proper Finding struct
-			// For now, just track counts
+		}
+
+		// Parse attack.completed event to extract metrics from typed Result
+		if event.Type == "attack.completed" && event.Result != nil {
+			resultStatus = event.Result.Status
+			resultDuration = time.Duration(event.Result.DurationMs) * time.Millisecond
+			resultTurns = int(event.Result.TurnsUsed)
 		}
 	}
 
-	// Create a result summary (simplified for now)
-	result := &attack.AttackResult{
-		// Note: We'll need to enhance the event stream to provide full result data
-		// For now, just show a completion message
+	// Create result with metrics from event stream
+	result := attack.NewAttackResult()
+	result.Duration = resultDuration
+	result.TurnsUsed = resultTurns
+	if resultStatus != "" {
+		result.Status = attack.AttackStatus(resultStatus)
 	}
 
 	outputHandler.OnComplete(result)

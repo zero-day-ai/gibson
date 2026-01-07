@@ -376,9 +376,11 @@ func (e *Executor) handleMissionRouter(ctx context.Context, args []string) (*Exe
 			file = GetFlag(subArgs, "-f")
 		}
 		if file == "" {
-			return errorResult("usage: /mission run --file <file>"), nil
+			return errorResult("usage: /mission run --file <file> [--target <name>]"), nil
 		}
-		result, err = core.MissionRun(cc, file)
+		// Get optional target flag
+		target := GetFlag(subArgs, "--target")
+		result, err = core.MissionRun(cc, file, target)
 		if err == nil {
 			return e.formatMissionRunResult(result)
 		}

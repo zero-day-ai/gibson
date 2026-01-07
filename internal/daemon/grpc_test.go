@@ -18,14 +18,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-
-
-
-
 // Stub implementations for other interface methods (not tested in this task)
-
-
-
 
 // TestListAgents_Success tests ListAgents with mock registry adapter.
 func TestListAgents_Success(t *testing.T) {
@@ -731,13 +724,13 @@ func TestRunAttack_Success(t *testing.T) {
 	require.GreaterOrEqual(t, len(events), 3) // started, finding, completed
 
 	// Check attack started event
-	assert.Equal(t, "attack_started", events[0].EventType)
+	assert.Equal(t, "attack.started", events[0].EventType)
 	assert.Contains(t, events[0].Message, "Starting attack")
 
 	// Check finding discovered event
 	var foundFindingEvent bool
 	for _, event := range events {
-		if event.EventType == "finding_discovered" {
+		if event.EventType == "attack.finding" {
 			foundFindingEvent = true
 			assert.NotNil(t, event.Finding)
 			assert.Equal(t, "Test Vulnerability", event.Finding.Title)
@@ -745,12 +738,16 @@ func TestRunAttack_Success(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, foundFindingEvent, "expected finding_discovered event")
+	assert.True(t, foundFindingEvent, "expected attack.finding event")
 
 	// Check attack completed event
 	lastEvent := events[len(events)-1]
-	assert.Equal(t, "attack_completed", lastEvent.EventType)
+	assert.Equal(t, "attack.completed", lastEvent.EventType)
 	assert.Contains(t, lastEvent.Message, "completed")
+	assert.NotNil(t, lastEvent.Result, "expected Result field in attack.completed event")
+	assert.Equal(t, "findings", lastEvent.Result.Status)      // AttackStatusFindings
+	assert.Equal(t, int64(5000), lastEvent.Result.DurationMs) // 5 seconds
+	assert.Equal(t, int32(1), lastEvent.Result.FindingsCount)
 }
 
 // TestRunAttack_ValidationError tests attack request validation
@@ -770,7 +767,7 @@ func TestRunAttack_ValidationError(t *testing.T) {
 			req: api.AttackRequest{
 				AgentID: "test-agent",
 			},
-			wantErr: "target is required",
+			wantErr: "either target or target_name is required",
 		},
 		{
 			name: "missing agent ID",
@@ -848,10 +845,10 @@ func TestRunAttack_ExecutionError(t *testing.T) {
 	require.GreaterOrEqual(t, len(events), 2) // started, error
 
 	// Check attack started event
-	assert.Equal(t, "attack_started", events[0].EventType)
+	assert.Equal(t, "attack.started", events[0].EventType)
 
 	// Check error event
-	assert.Equal(t, "attack_error", events[len(events)-1].EventType)
+	assert.Equal(t, "attack.failed", events[len(events)-1].EventType)
 	assert.Contains(t, events[len(events)-1].Error, "target unreachable")
 }
 
@@ -939,8 +936,8 @@ func TestRunAttack_NoFindings(t *testing.T) {
 
 	// Verify events - should have started and completed, no finding events
 	require.Equal(t, 2, len(events))
-	assert.Equal(t, "attack_started", events[0].EventType)
-	assert.Equal(t, "attack_completed", events[1].EventType)
+	assert.Equal(t, "attack.started", events[0].EventType)
+	assert.Equal(t, "attack.completed", events[1].EventType)
 	assert.Contains(t, events[1].Message, "0 findings")
 }
 
@@ -1067,6 +1064,219 @@ func TestBuildAttackOptions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, opts)
 			tt.check(t, opts)
+		})
+	}
+}
+
+// mockTargetDAO is a mock implementation of TargetDAO for testing
+type mockTargetDAO struct {
+	getByNameFunc func(ctx context.Context, name string) (*types.Target, error)
+}
+
+func (m *mockTargetDAO) GetByName(ctx context.Context, name string) (*types.Target, error) {
+	if m.getByNameFunc != nil {
+		return m.getByNameFunc(ctx, name)
+	}
+	return nil, fmt.Errorf("target not found")
+}
+
+// TestValidateAttackRequest_TargetName tests validation with target_name field
+func TestValidateAttackRequest_TargetName(t *testing.T) {
+	daemon := &daemonImpl{
+		logger: slog.Default(),
+	}
+
+	tests := []struct {
+		name    string
+		req     api.AttackRequest
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name: "valid request with target_name",
+			req: api.AttackRequest{
+				TargetName: "demo-target",
+				AgentID:    "test-agent",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid request with inline target",
+			req: api.AttackRequest{
+				Target:  "https://example.com",
+				AgentID: "test-agent",
+			},
+			wantErr: false,
+		},
+		{
+			name: "both target and target_name specified",
+			req: api.AttackRequest{
+				Target:     "https://example.com",
+				TargetName: "demo-target",
+				AgentID:    "test-agent",
+			},
+			wantErr: true,
+			errMsg:  "cannot specify both",
+		},
+		{
+			name: "neither target nor target_name specified",
+			req: api.AttackRequest{
+				AgentID: "test-agent",
+			},
+			wantErr: true,
+			errMsg:  "either target or target_name is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := daemon.validateAttackRequest(tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestBuildAttackOptions_TargetNameResolution tests target name lookup
+func TestBuildAttackOptions_TargetNameResolution(t *testing.T) {
+	tests := []struct {
+		name      string
+		req       api.AttackRequest
+		mockSetup func() *mockTargetDAO
+		wantErr   bool
+		check     func(t *testing.T, opts *attack.AttackOptions)
+	}{
+		{
+			name: "resolve target by name",
+			req: api.AttackRequest{
+				TargetName: "demo-target",
+				AgentID:    "test-agent",
+			},
+			mockSetup: func() *mockTargetDAO {
+				return &mockTargetDAO{
+					getByNameFunc: func(ctx context.Context, name string) (*types.Target, error) {
+						return &types.Target{
+							ID:   types.NewID(),
+							Name: "demo-target",
+							Type: "http_api",
+							Connection: map[string]any{
+								"url": "https://api.example.com/v1/chat",
+							},
+						}, nil
+					},
+				}
+			},
+			wantErr: false,
+			check: func(t *testing.T, opts *attack.AttackOptions) {
+				assert.Equal(t, "https://api.example.com/v1/chat", opts.TargetURL)
+				assert.Equal(t, "demo-target", opts.TargetName)
+				assert.Equal(t, "http_api", string(opts.TargetType))
+			},
+		},
+		{
+			name: "target not found error",
+			req: api.AttackRequest{
+				TargetName: "missing-target",
+				AgentID:    "test-agent",
+			},
+			mockSetup: func() *mockTargetDAO {
+				return &mockTargetDAO{
+					getByNameFunc: func(ctx context.Context, name string) (*types.Target, error) {
+						return nil, fmt.Errorf("target not found")
+					},
+				}
+			},
+			wantErr: true,
+		},
+		{
+			name: "target with no URL",
+			req: api.AttackRequest{
+				TargetName: "no-url-target",
+				AgentID:    "test-agent",
+			},
+			mockSetup: func() *mockTargetDAO {
+				return &mockTargetDAO{
+					getByNameFunc: func(ctx context.Context, name string) (*types.Target, error) {
+						return &types.Target{
+							ID:         types.NewID(),
+							Name:       "no-url-target",
+							Type:       "http_api",
+							Connection: map[string]any{},
+						}, nil
+					},
+				}
+			},
+			wantErr: true,
+		},
+		{
+			name: "backward compatibility with inline target",
+			req: api.AttackRequest{
+				Target:  "https://example.com",
+				AgentID: "test-agent",
+			},
+			mockSetup: func() *mockTargetDAO {
+				return &mockTargetDAO{}
+			},
+			wantErr: false,
+			check: func(t *testing.T, opts *attack.AttackOptions) {
+				assert.Equal(t, "https://example.com", opts.TargetURL)
+				assert.Equal(t, "", opts.TargetName)
+			},
+		},
+		{
+			name: "target with credential",
+			req: api.AttackRequest{
+				TargetName: "target-with-cred",
+				AgentID:    "test-agent",
+			},
+			mockSetup: func() *mockTargetDAO {
+				credID := types.NewID()
+				return &mockTargetDAO{
+					getByNameFunc: func(ctx context.Context, name string) (*types.Target, error) {
+						return &types.Target{
+							ID:   types.NewID(),
+							Name: "target-with-cred",
+							Type: "http_api",
+							Connection: map[string]any{
+								"url": "https://api.example.com/v1/chat",
+							},
+							CredentialID: &credID,
+						}, nil
+					},
+				}
+			},
+			wantErr: false,
+			check: func(t *testing.T, opts *attack.AttackOptions) {
+				assert.Equal(t, "https://api.example.com/v1/chat", opts.TargetURL)
+				assert.NotEmpty(t, opts.Credential)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDAO := tt.mockSetup()
+			daemon := &daemonImpl{
+				targetStore: mockDAO,
+				logger:      slog.Default(),
+			}
+
+			opts, err := daemon.buildAttackOptions(tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, opts)
+				if tt.check != nil {
+					tt.check(t, opts)
+				}
+			}
 		})
 	}
 }

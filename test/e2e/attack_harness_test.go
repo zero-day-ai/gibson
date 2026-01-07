@@ -379,6 +379,57 @@ func (m *mockMissionStore) Count(ctx context.Context, filter *mission.MissionFil
 	return len(m.missions), nil
 }
 
+func (m *mockMissionStore) GetByNameAndStatus(ctx context.Context, name string, status mission.MissionStatus) (*mission.Mission, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, mis := range m.missions {
+		if mis.Name == name && mis.Status == status {
+			return mis, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *mockMissionStore) ListByName(ctx context.Context, name string, limit int) ([]*mission.Mission, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []*mission.Mission
+	for _, mis := range m.missions {
+		if mis.Name == name {
+			result = append(result, mis)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockMissionStore) GetLatestByName(ctx context.Context, name string) (*mission.Mission, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var latest *mission.Mission
+	for _, mis := range m.missions {
+		if mis.Name == name {
+			if latest == nil || mis.CreatedAt.After(latest.CreatedAt) {
+				latest = mis
+			}
+		}
+	}
+	return latest, nil
+}
+
+func (m *mockMissionStore) IncrementRunNumber(ctx context.Context, name string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	maxRun := 0
+	for _, mis := range m.missions {
+		if mis.Name == name {
+			if rn, ok := mis.Metadata["run_number"].(int); ok && rn > maxRun {
+				maxRun = rn
+			}
+		}
+	}
+	return maxRun + 1, nil
+}
+
 // trackingMockHarness is a mock harness that tracks all calls
 type trackingMockHarness struct {
 	mu            sync.Mutex

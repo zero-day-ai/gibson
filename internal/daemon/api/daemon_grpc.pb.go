@@ -19,20 +19,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DaemonService_Connect_FullMethodName        = "/gibson.daemon.v1.DaemonService/Connect"
-	DaemonService_Ping_FullMethodName           = "/gibson.daemon.v1.DaemonService/Ping"
-	DaemonService_Status_FullMethodName         = "/gibson.daemon.v1.DaemonService/Status"
-	DaemonService_RunMission_FullMethodName     = "/gibson.daemon.v1.DaemonService/RunMission"
-	DaemonService_StopMission_FullMethodName    = "/gibson.daemon.v1.DaemonService/StopMission"
-	DaemonService_ListMissions_FullMethodName   = "/gibson.daemon.v1.DaemonService/ListMissions"
-	DaemonService_ListAgents_FullMethodName     = "/gibson.daemon.v1.DaemonService/ListAgents"
-	DaemonService_GetAgentStatus_FullMethodName = "/gibson.daemon.v1.DaemonService/GetAgentStatus"
-	DaemonService_ListTools_FullMethodName      = "/gibson.daemon.v1.DaemonService/ListTools"
-	DaemonService_ListPlugins_FullMethodName    = "/gibson.daemon.v1.DaemonService/ListPlugins"
-	DaemonService_RunAttack_FullMethodName      = "/gibson.daemon.v1.DaemonService/RunAttack"
-	DaemonService_Subscribe_FullMethodName      = "/gibson.daemon.v1.DaemonService/Subscribe"
-	DaemonService_StartComponent_FullMethodName = "/gibson.daemon.v1.DaemonService/StartComponent"
-	DaemonService_StopComponent_FullMethodName  = "/gibson.daemon.v1.DaemonService/StopComponent"
+	DaemonService_Connect_FullMethodName               = "/gibson.daemon.v1.DaemonService/Connect"
+	DaemonService_Ping_FullMethodName                  = "/gibson.daemon.v1.DaemonService/Ping"
+	DaemonService_Status_FullMethodName                = "/gibson.daemon.v1.DaemonService/Status"
+	DaemonService_RunMission_FullMethodName            = "/gibson.daemon.v1.DaemonService/RunMission"
+	DaemonService_StopMission_FullMethodName           = "/gibson.daemon.v1.DaemonService/StopMission"
+	DaemonService_ListMissions_FullMethodName          = "/gibson.daemon.v1.DaemonService/ListMissions"
+	DaemonService_ListAgents_FullMethodName            = "/gibson.daemon.v1.DaemonService/ListAgents"
+	DaemonService_GetAgentStatus_FullMethodName        = "/gibson.daemon.v1.DaemonService/GetAgentStatus"
+	DaemonService_ListTools_FullMethodName             = "/gibson.daemon.v1.DaemonService/ListTools"
+	DaemonService_ListPlugins_FullMethodName           = "/gibson.daemon.v1.DaemonService/ListPlugins"
+	DaemonService_RunAttack_FullMethodName             = "/gibson.daemon.v1.DaemonService/RunAttack"
+	DaemonService_Subscribe_FullMethodName             = "/gibson.daemon.v1.DaemonService/Subscribe"
+	DaemonService_StartComponent_FullMethodName        = "/gibson.daemon.v1.DaemonService/StartComponent"
+	DaemonService_StopComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/StopComponent"
+	DaemonService_PauseMission_FullMethodName          = "/gibson.daemon.v1.DaemonService/PauseMission"
+	DaemonService_ResumeMission_FullMethodName         = "/gibson.daemon.v1.DaemonService/ResumeMission"
+	DaemonService_GetMissionHistory_FullMethodName     = "/gibson.daemon.v1.DaemonService/GetMissionHistory"
+	DaemonService_GetMissionCheckpoints_FullMethodName = "/gibson.daemon.v1.DaemonService/GetMissionCheckpoints"
 )
 
 // DaemonServiceClient is the client API for DaemonService service.
@@ -80,6 +84,18 @@ type DaemonServiceClient interface {
 	// StopComponent stops a running component (agent, tool, or plugin) by kind and name.
 	// If force is true, sends SIGKILL immediately instead of graceful SIGTERM.
 	StopComponent(ctx context.Context, in *StopComponentRequest, opts ...grpc.CallOption) (*StopComponentResponse, error)
+	// PauseMission pauses a running mission at the next clean checkpoint boundary.
+	// If force is true, pauses immediately without waiting for a clean boundary.
+	PauseMission(ctx context.Context, in *PauseMissionRequest, opts ...grpc.CallOption) (*PauseMissionResponse, error)
+	// ResumeMission resumes a paused mission from its last checkpoint.
+	// Returns a stream of mission events as execution continues.
+	ResumeMission(ctx context.Context, in *ResumeMissionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MissionEvent], error)
+	// GetMissionHistory returns all runs for a mission name, showing the
+	// complete history of mission executions with the same workflow name.
+	GetMissionHistory(ctx context.Context, in *GetMissionHistoryRequest, opts ...grpc.CallOption) (*GetMissionHistoryResponse, error)
+	// GetMissionCheckpoints returns all checkpoints for a specific mission,
+	// providing visibility into saved execution states for resume capability.
+	GetMissionCheckpoints(ctx context.Context, in *GetMissionCheckpointsRequest, opts ...grpc.CallOption) (*GetMissionCheckpointsResponse, error)
 }
 
 type daemonServiceClient struct {
@@ -257,6 +273,55 @@ func (c *daemonServiceClient) StopComponent(ctx context.Context, in *StopCompone
 	return out, nil
 }
 
+func (c *daemonServiceClient) PauseMission(ctx context.Context, in *PauseMissionRequest, opts ...grpc.CallOption) (*PauseMissionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PauseMissionResponse)
+	err := c.cc.Invoke(ctx, DaemonService_PauseMission_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) ResumeMission(ctx context.Context, in *ResumeMissionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[MissionEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &DaemonService_ServiceDesc.Streams[3], DaemonService_ResumeMission_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ResumeMissionRequest, MissionEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DaemonService_ResumeMissionClient = grpc.ServerStreamingClient[MissionEvent]
+
+func (c *daemonServiceClient) GetMissionHistory(ctx context.Context, in *GetMissionHistoryRequest, opts ...grpc.CallOption) (*GetMissionHistoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMissionHistoryResponse)
+	err := c.cc.Invoke(ctx, DaemonService_GetMissionHistory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) GetMissionCheckpoints(ctx context.Context, in *GetMissionCheckpointsRequest, opts ...grpc.CallOption) (*GetMissionCheckpointsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetMissionCheckpointsResponse)
+	err := c.cc.Invoke(ctx, DaemonService_GetMissionCheckpoints_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DaemonServiceServer is the server API for DaemonService service.
 // All implementations must embed UnimplementedDaemonServiceServer
 // for forward compatibility.
@@ -302,6 +367,18 @@ type DaemonServiceServer interface {
 	// StopComponent stops a running component (agent, tool, or plugin) by kind and name.
 	// If force is true, sends SIGKILL immediately instead of graceful SIGTERM.
 	StopComponent(context.Context, *StopComponentRequest) (*StopComponentResponse, error)
+	// PauseMission pauses a running mission at the next clean checkpoint boundary.
+	// If force is true, pauses immediately without waiting for a clean boundary.
+	PauseMission(context.Context, *PauseMissionRequest) (*PauseMissionResponse, error)
+	// ResumeMission resumes a paused mission from its last checkpoint.
+	// Returns a stream of mission events as execution continues.
+	ResumeMission(*ResumeMissionRequest, grpc.ServerStreamingServer[MissionEvent]) error
+	// GetMissionHistory returns all runs for a mission name, showing the
+	// complete history of mission executions with the same workflow name.
+	GetMissionHistory(context.Context, *GetMissionHistoryRequest) (*GetMissionHistoryResponse, error)
+	// GetMissionCheckpoints returns all checkpoints for a specific mission,
+	// providing visibility into saved execution states for resume capability.
+	GetMissionCheckpoints(context.Context, *GetMissionCheckpointsRequest) (*GetMissionCheckpointsResponse, error)
 	mustEmbedUnimplementedDaemonServiceServer()
 }
 
@@ -353,6 +430,18 @@ func (UnimplementedDaemonServiceServer) StartComponent(context.Context, *StartCo
 }
 func (UnimplementedDaemonServiceServer) StopComponent(context.Context, *StopComponentRequest) (*StopComponentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopComponent not implemented")
+}
+func (UnimplementedDaemonServiceServer) PauseMission(context.Context, *PauseMissionRequest) (*PauseMissionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PauseMission not implemented")
+}
+func (UnimplementedDaemonServiceServer) ResumeMission(*ResumeMissionRequest, grpc.ServerStreamingServer[MissionEvent]) error {
+	return status.Error(codes.Unimplemented, "method ResumeMission not implemented")
+}
+func (UnimplementedDaemonServiceServer) GetMissionHistory(context.Context, *GetMissionHistoryRequest) (*GetMissionHistoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetMissionHistory not implemented")
+}
+func (UnimplementedDaemonServiceServer) GetMissionCheckpoints(context.Context, *GetMissionCheckpointsRequest) (*GetMissionCheckpointsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetMissionCheckpoints not implemented")
 }
 func (UnimplementedDaemonServiceServer) mustEmbedUnimplementedDaemonServiceServer() {}
 func (UnimplementedDaemonServiceServer) testEmbeddedByValue()                       {}
@@ -606,6 +695,71 @@ func _DaemonService_StopComponent_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DaemonService_PauseMission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PauseMissionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).PauseMission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_PauseMission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).PauseMission(ctx, req.(*PauseMissionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_ResumeMission_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ResumeMissionRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(DaemonServiceServer).ResumeMission(m, &grpc.GenericServerStream[ResumeMissionRequest, MissionEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DaemonService_ResumeMissionServer = grpc.ServerStreamingServer[MissionEvent]
+
+func _DaemonService_GetMissionHistory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMissionHistoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).GetMissionHistory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_GetMissionHistory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).GetMissionHistory(ctx, req.(*GetMissionHistoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_GetMissionCheckpoints_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMissionCheckpointsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).GetMissionCheckpoints(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_GetMissionCheckpoints_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).GetMissionCheckpoints(ctx, req.(*GetMissionCheckpointsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DaemonService_ServiceDesc is the grpc.ServiceDesc for DaemonService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -657,6 +811,18 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "StopComponent",
 			Handler:    _DaemonService_StopComponent_Handler,
 		},
+		{
+			MethodName: "PauseMission",
+			Handler:    _DaemonService_PauseMission_Handler,
+		},
+		{
+			MethodName: "GetMissionHistory",
+			Handler:    _DaemonService_GetMissionHistory_Handler,
+		},
+		{
+			MethodName: "GetMissionCheckpoints",
+			Handler:    _DaemonService_GetMissionCheckpoints_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -672,6 +838,11 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Subscribe",
 			Handler:       _DaemonService_Subscribe_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ResumeMission",
+			Handler:       _DaemonService_ResumeMission_Handler,
 			ServerStreams: true,
 		},
 	},

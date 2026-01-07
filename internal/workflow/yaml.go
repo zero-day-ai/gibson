@@ -73,8 +73,60 @@ import (
 type YAMLWorkflow struct {
 	Name        string          `yaml:"name"`
 	Description string          `yaml:"description"`
+	Target      *YAMLTarget     `yaml:"target,omitempty"`
 	Nodes       []YAMLNode      `yaml:"nodes"`
 	Planning    *PlanningConfig `yaml:"planning,omitempty"`
+}
+
+// YAMLTarget represents a target specification in YAML format.
+// It supports both string references and inline object definitions:
+//   - String form: target: my-target-name
+//   - Object form: target: { type: network, connection: {...} }
+type YAMLTarget struct {
+	// Reference is set when target is specified as a plain string (name or ID)
+	Reference string `yaml:"-"`
+
+	// Inline definition fields (set when target is an object)
+	Name       string         `yaml:"name,omitempty"`
+	Type       string         `yaml:"type,omitempty"`
+	Connection map[string]any `yaml:"connection,omitempty"`
+	Provider   string         `yaml:"provider,omitempty"`
+	Tags       []string       `yaml:"tags,omitempty"`
+}
+
+// UnmarshalYAML implements custom YAML unmarshaling to handle both string and object forms
+func (t *YAMLTarget) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Try unmarshaling as a string first
+	var str string
+	if err := unmarshal(&str); err == nil {
+		t.Reference = str
+		return nil
+	}
+
+	// If not a string, try unmarshaling as an object
+	type rawTarget YAMLTarget
+	var raw rawTarget
+	if err := unmarshal(&raw); err != nil {
+		return fmt.Errorf("target must be either a string reference or an object definition: %w", err)
+	}
+
+	// Check for ambiguous specification (both reference and inline fields)
+	if raw.Reference != "" && (raw.Type != "" || raw.Connection != nil) {
+		return fmt.Errorf("target must be either reference or inline, not both")
+	}
+
+	*t = YAMLTarget(raw)
+	return nil
+}
+
+// IsReference returns true if this target is a reference to an existing target
+func (t *YAMLTarget) IsReference() bool {
+	return t.Reference != ""
+}
+
+// IsInline returns true if this target is an inline definition
+func (t *YAMLTarget) IsInline() bool {
+	return t.Type != "" || t.Connection != nil
 }
 
 // YAMLNode represents a node definition in YAML format.
@@ -164,6 +216,15 @@ func ParseWorkflow(data []byte) (*Workflow, error) {
 		ExitPoints:  []string{},
 		Metadata:    make(map[string]any),
 		CreatedAt:   time.Now(),
+	}
+
+	// Copy target reference if present
+	if yamlWf.Target != nil {
+		if yamlWf.Target.IsReference() {
+			wf.TargetRef = yamlWf.Target.Reference
+		} else if yamlWf.Target.Name != "" {
+			wf.TargetRef = yamlWf.Target.Name
+		}
 	}
 
 	// Build a set of all node IDs for validation

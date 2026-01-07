@@ -23,8 +23,8 @@ import (
 // delegates them to the appropriate registered harness instance.
 //
 // The service supports two modes of harness lookup:
-//   1. Task-based lookup (legacy): Uses activeHarnesses sync.Map keyed by task ID
-//   2. Mission-based lookup (new): Uses CallbackHarnessRegistry keyed by "missionID:agentName"
+//  1. Task-based lookup (legacy): Uses activeHarnesses sync.Map keyed by task ID
+//  2. Mission-based lookup (new): Uses CallbackHarnessRegistry keyed by "missionID:agentName"
 //
 // When an agent running in standalone mode makes a harness call, the SDK's
 // CallbackClient sends a gRPC request with context information (task ID or

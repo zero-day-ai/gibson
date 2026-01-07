@@ -395,13 +395,13 @@ func TestConvertProtoMissionEvent(t *testing.T) {
 		{
 			name: "mission event with invalid JSON data",
 			input: &api.MissionEvent{
-				EventType: "finding_discovered",
+				EventType: "mission.finding",
 				Timestamp: 1640000200,
 				Message:   "Found vulnerability",
 				Data:      "invalid-json{",
 			},
 			expected: MissionEvent{
-				Type:      "finding_discovered",
+				Type:      "mission.finding",
 				Timestamp: time.Unix(1640000200, 0),
 				Message:   "Found vulnerability",
 				Data:      nil, // Invalid JSON results in nil
@@ -432,7 +432,7 @@ func TestConvertProtoAttackEvent(t *testing.T) {
 		{
 			name: "complete attack event",
 			input: &api.AttackEvent{
-				EventType: "attack_started",
+				EventType: "attack.started",
 				Timestamp: 1640000000,
 				AttackId:  "attack-1",
 				Message:   "Attack started",
@@ -440,7 +440,7 @@ func TestConvertProtoAttackEvent(t *testing.T) {
 				Error:     "",
 			},
 			expected: AttackEvent{
-				Type:      "attack_started",
+				Type:      "attack.started",
 				Timestamp: time.Unix(1640000000, 0),
 				Message:   "Attack started",
 				Severity:  "", // Not in proto
@@ -452,12 +452,12 @@ func TestConvertProtoAttackEvent(t *testing.T) {
 		{
 			name: "attack event with no data",
 			input: &api.AttackEvent{
-				EventType: "attack_completed",
+				EventType: "attack.completed",
 				Timestamp: 1640000100,
 				Message:   "Attack completed",
 			},
 			expected: AttackEvent{
-				Type:      "attack_completed",
+				Type:      "attack.completed",
 				Timestamp: time.Unix(1640000100, 0),
 				Message:   "Attack completed",
 				Severity:  "",
@@ -588,6 +588,18 @@ func (m *mockDaemonServiceClient) StartComponent(ctx context.Context, req *api.S
 	return nil, nil
 }
 func (m *mockDaemonServiceClient) StopComponent(ctx context.Context, req *api.StopComponentRequest, opts ...grpc.CallOption) (*api.StopComponentResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) PauseMission(ctx context.Context, req *api.PauseMissionRequest, opts ...grpc.CallOption) (*api.PauseMissionResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) ResumeMission(ctx context.Context, req *api.ResumeMissionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[api.MissionEvent], error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) GetMissionHistory(ctx context.Context, req *api.GetMissionHistoryRequest, opts ...grpc.CallOption) (*api.GetMissionHistoryResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) GetMissionCheckpoints(ctx context.Context, req *api.GetMissionCheckpointsRequest, opts ...grpc.CallOption) (*api.GetMissionCheckpointsResponse, error) {
 	return nil, nil
 }
 

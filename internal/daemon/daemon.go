@@ -16,8 +16,14 @@ import (
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
+
+// targetStore is an interface for target data access
+type targetStore interface {
+	GetByName(ctx context.Context, name string) (*types.Target, error)
+}
 
 // daemonImpl is the concrete implementation of the Daemon interface.
 //
@@ -57,6 +63,9 @@ type daemonImpl struct {
 	// missionStore provides access to mission persistence
 	missionStore mission.MissionStore
 
+	// targetStore provides access to target persistence
+	targetStore targetStore
+
 	// infrastructure holds shared components (DAG executor, finding store, LLM registry)
 	infrastructure *Infrastructure
 
@@ -87,6 +96,10 @@ type daemonImpl struct {
 
 	// startTime tracks when the daemon started
 	startTime time.Time
+
+	// onRegistryReady is called after the registry is started but before other services
+	// This allows CLI to set up verbose logging after etcd is initialized
+	onRegistryReady func()
 }
 
 // New creates a new daemon instance with the provided configuration.
@@ -144,6 +157,9 @@ func New(cfg *config.Config, homeDir string) (Daemon, error) {
 	// Initialize mission store
 	missionStore := mission.NewDBMissionStore(db)
 
+	// Initialize target store
+	targetStore := database.NewTargetDAO(db)
+
 	// Initialize event bus
 	eventBus := NewEventBus(logger, WithEventBufferSize(100))
 
@@ -166,6 +182,7 @@ func New(cfg *config.Config, homeDir string) (Daemon, error) {
 		eventBus:        eventBus,
 		db:              db,
 		missionStore:    missionStore,
+		targetStore:     targetStore,
 		activeMissions:  make(map[string]context.CancelFunc),
 		grpcServer:      nil,      // Created in Start()
 		grpcAddr:        grpcAddr, // Configurable via config file or environment variable
@@ -174,6 +191,14 @@ func New(cfg *config.Config, homeDir string) (Daemon, error) {
 		infoFile:        filepath.Join(homeDir, "daemon.json"),
 		startTime:       time.Time{}, // Set when Start() is called
 	}, nil
+}
+
+// SetOnRegistryReady sets a callback that will be called after the registry
+// is started but before other services. This is used by the CLI to set up
+// verbose logging after etcd is initialized, avoiding conflicts with etcd's
+// internal logging during startup.
+func (d *daemonImpl) SetOnRegistryReady(fn func()) {
+	d.onRegistryReady = fn
 }
 
 // Start begins the daemon process and all managed services.
@@ -222,6 +247,10 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start registry: %w", err)
 	}
 
+	// Call the registry ready callback if set (for future use)
+	if d.onRegistryReady != nil {
+		d.onRegistryReady()
+	}
 	// Initialize registry adapter now that registry is started
 	regAdapter := registry.NewRegistryAdapter(d.registry.Registry())
 	d.registryAdapter = regAdapter
@@ -241,6 +270,14 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	}
 	d.infrastructure = infra
 	d.logger.Info("infrastructure components initialized")
+
+	// Perform crash recovery: find any missions that were running when daemon stopped
+	// and transition them to paused status before accepting new connections
+	d.logger.Info("checking for missions to recover after daemon restart")
+	if err := d.recoverRunningMissions(ctx); err != nil {
+		d.logger.Warn("failed to recover running missions", "error", err)
+		// Don't fail startup on recovery error - continue with normal operation
+	}
 
 	// Initialize attack runner with required dependencies
 	// Create orchestrator with full configuration including harness factory and workflow executor
@@ -455,6 +492,59 @@ func (d *daemonImpl) status() (*DaemonStatus, error) {
 	}
 
 	return status, nil
+}
+
+// recoverRunningMissions handles crash recovery by transitioning any missions that were
+// in running status when the daemon stopped to paused status. This ensures missions can
+// be resumed after an unexpected shutdown.
+//
+// This function is called during daemon startup, after infrastructure initialization but
+// before accepting new connections. It queries for all missions with running status and
+// updates them to paused, logging a warning for each recovered mission.
+func (d *daemonImpl) recoverRunningMissions(ctx context.Context) error {
+	// Query for all missions that are currently in running status
+	activeMissions, err := d.missionStore.GetActive(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to query active missions: %w", err)
+	}
+
+	if len(activeMissions) == 0 {
+		d.logger.Info("no running missions to recover")
+		return nil
+	}
+
+	// Transition each running mission to paused status
+	recoveredCount := 0
+	for _, m := range activeMissions {
+		// Only recover missions that are actually running (not already paused)
+		if m.Status == mission.MissionStatusRunning {
+			d.logger.Warn("recovered mission - set to paused after daemon restart",
+				"mission_id", m.ID.String(),
+				"mission_name", m.Name,
+				"status", m.Status,
+			)
+
+			// Update mission status to paused
+			if err := d.missionStore.UpdateStatus(ctx, m.ID, mission.MissionStatusPaused); err != nil {
+				d.logger.Error("failed to pause recovered mission",
+					"mission_id", m.ID.String(),
+					"error", err,
+				)
+				continue
+			}
+
+			recoveredCount++
+		}
+	}
+
+	if recoveredCount > 0 {
+		d.logger.Info("completed crash recovery",
+			"recovered_missions", recoveredCount,
+			"total_active", len(activeMissions),
+		)
+	}
+
+	return nil
 }
 
 // formatDuration formats a duration into a human-readable string.

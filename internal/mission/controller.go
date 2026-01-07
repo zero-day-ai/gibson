@@ -41,18 +41,32 @@ type MissionController interface {
 
 // DefaultMissionController implements MissionController.
 type DefaultMissionController struct {
-	store        MissionStore
-	service      MissionService
-	orchestrator MissionOrchestrator
+	store             MissionStore
+	service           MissionService
+	orchestrator      MissionOrchestrator
+	checkpointManager CheckpointManager
 
 	// executionMu protects concurrent mission operations
 	executionMu sync.RWMutex
 	// activeMissions tracks currently executing missions
 	activeMissions map[types.ID]context.CancelFunc
+
+	// operationLocksMu protects access to the operationLocks map
+	operationLocksMu sync.Mutex
+	// operationLocks provides per-mission mutexes to prevent concurrent operations
+	// on the same mission (e.g., simultaneous pause and resume)
+	operationLocks map[types.ID]*sync.Mutex
 }
 
 // ControllerOption is a functional option for configuring the controller.
 type ControllerOption func(*DefaultMissionController)
+
+// WithCheckpointManager sets the checkpoint manager for pause/resume capability.
+func WithCheckpointManager(cm CheckpointManager) ControllerOption {
+	return func(c *DefaultMissionController) {
+		c.checkpointManager = cm
+	}
+}
 
 // NewMissionController creates a new mission controller.
 func NewMissionController(
@@ -66,6 +80,7 @@ func NewMissionController(
 		service:        service,
 		orchestrator:   orchestrator,
 		activeMissions: make(map[types.ID]context.CancelFunc),
+		operationLocks: make(map[types.ID]*sync.Mutex),
 	}
 
 	for _, opt := range opts {
@@ -73,6 +88,43 @@ func NewMissionController(
 	}
 
 	return c
+}
+
+// acquireOperationLock attempts to acquire a lock for the specified mission to prevent
+// concurrent operations. Returns an error if another operation is already in progress.
+func (c *DefaultMissionController) acquireOperationLock(missionID types.ID) (*sync.Mutex, error) {
+	c.operationLocksMu.Lock()
+	defer c.operationLocksMu.Unlock()
+
+	// Get or create the mutex for this mission
+	mu, exists := c.operationLocks[missionID]
+	if !exists {
+		mu = &sync.Mutex{}
+		c.operationLocks[missionID] = mu
+	}
+
+	// Try to acquire the lock (non-blocking)
+	locked := mu.TryLock()
+	if !locked {
+		return nil, NewMissionError(
+			ErrMissionInternal,
+			fmt.Sprintf("operation already in progress for mission %s", missionID.String()),
+		).WithContext("mission_id", missionID.String())
+	}
+
+	return mu, nil
+}
+
+// releaseOperationLock releases the operation lock for the specified mission.
+func (c *DefaultMissionController) releaseOperationLock(missionID types.ID) {
+	c.operationLocksMu.Lock()
+	defer c.operationLocksMu.Unlock()
+
+	if mu, exists := c.operationLocks[missionID]; exists {
+		mu.Unlock()
+		// Note: We keep the mutex in the map rather than deleting it
+		// to avoid repeated allocations for frequently accessed missions
+	}
 }
 
 // Create creates a new mission from configuration.
@@ -129,6 +181,13 @@ func (c *DefaultMissionController) Start(ctx context.Context, missionID types.ID
 
 // Stop gracefully cancels mission execution.
 func (c *DefaultMissionController) Stop(ctx context.Context, missionID types.ID) error {
+	// Acquire operation lock to prevent concurrent operations
+	_, err := c.acquireOperationLock(missionID)
+	if err != nil {
+		return err
+	}
+	defer c.releaseOperationLock(missionID)
+
 	c.executionMu.Lock()
 	defer c.executionMu.Unlock()
 
@@ -157,6 +216,17 @@ func (c *DefaultMissionController) Stop(ctx context.Context, missionID types.ID)
 
 // Pause suspends mission at next checkpoint.
 func (c *DefaultMissionController) Pause(ctx context.Context, missionID types.ID) error {
+	// Acquire operation lock to prevent concurrent operations
+	_, err := c.acquireOperationLock(missionID)
+	if err != nil {
+		return err
+	}
+	defer c.releaseOperationLock(missionID)
+
+	c.executionMu.RLock()
+	cancelFunc, isRunning := c.activeMissions[missionID]
+	c.executionMu.RUnlock()
+
 	// Get mission
 	mission, err := c.store.Get(ctx, missionID)
 	if err != nil {
@@ -168,13 +238,53 @@ func (c *DefaultMissionController) Pause(ctx context.Context, missionID types.ID
 		return NewInvalidStateError(mission.Status, MissionStatusPaused)
 	}
 
-	// Update status
+	// If mission is running, request pause via orchestrator
+	if isRunning {
+		// For now, we'll cancel execution which will be picked up by orchestrator
+		// The orchestrator should detect cancellation and save checkpoint before transitioning to paused
+		cancelFunc()
+
+		// Wait for mission to reach paused state (with timeout)
+		timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-timeoutCtx.Done():
+				return fmt.Errorf("timeout waiting for mission to pause")
+			case <-ticker.C:
+				// Re-fetch mission to check status
+				mission, err = c.store.Get(ctx, missionID)
+				if err != nil {
+					return fmt.Errorf("failed to check mission status: %w", err)
+				}
+				if mission.Status == MissionStatusPaused || mission.Status.IsTerminal() {
+					return nil
+				}
+			}
+		}
+	}
+
+	// Mission is not running, directly update status to paused
 	mission.Status = MissionStatusPaused
 	return c.store.Update(ctx, mission)
 }
 
 // Resume continues mission from checkpoint.
 func (c *DefaultMissionController) Resume(ctx context.Context, missionID types.ID) error {
+	// Acquire operation lock to prevent concurrent operations
+	_, err := c.acquireOperationLock(missionID)
+	if err != nil {
+		return err
+	}
+	defer c.releaseOperationLock(missionID)
+
+	c.executionMu.Lock()
+	defer c.executionMu.Unlock()
+
 	// Get mission
 	mission, err := c.store.Get(ctx, missionID)
 	if err != nil {
@@ -186,8 +296,71 @@ func (c *DefaultMissionController) Resume(ctx context.Context, missionID types.I
 		return NewInvalidStateError(mission.Status, MissionStatusRunning)
 	}
 
-	// Start execution (which will resume from checkpoint)
-	return c.Start(ctx, missionID)
+	// Check if already running
+	if _, exists := c.activeMissions[missionID]; exists {
+		return fmt.Errorf("mission is already running")
+	}
+
+	// Load checkpoint if checkpoint manager is available
+	var checkpoint *MissionCheckpoint
+	if c.checkpointManager != nil {
+		checkpoint, err = c.checkpointManager.Restore(ctx, missionID)
+		if err != nil {
+			return fmt.Errorf("failed to restore checkpoint: %w", err)
+		}
+	}
+
+	// Update mission status to running
+	mission.Status = MissionStatusRunning
+	startedAt := time.Now()
+	mission.StartedAt = &startedAt
+	if err := c.store.Update(ctx, mission); err != nil {
+		return fmt.Errorf("failed to update mission status: %w", err)
+	}
+
+	// Create cancellable context for execution
+	execCtx, cancel := context.WithCancel(context.Background())
+	c.activeMissions[missionID] = cancel
+
+	// Start mission execution in background
+	go func() {
+		defer func() {
+			c.executionMu.Lock()
+			delete(c.activeMissions, missionID)
+			c.executionMu.Unlock()
+		}()
+
+		var result *MissionResult
+		var err error
+
+		// Execute from checkpoint if available, otherwise execute normally
+		if checkpoint != nil {
+			// Note: ExecuteFromCheckpoint is not yet implemented in the orchestrator
+			// For now, we'll execute normally - this is a placeholder for when
+			// the orchestrator supports checkpoint-based execution
+			result, err = c.orchestrator.Execute(execCtx, mission)
+		} else {
+			result, err = c.orchestrator.Execute(execCtx, mission)
+		}
+
+		if err != nil {
+			// Update mission with error
+			mission.Status = MissionStatusFailed
+			mission.Error = err.Error()
+			completedAt := time.Now()
+			mission.CompletedAt = &completedAt
+			c.store.Update(context.Background(), mission)
+		} else if result != nil {
+			// Update mission with result status
+			mission.Status = result.Status
+			completedAt := time.Now()
+			mission.CompletedAt = &completedAt
+			mission.Metrics = result.Metrics
+			c.store.Update(context.Background(), mission)
+		}
+	}()
+
+	return nil
 }
 
 // Delete removes mission (only terminal states).

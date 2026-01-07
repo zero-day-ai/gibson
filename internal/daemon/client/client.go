@@ -8,6 +8,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -528,9 +529,133 @@ func (c *Client) RunMission(ctx context.Context, workflowPath string) (<-chan Mi
 	return eventChan, nil
 }
 
+// MissionInfo represents information about a mission.
+type MissionInfo struct {
+	ID           string
+	WorkflowPath string
+	Status       string
+	StartTime    time.Time
+	EndTime      time.Time
+	FindingCount int
+}
+
+// ListMissions retrieves a list of missions from the daemon.
+//
+// This method queries the daemon's mission store with optional filtering by
+// status and name pattern. It supports pagination via limit and offset parameters.
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - activeOnly: If true, only return running/paused missions
+//   - statusFilter: Filter by specific status (running, completed, failed, cancelled) - empty means all
+//   - namePattern: Filter by mission name using pattern matching - empty means all
+//   - limit: Maximum number of missions to return (0 = use default)
+//   - offset: Number of missions to skip for pagination
+//
+// Returns:
+//   - []MissionInfo: List of missions matching the filter
+//   - int: Total count of missions (for pagination)
+//   - error: Non-nil if RPC fails
+//
+// Example:
+//
+//	missions, total, err := client.ListMissions(ctx, false, "running", "", 10, 0)
+//	if err != nil {
+//	    return err
+//	}
+//	fmt.Printf("Found %d missions (showing %d)\n", total, len(missions))
+func (c *Client) ListMissions(ctx context.Context, activeOnly bool, statusFilter, namePattern string, limit, offset int) ([]MissionInfo, int, error) {
+	resp, err := c.daemon.ListMissions(ctx, &api.ListMissionsRequest{
+		ActiveOnly:   activeOnly,
+		StatusFilter: statusFilter,
+		NamePattern:  namePattern,
+		Limit:        int32(limit),
+		Offset:       int32(offset),
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, 0, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.DeadlineExceeded:
+				return nil, 0, fmt.Errorf("daemon request timeout while listing missions")
+			default:
+				return nil, 0, fmt.Errorf("failed to list missions: %s", st.Message())
+			}
+		}
+		return nil, 0, fmt.Errorf("failed to list missions: %w", err)
+	}
+
+	// Convert proto missions to domain types
+	missions := make([]MissionInfo, len(resp.Missions))
+	for i, m := range resp.Missions {
+		missions[i] = MissionInfo{
+			ID:           m.Id,
+			WorkflowPath: m.WorkflowPath,
+			Status:       m.Status,
+			StartTime:    time.Unix(m.StartTime, 0),
+			EndTime:      time.Unix(m.EndTime, 0),
+			FindingCount: int(m.FindingCount),
+		}
+	}
+
+	return missions, int(resp.Total), nil
+}
+
+// StopMission stops a running mission via the daemon.
+//
+// This method requests graceful termination of a mission. If force is true,
+// the mission is killed immediately without cleanup.
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - missionID: The unique identifier of the mission to stop
+//   - force: If true, force-kill the mission immediately
+//
+// Returns:
+//   - error: Non-nil if stop request fails
+//
+// Example:
+//
+//	err := client.StopMission(ctx, "mission-123", false)
+//	if err != nil {
+//	    return err
+//	}
+//	fmt.Println("Mission stopped successfully")
+func (c *Client) StopMission(ctx context.Context, missionID string, force bool) error {
+	resp, err := c.daemon.StopMission(ctx, &api.StopMissionRequest{
+		MissionId: missionID,
+		Force:     force,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return fmt.Errorf("mission not found: %s", missionID)
+			case codes.FailedPrecondition:
+				return fmt.Errorf("mission is not running: %s", missionID)
+			default:
+				return fmt.Errorf("failed to stop mission: %s", st.Message())
+			}
+		}
+		return fmt.Errorf("failed to stop mission: %w", err)
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("failed to stop mission: %s", resp.Message)
+	}
+
+	return nil
+}
+
 // AttackOptions contains options for running an attack.
 type AttackOptions struct {
 	Target      string
+	TargetName  string
 	AttackType  string
 	Credentials []string
 	Payloads    []string
@@ -545,6 +670,26 @@ type AttackEvent struct {
 	Message   string
 	Severity  string
 	Data      map[string]interface{}
+	Result    *OperationResult
+}
+
+// OperationResult represents typed operation metrics.
+type OperationResult struct {
+	Status        string
+	DurationMs    int64
+	StartedAt     int64
+	CompletedAt   int64
+	TurnsUsed     int32
+	TokensUsed    int64
+	NodesExecuted int32
+	NodesFailed   int32
+	FindingsCount int32
+	CriticalCount int32
+	HighCount     int32
+	MediumCount   int32
+	LowCount      int32
+	ErrorMessage  string
+	ErrorCode     string
 }
 
 // RunAttack executes an attack via the daemon and streams events.
@@ -586,6 +731,7 @@ func (c *Client) RunAttack(ctx context.Context, opts AttackOptions) (<-chan Atta
 	// Start streaming RPC
 	stream, err := c.daemon.RunAttack(ctx, &api.RunAttackRequest{
 		Target:     opts.Target,
+		TargetName: opts.TargetName,
 		AttackType: opts.AttackType,
 		AgentId:    opts.AttackType, // Use attack type as agent ID
 	})
@@ -844,4 +990,248 @@ func (c *Client) stopComponent(ctx context.Context, kind, name string, force boo
 		StoppedCount: int(resp.StoppedCount),
 		TotalCount:   int(resp.TotalCount),
 	}, nil
+}
+
+// PauseMission pauses a running mission at the next clean checkpoint.
+//
+// This method triggers a graceful pause of the specified mission. The mission
+// will complete its current node execution and save a checkpoint before pausing.
+// If force is true, the mission will pause immediately without waiting for a
+// clean checkpoint boundary.
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - missionID: ID of the mission to pause
+//   - force: If true, pause immediately without waiting for clean boundary
+//
+// Returns:
+//   - checkpointID: ID of the checkpoint created during pause
+//   - error: Non-nil if the pause operation fails
+func (c *Client) PauseMission(ctx context.Context, missionID string, force bool) (string, error) {
+	resp, err := c.daemon.PauseMission(ctx, &api.PauseMissionRequest{
+		MissionId: missionID,
+		Force:     force,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return "", fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return "", fmt.Errorf("mission not found: %s", missionID)
+			case codes.FailedPrecondition:
+				return "", fmt.Errorf("mission is not running: %s", missionID)
+			default:
+				return "", fmt.Errorf("failed to pause mission: %s", st.Message())
+			}
+		}
+		return "", fmt.Errorf("failed to pause mission: %w", err)
+	}
+
+	if !resp.Success {
+		return "", fmt.Errorf("failed to pause mission: %s", resp.Message)
+	}
+
+	return resp.CheckpointId, nil
+}
+
+// ResumeMission resumes a paused mission from its last checkpoint.
+//
+// This method resumes execution of a paused mission, restoring its state from
+// the last saved checkpoint. Events are streamed back via the returned channel
+// similar to RunMission.
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - missionID: ID of the mission to resume
+//   - fromCheckpoint: Optional specific checkpoint ID to resume from (empty for latest)
+//
+// Returns:
+//   - <-chan MissionEvent: Channel streaming mission events during execution
+//   - error: Non-nil if the resume operation fails to start
+func (c *Client) ResumeMission(ctx context.Context, missionID string, fromCheckpoint string) (<-chan MissionEvent, error) {
+	stream, err := c.daemon.ResumeMission(ctx, &api.ResumeMissionRequest{
+		MissionId:    missionID,
+		CheckpointId: fromCheckpoint,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return nil, fmt.Errorf("mission not found: %s", missionID)
+			case codes.FailedPrecondition:
+				return nil, fmt.Errorf("mission cannot be resumed (wrong status or no checkpoint)")
+			default:
+				return nil, fmt.Errorf("failed to resume mission: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to resume mission: %w", err)
+	}
+
+	// Stream events in background goroutine
+	eventChan := make(chan MissionEvent, 10)
+	go func() {
+		defer close(eventChan)
+		for {
+			event, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				// Send error event
+				eventChan <- MissionEvent{
+					Type:      "error",
+					Timestamp: time.Now(),
+					Message:   fmt.Sprintf("stream error: %v", err),
+				}
+				return
+			}
+
+			// Convert proto event to client event
+			// Parse JSON data string into map if present
+			var data map[string]interface{}
+			if event.Data != "" {
+				if err := json.Unmarshal([]byte(event.Data), &data); err != nil {
+					// If data is not valid JSON, put it in a map with "raw" key
+					data = map[string]interface{}{"raw": event.Data}
+				}
+			}
+
+			eventChan <- MissionEvent{
+				Type:      event.EventType,
+				Timestamp: time.Unix(event.Timestamp, 0),
+				Message:   event.Message,
+				Data:      data,
+			}
+		}
+	}()
+
+	return eventChan, nil
+}
+
+// MissionRun represents a single execution run of a mission with a given name.
+type MissionRun struct {
+	MissionID     string
+	RunNumber     int
+	Status        string
+	CreatedAt     time.Time
+	CompletedAt   *time.Time
+	FindingsCount int
+}
+
+// GetMissionHistory returns all runs for a mission name.
+//
+// This method retrieves the complete history of executions for a given mission
+// name, including all run numbers, statuses, and timestamps. Runs are returned
+// in chronological order (most recent first).
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - name: Name of the mission to get history for
+//   - limit: Maximum number of runs to return (0 for all)
+//   - offset: Number of runs to skip for pagination
+//
+// Returns:
+//   - []MissionRun: List of mission runs
+//   - int: Total number of runs available
+//   - error: Non-nil if the query fails
+func (c *Client) GetMissionHistory(ctx context.Context, name string, limit, offset int) ([]MissionRun, int, error) {
+	resp, err := c.daemon.GetMissionHistory(ctx, &api.GetMissionHistoryRequest{
+		Name:   name,
+		Limit:  int32(limit),
+		Offset: int32(offset),
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, 0, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return nil, 0, fmt.Errorf("no missions found with name: %s", name)
+			default:
+				return nil, 0, fmt.Errorf("failed to get mission history: %s", st.Message())
+			}
+		}
+		return nil, 0, fmt.Errorf("failed to get mission history: %w", err)
+	}
+
+	// Convert proto runs to client runs
+	runs := make([]MissionRun, len(resp.Runs))
+	for i, r := range resp.Runs {
+		run := MissionRun{
+			MissionID:     r.MissionId,
+			RunNumber:     int(r.RunNumber),
+			Status:        r.Status,
+			CreatedAt:     time.Unix(r.CreatedAt, 0),
+			FindingsCount: int(r.FindingsCount),
+		}
+		if r.CompletedAt > 0 {
+			t := time.Unix(r.CompletedAt, 0)
+			run.CompletedAt = &t
+		}
+		runs[i] = run
+	}
+
+	return runs, int(resp.Total), nil
+}
+
+// MissionCheckpoint represents a saved checkpoint of mission execution state.
+type MissionCheckpoint struct {
+	CheckpointID   string
+	CreatedAt      time.Time
+	CompletedNodes int
+	TotalNodes     int
+	FindingsCount  int
+}
+
+// GetMissionCheckpoints returns all checkpoints for a mission.
+//
+// This method retrieves all saved checkpoints for the specified mission,
+// sorted by creation time (most recent first). Each checkpoint contains
+// metadata about the mission state at the time it was saved.
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - missionID: ID of the mission to get checkpoints for
+//
+// Returns:
+//   - []MissionCheckpoint: List of checkpoints
+//   - error: Non-nil if the query fails
+func (c *Client) GetMissionCheckpoints(ctx context.Context, missionID string) ([]MissionCheckpoint, error) {
+	resp, err := c.daemon.GetMissionCheckpoints(ctx, &api.GetMissionCheckpointsRequest{
+		MissionId: missionID,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return nil, fmt.Errorf("mission not found: %s", missionID)
+			default:
+				return nil, fmt.Errorf("failed to get checkpoints: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to get checkpoints: %w", err)
+	}
+
+	// Convert proto checkpoints to client checkpoints
+	checkpoints := make([]MissionCheckpoint, len(resp.Checkpoints))
+	for i, cp := range resp.Checkpoints {
+		checkpoints[i] = MissionCheckpoint{
+			CheckpointID:   cp.CheckpointId,
+			CreatedAt:      time.Unix(cp.CreatedAt, 0),
+			CompletedNodes: int(cp.CompletedNodes),
+			TotalNodes:     int(cp.TotalNodes),
+			FindingsCount:  int(cp.FindingsCount),
+		}
+	}
+
+	return checkpoints, nil
 }

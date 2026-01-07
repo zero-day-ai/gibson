@@ -257,13 +257,7 @@ func (d *daemonImpl) ListPlugins(ctx context.Context) ([]api.PluginInfoInternal,
 
 // RunMission starts a mission and returns an event channel.
 func (d *daemonImpl) RunMission(ctx context.Context, workflowPath string, missionID string, variables map[string]string) (<-chan api.MissionEventData, error) {
-	// TODO: Implement when mission manager is available
-	d.logger.Info("RunMission called", "workflow_path", workflowPath, "mission_id", missionID)
-
-	// For now, return a channel that immediately closes
-	eventChan := make(chan api.MissionEventData)
-	close(eventChan)
-	return eventChan, fmt.Errorf("mission execution not yet implemented")
+	return d.RunMissionWithManager(ctx, workflowPath, missionID, variables)
 }
 
 // StopMission stops a running mission.
@@ -379,22 +373,26 @@ func (d *daemonImpl) RunAttack(ctx context.Context, req api.AttackRequest) (<-ch
 		// Generate unique attack ID
 		attackID := types.NewID().String()
 
-		// Send attack started event
+		// Send attack started event with resolved target URL
 		eventChan <- api.AttackEventData{
-			EventType: "attack_started",
+			EventType: "attack.started",
 			Timestamp: time.Now(),
 			AttackID:  attackID,
-			Message:   fmt.Sprintf("Starting attack on %s with agent %s", req.Target, req.AgentID),
+			Message:   fmt.Sprintf("Starting attack on %s with agent %s", attackOpts.TargetURL, req.AgentID),
 		}
 
-		d.logger.Info("executing attack", "attack_id", attackID, "target", req.Target)
+		d.logger.Info("executing attack",
+			"attack_id", attackID,
+			"target_url", attackOpts.TargetURL,
+			"target_name", attackOpts.TargetName,
+			"agent", attackOpts.AgentName)
 
 		// Execute attack through runner
 		result, err := d.attackRunner.Run(ctx, attackOpts)
 		if err != nil {
 			d.logger.Error("attack execution failed", "error", err, "attack_id", attackID)
 			eventChan <- api.AttackEventData{
-				EventType: "attack_error",
+				EventType: "attack.failed",
 				Timestamp: time.Now(),
 				AttackID:  attackID,
 				Message:   "Attack execution failed",
@@ -406,7 +404,7 @@ func (d *daemonImpl) RunAttack(ctx context.Context, req api.AttackRequest) (<-ch
 		// Send progress events for findings
 		for _, f := range result.Findings {
 			eventChan <- api.AttackEventData{
-				EventType: "finding_discovered",
+				EventType: "attack.finding",
 				Timestamp: time.Now(),
 				AttackID:  attackID,
 				Message:   fmt.Sprintf("Found %s severity finding: %s", f.Severity, f.Title),
@@ -423,22 +421,47 @@ func (d *daemonImpl) RunAttack(ctx context.Context, req api.AttackRequest) (<-ch
 			}
 		}
 
-		// Send attack completed event
-		var resultData string
+		// Send attack completed event with typed OperationResult
+		now := time.Now()
+		startTime := now.Add(-result.Duration)
+
+		// Create typed operation result
+		operationResult := &api.OperationResult{
+			Status:        string(result.Status),
+			DurationMs:    result.Duration.Milliseconds(),
+			StartedAt:     startTime.UnixMilli(),
+			CompletedAt:   now.UnixMilli(),
+			TurnsUsed:     int32(result.TurnsUsed),
+			TokensUsed:    result.TokensUsed,
+			FindingsCount: int32(len(result.Findings)),
+		}
+
+		// Populate severity counts from FindingsBySeverity map
+		if count, ok := result.FindingsBySeverity["critical"]; ok {
+			operationResult.CriticalCount = int32(count)
+		}
+		if count, ok := result.FindingsBySeverity["high"]; ok {
+			operationResult.HighCount = int32(count)
+		}
+		if count, ok := result.FindingsBySeverity["medium"]; ok {
+			operationResult.MediumCount = int32(count)
+		}
+		if count, ok := result.FindingsBySeverity["low"]; ok {
+			operationResult.LowCount = int32(count)
+		}
+
+		// Add error information if present
 		if result.Error != nil {
-			resultData = fmt.Sprintf(`{"status":"%s","duration":"%s","findings":%d,"error":"%s"}`,
-				result.Status, result.Duration, len(result.Findings), result.Error.Error())
-		} else {
-			resultData = fmt.Sprintf(`{"status":"%s","duration":"%s","findings":%d}`,
-				result.Status, result.Duration, len(result.Findings))
+			operationResult.ErrorMessage = result.Error.Error()
 		}
 
 		eventChan <- api.AttackEventData{
-			EventType: "attack_completed",
-			Timestamp: time.Now(),
+			EventType: "attack.completed",
+			Timestamp: now,
 			AttackID:  attackID,
 			Message:   fmt.Sprintf("Attack completed: %d findings discovered", len(result.Findings)),
-			Data:      resultData,
+			Data:      "", // Empty - using typed Result now
+			Result:    operationResult,
 		}
 
 		d.logger.Info("attack completed",
@@ -453,8 +476,14 @@ func (d *daemonImpl) RunAttack(ctx context.Context, req api.AttackRequest) (<-ch
 
 // validateAttackRequest validates the attack request parameters.
 func (d *daemonImpl) validateAttackRequest(req api.AttackRequest) error {
-	if req.Target == "" {
-		return fmt.Errorf("target is required")
+	// Require either target or target_name
+	if req.Target == "" && req.TargetName == "" {
+		return fmt.Errorf("either target or target_name is required")
+	}
+
+	// Don't allow both to be set (user should choose one approach)
+	if req.Target != "" && req.TargetName != "" {
+		return fmt.Errorf("cannot specify both target and target_name")
 	}
 
 	if req.AgentID == "" {
@@ -467,7 +496,35 @@ func (d *daemonImpl) validateAttackRequest(req api.AttackRequest) error {
 // buildAttackOptions converts API AttackRequest to internal AttackOptions.
 func (d *daemonImpl) buildAttackOptions(req api.AttackRequest) (*attack.AttackOptions, error) {
 	opts := attack.NewAttackOptions()
-	opts.TargetURL = req.Target
+
+	// Handle target resolution: prefer target_name lookup, fall back to inline target
+	if req.TargetName != "" {
+		// Look up target from database by name
+		target, err := d.targetStore.GetByName(context.Background(), req.TargetName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to lookup target '%s': %w", req.TargetName, err)
+		}
+
+		// Extract URL from connection JSON
+		targetURL := target.GetURL()
+		if targetURL == "" {
+			return nil, fmt.Errorf("target '%s' has no URL configured", req.TargetName)
+		}
+
+		// Set target options from stored target
+		// Only set TargetURL - the name was used for lookup, URL is the resolved value
+		opts.TargetURL = targetURL
+		opts.TargetType = types.TargetType(target.Type)
+
+		// Set credential if target has one configured
+		if target.CredentialID != nil {
+			opts.Credential = target.CredentialID.String()
+		}
+	} else {
+		// Use inline target URL (backward compatibility)
+		opts.TargetURL = req.Target
+	}
+
 	opts.AgentName = req.AgentID
 
 	// Map attack_type to agent configuration
@@ -696,4 +753,144 @@ func (d *daemonImpl) StopComponent(ctx context.Context, kind string, name string
 		StoppedCount: stoppedCount,
 		TotalCount:   len(instances),
 	}, nil
+}
+
+// PauseMission pauses a running mission at the next clean checkpoint boundary.
+func (d *daemonImpl) PauseMission(ctx context.Context, missionID string, force bool) error {
+	d.logger.Info("PauseMission called", "mission_id", missionID, "force", force)
+
+	// Validate mission ID
+	if missionID == "" {
+		return fmt.Errorf("mission ID cannot be empty")
+	}
+
+	// Check if mission manager is available
+	if d.missionManager == nil {
+		d.logger.Error("mission manager not initialized")
+		return fmt.Errorf("mission manager not initialized")
+	}
+
+	// Call mission manager's pause method
+	if err := d.missionManager.Pause(ctx, missionID, force); err != nil {
+		d.logger.Error("failed to pause mission", "error", err, "mission_id", missionID)
+		return fmt.Errorf("failed to pause mission: %w", err)
+	}
+
+	d.logger.Info("mission paused successfully", "mission_id", missionID)
+	return nil
+}
+
+// ResumeMission resumes a paused mission from its last checkpoint.
+func (d *daemonImpl) ResumeMission(ctx context.Context, missionID string) (<-chan api.MissionEventData, error) {
+	d.logger.Info("ResumeMission called", "mission_id", missionID)
+
+	// Validate mission ID
+	if missionID == "" {
+		return nil, fmt.Errorf("mission ID cannot be empty")
+	}
+
+	// Check if mission manager is available
+	if d.missionManager == nil {
+		d.logger.Error("mission manager not initialized")
+		return nil, fmt.Errorf("mission manager not initialized")
+	}
+
+	// Call mission manager's resume method
+	eventChan, err := d.missionManager.Resume(ctx, missionID)
+	if err != nil {
+		d.logger.Error("failed to resume mission", "error", err, "mission_id", missionID)
+		return nil, fmt.Errorf("failed to resume mission: %w", err)
+	}
+
+	d.logger.Info("mission resume started", "mission_id", missionID)
+	return eventChan, nil
+}
+
+// GetMissionHistory returns all runs for a mission name.
+func (d *daemonImpl) GetMissionHistory(ctx context.Context, name string, limit int, offset int) ([]api.MissionRunData, int, error) {
+	d.logger.Debug("GetMissionHistory called", "name", name, "limit", limit, "offset", offset)
+
+	// Validate name
+	if name == "" {
+		return nil, 0, fmt.Errorf("mission name cannot be empty")
+	}
+
+	// TODO: Implement when mission run linker is added (Task 13)
+	// This will query the mission store for all missions with the given name
+	// For now, return empty results as the store doesn't support name filtering
+	// This will be properly implemented once the run linker is integrated
+	missions := []*mission.Mission{}
+	total := 0
+
+	// TODO: Once run linker is properly wired, use:
+	// missions, err := d.infrastructure.runLinker.GetRunHistory(ctx, name)
+	// if err != nil {
+	//     return nil, 0, err
+	// }
+
+	// Convert missions to MissionRunData
+	runs := make([]api.MissionRunData, len(missions))
+	for i, m := range missions {
+		completedAt := int64(0)
+		if m.CompletedAt != nil {
+			completedAt = m.CompletedAt.Unix()
+		}
+
+		runs[i] = api.MissionRunData{
+			MissionID:     m.ID.String(),
+			RunNumber:     1, // TODO: Will be populated when run_number field is added
+			Status:        string(m.Status),
+			CreatedAt:     m.CreatedAt.Unix(),
+			CompletedAt:   completedAt,
+			FindingsCount: m.FindingsCount,
+			PreviousRunID: "", // TODO: Will be populated when previous_run_id field is added
+		}
+	}
+
+	d.logger.Debug("mission history retrieved", "name", name, "count", len(runs), "total", total)
+	return runs, total, nil
+}
+
+// GetMissionCheckpoints returns all checkpoints for a mission.
+func (d *daemonImpl) GetMissionCheckpoints(ctx context.Context, missionID string) ([]api.CheckpointData, error) {
+	d.logger.Debug("GetMissionCheckpoints called", "mission_id", missionID)
+
+	// Validate mission ID
+	if missionID == "" {
+		return nil, fmt.Errorf("mission ID cannot be empty")
+	}
+
+	// Get the mission from the store
+	m, err := d.missionStore.Get(ctx, types.ID(missionID))
+	if err != nil {
+		d.logger.Error("failed to get mission", "error", err, "mission_id", missionID)
+		return nil, fmt.Errorf("failed to get mission: %w", err)
+	}
+
+	// Check if mission has a checkpoint
+	if m.Checkpoint == nil {
+		d.logger.Debug("no checkpoints found for mission", "mission_id", missionID)
+		return []api.CheckpointData{}, nil
+	}
+
+	// Convert checkpoint to CheckpointData
+	// Calculate total nodes from metrics if available
+	totalNodes := 0
+	findingsCount := 0
+	if m.Metrics != nil {
+		totalNodes = m.Metrics.TotalNodes
+		findingsCount = m.Metrics.TotalFindings
+	}
+
+	checkpoint := api.CheckpointData{
+		CheckpointID:   m.Checkpoint.ID.String(),
+		CreatedAt:      m.Checkpoint.CheckpointedAt.Unix(),
+		CompletedNodes: len(m.Checkpoint.CompletedNodes),
+		TotalNodes:     totalNodes,
+		FindingsCount:  findingsCount,
+		Version:        m.Checkpoint.Version,
+	}
+
+	d.logger.Debug("mission checkpoints retrieved", "mission_id", missionID, "count", 1)
+	return []api.CheckpointData{checkpoint}, nil
 }

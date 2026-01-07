@@ -245,8 +245,8 @@ func TestMigrate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get version: %v", err)
 	}
-	if version != 10 {
-		t.Errorf("expected version 10, got %d", version)
+	if version != 11 {
+		t.Errorf("expected version 11, got %d", version)
 	}
 
 	// Verify tables were created
@@ -288,8 +288,8 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get version: %v", err)
 	}
-	if version != 10 {
-		t.Errorf("expected version 10, got %d", version)
+	if version != 11 {
+		t.Errorf("expected version 11, got %d", version)
 	}
 }
 
@@ -717,11 +717,11 @@ func TestGetAppliedMigrations(t *testing.T) {
 		t.Fatalf("failed to get applied migrations: %v", err)
 	}
 
-	if len(migrations) != 10 {
-		t.Errorf("expected 10 applied migrations, got %d", len(migrations))
+	if len(migrations) != 11 {
+		t.Errorf("expected 11 applied migrations, got %d", len(migrations))
 	}
 
-	if len(migrations) >= 10 {
+	if len(migrations) >= 11 {
 		// Check first migration
 		if migrations[0].Version != 1 {
 			t.Errorf("expected version 1, got %d", migrations[0].Version)
@@ -729,12 +729,12 @@ func TestGetAppliedMigrations(t *testing.T) {
 		if migrations[0].Name != "initial_schema" {
 			t.Errorf("expected name 'initial_schema', got %s", migrations[0].Name)
 		}
-		// Check last migration (index 9 since we now have 10 migrations, 0-indexed)
-		if migrations[9].Version != 10 {
-			t.Errorf("expected version 10, got %d", migrations[9].Version)
+		// Check last migration (index 10 since we now have 11 migrations, 0-indexed)
+		if migrations[10].Version != 11 {
+			t.Errorf("expected version 11, got %d", migrations[10].Version)
 		}
-		if migrations[9].Name != "mission_consolidation_columns" {
-			t.Errorf("expected name 'mission_consolidation_columns', got %s", migrations[9].Name)
+		if migrations[10].Name != "resumable_mission_architecture" {
+			t.Errorf("expected name 'resumable_mission_architecture', got %s", migrations[10].Name)
 		}
 	}
 }

@@ -22,6 +22,9 @@ type CommandContext struct {
 	// DAO provides access to component data from SQLite
 	DAO database.ComponentDAO
 
+	// TargetDAO provides access to target data from SQLite
+	TargetDAO *database.TargetDAO
+
 	// HomeDir is the Gibson home directory path (e.g., ~/.gibson)
 	HomeDir string
 

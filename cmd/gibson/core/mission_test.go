@@ -182,6 +182,54 @@ func (m *mockMissionStore) Count(ctx context.Context, filter *mission.MissionFil
 	return len(missions), nil
 }
 
+func (m *mockMissionStore) GetByNameAndStatus(ctx context.Context, name string, status mission.MissionStatus) (*mission.Mission, error) {
+	for _, mis := range m.missions {
+		if mis.Name == name && mis.Status == status {
+			return mis, nil
+		}
+	}
+	return nil, mission.NewNotFoundError(fmt.Sprintf("%s (status=%s)", name, status))
+}
+
+func (m *mockMissionStore) ListByName(ctx context.Context, name string, limit int) ([]*mission.Mission, error) {
+	var filtered []*mission.Mission
+	for _, mis := range m.missions {
+		if mis.Name == name {
+			filtered = append(filtered, mis)
+		}
+	}
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	return filtered, nil
+}
+
+func (m *mockMissionStore) GetLatestByName(ctx context.Context, name string) (*mission.Mission, error) {
+	var latest *mission.Mission
+	for _, mis := range m.missions {
+		if mis.Name == name {
+			if latest == nil || mis.RunNumber > latest.RunNumber {
+				latest = mis
+			}
+		}
+	}
+	if latest == nil {
+		return nil, mission.NewNotFoundError(name)
+	}
+	return latest, nil
+}
+
+func (m *mockMissionStore) IncrementRunNumber(ctx context.Context, name string) (int, error) {
+	maxRun := 0
+	for _, mis := range m.missions {
+		if mis.Name == name && mis.RunNumber > maxRun {
+			maxRun = mis.RunNumber
+		}
+	}
+	return maxRun + 1, nil
+}
+
+
 func TestMissionList(t *testing.T) {
 	now := time.Now()
 	targetID := types.NewID()
@@ -463,12 +511,17 @@ func TestMissionShow(t *testing.T) {
 }
 
 func TestMissionRun(t *testing.T) {
-	// Create a temporary workflow file for testing
+	// Create a temporary workflow file for testing with inline target
 	tempDir := t.TempDir()
 	validWorkflowPath := filepath.Join(tempDir, "valid-workflow.yaml")
 	validWorkflow := `
 name: test-workflow
 description: Test workflow
+target:
+  name: inline-test-target
+  type: network
+  connection:
+    cidr: "10.0.0.0/24"
 nodes:
   - id: node1
     type: agent
@@ -527,12 +580,14 @@ exit_points:
 				store = mockStore
 			}
 
+			// No TargetDAO needed - workflow has inline target definition
 			cc := &CommandContext{
 				Ctx:          context.Background(),
 				MissionStore: store,
 			}
 
-			result, err := MissionRun(cc, tt.workflowFile)
+			// Pass empty target flag since we have inline target in workflow
+			result, err := MissionRun(cc, tt.workflowFile, "")
 
 			if tt.wantErr {
 				if err == nil {

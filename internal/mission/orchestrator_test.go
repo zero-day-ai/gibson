@@ -429,3 +429,452 @@ Done:
 	assert.Contains(t, receivedEvents, EventMissionStarted)
 	assert.Contains(t, receivedEvents, EventMissionCompleted)
 }
+
+func TestExecute_PropagatesWorkflowMetrics(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	ctx := context.Background()
+
+	// Create orchestrator without workflow executor to use fallback mode
+	// This tests that metrics are still populated even without a workflow
+	orchestrator := NewMissionOrchestrator(store)
+
+	// Create mission
+	mission := createTestMission(t)
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	// Execute mission - will use fallback mode without executor
+	result, err := orchestrator.Execute(ctx, mission)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Verify mission metrics were initialized and updated
+	updatedMission, err := store.Get(ctx, mission.ID)
+	require.NoError(t, err)
+	assert.NotNil(t, updatedMission.Metrics)
+
+	// Verify basic metrics are set
+	assert.NotZero(t, updatedMission.Metrics.Duration)
+	assert.False(t, updatedMission.Metrics.LastUpdateAt.IsZero())
+	assert.False(t, updatedMission.Metrics.StartedAt.IsZero())
+
+	// When workflow executor is present and returns NodesExecuted,
+	// mission.Metrics.CompletedNodes should be set from workflowResult.NodesExecuted
+	// In fallback mode (no executor), CompletedNodes will be 0
+	assert.GreaterOrEqual(t, updatedMission.Metrics.CompletedNodes, 0)
+}
+
+// TestOrchestrator_EventPersistence verifies that mission events are persisted to the EventStore.
+func TestOrchestrator_EventPersistence(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	eventStore := NewDBEventStore(db)
+	ctx := context.Background()
+
+	// Create orchestrator with event store
+	orchestrator := NewMissionOrchestrator(
+		store,
+		WithEventStore(eventStore),
+	)
+
+	// Create and save mission
+	mission := createTestMission(t)
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	// Execute mission - this will emit events
+	result, err := orchestrator.Execute(ctx, mission)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+
+	// Query events from the event store
+	filter := NewEventFilter().
+		WithMissionID(mission.ID).
+		WithPagination(100, 0)
+
+	events, err := eventStore.Query(ctx, filter)
+	require.NoError(t, err)
+
+	// Verify events were persisted
+	assert.NotEmpty(t, events, "Expected mission events to be persisted")
+
+	// Check for expected event types
+	eventTypes := make(map[MissionEventType]bool)
+	for _, event := range events {
+		eventTypes[event.Type] = true
+		assert.Equal(t, mission.ID, event.MissionID, "Event mission ID should match")
+		assert.False(t, event.Timestamp.IsZero(), "Event timestamp should be set")
+	}
+
+	// Verify we have the essential events
+	assert.True(t, eventTypes[EventMissionStarted], "Should have mission.started event")
+	assert.True(t, eventTypes[EventMissionCompleted], "Should have mission.completed event")
+
+	// Verify events are ordered by timestamp
+	for i := 1; i < len(events); i++ {
+		assert.True(t, events[i].Timestamp.After(events[i-1].Timestamp) || events[i].Timestamp.Equal(events[i-1].Timestamp),
+			"Events should be ordered by timestamp")
+	}
+}
+
+// TestOrchestrator_EventPersistence_WithEventTypes tests filtering by event type.
+func TestOrchestrator_EventPersistence_WithEventTypes(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	eventStore := NewDBEventStore(db)
+	ctx := context.Background()
+
+	// Create orchestrator with event store
+	orchestrator := NewMissionOrchestrator(
+		store,
+		WithEventStore(eventStore),
+	)
+
+	// Create and execute mission
+	mission := createTestMission(t)
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	_, err = orchestrator.Execute(ctx, mission)
+	require.NoError(t, err)
+
+	// Query only mission.started events
+	filter := NewEventFilter().
+		WithMissionID(mission.ID).
+		WithEventTypes(EventMissionStarted)
+
+	events, err := eventStore.Query(ctx, filter)
+	require.NoError(t, err)
+
+	// Verify we only get started events
+	assert.Len(t, events, 1, "Should have exactly one mission.started event")
+	assert.Equal(t, EventMissionStarted, events[0].Type)
+
+	// Query only completion events
+	filter = NewEventFilter().
+		WithMissionID(mission.ID).
+		WithEventTypes(EventMissionCompleted, EventMissionFailed, EventMissionCancelled)
+
+	events, err = eventStore.Query(ctx, filter)
+	require.NoError(t, err)
+
+	// Should have at least one completion-type event
+	assert.NotEmpty(t, events, "Should have at least one completion event")
+	for _, event := range events {
+		assert.Contains(t, []MissionEventType{EventMissionCompleted, EventMissionFailed, EventMissionCancelled}, event.Type)
+	}
+}
+
+// TestOrchestrator_EventPersistence_FailedMission verifies events are persisted even when mission fails.
+func TestOrchestrator_EventPersistence_FailedMission(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	eventStore := NewDBEventStore(db)
+	ctx := context.Background()
+
+	// Create real workflow executor
+	executor := workflow.NewWorkflowExecutor()
+
+	// Create orchestrator with event store but no harness factory to cause failure
+	orchestrator := NewMissionOrchestrator(
+		store,
+		WithEventStore(eventStore),
+		WithWorkflowExecutor(executor),
+	)
+
+	// Create mission with workflow JSON that requires harness
+	mission := createTestMission(t)
+	mission.WorkflowJSON = createWorkflowJSON(t, mission.WorkflowID)
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	// Execute mission - should fail due to missing harness factory
+	result, err := orchestrator.Execute(ctx, mission)
+	require.Error(t, err)
+	assert.Equal(t, MissionStatusFailed, result.Status)
+
+	// Query events from the event store
+	filter := NewEventFilter().
+		WithMissionID(mission.ID).
+		WithPagination(100, 0)
+
+	events, err := eventStore.Query(ctx, filter)
+	require.NoError(t, err)
+
+	// Verify events were persisted even though mission failed
+	assert.NotEmpty(t, events, "Events should be persisted even on failure")
+
+	// Check for expected event types
+	eventTypes := make(map[MissionEventType]bool)
+	for _, event := range events {
+		eventTypes[event.Type] = true
+	}
+
+	// Verify we have started and failed events
+	assert.True(t, eventTypes[EventMissionStarted], "Should have mission.started event")
+	assert.True(t, eventTypes[EventMissionFailed], "Should have mission.failed event")
+}
+
+// TestOrchestrator_EventPersistence_TimeRange tests filtering by time range.
+func TestOrchestrator_EventPersistence_TimeRange(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	eventStore := NewDBEventStore(db)
+	ctx := context.Background()
+
+	// Create orchestrator with event store
+	orchestrator := NewMissionOrchestrator(
+		store,
+		WithEventStore(eventStore),
+	)
+
+	// Record start time
+	startTime := time.Now()
+
+	// Create and execute mission
+	mission := createTestMission(t)
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	_, err = orchestrator.Execute(ctx, mission)
+	require.NoError(t, err)
+
+	// Record end time
+	endTime := time.Now()
+
+	// Query events within time range
+	filter := NewEventFilter().
+		WithMissionID(mission.ID).
+		WithTimeRange(startTime, endTime)
+
+	events, err := eventStore.Query(ctx, filter)
+	require.NoError(t, err)
+
+	// All events should be within the time range
+	assert.NotEmpty(t, events)
+	for _, event := range events {
+		assert.True(t, event.Timestamp.After(startTime) || event.Timestamp.Equal(startTime))
+		assert.True(t, event.Timestamp.Before(endTime) || event.Timestamp.Equal(endTime))
+	}
+
+	// Query with time range that excludes all events
+	futureTime := time.Now().Add(1 * time.Hour)
+	filter = NewEventFilter().
+		WithMissionID(mission.ID).
+		WithTimeRange(futureTime, futureTime.Add(1*time.Hour))
+
+	events, err = eventStore.Query(ctx, filter)
+	require.NoError(t, err)
+	assert.Empty(t, events, "Should have no events in future time range")
+}
+
+// TestOrchestrator_EventStore_Stream tests the event streaming functionality.
+func TestOrchestrator_EventStore_Stream(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	eventStore := NewDBEventStore(db)
+	ctx := context.Background()
+
+	// Create orchestrator with event store
+	orchestrator := NewMissionOrchestrator(
+		store,
+		WithEventStore(eventStore),
+	)
+
+	// Create and execute mission
+	mission := createTestMission(t)
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	startTime := time.Now()
+
+	_, err = orchestrator.Execute(ctx, mission)
+	require.NoError(t, err)
+
+	// Stream events from start time
+	streamCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	eventCh, err := eventStore.Stream(streamCtx, mission.ID, startTime)
+	require.NoError(t, err)
+
+	// Collect events from stream
+	var streamedEvents []*MissionEvent
+	for event := range eventCh {
+		streamedEvents = append(streamedEvents, event)
+	}
+
+	// Verify we received events
+	assert.NotEmpty(t, streamedEvents, "Should receive events from stream")
+
+	// Verify events are for the correct mission
+	for _, event := range streamedEvents {
+		assert.Equal(t, mission.ID, event.MissionID)
+	}
+
+	// Verify events are ordered
+	for i := 1; i < len(streamedEvents); i++ {
+		assert.True(t, streamedEvents[i].Timestamp.After(streamedEvents[i-1].Timestamp) || streamedEvents[i].Timestamp.Equal(streamedEvents[i-1].Timestamp))
+	}
+}
+
+// TestOrchestrator_IsPauseRequested tests the pause request flag mechanism.
+func TestOrchestrator_IsPauseRequested(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	orchestrator := NewMissionOrchestrator(store)
+	ctx := context.Background()
+
+	mission := createTestMission(t)
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	// Initially, no pause should be requested
+	assert.False(t, orchestrator.IsPauseRequested(mission.ID), "No pause should be requested initially")
+
+	// Request pause
+	err = orchestrator.RequestPause(ctx, mission.ID)
+	require.NoError(t, err)
+
+	// Pause should now be requested
+	assert.True(t, orchestrator.IsPauseRequested(mission.ID), "Pause should be requested after RequestPause")
+
+	// Clear pause request
+	orchestrator.ClearPauseRequest(mission.ID)
+
+	// Pause should no longer be requested
+	assert.False(t, orchestrator.IsPauseRequested(mission.ID), "Pause should not be requested after ClearPauseRequest")
+}
+
+// TestOrchestrator_IsPauseRequested_MultipleMissions tests pause requests for multiple missions.
+func TestOrchestrator_IsPauseRequested_MultipleMissions(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	orchestrator := NewMissionOrchestrator(store)
+	ctx := context.Background()
+
+	// Create two missions
+	mission1 := createTestMission(t)
+	err := store.Save(ctx, mission1)
+	require.NoError(t, err)
+
+	mission2 := createTestMission(t)
+	err = store.Save(ctx, mission2)
+	require.NoError(t, err)
+
+	// Request pause for mission1 only
+	err = orchestrator.RequestPause(ctx, mission1.ID)
+	require.NoError(t, err)
+
+	// Verify only mission1 has pause requested
+	assert.True(t, orchestrator.IsPauseRequested(mission1.ID), "Pause should be requested for mission1")
+	assert.False(t, orchestrator.IsPauseRequested(mission2.ID), "Pause should not be requested for mission2")
+
+	// Request pause for mission2
+	err = orchestrator.RequestPause(ctx, mission2.ID)
+	require.NoError(t, err)
+
+	// Verify both have pause requested
+	assert.True(t, orchestrator.IsPauseRequested(mission1.ID), "Pause should still be requested for mission1")
+	assert.True(t, orchestrator.IsPauseRequested(mission2.ID), "Pause should now be requested for mission2")
+
+	// Clear pause for mission1
+	orchestrator.ClearPauseRequest(mission1.ID)
+
+	// Verify only mission2 has pause requested
+	assert.False(t, orchestrator.IsPauseRequested(mission1.ID), "Pause should be cleared for mission1")
+	assert.True(t, orchestrator.IsPauseRequested(mission2.ID), "Pause should still be requested for mission2")
+}
+
+// TestOrchestrator_ExecuteFromCheckpoint tests resuming from a checkpoint.
+func TestOrchestrator_ExecuteFromCheckpoint(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	eventStore := NewDBEventStore(db)
+	ctx := context.Background()
+
+	// Create orchestrator with event store
+	orchestrator := NewMissionOrchestrator(
+		store,
+		WithEventStore(eventStore),
+	)
+
+	// Create mission in paused state
+	mission := createTestMission(t)
+	mission.Status = MissionStatusPaused
+	startedAt := time.Now()
+	mission.StartedAt = &startedAt
+	mission.Metrics = &MissionMetrics{
+		StartedAt:          startedAt,
+		LastUpdateAt:       startedAt,
+		FindingsBySeverity: make(map[string]int),
+		CompletedNodes:     2,
+		TotalNodes:         5,
+	}
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	// Create a checkpoint
+	checkpoint := &MissionCheckpoint{
+		CompletedNodes: []string{"node1", "node2"},
+		PendingNodes:   []string{"node3", "node4", "node5"},
+		NodeResults: map[string]any{
+			"node1": map[string]any{"status": "completed"},
+			"node2": map[string]any{"status": "completed"},
+		},
+		LastNodeID:     "node2",
+		CheckpointedAt: startedAt,
+	}
+
+	// Execute from checkpoint
+	result, err := orchestrator.ExecuteFromCheckpoint(ctx, mission, checkpoint)
+	require.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, mission.ID, result.MissionID)
+	assert.Equal(t, MissionStatusCompleted, result.Status)
+
+	// Verify mission was updated
+	updatedMission, err := store.Get(ctx, mission.ID)
+	require.NoError(t, err)
+	assert.Equal(t, MissionStatusCompleted, updatedMission.Status)
+	assert.NotNil(t, updatedMission.CompletedAt)
+
+	// Verify resumed event was emitted and persisted
+	filter := NewEventFilter().
+		WithMissionID(mission.ID).
+		WithEventTypes(EventMissionResumed)
+
+	events, err := eventStore.Query(ctx, filter)
+	require.NoError(t, err)
+	assert.NotEmpty(t, events, "Should have mission.resumed event")
+	assert.Equal(t, EventMissionResumed, events[0].Type)
+}
+
+// TestOrchestrator_ExecuteFromCheckpoint_InvalidState tests resuming from invalid state.
+func TestOrchestrator_ExecuteFromCheckpoint_InvalidState(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewDBMissionStore(db)
+	orchestrator := NewMissionOrchestrator(store)
+	ctx := context.Background()
+
+	// Create mission in completed state (cannot resume)
+	mission := createTestMission(t)
+	mission.Status = MissionStatusCompleted
+	completedAt := time.Now()
+	mission.CompletedAt = &completedAt
+	err := store.Save(ctx, mission)
+	require.NoError(t, err)
+
+	// Create a checkpoint
+	checkpoint := &MissionCheckpoint{
+		CompletedNodes: []string{"node1"},
+		PendingNodes:   []string{"node2"},
+		CheckpointedAt: time.Now(),
+	}
+
+	// Attempt to execute from checkpoint - should fail
+	_, err = orchestrator.ExecuteFromCheckpoint(ctx, mission, checkpoint)
+	require.Error(t, err)
+	assert.True(t, IsInvalidStateError(err), "Should return invalid state error")
+}

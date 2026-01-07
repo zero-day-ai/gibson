@@ -554,10 +554,10 @@ func TestApplySlotNameDefaults_OnlyConstraints(t *testing.T) {
 	mgr := NewDaemonSlotManager(registry, logger)
 
 	tests := []struct {
-		name                 string
-		slotName             string
-		expectedMinContext   int
-		expectVisionFeature  bool
+		name                string
+		slotName            string
+		expectedMinContext  int
+		expectVisionFeature bool
 	}{
 		{"primary", "primary", 100000, false},
 		{"fast", "fast", 8192, false},

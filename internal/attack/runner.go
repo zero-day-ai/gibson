@@ -153,8 +153,14 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 	startTime := time.Now()
 	result := NewAttackResult()
 
+	r.logger.Debug("AttackRunner.Run called",
+		"target_url", opts.TargetURL,
+		"target_name", opts.TargetName,
+		"agent", opts.AgentName)
+
 	// Validate attack options
 	if err := opts.Validate(); err != nil {
+		r.logger.Error("Attack options validation failed", "error", err)
 		return result.WithError(fmt.Errorf("invalid attack options: %w", err)), nil
 	}
 

@@ -3,13 +3,16 @@ package component
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
+	dclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
 
@@ -76,19 +79,14 @@ func runStatus(cmd *cobra.Command, args []string, cfg Config, flags *StatusFlags
 		componentName = args[0]
 	}
 
-	// TODO (Task 25): Check for daemon client in context
-	// When daemon is fully implemented, list and status handlers should
-	// query the registry via daemon instead of local registry manager.
-	//
-	// Example implementation:
-	//   ctx := cmd.Context()
-	//   if daemonClient := GetDaemonClient(ctx); daemonClient != nil {
-	//       // Query daemon for component status
-	//       return queryComponentStatusViaDaemon(cmd, daemonClient, cfg, componentName, flags)
-	//   }
-	//
-	// For now, we continue with local registry queries for backward compatibility.
-	// Note: install/build operations should remain local (file operations).
+	// Check for daemon client first - prefer daemon registry for live status
+	ctx := cmd.Context()
+	if daemonClient := GetDaemonClient(ctx); daemonClient != nil {
+		return queryComponentStatusViaDaemon(cmd, daemonClient, cfg, componentName, flags)
+	}
+
+	// Fall back to local registry when daemon unavailable
+	fmt.Fprintln(os.Stderr, "[WARN] Daemon not running, showing local registry data")
 
 	// Build command context
 	cc, err := buildCommandContext(cmd)
@@ -387,4 +385,132 @@ func padRight(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-len(s))
+}
+
+// queryComponentStatusViaDaemon queries component status from the daemon registry.
+func queryComponentStatusViaDaemon(cmd *cobra.Command, daemonClient interface{}, cfg Config, componentName string, flags *StatusFlags) error {
+	// Type assert to daemon client
+	client, ok := daemonClient.(*dclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
+
+	ctx := cmd.Context()
+
+	// Query appropriate component type from daemon
+	switch cfg.Kind {
+	case "agent":
+		agents, err := client.ListAgents(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list agents from daemon: %w", err)
+		}
+		return displayDaemonComponents(cmd, "AGENTS", agents, componentName)
+
+	case "tool":
+		tools, err := client.ListTools(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list tools from daemon: %w", err)
+		}
+		return displayDaemonTools(cmd, tools, componentName)
+
+	case "plugin":
+		plugins, err := client.ListPlugins(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to list plugins from daemon: %w", err)
+		}
+		return displayDaemonPlugins(cmd, plugins, componentName)
+
+	default:
+		return fmt.Errorf("unknown component kind: %s", cfg.Kind)
+	}
+}
+
+// displayDaemonComponents displays agent components from daemon.
+func displayDaemonComponents(cmd *cobra.Command, title string, agents []dclient.AgentInfo, filter string) error {
+	if len(agents) == 0 {
+		fmt.Println("No components registered")
+		return nil
+	}
+
+	// Filter if needed
+	if filter != "" {
+		filtered := make([]dclient.AgentInfo, 0)
+		for _, a := range agents {
+			if strings.Contains(a.Name, filter) {
+				filtered = append(filtered, a)
+			}
+		}
+		agents = filtered
+	}
+
+	// Display table
+	fmt.Printf("\n%s (%d registered)\n\n", title, len(agents))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
+	for _, a := range agents {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", a.Name, a.Version, a.Status, a.Address)
+	}
+	w.Flush()
+
+	return nil
+}
+
+// displayDaemonTools displays tool components from daemon.
+func displayDaemonTools(cmd *cobra.Command, tools []dclient.ToolInfo, filter string) error {
+	if len(tools) == 0 {
+		fmt.Println("No tools registered")
+		return nil
+	}
+
+	// Filter if needed
+	if filter != "" {
+		filtered := make([]dclient.ToolInfo, 0)
+		for _, t := range tools {
+			if strings.Contains(t.Name, filter) {
+				filtered = append(filtered, t)
+			}
+		}
+		tools = filtered
+	}
+
+	// Display table
+	fmt.Printf("\nTOOLS (%d registered)\n\n", len(tools))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
+	for _, t := range tools {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", t.Name, t.Version, t.Status, t.Address)
+	}
+	w.Flush()
+
+	return nil
+}
+
+// displayDaemonPlugins displays plugin components from daemon.
+func displayDaemonPlugins(cmd *cobra.Command, plugins []dclient.PluginInfo, filter string) error {
+	if len(plugins) == 0 {
+		fmt.Println("No plugins registered")
+		return nil
+	}
+
+	// Filter if needed
+	if filter != "" {
+		filtered := make([]dclient.PluginInfo, 0)
+		for _, p := range plugins {
+			if strings.Contains(p.Name, filter) {
+				filtered = append(filtered, p)
+			}
+		}
+		plugins = filtered
+	}
+
+	// Display table
+	fmt.Printf("\nPLUGINS (%d registered)\n\n", len(plugins))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
+	for _, p := range plugins {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Status, p.Address)
+	}
+	w.Flush()
+
+	return nil
 }

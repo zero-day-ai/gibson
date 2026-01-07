@@ -80,3 +80,19 @@ func (m *mockMissionStore) DeleteCheckpoint(ctx context.Context, missionID types
 func (m *mockMissionStore) Count(ctx context.Context, filter *MissionFilter) (int, error) {
 	return 0, nil
 }
+
+func (m *mockMissionStore) GetByNameAndStatus(ctx context.Context, name string, status MissionStatus) (*Mission, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) ListByName(ctx context.Context, name string, limit int) ([]*Mission, error) {
+	return []*Mission{}, nil
+}
+
+func (m *mockMissionStore) GetLatestByName(ctx context.Context, name string) (*Mission, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) IncrementRunNumber(ctx context.Context, name string) (int, error) {
+	return 1, nil
+}

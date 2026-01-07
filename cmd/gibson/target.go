@@ -362,7 +362,6 @@ func runTargetAdd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-
 // promptForConnection prompts the user for connection fields based on target type schema
 func promptForConnection(cmd *cobra.Command, targetType string) (map[string]any, error) {
 	connection := make(map[string]any)

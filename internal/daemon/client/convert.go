@@ -203,12 +203,35 @@ func convertProtoAttackEvent(event *api.AttackEvent) AttackEvent {
 		}
 	}
 
+	// Convert OperationResult if present
+	var result *OperationResult
+	if event.Result != nil {
+		result = &OperationResult{
+			Status:        event.Result.Status,
+			DurationMs:    event.Result.DurationMs,
+			StartedAt:     event.Result.StartedAt,
+			CompletedAt:   event.Result.CompletedAt,
+			TurnsUsed:     event.Result.TurnsUsed,
+			TokensUsed:    event.Result.TokensUsed,
+			NodesExecuted: event.Result.NodesExecuted,
+			NodesFailed:   event.Result.NodesFailed,
+			FindingsCount: event.Result.FindingsCount,
+			CriticalCount: event.Result.CriticalCount,
+			HighCount:     event.Result.HighCount,
+			MediumCount:   event.Result.MediumCount,
+			LowCount:      event.Result.LowCount,
+			ErrorMessage:  event.Result.ErrorMessage,
+			ErrorCode:     event.Result.ErrorCode,
+		}
+	}
+
 	return AttackEvent{
 		Type:      event.EventType,
 		Timestamp: time.Unix(event.Timestamp, 0),
 		Message:   event.Message,
 		Severity:  "", // Severity not in proto AttackEvent
 		Data:      data,
+		Result:    result,
 	}
 }
 

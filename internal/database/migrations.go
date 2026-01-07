@@ -114,6 +114,12 @@ func getMigrations() []migration {
 			up:      getMissionConsolidationColumnsSchema(),
 			down:    getDownMigration11(),
 		},
+		{
+			version: 11,
+			name:    "resumable_mission_architecture",
+			up:      getResumableMissionArchitectureSchema(),
+			down:    getDownMigration12(),
+		},
 		// Future migrations will be added here
 	}
 
@@ -1541,5 +1547,138 @@ func getDownMigration11() string {
 -- All columns were added in previous migrations (4, 6, 9) and remain in place.
 
 -- No changes to rollback
+`
+}
+
+// getResumableMissionArchitectureSchema returns the schema for resumable missions
+func getResumableMissionArchitectureSchema() string {
+	return `
+-- Migration 11: Resumable Mission Architecture
+-- Removes UNIQUE constraint on name, adds run linkage columns
+-- Creates mission_events table for event persistence
+
+-- ============================================================================
+-- Recreate missions table without UNIQUE constraint on name
+-- ============================================================================
+
+-- Step 1: Create new table without UNIQUE constraint on name
+CREATE TABLE IF NOT EXISTS missions_new (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,                    -- No longer UNIQUE
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    workflow_id TEXT NOT NULL,
+    workflow TEXT,
+    workflow_json TEXT,
+    target_id TEXT,
+    constraints TEXT,
+    metrics TEXT,
+    checkpoint TEXT,
+    error TEXT,
+    progress REAL DEFAULT 0.0,
+    findings_count INTEGER DEFAULT 0,
+    agent_assignments TEXT,
+    metadata TEXT,
+    run_number INTEGER DEFAULT 1,          -- NEW: Sequential run number
+    previous_run_id TEXT,                  -- NEW: Link to previous run
+    checkpoint_at TIMESTAMP,               -- NEW: Last checkpoint time
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+
+    FOREIGN KEY (previous_run_id) REFERENCES missions(id)
+);
+
+-- Step 2: Copy data from old table to new table
+INSERT INTO missions_new (
+    id, name, description, status, workflow_id, workflow, workflow_json,
+    target_id, constraints, metrics, checkpoint, error, progress,
+    findings_count, agent_assignments, metadata,
+    created_at, updated_at, started_at, completed_at
+)
+SELECT
+    id, name, description, status, workflow_id, workflow, workflow_json,
+    target_id, constraints, metrics, checkpoint, error, progress,
+    findings_count, agent_assignments, metadata,
+    created_at, updated_at, started_at, completed_at
+FROM missions;
+
+-- Step 3: Drop old table
+DROP TABLE missions;
+
+-- Step 4: Rename new table to missions
+ALTER TABLE missions_new RENAME TO missions;
+
+-- ============================================================================
+-- Indexes for Run Linkage and Queries
+-- ============================================================================
+
+-- Composite index for name + status queries (find active missions by name)
+CREATE INDEX IF NOT EXISTS idx_missions_name_status ON missions(name, status);
+
+-- Index for previous_run_id linkage
+CREATE INDEX IF NOT EXISTS idx_missions_previous_run ON missions(previous_run_id);
+
+-- Index for name lookups (used by GetByName, ListByName, etc.)
+CREATE INDEX IF NOT EXISTS idx_missions_name ON missions(name);
+
+-- ============================================================================
+-- Mission Events Table: Persistent event log for audit trail
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mission_events (
+    id TEXT PRIMARY KEY,
+    mission_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,              -- 'started', 'paused', 'resumed', 'completed', 'failed', 'checkpoint', etc.
+    payload TEXT,                          -- JSON serialized event payload
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE
+);
+
+-- ============================================================================
+-- Mission Events Indexes for Efficient Queries
+-- ============================================================================
+
+-- Index for querying events by mission
+CREATE INDEX IF NOT EXISTS idx_mission_events_mission_id ON mission_events(mission_id);
+
+-- Index for filtering by event type
+CREATE INDEX IF NOT EXISTS idx_mission_events_type ON mission_events(event_type);
+
+-- Index for time-based queries
+CREATE INDEX IF NOT EXISTS idx_mission_events_created_at ON mission_events(created_at);
+
+-- Composite index for mission + event type queries
+CREATE INDEX IF NOT EXISTS idx_mission_events_mission_type ON mission_events(mission_id, event_type);
+`
+}
+
+// getDownMigration12 returns the rollback SQL for migration 11
+func getDownMigration12() string {
+	return `
+-- Rollback Migration 11: Resumable Mission Architecture
+
+-- Drop mission_events indexes
+DROP INDEX IF EXISTS idx_mission_events_mission_type;
+DROP INDEX IF EXISTS idx_mission_events_created_at;
+DROP INDEX IF EXISTS idx_mission_events_type;
+DROP INDEX IF EXISTS idx_mission_events_mission_id;
+
+-- Drop mission_events table
+DROP TABLE IF EXISTS mission_events;
+
+-- Drop missions table indexes for run linkage
+DROP INDEX IF EXISTS idx_missions_previous_run;
+DROP INDEX IF EXISTS idx_missions_name_status;
+
+-- Note: SQLite doesn't support DROP COLUMN directly
+-- The run_number, previous_run_id, and checkpoint_at columns will remain
+-- In production, you would need to:
+-- 1. Create a new table without the enhanced columns
+-- 2. Copy data from old table to new table
+-- 3. Drop old table
+-- 4. Rename new table
+-- For simplicity, we're leaving the columns in place during rollback
 `
 }

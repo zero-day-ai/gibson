@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/daemon/api"
@@ -14,11 +15,14 @@ import (
 //
 // This method queries the mission store to retrieve missions based on the provided
 // filters. When activeOnly is true, it returns only missions with status "running"
-// or "paused". Pagination is supported via limit and offset parameters.
+// or "paused". Additional filters include status and name pattern matching.
+// Pagination is supported via limit and offset parameters.
 //
 // Parameters:
 //   - ctx: Context for the database query
 //   - activeOnly: If true, return only running/paused missions
+//   - statusFilter: Filter by specific status (running, completed, failed, cancelled) - empty means all
+//   - namePattern: Filter by mission name using glob pattern - empty means all
 //   - limit: Maximum number of missions to return (0 = use default)
 //   - offset: Number of missions to skip for pagination
 //
@@ -26,8 +30,14 @@ import (
 //   - []api.MissionData: List of missions matching the filter
 //   - int: Total count of missions (for pagination, not affected by limit/offset)
 //   - error: Non-nil if query fails
-func (d *daemonImpl) ListMissions(ctx context.Context, activeOnly bool, limit, offset int) ([]api.MissionData, int, error) {
-	d.logger.Debug("ListMissions called", "active_only", activeOnly, "limit", limit, "offset", offset)
+func (d *daemonImpl) ListMissions(ctx context.Context, activeOnly bool, statusFilter, namePattern string, limit, offset int) ([]api.MissionData, int, error) {
+	d.logger.Debug("ListMissions called",
+		"active_only", activeOnly,
+		"status_filter", statusFilter,
+		"name_pattern", namePattern,
+		"limit", limit,
+		"offset", offset,
+	)
 
 	// Set default limit if not specified
 	if limit == 0 {
@@ -47,7 +57,10 @@ func (d *daemonImpl) ListMissions(ctx context.Context, activeOnly bool, limit, o
 			return nil, 0, fmt.Errorf("failed to get active missions: %w", err)
 		}
 
-		// Total is the number of active missions
+		// Apply additional filters in-memory for active missions
+		missions = d.filterMissions(missions, statusFilter, namePattern)
+
+		// Total is the number of filtered active missions
 		total = len(missions)
 
 		// Apply pagination manually for active missions
@@ -63,9 +76,20 @@ func (d *daemonImpl) ListMissions(ctx context.Context, activeOnly bool, limit, o
 		// Slice the results for pagination
 		missions = missions[start:end]
 	} else {
-		// Query all missions with pagination
+		// Query all missions with pagination and filters
 		filter := mission.NewMissionFilter()
 		filter.WithPagination(limit, offset)
+
+		// Apply status filter if provided
+		if statusFilter != "" {
+			status := mission.MissionStatus(statusFilter)
+			filter.WithStatus(status)
+		}
+
+		// Apply name pattern filter if provided
+		if namePattern != "" {
+			filter.SearchText = &namePattern
+		}
 
 		missions, err = d.missionStore.List(ctx, filter)
 		if err != nil {
@@ -73,8 +97,16 @@ func (d *daemonImpl) ListMissions(ctx context.Context, activeOnly bool, limit, o
 			return nil, 0, fmt.Errorf("failed to list missions: %w", err)
 		}
 
-		// Get total count for pagination (count all missions, not just the page)
+		// Get total count for pagination (count all missions matching filters, not just the page)
 		totalFilter := mission.NewMissionFilter()
+		if statusFilter != "" {
+			status := mission.MissionStatus(statusFilter)
+			totalFilter.WithStatus(status)
+		}
+		if namePattern != "" {
+			totalFilter.SearchText = &namePattern
+		}
+
 		total, err = d.missionStore.Count(ctx, totalFilter)
 		if err != nil {
 			d.logger.Error("failed to count missions", "error", err)
@@ -124,6 +156,60 @@ func convertMissionToData(m *mission.Mission) api.MissionData {
 		EndTime:      endTime,
 		FindingCount: int32(m.FindingsCount),
 	}
+}
+
+// filterMissions applies in-memory filtering to a mission list.
+//
+// This helper is used when filtering active missions that are retrieved from GetActive()
+// which doesn't support the full filter API. It applies status and name pattern filters
+// in memory to reduce the result set before pagination.
+//
+// Parameters:
+//   - missions: The missions to filter
+//   - statusFilter: Status to match (empty = no filter)
+//   - namePattern: Name pattern to match (empty = no filter)
+//
+// Returns:
+//   - []*mission.Mission: Filtered mission list
+func (d *daemonImpl) filterMissions(missions []*mission.Mission, statusFilter, namePattern string) []*mission.Mission {
+	if statusFilter == "" && namePattern == "" {
+		return missions
+	}
+
+	filtered := make([]*mission.Mission, 0, len(missions))
+	for _, m := range missions {
+		// Apply status filter
+		if statusFilter != "" && string(m.Status) != statusFilter {
+			continue
+		}
+
+		// Apply name pattern filter (simple contains match for now)
+		// In future, could add glob pattern matching
+		if namePattern != "" {
+			// Use WorkflowID as name for now (could be enhanced to use mission name field)
+			missionName := m.WorkflowID.String()
+			if !contains(missionName, namePattern) {
+				continue
+			}
+		}
+
+		filtered = append(filtered, m)
+	}
+
+	return filtered
+}
+
+// contains is a simple case-insensitive substring match helper.
+func contains(s, substr string) bool {
+	return len(substr) == 0 || len(s) >= len(substr) &&
+		(s == substr || len(s) > len(substr) && containsSubstring(s, substr))
+}
+
+// containsSubstring performs case-insensitive substring search.
+func containsSubstring(s, substr string) bool {
+	s = strings.ToLower(s)
+	substr = strings.ToLower(substr)
+	return strings.Contains(s, substr)
 }
 
 // parseMissionID is a helper to parse and validate mission IDs.

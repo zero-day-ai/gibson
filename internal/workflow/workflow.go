@@ -54,6 +54,10 @@ type Workflow struct {
 	// Description provides additional context about what this workflow does.
 	Description string `json:"description"`
 
+	// TargetRef is a reference to the target (name or ID) from the YAML.
+	// This needs to be resolved to a TargetID when creating a mission.
+	TargetRef string `json:"target_ref,omitempty"`
+
 	// Nodes contains all the nodes in the workflow, indexed by node ID.
 	Nodes map[string]*WorkflowNode `json:"nodes"`
 

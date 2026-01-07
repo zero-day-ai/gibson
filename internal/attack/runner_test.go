@@ -194,6 +194,35 @@ func (m *MockMissionStore) UpdateProgress(ctx context.Context, id types.ID, prog
 	return args.Error(0)
 }
 
+func (m *MockMissionStore) GetByNameAndStatus(ctx context.Context, name string, status mission.MissionStatus) (*mission.Mission, error) {
+	args := m.Called(ctx, name, status)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*mission.Mission), args.Error(1)
+}
+
+func (m *MockMissionStore) ListByName(ctx context.Context, name string, limit int) ([]*mission.Mission, error) {
+	args := m.Called(ctx, name, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*mission.Mission), args.Error(1)
+}
+
+func (m *MockMissionStore) GetLatestByName(ctx context.Context, name string) (*mission.Mission, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*mission.Mission), args.Error(1)
+}
+
+func (m *MockMissionStore) IncrementRunNumber(ctx context.Context, name string) (int, error) {
+	args := m.Called(ctx, name)
+	return args.Int(0), args.Error(1)
+}
+
 type MockFindingStore struct {
 	mock.Mock
 }

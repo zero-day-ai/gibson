@@ -99,23 +99,23 @@ func TestSetupVerbose_MultipleCleanups(t *testing.T) {
 
 func TestSetupVerbose_LevelFiltering(t *testing.T) {
 	tests := []struct {
-		name          string
-		level         verbose.VerboseLevel
+		name            string
+		level           verbose.VerboseLevel
 		expectNilWriter bool
 	}{
 		{
-			name:          "LevelNone returns nil writer",
-			level:         verbose.LevelNone,
+			name:            "LevelNone returns nil writer",
+			level:           verbose.LevelNone,
 			expectNilWriter: true,
 		},
 		{
-			name:          "LevelVerbose returns writer",
-			level:         verbose.LevelVerbose,
+			name:            "LevelVerbose returns writer",
+			level:           verbose.LevelVerbose,
 			expectNilWriter: false,
 		},
 		{
-			name:          "LevelDebug returns writer",
-			level:         verbose.LevelDebug,
+			name:            "LevelDebug returns writer",
+			level:           verbose.LevelDebug,
 			expectNilWriter: false,
 		},
 	}

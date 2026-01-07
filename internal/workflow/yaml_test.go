@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseWorkflow_BasicWorkflow(t *testing.T) {
@@ -845,4 +846,225 @@ nodes:
 
 	// Exit point: notify node has no outgoing edges
 	assert.Equal(t, []string{"notify"}, wf.ExitPoints)
+}
+
+// TestYAMLTarget_UnmarshalYAML_StringReference tests parsing target as a string reference
+func TestYAMLTarget_UnmarshalYAML_StringReference(t *testing.T) {
+	yamlData := []byte(`target: my-target-name`)
+
+	var result struct {
+		Target YAMLTarget `yaml:"target"`
+	}
+	err := yaml.Unmarshal(yamlData, &result)
+	require.NoError(t, err)
+
+	target := result.Target
+	assert.Equal(t, "my-target-name", target.Reference)
+	assert.Empty(t, target.Type)
+	assert.Nil(t, target.Connection)
+	assert.True(t, target.IsReference())
+	assert.False(t, target.IsInline())
+}
+
+// TestYAMLTarget_UnmarshalYAML_InlineObject tests parsing target as an inline object
+func TestYAMLTarget_UnmarshalYAML_InlineObject(t *testing.T) {
+	yamlData := []byte(`
+target:
+  type: network
+  connection:
+    cidr: "192.168.50.0/24"
+    ports: [22, 80, 443]
+  provider: custom
+  tags: [demo, test]
+`)
+
+	var result struct {
+		Target *YAMLTarget `yaml:"target"`
+	}
+	err := yaml.Unmarshal(yamlData, &result)
+	require.NoError(t, err)
+	require.NotNil(t, result.Target)
+
+	target := result.Target
+	assert.Empty(t, target.Reference)
+	assert.Equal(t, "network", target.Type)
+	assert.NotNil(t, target.Connection)
+	assert.Equal(t, "192.168.50.0/24", target.Connection["cidr"])
+	assert.Equal(t, "custom", target.Provider)
+	assert.Equal(t, []string{"demo", "test"}, target.Tags)
+	assert.False(t, target.IsReference())
+	assert.True(t, target.IsInline())
+}
+
+// TestYAMLTarget_IsReference tests the IsReference helper method
+func TestYAMLTarget_IsReference(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   YAMLTarget
+		expected bool
+	}{
+		{
+			name:     "string reference",
+			target:   YAMLTarget{Reference: "my-target"},
+			expected: true,
+		},
+		{
+			name:     "inline with type",
+			target:   YAMLTarget{Type: "network"},
+			expected: false,
+		},
+		{
+			name:     "inline with connection",
+			target:   YAMLTarget{Connection: map[string]any{"url": "http://example.com"}},
+			expected: false,
+		},
+		{
+			name:     "empty target",
+			target:   YAMLTarget{},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.target.IsReference())
+		})
+	}
+}
+
+// TestYAMLTarget_IsInline tests the IsInline helper method
+func TestYAMLTarget_IsInline(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   YAMLTarget
+		expected bool
+	}{
+		{
+			name:     "string reference",
+			target:   YAMLTarget{Reference: "my-target"},
+			expected: false,
+		},
+		{
+			name:     "inline with type",
+			target:   YAMLTarget{Type: "network"},
+			expected: true,
+		},
+		{
+			name:     "inline with connection",
+			target:   YAMLTarget{Connection: map[string]any{"url": "http://example.com"}},
+			expected: true,
+		},
+		{
+			name:     "inline with both",
+			target:   YAMLTarget{Type: "http_api", Connection: map[string]any{"url": "http://example.com"}},
+			expected: true,
+		},
+		{
+			name:     "empty target",
+			target:   YAMLTarget{},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.target.IsInline())
+		})
+	}
+}
+
+// TestYAMLWorkflow_WithTarget tests parsing workflow with target field
+func TestYAMLWorkflow_WithTarget(t *testing.T) {
+	tests := []struct {
+		name        string
+		yaml        string
+		expectError bool
+		checkTarget func(*testing.T, *YAMLTarget)
+	}{
+		{
+			name: "workflow with string target reference",
+			yaml: `
+name: Test Workflow
+description: Test with target reference
+target: local-network
+nodes:
+  - id: node1
+    type: agent
+    name: Test Node
+    agent: test-agent
+    task:
+      action: scan
+`,
+			expectError: false,
+			checkTarget: func(t *testing.T, target *YAMLTarget) {
+				require.NotNil(t, target)
+				assert.Equal(t, "local-network", target.Reference)
+				assert.True(t, target.IsReference())
+			},
+		},
+		{
+			name: "workflow with inline target",
+			yaml: `
+name: Test Workflow
+description: Test with inline target
+target:
+  type: network
+  connection:
+    cidr: "192.168.1.0/24"
+nodes:
+  - id: node1
+    type: agent
+    name: Test Node
+    agent: test-agent
+    task:
+      action: scan
+`,
+			expectError: false,
+			checkTarget: func(t *testing.T, target *YAMLTarget) {
+				require.NotNil(t, target)
+				assert.Equal(t, "network", target.Type)
+				assert.NotNil(t, target.Connection)
+				assert.Equal(t, "192.168.1.0/24", target.Connection["cidr"])
+				assert.True(t, target.IsInline())
+			},
+		},
+		{
+			name: "workflow without target (backward compat)",
+			yaml: `
+name: Test Workflow
+description: Test without target
+nodes:
+  - id: node1
+    type: agent
+    name: Test Node
+    agent: test-agent
+    task:
+      action: scan
+`,
+			expectError: false,
+			checkTarget: func(t *testing.T, target *YAMLTarget) {
+				assert.Nil(t, target)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Parse YAML into YAMLWorkflow to check target field
+			var yamlWf YAMLWorkflow
+			err := yaml.Unmarshal([]byte(tt.yaml), &yamlWf)
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			tt.checkTarget(t, yamlWf.Target)
+
+			// Also verify full workflow parses correctly
+			wf, err := ParseWorkflow([]byte(tt.yaml))
+			require.NoError(t, err)
+			require.NotNil(t, wf)
+		})
+	}
 }

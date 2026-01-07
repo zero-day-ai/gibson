@@ -3,12 +3,14 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
+	"gopkg.in/yaml.v3"
 )
 
 // MissionListResult represents the structured output from MissionList
@@ -90,13 +92,13 @@ type MissionRunResult struct {
 
 // MissionRun creates and runs a new mission from a workflow YAML file.
 // This is the non-verbose version that calls MissionRunWithVerbose with nil verbose writer.
-func MissionRun(cc *CommandContext, workflowFile string) (*CommandResult, error) {
-	return MissionRunWithVerbose(cc, workflowFile, nil, verbose.LevelNone)
+func MissionRun(cc *CommandContext, workflowFile string, targetFlag string) (*CommandResult, error) {
+	return MissionRunWithVerbose(cc, workflowFile, targetFlag, nil, verbose.LevelNone)
 }
 
 // MissionRunWithVerbose creates and runs a new mission from a workflow YAML file with verbose logging support.
 // If vw is non-nil, it integrates verbose event logging for mission events and DAG node execution.
-func MissionRunWithVerbose(cc *CommandContext, workflowFile string, vw *verbose.VerboseWriter, level verbose.VerboseLevel) (*CommandResult, error) {
+func MissionRunWithVerbose(cc *CommandContext, workflowFile string, targetFlag string, vw *verbose.VerboseWriter, level verbose.VerboseLevel) (*CommandResult, error) {
 	// Validate mission store
 	if cc.MissionStore == nil {
 		return nil, fmt.Errorf("mission store not initialized")
@@ -110,6 +112,29 @@ func MissionRunWithVerbose(cc *CommandContext, workflowFile string, vw *verbose.
 		}, nil
 	}
 
+	// Parse YAML to get target field (ParseWorkflowFile only returns Workflow, not YAMLWorkflow)
+	data, err := os.ReadFile(workflowFile)
+	if err != nil {
+		return &CommandResult{
+			Error: fmt.Errorf("failed to read workflow file: %w", err),
+		}, nil
+	}
+
+	var yamlWf workflow.YAMLWorkflow
+	if err := yaml.Unmarshal(data, &yamlWf); err != nil {
+		return &CommandResult{
+			Error: fmt.Errorf("failed to parse workflow YAML: %w", err),
+		}, nil
+	}
+
+	// Resolve target
+	targetID, err := resolveTarget(cc, targetFlag, yamlWf.Target)
+	if err != nil {
+		return &CommandResult{
+			Error: fmt.Errorf("failed to resolve target: %w", err),
+		}, nil
+	}
+
 	// Serialize workflow to JSON
 	workflowJSON, err := json.Marshal(wf)
 	if err != nil {
@@ -118,18 +143,14 @@ func MissionRunWithVerbose(cc *CommandContext, workflowFile string, vw *verbose.
 		}, nil
 	}
 
-	// Create mission
-	// Note: TargetID is required in the new Mission type, but we don't have it in this workflow-only context.
-	// This is a limitation - missions should probably be created with explicit target specification.
-	// For now, we'll use an empty string as a placeholder.
-	// TODO: Update mission run command to require a target specification
+	// Create mission with resolved target
 	now := time.Now()
 	m := &mission.Mission{
 		ID:               types.NewID(),
 		Name:             wf.Name,
 		Description:      wf.Description,
 		Status:           mission.MissionStatusPending,
-		TargetID:         "", // FIXME: This should be specified by the user
+		TargetID:         targetID, // Use resolved target ID from CLI flag or YAML
 		WorkflowID:       wf.ID,
 		WorkflowJSON:     string(workflowJSON),
 		Progress:         0.0,
@@ -318,4 +339,89 @@ func IsValidMissionStatus(status mission.MissionStatus) bool {
 	default:
 		return false
 	}
+}
+
+// resolveTarget resolves target from CLI flag or YAML to a types.ID.
+// Priority: CLI flag > YAML reference > YAML inline > error
+func resolveTarget(cc *CommandContext, flagTarget string, yamlTarget *workflow.YAMLTarget) (types.ID, error) {
+	// Priority 1: CLI flag
+	if flagTarget != "" {
+		return lookupTarget(cc, flagTarget)
+	}
+
+	// Priority 2: YAML target
+	if yamlTarget == nil {
+		return "", fmt.Errorf("target required: specify in YAML or use --target flag")
+	}
+
+	// String reference in YAML
+	if yamlTarget.IsReference() {
+		return lookupTarget(cc, yamlTarget.Reference)
+	}
+
+	// Inline definition in YAML
+	if yamlTarget.IsInline() {
+		return createInlineTarget(cc, yamlTarget)
+	}
+
+	return "", fmt.Errorf("invalid target specification")
+}
+
+// lookupTarget finds a target by name or ID in the database.
+// It tries name lookup first (more common), then falls back to UUID parsing.
+func lookupTarget(cc *CommandContext, nameOrID string) (types.ID, error) {
+	if cc.TargetDAO == nil {
+		return "", fmt.Errorf("target DAO not initialized")
+	}
+
+	// Try name first (more common)
+	target, err := cc.TargetDAO.GetByName(cc.Ctx, nameOrID)
+	if err == nil {
+		return target.ID, nil
+	}
+
+	// Try as UUID
+	id, err := types.ParseID(nameOrID)
+	if err != nil {
+		return "", fmt.Errorf("target not found: %s", nameOrID)
+	}
+
+	exists, err := cc.TargetDAO.Exists(cc.Ctx, id)
+	if err != nil || !exists {
+		return "", fmt.Errorf("target not found: %s", nameOrID)
+	}
+
+	return id, nil
+}
+
+// createInlineTarget creates a new target from inline YAML definition.
+// If no name is provided, generates one like "inline-<short-id>".
+func createInlineTarget(cc *CommandContext, yt *workflow.YAMLTarget) (types.ID, error) {
+	if cc.TargetDAO == nil {
+		return "", fmt.Errorf("target DAO not initialized")
+	}
+
+	name := yt.Name
+	if name == "" {
+		// Generate a short name using first 8 chars of UUID
+		id := types.NewID()
+		name = fmt.Sprintf("inline-%s", string(id)[:8])
+	}
+
+	// Check for name collision
+	if exists, _ := cc.TargetDAO.ExistsByName(cc.Ctx, name); exists {
+		return "", fmt.Errorf("target already exists: %s", name)
+	}
+
+	target := types.NewTargetWithConnection(name, yt.Type, yt.Connection)
+	if yt.Provider != "" {
+		target.Provider = types.Provider(yt.Provider)
+	}
+	target.Tags = yt.Tags
+
+	if err := cc.TargetDAO.Create(cc.Ctx, target); err != nil {
+		return "", fmt.Errorf("failed to create inline target: %w", err)
+	}
+
+	return target.ID, nil
 }

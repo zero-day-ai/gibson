@@ -94,10 +94,9 @@ func (o *AttackOptions) Validate() error {
 		return fmt.Errorf("cannot specify both target URL and target name")
 	}
 
-	// Validate target type if specified
-	if o.TargetType != "" && !o.TargetType.IsValid() {
-		return fmt.Errorf("invalid target type: %s", o.TargetType)
-	}
+	// Note: TargetType validation removed because the enum is deprecated.
+	// The system now uses string-based target types (http_api, kubernetes, etc.)
+	// which are validated by the target schema system, not the old enum.
 
 	// Validate provider if specified
 	if o.TargetProvider != "" {

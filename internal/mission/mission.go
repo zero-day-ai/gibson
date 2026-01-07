@@ -123,6 +123,16 @@ type Mission struct {
 	// Checkpoint stores state for resume capability.
 	Checkpoint *MissionCheckpoint `json:"checkpoint,omitempty"`
 
+	// RunNumber is the sequential run number for missions with the same name.
+	// This allows multiple runs of the same mission workflow to be tracked.
+	RunNumber int `json:"run_number"`
+
+	// PreviousRunID links to the previous run of this mission (for run history).
+	PreviousRunID *types.ID `json:"previous_run_id,omitempty"`
+
+	// CheckpointAt is the timestamp of the last checkpoint save.
+	CheckpointAt *time.Time `json:"checkpoint_at,omitempty"`
+
 	// Error contains error message if mission failed.
 	Error string `json:"error,omitempty"`
 
@@ -177,6 +187,12 @@ type MissionMetrics struct {
 // Checkpoints are created periodically during execution to enable
 // resuming a mission after interruption.
 type MissionCheckpoint struct {
+	// ID is the unique identifier for this checkpoint.
+	ID types.ID `json:"id"`
+
+	// Version is the checkpoint format version for compatibility.
+	Version int `json:"version"`
+
 	// WorkflowState contains the DAG execution state.
 	WorkflowState map[string]any `json:"workflow_state"`
 
@@ -194,6 +210,15 @@ type MissionCheckpoint struct {
 
 	// CheckpointedAt is when this checkpoint was created.
 	CheckpointedAt time.Time `json:"checkpointed_at"`
+
+	// Checksum is a SHA256 hash for integrity validation.
+	Checksum string `json:"checksum"`
+
+	// MetricsSnapshot contains mission metrics at checkpoint time.
+	MetricsSnapshot *MissionMetrics `json:"metrics_snapshot,omitempty"`
+
+	// FindingIDs contains IDs of findings discovered up to this checkpoint.
+	FindingIDs []types.ID `json:"finding_ids,omitempty"`
 }
 
 // MissionProgress provides real-time progress information.

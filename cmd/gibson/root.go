@@ -197,7 +197,6 @@ func init() {
 	rootCmd.AddCommand(daemonCmd)
 }
 
-
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",

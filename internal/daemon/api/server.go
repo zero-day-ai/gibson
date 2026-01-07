@@ -58,7 +58,7 @@ type DaemonInterface interface {
 	StopMission(ctx context.Context, missionID string, force bool) error
 
 	// ListMissions returns mission list
-	ListMissions(ctx context.Context, activeOnly bool, limit, offset int) ([]MissionData, int, error)
+	ListMissions(ctx context.Context, activeOnly bool, statusFilter, namePattern string, limit, offset int) ([]MissionData, int, error)
 
 	// RunAttack executes an attack and returns an event channel
 	RunAttack(ctx context.Context, req AttackRequest) (<-chan AttackEventData, error)
@@ -71,6 +71,18 @@ type DaemonInterface interface {
 
 	// StopComponent stops a component by kind and name
 	StopComponent(ctx context.Context, kind string, name string, force bool) (StopComponentResult, error)
+
+	// PauseMission pauses a running mission at the next clean checkpoint boundary
+	PauseMission(ctx context.Context, missionID string, force bool) error
+
+	// ResumeMission resumes a paused mission from its last checkpoint
+	ResumeMission(ctx context.Context, missionID string) (<-chan MissionEventData, error)
+
+	// GetMissionHistory returns all runs for a mission name
+	GetMissionHistory(ctx context.Context, name string, limit int, offset int) ([]MissionRunData, int, error)
+
+	// GetMissionCheckpoints returns all checkpoints for a mission
+	GetMissionCheckpoints(ctx context.Context, missionID string) ([]CheckpointData, error)
 }
 
 // DaemonStatus represents daemon status information.
@@ -153,11 +165,13 @@ type MissionEventData struct {
 	Message   string
 	Data      string
 	Error     string
+	Result    *OperationResult
 }
 
 // AttackRequest represents an attack request.
 type AttackRequest struct {
 	Target        string
+	TargetName    string
 	AttackType    string
 	AgentID       string
 	PayloadFilter string
@@ -173,6 +187,7 @@ type AttackEventData struct {
 	Data      string
 	Error     string
 	Finding   *FindingData
+	Result    *OperationResult
 }
 
 // FindingData represents finding information.
@@ -228,6 +243,27 @@ type StartComponentResult struct {
 type StopComponentResult struct {
 	StoppedCount int
 	TotalCount   int
+}
+
+// MissionRunData represents a single execution instance of a mission.
+type MissionRunData struct {
+	MissionID     string
+	RunNumber     int
+	Status        string
+	CreatedAt     int64
+	CompletedAt   int64
+	FindingsCount int
+	PreviousRunID string
+}
+
+// CheckpointData provides metadata about a mission checkpoint.
+type CheckpointData struct {
+	CheckpointID   string
+	CreatedAt      int64
+	CompletedNodes int
+	TotalNodes     int
+	FindingsCount  int
+	Version        int
 }
 
 // NewDaemonServer creates a new gRPC server that exposes daemon functionality.
@@ -381,11 +417,13 @@ func (s *DaemonServer) StopMission(ctx context.Context, req *StopMissionRequest)
 func (s *DaemonServer) ListMissions(ctx context.Context, req *ListMissionsRequest) (*ListMissionsResponse, error) {
 	s.logger.Debug("mission list request received",
 		"active_only", req.ActiveOnly,
+		"status_filter", req.StatusFilter,
+		"name_pattern", req.NamePattern,
 		"limit", req.Limit,
 		"offset", req.Offset,
 	)
 
-	missions, total, err := s.daemon.ListMissions(ctx, req.ActiveOnly, int(req.Limit), int(req.Offset))
+	missions, total, err := s.daemon.ListMissions(ctx, req.ActiveOnly, req.StatusFilter, req.NamePattern, int(req.Limit), int(req.Offset))
 	if err != nil {
 		s.logger.Error("failed to list missions", "error", err)
 		return nil, status_grpc.Errorf(codes.Internal, "failed to list missions: %v", err)
@@ -478,6 +516,7 @@ func (s *DaemonServer) RunAttack(req *RunAttackRequest, stream grpc.ServerStream
 	// Convert proto request to internal request
 	attackReq := AttackRequest{
 		Target:        req.Target,
+		TargetName:    req.TargetName,
 		AttackType:    req.AttackType,
 		AgentID:       req.AgentId,
 		PayloadFilter: req.PayloadFilter,
@@ -513,6 +552,11 @@ func (s *DaemonServer) RunAttack(req *RunAttackRequest, stream grpc.ServerStream
 				Message:   event.Message,
 				Data:      event.Data,
 				Error:     event.Error,
+			}
+
+			// Add operation result if present
+			if event.Result != nil {
+				protoEvent.Result = event.Result
 			}
 
 			// Add finding if present
@@ -750,5 +794,208 @@ func (s *DaemonServer) StopComponent(ctx context.Context, req *StopComponentRequ
 		StoppedCount: int32(result.StoppedCount),
 		TotalCount:   int32(result.TotalCount),
 		Message:      fmt.Sprintf("Stopped %d/%d instances of component '%s'", result.StoppedCount, result.TotalCount, req.Name),
+	}, nil
+}
+
+// PauseMission pauses a running mission at the next clean checkpoint boundary.
+func (s *DaemonServer) PauseMission(ctx context.Context, req *PauseMissionRequest) (*PauseMissionResponse, error) {
+	s.logger.Info("mission pause request received",
+		"mission_id", req.MissionId,
+		"force", req.Force,
+	)
+
+	// Validate mission ID
+	if req.MissionId == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "mission ID is required")
+	}
+
+	// Call daemon implementation
+	err := s.daemon.PauseMission(ctx, req.MissionId, req.Force)
+	if err != nil {
+		s.logger.Error("failed to pause mission", "error", err, "mission_id", req.MissionId)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "mission not found: %s", req.MissionId)
+		}
+		if strings.Contains(err.Error(), "not running") {
+			return nil, status_grpc.Errorf(codes.FailedPrecondition, "mission is not running: %s", req.MissionId)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to pause mission: %v", err)
+	}
+
+	s.logger.Info("mission paused successfully", "mission_id", req.MissionId)
+
+	return &PauseMissionResponse{
+		Success:      true,
+		CheckpointId: "", // Will be populated when checkpoint system is fully integrated
+		Message:      fmt.Sprintf("Mission %s paused successfully", req.MissionId),
+	}, nil
+}
+
+// ResumeMission resumes a paused mission from its last checkpoint and streams execution events.
+func (s *DaemonServer) ResumeMission(req *ResumeMissionRequest, stream grpc.ServerStreamingServer[MissionEvent]) error {
+	s.logger.Info("mission resume request received",
+		"mission_id", req.MissionId,
+		"checkpoint_id", req.CheckpointId,
+	)
+
+	// Validate mission ID
+	if req.MissionId == "" {
+		return status_grpc.Errorf(codes.InvalidArgument, "mission ID is required")
+	}
+
+	// Call daemon implementation to resume the mission
+	eventChan, err := s.daemon.ResumeMission(stream.Context(), req.MissionId)
+	if err != nil {
+		s.logger.Error("failed to resume mission", "error", err, "mission_id", req.MissionId)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return status_grpc.Errorf(codes.NotFound, "mission not found: %s", req.MissionId)
+		}
+		if strings.Contains(err.Error(), "not paused") {
+			return status_grpc.Errorf(codes.FailedPrecondition, "mission is not paused: %s", req.MissionId)
+		}
+		if strings.Contains(err.Error(), "no checkpoint") {
+			return status_grpc.Errorf(codes.FailedPrecondition, "no checkpoint available for mission: %s", req.MissionId)
+		}
+
+		return status_grpc.Errorf(codes.Internal, "failed to resume mission: %v", err)
+	}
+
+	// Stream events to client (similar to RunMission)
+	for {
+		select {
+		case <-stream.Context().Done():
+			s.logger.Info("mission resume stream cancelled", "mission_id", req.MissionId)
+			return stream.Context().Err()
+
+		case event, ok := <-eventChan:
+			if !ok {
+				// Event channel closed, mission completed
+				s.logger.Info("mission resumed and completed", "mission_id", req.MissionId)
+				return nil
+			}
+
+			// Convert event to proto message
+			protoEvent := &MissionEvent{
+				EventType: event.EventType,
+				Timestamp: event.Timestamp.Unix(),
+				MissionId: event.MissionID,
+				NodeId:    event.NodeID,
+				Message:   event.Message,
+				Data:      event.Data,
+				Error:     event.Error,
+			}
+
+			// Add operation result if present
+			if event.Result != nil {
+				protoEvent.Result = event.Result
+			}
+
+			// Send event to client
+			if err := stream.Send(protoEvent); err != nil {
+				s.logger.Error("failed to send mission event", "error", err)
+				return status_grpc.Errorf(codes.Internal, "failed to send event: %v", err)
+			}
+		}
+	}
+}
+
+// GetMissionHistory returns all runs for a mission name.
+func (s *DaemonServer) GetMissionHistory(ctx context.Context, req *GetMissionHistoryRequest) (*GetMissionHistoryResponse, error) {
+	s.logger.Debug("mission history request received",
+		"name", req.Name,
+		"limit", req.Limit,
+		"offset", req.Offset,
+	)
+
+	// Validate request
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "mission name is required")
+	}
+
+	// Set defaults for pagination
+	limit := int(req.Limit)
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := int(req.Offset)
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Call daemon implementation
+	runs, total, err := s.daemon.GetMissionHistory(ctx, req.Name, limit, offset)
+	if err != nil {
+		s.logger.Error("failed to get mission history", "error", err, "name", req.Name)
+		return nil, status_grpc.Errorf(codes.Internal, "failed to get mission history: %v", err)
+	}
+
+	// Convert internal types to proto types
+	protoRuns := make([]*MissionRun, len(runs))
+	for i, run := range runs {
+		protoRuns[i] = &MissionRun{
+			MissionId:     run.MissionID,
+			RunNumber:     int32(run.RunNumber),
+			Status:        run.Status,
+			CreatedAt:     run.CreatedAt,
+			CompletedAt:   run.CompletedAt,
+			FindingsCount: int32(run.FindingsCount),
+			PreviousRunId: run.PreviousRunID,
+		}
+	}
+
+	s.logger.Debug("mission history retrieved", "name", req.Name, "count", len(runs), "total", total)
+
+	return &GetMissionHistoryResponse{
+		Runs:  protoRuns,
+		Total: int32(total),
+	}, nil
+}
+
+// GetMissionCheckpoints returns all checkpoints for a specific mission.
+func (s *DaemonServer) GetMissionCheckpoints(ctx context.Context, req *GetMissionCheckpointsRequest) (*GetMissionCheckpointsResponse, error) {
+	s.logger.Debug("mission checkpoints request received",
+		"mission_id", req.MissionId,
+	)
+
+	// Validate request
+	if req.MissionId == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "mission ID is required")
+	}
+
+	// Call daemon implementation
+	checkpoints, err := s.daemon.GetMissionCheckpoints(ctx, req.MissionId)
+	if err != nil {
+		s.logger.Error("failed to get mission checkpoints", "error", err, "mission_id", req.MissionId)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "mission not found: %s", req.MissionId)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to get mission checkpoints: %v", err)
+	}
+
+	// Convert internal types to proto types
+	protoCheckpoints := make([]*CheckpointInfo, len(checkpoints))
+	for i, cp := range checkpoints {
+		protoCheckpoints[i] = &CheckpointInfo{
+			CheckpointId:   cp.CheckpointID,
+			CreatedAt:      cp.CreatedAt,
+			CompletedNodes: int32(cp.CompletedNodes),
+			TotalNodes:     int32(cp.TotalNodes),
+			FindingsCount:  int32(cp.FindingsCount),
+			Version:        int32(cp.Version),
+		}
+	}
+
+	s.logger.Debug("mission checkpoints retrieved", "mission_id", req.MissionId, "count", len(checkpoints))
+
+	return &GetMissionCheckpointsResponse{
+		Checkpoints: protoCheckpoints,
 	}, nil
 }

@@ -58,6 +58,22 @@ service DaemonService {
   // StopComponent stops a running component (agent, tool, or plugin) by kind and name.
   // If force is true, sends SIGKILL immediately instead of graceful SIGTERM.
   rpc StopComponent(StopComponentRequest) returns (StopComponentResponse);
+
+  // PauseMission pauses a running mission at the next clean checkpoint boundary.
+  // If force is true, pauses immediately without waiting for a clean boundary.
+  rpc PauseMission(PauseMissionRequest) returns (PauseMissionResponse);
+
+  // ResumeMission resumes a paused mission from its last checkpoint.
+  // Returns a stream of mission events as execution continues.
+  rpc ResumeMission(ResumeMissionRequest) returns (stream MissionEvent);
+
+  // GetMissionHistory returns all runs for a mission name, showing the
+  // complete history of mission executions with the same workflow name.
+  rpc GetMissionHistory(GetMissionHistoryRequest) returns (GetMissionHistoryResponse);
+
+  // GetMissionCheckpoints returns all checkpoints for a specific mission,
+  // providing visibility into saved execution states for resume capability.
+  rpc GetMissionCheckpoints(GetMissionCheckpointsRequest) returns (GetMissionCheckpointsResponse);
 }
 
 // ConnectRequest initiates a client connection to the daemon.
@@ -163,6 +179,9 @@ message MissionEvent {
 
   // error contains error information if the event represents an error
   string error = 7;
+
+  // result contains typed operation metrics (for mission.completed events)
+  OperationResult result = 8;
 }
 
 // StopMissionRequest requests mission termination.
@@ -193,6 +212,12 @@ message ListMissionsRequest {
 
   // offset is the pagination offset
   int32 offset = 3;
+
+  // status_filter filters missions by status (running, completed, failed, cancelled)
+  string status_filter = 4;
+
+  // name_pattern filters missions by name using glob pattern matching
+  string name_pattern = 5;
 }
 
 // ListMissionsResponse returns mission list.
@@ -367,6 +392,9 @@ message RunAttackRequest {
 
   // options contains attack-specific options
   map<string, string> options = 5;
+
+  // target_name is the name of a stored target to look up from the database
+  string target_name = 6;
 }
 
 // AttackEvent represents an attack execution event.
@@ -391,6 +419,9 @@ message AttackEvent {
 
   // finding describes a discovered finding (if applicable)
   FindingInfo finding = 7;
+
+  // result contains typed operation metrics (for attack.completed events)
+  OperationResult result = 8;
 }
 
 // FindingInfo describes a discovered vulnerability.
@@ -540,4 +571,163 @@ message StopComponentResponse {
 
   // message provides additional context or error information
   string message = 4;
+}
+
+// OperationResult represents the unified result of a long-running operation (attack or mission).
+// This provides typed metrics instead of JSON-encoded strings.
+message OperationResult {
+  // status of the operation ("success", "failed", "timeout", "cancelled")
+  string status = 1;
+
+  // duration_ms is the total duration in milliseconds
+  int64 duration_ms = 2;
+
+  // started_at is the Unix timestamp (milliseconds) when the operation started
+  int64 started_at = 3;
+
+  // completed_at is the Unix timestamp (milliseconds) when the operation completed
+  int64 completed_at = 4;
+
+  // turns_used is the number of agent turns/iterations executed
+  int32 turns_used = 5;
+
+  // tokens_used is the total LLM tokens consumed
+  int64 tokens_used = 6;
+
+  // nodes_executed is the number of workflow nodes that ran successfully
+  int32 nodes_executed = 7;
+
+  // nodes_failed is the number of workflow nodes that failed
+  int32 nodes_failed = 8;
+
+  // findings_count is the total number of findings discovered
+  int32 findings_count = 9;
+
+  // critical_count is the number of critical severity findings
+  int32 critical_count = 10;
+
+  // high_count is the number of high severity findings
+  int32 high_count = 11;
+
+  // medium_count is the number of medium severity findings
+  int32 medium_count = 12;
+
+  // low_count is the number of low severity findings
+  int32 low_count = 13;
+
+  // error_message contains the error message if status == "failed"
+  string error_message = 14;
+
+  // error_code contains a machine-readable error code if status == "failed"
+  string error_code = 15;
+}
+
+// PauseMissionRequest requests pausing a running mission.
+message PauseMissionRequest {
+  // mission_id is the unique identifier of the mission to pause
+  string mission_id = 1;
+
+  // force indicates whether to pause immediately without waiting for a clean checkpoint boundary
+  // If false (default), waits for the current node to complete before pausing
+  bool force = 2;
+}
+
+// PauseMissionResponse confirms the mission pause request.
+message PauseMissionResponse {
+  // success indicates if the pause request was accepted
+  bool success = 1;
+
+  // checkpoint_id is the ID of the checkpoint created during pause
+  string checkpoint_id = 2;
+
+  // message provides additional context about the pause operation
+  string message = 3;
+}
+
+// ResumeMissionRequest requests resuming a paused mission.
+message ResumeMissionRequest {
+  // mission_id is the unique identifier of the mission to resume
+  string mission_id = 1;
+
+  // checkpoint_id optionally specifies a specific checkpoint to resume from
+  // If empty, resumes from the latest checkpoint
+  string checkpoint_id = 2;
+}
+
+// GetMissionHistoryRequest queries mission execution history by name.
+message GetMissionHistoryRequest {
+  // name is the mission name to query history for
+  string name = 1;
+
+  // limit restricts the number of results (default: 100)
+  int32 limit = 2;
+
+  // offset is the pagination offset (default: 0)
+  int32 offset = 3;
+}
+
+// GetMissionHistoryResponse returns mission execution history.
+message GetMissionHistoryResponse {
+  // runs contains all mission runs for the requested name
+  repeated MissionRun runs = 1;
+
+  // total is the total count of runs (for pagination)
+  int32 total = 2;
+}
+
+// MissionRun represents a single execution instance of a mission.
+message MissionRun {
+  // mission_id is the unique identifier for this run
+  string mission_id = 1;
+
+  // run_number is the sequential run number for this mission name
+  int32 run_number = 2;
+
+  // status is the final status of this run (running, completed, failed, cancelled, paused)
+  string status = 3;
+
+  // created_at is when this run was created (Unix timestamp)
+  int64 created_at = 4;
+
+  // completed_at is when this run completed (Unix timestamp, 0 if not completed)
+  int64 completed_at = 5;
+
+  // findings_count is the number of findings discovered in this run
+  int32 findings_count = 6;
+
+  // previous_run_id is the ID of the previous run (if any)
+  string previous_run_id = 7;
+}
+
+// GetMissionCheckpointsRequest queries checkpoints for a mission.
+message GetMissionCheckpointsRequest {
+  // mission_id is the unique identifier of the mission to query checkpoints for
+  string mission_id = 1;
+}
+
+// GetMissionCheckpointsResponse returns all checkpoints for a mission.
+message GetMissionCheckpointsResponse {
+  // checkpoints contains all checkpoints for the requested mission
+  repeated CheckpointInfo checkpoints = 1;
+}
+
+// CheckpointInfo provides metadata about a mission checkpoint.
+message CheckpointInfo {
+  // checkpoint_id is the unique identifier for this checkpoint
+  string checkpoint_id = 1;
+
+  // created_at is when this checkpoint was created (Unix timestamp)
+  int64 created_at = 2;
+
+  // completed_nodes is the number of nodes that had completed at checkpoint time
+  int32 completed_nodes = 3;
+
+  // total_nodes is the total number of nodes in the workflow
+  int32 total_nodes = 4;
+
+  // findings_count is the number of findings at checkpoint time
+  int32 findings_count = 5;
+
+  // version is the checkpoint format version
+  int32 version = 6;
 }

@@ -56,6 +56,13 @@ func (d *daemonImpl) ensureMissionManager() error {
 			return
 		}
 
+		// Create mission run linker
+		runLinker := d.infrastructure.runLinker
+		if runLinker == nil {
+			missionManagerInstance.initErr = fmt.Errorf("run linker not initialized in infrastructure")
+			return
+		}
+
 		// Create mission manager
 		missionManagerInstance.mgr = newMissionManager(
 			d.config,
@@ -66,6 +73,8 @@ func (d *daemonImpl) ensureMissionManager() error {
 			llmReg,
 			d.callback,
 			harnessFactory,
+			d.targetStore,
+			runLinker,
 		)
 
 		d.logger.Info("mission manager initialized")

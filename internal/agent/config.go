@@ -98,8 +98,8 @@ type AgentDescriptor struct {
 	Version        string                    `json:"version"`
 	Description    string                    `json:"description"`
 	Capabilities   []string                  `json:"capabilities"`
-	TargetTypes    []component.TargetType    `json:"target_types"`    // Deprecated: use TargetSchemas
-	TargetSchemas  []TargetSchema            `json:"target_schemas"`  // New: schema-based target definitions
+	TargetTypes    []component.TargetType    `json:"target_types"`   // Deprecated: use TargetSchemas
+	TargetSchemas  []TargetSchema            `json:"target_schemas"` // New: schema-based target definitions
 	TechniqueTypes []component.TechniqueType `json:"technique_types"`
 	Slots          []SlotDefinition          `json:"slots"`
 	IsExternal     bool                      `json:"is_external"` // True if agent runs via gRPC

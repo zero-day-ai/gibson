@@ -145,3 +145,19 @@ func (m *mockMissionStore) SaveCheckpoint(ctx context.Context, missionID types.I
 func (m *mockMissionStore) Count(ctx context.Context, filter *mission.MissionFilter) (int, error) {
 	return 0, nil
 }
+
+func (m *mockMissionStore) GetByNameAndStatus(ctx context.Context, name string, status mission.MissionStatus) (*mission.Mission, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) ListByName(ctx context.Context, name string, limit int) ([]*mission.Mission, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) GetLatestByName(ctx context.Context, name string) (*mission.Mission, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) IncrementRunNumber(ctx context.Context, name string) (int, error) {
+	return 1, nil
+}

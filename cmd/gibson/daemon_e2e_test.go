@@ -193,7 +193,6 @@ func TestDaemonStatusJSON(t *testing.T) {
 	assert.Contains(t, output, `"grpc_address"`, "JSON should contain grpc_address field")
 }
 
-
 // Helper functions
 
 // startDaemonInBackground starts the daemon in a background process.
