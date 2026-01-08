@@ -339,7 +339,7 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 				target.Name,
 				target.URL,
 				target.Type,
-				target.Config, // Config contains connection parameters
+				target.Connection, // Connection contains schema-based connection parameters
 			)
 		} else {
 			// Fallback if no target store configured (backward compatibility)
@@ -865,7 +865,7 @@ func (o *DefaultMissionOrchestrator) ExecuteFromCheckpoint(ctx context.Context, 
 				target.Name,
 				target.URL,
 				target.Type,
-				target.Config, // Config contains connection parameters
+				target.Connection, // Connection contains schema-based connection parameters
 			)
 		} else {
 			// Fallback if no target store configured (backward compatibility)
