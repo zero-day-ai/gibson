@@ -67,6 +67,7 @@ type TargetInfo struct {
 
 // NewTargetInfo creates a new target info with the given ID, name, URL, and type.
 // Provider, headers, and metadata are initialized to empty/default values.
+// For targets with connection parameters, use NewTargetInfoFull instead.
 func NewTargetInfo(id types.ID, name, url, targetType string) TargetInfo {
 	return TargetInfo{
 		ID:       id,
@@ -77,6 +78,28 @@ func NewTargetInfo(id types.ID, name, url, targetType string) TargetInfo {
 		Headers:  make(map[string]string),
 		Metadata: make(map[string]any),
 	}
+}
+
+// NewTargetInfoFull creates a new target info with full connection parameters.
+// This constructor should be used when creating TargetInfo from a Target entity
+// that has schema-based connection configuration.
+func NewTargetInfoFull(id types.ID, name, url, targetType string, connection map[string]any) TargetInfo {
+	return TargetInfo{
+		ID:         id,
+		Name:       name,
+		URL:        url,
+		Type:       targetType,
+		Provider:   "",
+		Connection: connection,
+		Headers:    make(map[string]string),
+		Metadata:   make(map[string]any),
+	}
+}
+
+// GetConnection returns the connection parameters for this target.
+// Returns nil if no connection parameters are set.
+func (t TargetInfo) GetConnection() map[string]any {
+	return t.Connection
 }
 
 // WithProvider sets the provider for this target

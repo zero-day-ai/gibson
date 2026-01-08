@@ -355,6 +355,26 @@ func (w *PlanningHarnessWrapper) TokenUsage() *llm.TokenTracker {
 	return w.inner.TokenUsage()
 }
 
+// MissionExecutionContext delegates to the inner harness.
+func (w *PlanningHarnessWrapper) MissionExecutionContext() MissionExecutionContextSDK {
+	return w.inner.MissionExecutionContext()
+}
+
+// GetMissionRunHistory delegates to the inner harness.
+func (w *PlanningHarnessWrapper) GetMissionRunHistory(ctx context.Context) ([]MissionRunSummarySDK, error) {
+	return w.inner.GetMissionRunHistory(ctx)
+}
+
+// GetPreviousRunFindings delegates to the inner harness.
+func (w *PlanningHarnessWrapper) GetPreviousRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	return w.inner.GetPreviousRunFindings(ctx, filter)
+}
+
+// GetAllRunFindings delegates to the inner harness.
+func (w *PlanningHarnessWrapper) GetAllRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	return w.inner.GetAllRunFindings(ctx, filter)
+}
+
 // Ensure PlanningHarnessWrapper implements AgentHarness
 var _ AgentHarness = (*PlanningHarnessWrapper)(nil)
 

@@ -212,14 +212,52 @@ running missions and determining if a paused mission can be resumed.`,
 	RunE: runMissionStatus,
 }
 
+var missionContextCmd = &cobra.Command{
+	Use:   "context <mission-id>",
+	Short: "Show comprehensive mission context",
+	Long: `Display comprehensive context information about a mission including run history, resume status, and cross-run metrics.
+
+This command provides a detailed view of mission execution context:
+  - Mission name and ID
+  - Run number (e.g., "Run 3 of 5")
+  - Current status
+  - Resume status (whether this run was resumed from a checkpoint)
+  - Previous run details (ID and status)
+  - Total findings across all runs
+  - Memory continuity mode
+
+This is useful for:
+  - Understanding mission execution history
+  - Tracking progress across multiple runs
+  - Debugging resume/checkpoint behavior
+  - Auditing security testing campaigns`,
+	Example: `  # Show context for a specific mission
+  gibson mission context mission-20260107-153045-abc123
+
+  # Example output:
+  # Mission Context
+  # ===============
+  # Name:              recon-webapp
+  # Mission ID:        mission-20260107-153045-abc123
+  # Run Number:        3 of 5
+  # Status:            running
+  # Resumed:           Yes (from checkpoint-5-nodes)
+  # Previous Run:      mission-20260107-143045-xyz789 (completed)
+  # Total Findings:    47 (across all runs)
+  # Memory Continuity: inherit`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMissionContext,
+}
+
 // Flags
 var (
-	missionStatusFilter   string
-	missionWorkflowFile   string
-	missionTargetFlag     string
-	missionForceDelete    bool
-	missionForcePause     bool
-	missionFromCheckpoint string
+	missionStatusFilter     string
+	missionWorkflowFile     string
+	missionTargetFlag       string
+	missionForceDelete      bool
+	missionForcePause       bool
+	missionFromCheckpoint   string
+	missionMemoryContinuity string
 )
 
 // getHomeDirFromFlags returns the Gibson home directory from flags or environment
@@ -274,6 +312,7 @@ func init() {
 	missionCmd.AddCommand(missionListCmd)
 	missionCmd.AddCommand(missionShowCmd)
 	missionCmd.AddCommand(missionStatusCmd)
+	missionCmd.AddCommand(missionContextCmd)
 	missionCmd.AddCommand(missionRunCmd)
 	missionCmd.AddCommand(missionResumeCmd)
 	missionCmd.AddCommand(missionStopCmd)
@@ -289,6 +328,7 @@ func init() {
 	missionRunCmd.Flags().StringVarP(&missionWorkflowFile, "file", "f", "", "Workflow YAML file (required)")
 	missionRunCmd.MarkFlagRequired("file")
 	missionRunCmd.Flags().StringVar(&missionTargetFlag, "target", "", "Target name or ID (overrides YAML target if specified)")
+	missionRunCmd.Flags().StringVar(&missionMemoryContinuity, "memory-continuity", "isolated", "Memory continuity mode: isolated (default), inherit, shared")
 
 	// Delete flags
 	missionDeleteCmd.Flags().BoolVar(&missionForceDelete, "force", false, "Skip confirmation prompt")
@@ -417,6 +457,15 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
 	}
 
+	// Validate memory continuity flag
+	switch missionMemoryContinuity {
+	case "isolated", "inherit", "shared", "":
+		// valid
+	default:
+		return internal.WrapError(internal.ExitConfigError,
+			fmt.Sprintf("invalid memory-continuity: %s (must be isolated, inherit, or shared)", missionMemoryContinuity), nil)
+	}
+
 	// Setup verbose logging infrastructure
 	jsonOutput := flags.OutputFormat == "json"
 	_, cleanup := internal.SetupVerbose(cmd, flags.VerbosityLevel(), jsonOutput)
@@ -427,6 +476,9 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	// Verbose output
 	if verbose {
 		fmt.Printf("Loading workflow from %s\n", missionWorkflowFile)
+		if missionMemoryContinuity != "" && missionMemoryContinuity != "isolated" {
+			fmt.Printf("Memory continuity: %s\n", missionMemoryContinuity)
+		}
 	}
 
 	// Mission execution requires daemon
@@ -437,7 +489,7 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	defer client.Close()
 
 	// Start mission execution via daemon
-	eventChan, err := client.RunMission(ctx, missionWorkflowFile)
+	eventChan, err := client.RunMission(ctx, missionWorkflowFile, missionMemoryContinuity)
 	if err != nil {
 		return internal.WrapError(internal.ExitError, "failed to start mission", err)
 	}
@@ -857,6 +909,32 @@ func runMissionStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// runMissionContext displays comprehensive context for a mission
+func runMissionContext(cmd *cobra.Command, args []string) error {
+	missionID := args[0]
+
+	// Build command context
+	cc, err := buildMissionCommandContext(cmd)
+	if err != nil {
+		return err
+	}
+	defer internal.CloseWithLog(cc, nil, "gRPC connection")
+
+	// Call core function
+	result, err := core.MissionContext(cc, missionID)
+	if err != nil {
+		return err
+	}
+
+	// Handle errors from core
+	if result.Error != nil {
+		return internal.WrapError(internal.ExitError, "mission context failed", result.Error)
+	}
+
+	// Format output
+	return formatMissionContextOutput(cmd, result)
+}
+
 // Output formatting functions
 
 // formatMissionListOutput formats the mission list result
@@ -1040,6 +1118,74 @@ func formatMissionActionOutput(cmd *cobra.Command, result *core.CommandResult) e
 
 	// Print success message
 	fmt.Println(result.Message)
+	return nil
+}
+
+// formatMissionContextOutput formats the mission context result
+func formatMissionContextOutput(cmd *cobra.Command, result *core.CommandResult) error {
+	// Parse global flags
+	flags, err := ParseGlobalFlags(cmd)
+	if err != nil {
+		return internal.WrapError(internal.ExitConfigError, "failed to parse flags", err)
+	}
+
+	// Extract result data
+	contextResult, ok := result.Data.(*core.MissionContextResult)
+	if !ok {
+		return fmt.Errorf("invalid result type for mission context")
+	}
+
+	// Create formatter
+	outFormat := internal.FormatText
+	if flags.OutputFormat == "json" {
+		outFormat = internal.FormatJSON
+	}
+	formatter := internal.NewFormatter(outFormat, cmd.OutOrStdout())
+
+	if outFormat == internal.FormatJSON {
+		return formatter.PrintJSON(contextResult)
+	}
+
+	// Text format - structured display
+	fmt.Fprintln(cmd.OutOrStdout(), "Mission Context")
+	fmt.Fprintln(cmd.OutOrStdout(), "===============")
+
+	tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	defer tw.Flush()
+
+	fmt.Fprintf(tw, "Name:\t%s\n", contextResult.MissionName)
+	fmt.Fprintf(tw, "Mission ID:\t%s\n", contextResult.MissionID)
+	fmt.Fprintf(tw, "Run Number:\t%d of %d\n", contextResult.RunNumber, contextResult.TotalRuns)
+	fmt.Fprintf(tw, "Status:\t%s\n", contextResult.Status)
+
+	// Resume status
+	if contextResult.Resumed {
+		resumeInfo := "Yes"
+		if contextResult.ResumedFromNode != "" {
+			resumeInfo = fmt.Sprintf("Yes (from %s)", contextResult.ResumedFromNode)
+		}
+		fmt.Fprintf(tw, "Resumed:\t%s\n", resumeInfo)
+	} else {
+		fmt.Fprintf(tw, "Resumed:\tNo\n")
+	}
+
+	// Previous run
+	if contextResult.PreviousRunID != "" {
+		previousInfo := contextResult.PreviousRunID
+		if contextResult.PreviousStatus != "" {
+			previousInfo = fmt.Sprintf("%s (%s)", contextResult.PreviousRunID, contextResult.PreviousStatus)
+		}
+		fmt.Fprintf(tw, "Previous Run:\t%s\n", previousInfo)
+	} else {
+		fmt.Fprintf(tw, "Previous Run:\tNone (first run)\n")
+	}
+
+	// Total findings
+	fmt.Fprintf(tw, "Total Findings:\t%d (across all runs)\n", contextResult.TotalFindings)
+
+	// Memory continuity
+	fmt.Fprintf(tw, "Memory Continuity:\t%s\n", contextResult.MemoryContinuity)
+
 	return nil
 }
 

@@ -152,6 +152,74 @@ func (n *GraphNode) GetStringProperty(key string) string {
 	return ""
 }
 
+// WithMissionName sets the mission_name property.
+// Returns the node for method chaining.
+func (n *GraphNode) WithMissionName(name string) *GraphNode {
+	return n.WithProperty("mission_name", name)
+}
+
+// WithRunNumber sets the run_number property.
+// Returns the node for method chaining.
+func (n *GraphNode) WithRunNumber(runNumber int) *GraphNode {
+	return n.WithProperty("run_number", runNumber)
+}
+
+// WithCreatedInRun sets the created_in_run property (original discovery run ID).
+// Returns the node for method chaining.
+func (n *GraphNode) WithCreatedInRun(runID string) *GraphNode {
+	return n.WithProperty("created_in_run", runID)
+}
+
+// WithUpdatedInRun sets the updated_in_run property (most recent update run ID).
+// Returns the node for method chaining.
+func (n *GraphNode) WithUpdatedInRun(runID string) *GraphNode {
+	return n.WithProperty("updated_in_run", runID)
+}
+
+// WithLastSeenInRun sets the last_seen_in_run property (for re-discovery tracking).
+// Returns the node for method chaining.
+func (n *GraphNode) WithLastSeenInRun(runID string) *GraphNode {
+	return n.WithProperty("last_seen_in_run", runID)
+}
+
+// GetMissionName returns the mission_name property.
+func (n *GraphNode) GetMissionName() string {
+	return n.GetStringProperty("mission_name")
+}
+
+// GetRunNumber returns the run_number property.
+// Handles both int and float64 types for JSON compatibility.
+func (n *GraphNode) GetRunNumber() int {
+	if v, ok := n.Properties["run_number"].(int); ok {
+		return v
+	}
+	if v, ok := n.Properties["run_number"].(float64); ok {
+		return int(v)
+	}
+	return 0
+}
+
+// RunMetadata contains run provenance information for a graph node.
+type RunMetadata struct {
+	MissionName  string    `json:"mission_name"`
+	RunNumber    int       `json:"run_number"`
+	DiscoveredAt time.Time `json:"discovered_at"`
+}
+
+// GetRunMetadata extracts run metadata from node properties.
+// Returns nil if no mission_name is set (backwards compatibility).
+func (n *GraphNode) GetRunMetadata() *RunMetadata {
+	name := n.GetMissionName()
+	if name == "" {
+		return nil
+	}
+	return &RunMetadata{
+		MissionName:  name,
+		RunNumber:    n.GetRunNumber(),
+		DiscoveredAt: n.CreatedAt,
+	}
+}
+
 // Validate validates the GraphNode fields.
 func (n *GraphNode) Validate() error {
 	if err := n.ID.Validate(); err != nil {

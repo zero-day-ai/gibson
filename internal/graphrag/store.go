@@ -185,8 +185,8 @@ func NewGraphRAGStore(config GraphRAGConfig, emb embedder.Embedder) (GraphRAGSto
 	// Create noop provider for disabled GraphRAG
 	provider := &noopProvider{}
 
-	// Create query processor
-	processor, err := NewQueryProcessorFromConfig(config, emb)
+	// Create query processor (nil logger defaults to slog.Default())
+	processor, err := NewQueryProcessorFromConfig(config, emb, nil)
 	if err != nil {
 		return nil, NewConfigError("failed to create query processor", err)
 	}
@@ -626,8 +626,8 @@ func NewGraphRAGStoreWithProvider(config GraphRAGConfig, emb embedder.Embedder, 
 		return nil, NewConfigError("provider cannot be nil", nil)
 	}
 
-	// Create query processor
-	processor, err := NewQueryProcessorFromConfig(config, emb)
+	// Create query processor (nil logger defaults to slog.Default())
+	processor, err := NewQueryProcessorFromConfig(config, emb, nil)
 	if err != nil {
 		return nil, NewConfigError("failed to create query processor", err)
 	}

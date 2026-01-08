@@ -404,9 +404,12 @@ type RunMissionRequest struct {
 	// mission_id is an optional custom mission identifier
 	MissionId string `protobuf:"bytes,2,opt,name=mission_id,json=missionId,proto3" json:"mission_id,omitempty"`
 	// variables contains workflow variables to override
-	Variables     map[string]string `protobuf:"bytes,3,rep,name=variables,proto3" json:"variables,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Variables map[string]string `protobuf:"bytes,3,rep,name=variables,proto3" json:"variables,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// memory_continuity defines how agent memory is shared across mission runs
+	// Valid values: "isolated" (default), "inherit", "shared"
+	MemoryContinuity string `protobuf:"bytes,4,opt,name=memory_continuity,json=memoryContinuity,proto3" json:"memory_continuity,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *RunMissionRequest) Reset() {
@@ -458,6 +461,13 @@ func (x *RunMissionRequest) GetVariables() map[string]string {
 		return x.Variables
 	}
 	return nil
+}
+
+func (x *RunMissionRequest) GetMemoryContinuity() string {
+	if x != nil {
+		return x.MemoryContinuity
+	}
+	return ""
 }
 
 // MissionEvent represents a mission execution event.
@@ -3330,12 +3340,13 @@ const file_daemon_proto_rawDesc = "" +
 	"agentCount\x12#\n" +
 	"\rmission_count\x18\n" +
 	" \x01(\x05R\fmissionCount\x120\n" +
-	"\x14active_mission_count\x18\v \x01(\x05R\x12activeMissionCount\"\xe7\x01\n" +
+	"\x14active_mission_count\x18\v \x01(\x05R\x12activeMissionCount\"\x94\x02\n" +
 	"\x11RunMissionRequest\x12#\n" +
 	"\rworkflow_path\x18\x01 \x01(\tR\fworkflowPath\x12\x1d\n" +
 	"\n" +
 	"mission_id\x18\x02 \x01(\tR\tmissionId\x12P\n" +
-	"\tvariables\x18\x03 \x03(\v22.gibson.daemon.v1.RunMissionRequest.VariablesEntryR\tvariables\x1a<\n" +
+	"\tvariables\x18\x03 \x03(\v22.gibson.daemon.v1.RunMissionRequest.VariablesEntryR\tvariables\x12+\n" +
+	"\x11memory_continuity\x18\x04 \x01(\tR\x10memoryContinuity\x1a<\n" +
 	"\x0eVariablesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x82\x02\n" +

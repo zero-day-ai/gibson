@@ -310,6 +310,21 @@ func (m *VerboseMissionMemoryWrapper) MissionID() types.ID {
 	return m.inner.MissionID()
 }
 
+// GetPreviousRunValue retrieves a value from the prior run's memory.
+func (m *VerboseMissionMemoryWrapper) GetPreviousRunValue(ctx context.Context, key string) (any, error) {
+	return m.inner.GetPreviousRunValue(ctx, key)
+}
+
+// GetValueHistory returns values for a key across all runs.
+func (m *VerboseMissionMemoryWrapper) GetValueHistory(ctx context.Context, key string) ([]memory.HistoricalValue, error) {
+	return m.inner.GetValueHistory(ctx, key)
+}
+
+// ContinuityMode returns the current memory continuity mode.
+func (m *VerboseMissionMemoryWrapper) ContinuityMode() memory.MemoryContinuityMode {
+	return m.inner.ContinuityMode()
+}
+
 // Ensure VerboseMissionMemoryWrapper implements MissionMemory at compile time
 var _ memory.MissionMemory = (*VerboseMissionMemoryWrapper)(nil)
 

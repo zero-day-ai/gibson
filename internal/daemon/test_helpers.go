@@ -248,6 +248,22 @@ func (m *mockAgentHarness) TokenUsage() *llm.TokenTracker {
 	return nil
 }
 
+func (m *mockAgentHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
+}
+
+func (m *mockAgentHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return nil, nil
+}
+
+func (m *mockAgentHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+
+func (m *mockAgentHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+
 // mockMemoryStore is a minimal mock implementation of memory.MemoryStore for testing.
 type mockMemoryStore struct{}
 
@@ -292,6 +308,18 @@ func (m *mockMissionMemory) Keys(ctx context.Context) ([]string, error) {
 
 func (m *mockMissionMemory) MissionID() types.ID {
 	return types.NewID()
+}
+
+func (m *mockMissionMemory) GetPreviousRunValue(ctx context.Context, key string) (any, error) {
+	return nil, fmt.Errorf("not found")
+}
+
+func (m *mockMissionMemory) GetValueHistory(ctx context.Context, key string) ([]memory.HistoricalValue, error) {
+	return nil, nil
+}
+
+func (m *mockMissionMemory) ContinuityMode() memory.MemoryContinuityMode {
+	return memory.MemoryIsolated
 }
 
 // mockLongTermMemory is a minimal mock implementation for testing.

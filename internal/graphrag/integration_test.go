@@ -22,7 +22,7 @@ func TestIntegration_StoreFindingAndQuery(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	// Create store
 	config := GraphRAGConfig{
@@ -115,7 +115,7 @@ func TestIntegration_AttackPatternWorkflow(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{
 		Enabled:  true,
@@ -173,7 +173,7 @@ func TestIntegration_FindingCorrelationAcrossMissions(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{Enabled: true}
 	store := &DefaultGraphRAGStore{
@@ -312,7 +312,7 @@ func TestIntegration_ObservabilitySpans(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{Enabled: true}
 
@@ -390,7 +390,7 @@ func TestIntegration_GraphRAGStoreEndToEnd(t *testing.T) {
 
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{
 		Enabled:  true,
@@ -509,7 +509,7 @@ func TestIntegration_QueryProcessorWithMocks(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	// Test 1: Successful hybrid query
 	query := NewGraphRAGQuery("test attack pattern").
@@ -565,7 +565,7 @@ func TestIntegration_ErrorHandlingAndGracefulDegradation(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{Enabled: true}
 	store := &DefaultGraphRAGStore{
@@ -612,7 +612,7 @@ func TestIntegration_HealthAggregation(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{Enabled: true}
 	store := &DefaultGraphRAGStore{
@@ -680,7 +680,7 @@ func TestIntegration_GetAttackChains(t *testing.T) {
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
-	processor := NewDefaultQueryProcessor(embedder, reranker)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{Enabled: true}
 	store := &DefaultGraphRAGStore{

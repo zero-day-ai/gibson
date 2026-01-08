@@ -22,6 +22,8 @@ type Config struct {
 	Registry     RegistryConfig      `mapstructure:"registry" yaml:"registry"`
 	Callback     CallbackConfig      `mapstructure:"callback" yaml:"callback,omitempty"`
 	Daemon       DaemonConfig        `mapstructure:"daemon" yaml:"daemon,omitempty"`
+	Langfuse     LangfuseConfig      `mapstructure:"langfuse" yaml:"langfuse"`
+	GraphRAG     GraphRAGConfig      `mapstructure:"graphrag" yaml:"graphrag"`
 }
 
 // CoreConfig contains core application settings.
@@ -141,4 +143,27 @@ type DaemonConfig struct {
 	// Default: "localhost:50002"
 	// Can be overridden via GIBSON_DAEMON_GRPC_ADDR environment variable.
 	GRPCAddress string `mapstructure:"grpc_address" yaml:"grpc_address"`
+}
+
+// LangfuseConfig contains Langfuse LLM observability configuration.
+type LangfuseConfig struct {
+	Enabled   bool   `mapstructure:"enabled" yaml:"enabled"`
+	Host      string `mapstructure:"host" yaml:"host"`
+	PublicKey string `mapstructure:"public_key" yaml:"public_key"`
+	SecretKey string `mapstructure:"secret_key" yaml:"secret_key"`
+}
+
+// Neo4jConfig contains Neo4j connection settings.
+type Neo4jConfig struct {
+	URI               string        `mapstructure:"uri" yaml:"uri"`
+	Username          string        `mapstructure:"username" yaml:"username"`
+	Password          string        `mapstructure:"password" yaml:"password"`
+	MaxConnections    int           `mapstructure:"max_connections" yaml:"max_connections"`
+	ConnectionTimeout time.Duration `mapstructure:"connection_timeout" yaml:"connection_timeout"`
+}
+
+// GraphRAGConfig contains Neo4j knowledge graph configuration.
+type GraphRAGConfig struct {
+	Enabled bool        `mapstructure:"enabled" yaml:"enabled"`
+	Neo4j   Neo4jConfig `mapstructure:"neo4j" yaml:"neo4j"`
 }

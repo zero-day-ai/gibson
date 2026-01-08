@@ -556,4 +556,89 @@ func convertSeverityFromGibson(s gibsonAgent.FindingSeverity) finding.Severity {
 	}
 }
 
+// MissionExecutionContext returns the full execution context for the current run.
+func (a *GibsonHarnessAdapter) MissionExecutionContext() types.MissionExecutionContext {
+	gibsonCtx := a.inner.MissionExecutionContext()
+	return types.MissionExecutionContext{
+		MissionID:            gibsonCtx.MissionID,
+		MissionName:          gibsonCtx.MissionName,
+		RunNumber:            gibsonCtx.RunNumber,
+		IsResumed:            gibsonCtx.IsResumed,
+		PreviousRunID:        gibsonCtx.PreviousRunID,
+		PreviousRunStatus:    gibsonCtx.PreviousRunStatus,
+		TotalFindingsAllRuns: gibsonCtx.TotalFindingsAllRuns,
+		MemoryContinuity:     gibsonCtx.MemoryContinuity,
+	}
+}
+
+// GetMissionRunHistory returns all runs for this mission name.
+func (a *GibsonHarnessAdapter) GetMissionRunHistory(ctx context.Context) ([]types.MissionRunSummary, error) {
+	gibsonRuns, err := a.inner.GetMissionRunHistory(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]types.MissionRunSummary, len(gibsonRuns))
+	for i, r := range gibsonRuns {
+		result[i] = types.MissionRunSummary{
+			MissionID:     r.MissionID,
+			RunNumber:     r.RunNumber,
+			Status:        r.Status,
+			FindingsCount: r.FindingsCount,
+			CreatedAt:     r.CreatedAt,
+			CompletedAt:   r.CompletedAt,
+		}
+	}
+	return result, nil
+}
+
+// GetPreviousRunFindings returns findings from the immediate prior run.
+func (a *GibsonHarnessAdapter) GetPreviousRunFindings(ctx context.Context, filter finding.Filter) ([]*finding.Finding, error) {
+	// Convert SDK filter to Gibson filter
+	gibsonFilter := convertFilterToGibson(filter)
+	gibsonFindings, err := a.inner.GetPreviousRunFindings(ctx, gibsonFilter)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*finding.Finding, len(gibsonFindings))
+	for i, f := range gibsonFindings {
+		result[i] = convertFindingFromGibson(f)
+	}
+	return result, nil
+}
+
+// GetAllRunFindings returns findings from all runs of this mission.
+func (a *GibsonHarnessAdapter) GetAllRunFindings(ctx context.Context, filter finding.Filter) ([]*finding.Finding, error) {
+	// Convert SDK filter to Gibson filter
+	gibsonFilter := convertFilterToGibson(filter)
+	gibsonFindings, err := a.inner.GetAllRunFindings(ctx, gibsonFilter)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]*finding.Finding, len(gibsonFindings))
+	for i, f := range gibsonFindings {
+		result[i] = convertFindingFromGibson(f)
+	}
+	return result, nil
+}
+
+// convertFilterToGibson converts SDK finding.Filter to Gibson FindingFilter.
+func convertFilterToGibson(filter finding.Filter) gibsonHarness.FindingFilter {
+	gibsonFilter := gibsonHarness.FindingFilter{}
+	if len(filter.Severities) > 0 {
+		sev := convertSeverityToGibson(filter.Severities[0])
+		gibsonFilter.Severity = &sev
+	}
+	if len(filter.Categories) > 0 {
+		cat := string(filter.Categories[0])
+		gibsonFilter.Category = &cat
+	}
+	return gibsonFilter
+}
+
+// QueryGraphRAGScoped executes a GraphRAG query with explicit scope.
+func (a *GibsonHarnessAdapter) QueryGraphRAGScoped(ctx context.Context, query graphrag.Query, scope graphrag.MissionScope) ([]graphrag.Result, error) {
+	// Not yet implemented - requires full GraphRAG integration
+	return nil, ErrNotImplemented
+}
+
 var _ agent.Harness = (*GibsonHarnessAdapter)(nil)

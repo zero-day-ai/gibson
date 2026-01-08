@@ -14,9 +14,13 @@ import (
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/observability"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // targetStore is an interface for target lookup in mission manager
@@ -38,6 +42,7 @@ type missionManager struct {
 	harnessFactory  harness.HarnessFactoryInterface
 	targetStore     targetStoreLookup
 	runLinker       mission.MissionRunLinker
+	infrastructure  *Infrastructure
 
 	// Track active missions with their contexts and event channels
 	mu             sync.RWMutex
@@ -67,6 +72,7 @@ func newMissionManager(
 	harnessFactory harness.HarnessFactoryInterface,
 	targetStore targetStoreLookup,
 	runLinker mission.MissionRunLinker,
+	infrastructure *Infrastructure,
 ) *missionManager {
 	return &missionManager{
 		config:          cfg,
@@ -79,6 +85,7 @@ func newMissionManager(
 		harnessFactory:  harnessFactory,
 		targetStore:     targetStore,
 		runLinker:       runLinker,
+		infrastructure:  infrastructure,
 		activeMissions:  make(map[string]*activeMission),
 	}
 }
@@ -89,11 +96,12 @@ func newMissionManager(
 // 2. Create mission context and stores
 // 3. Launch workflow executor in goroutine
 // 4. Return event channel for streaming updates
-func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID string, variables map[string]string) (<-chan api.MissionEventData, error) {
+func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID string, variables map[string]string, memoryContinuity string) (<-chan api.MissionEventData, error) {
 	m.logger.Info("starting mission",
 		"workflow_path", workflowPath,
 		"mission_id", missionID,
 		"variables", len(variables),
+		"memory_continuity", memoryContinuity,
 	)
 
 	// Load workflow from YAML file
@@ -110,7 +118,7 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 
 	// Generate mission ID if not provided
 	if missionID == "" {
-		missionID = fmt.Sprintf("mission-%d", time.Now().Unix())
+		missionID = types.NewID().String()
 	}
 
 	// Check if mission ID already exists
@@ -148,15 +156,16 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 
 	// Create mission record with Pending status (orchestrator will transition to Running)
 	missionRecord := &mission.Mission{
-		ID:            types.ID(missionID),
-		Name:          wf.Name,
-		Description:   wf.Description,
-		Status:        mission.MissionStatusPending,
-		WorkflowID:    wf.ID,
-		WorkflowJSON:  string(workflowJSON),
-		TargetID:      targetID,
-		CreatedAt:     time.Now(),
-		FindingsCount: 0,
+		ID:               types.ID(missionID),
+		Name:             wf.Name,
+		Description:      wf.Description,
+		Status:           mission.MissionStatusPending,
+		WorkflowID:       wf.ID,
+		WorkflowJSON:     string(workflowJSON),
+		TargetID:         targetID,
+		MemoryContinuity: memoryContinuity,
+		CreatedAt:        time.Now(),
+		FindingsCount:    0,
 		Metrics: &mission.MissionMetrics{
 			TotalNodes:     len(wf.Nodes),
 			CompletedNodes: 0,
@@ -234,6 +243,19 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 	defer close(eventChan)
 	defer m.cleanupMission(missionID)
 
+	// Create mission execution span if tracing is enabled
+	var span trace.Span
+	if m.infrastructure != nil && m.infrastructure.tracerProvider != nil {
+		tracer := m.infrastructure.tracerProvider.Tracer("gibson")
+		ctx, span = tracer.Start(ctx, observability.SpanMissionExecute,
+			trace.WithAttributes(
+				attribute.String(observability.GibsonMissionID, missionID),
+				attribute.String(observability.GibsonWorkflowName, wf.Name),
+			),
+		)
+		defer span.End()
+	}
+
 	m.logger.Info("executing mission workflow", "mission_id", missionID)
 
 	// Get active mission
@@ -243,6 +265,13 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 
 	if !exists {
 		m.logger.Error("active mission not found", "mission_id", missionID)
+
+		// Record error on span
+		if span != nil {
+			span.RecordError(fmt.Errorf("active mission not found"))
+			span.SetStatus(codes.Error, "mission not found")
+		}
+
 		m.emitEvent(eventChan, api.MissionEventData{
 			EventType: "mission.failed",
 			Timestamp: time.Now(),
@@ -252,6 +281,11 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 		return
 	}
 
+	// Add mission name to span now that we have the active mission
+	if span != nil {
+		span.SetAttributes(attribute.String(observability.GibsonMissionName, active.mission.Name))
+	}
+
 	// Create workflow executor
 	workflowExecutor := workflow.NewWorkflowExecutor(
 		workflow.WithLogger(m.logger.With("component", "workflow-executor")),
@@ -259,12 +293,18 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 	)
 
 	// Create mission orchestrator with harness factory
-	orchestrator := mission.NewMissionOrchestrator(
-		m.missionStore,
+	orchestratorOpts := []mission.OrchestratorOption{
 		mission.WithHarnessFactory(m.harnessFactory),
 		mission.WithWorkflowExecutor(workflowExecutor),
 		mission.WithEventEmitter(mission.NewDefaultEventEmitter(mission.WithBufferSize(100))),
-	)
+	}
+
+	// Add target store if it implements the required interface
+	if ts, ok := m.targetStore.(mission.TargetStore); ok {
+		orchestratorOpts = append(orchestratorOpts, mission.WithTargetStore(ts))
+	}
+
+	orchestrator := mission.NewMissionOrchestrator(m.missionStore, orchestratorOpts...)
 
 	// Emit workflow execution started event
 	m.emitEvent(eventChan, api.MissionEventData{
@@ -277,14 +317,27 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 	// Execute mission through orchestrator
 	result, err := orchestrator.Execute(ctx, active.mission)
 
+	// Calculate mission duration
+	missionDuration := time.Since(active.startTime)
+
 	// Determine final status based on execution result
 	var finalStatus mission.MissionStatus
 	var errorMsg string
+	var findingsCount int
 
 	if err != nil {
 		m.logger.Error("mission execution failed", "mission_id", missionID, "error", err)
 		finalStatus = mission.MissionStatusFailed
 		errorMsg = err.Error()
+
+		// Record error on span
+		if span != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, errorMsg)
+			span.SetAttributes(
+				attribute.Int("gibson.mission.duration_ms", int(missionDuration.Milliseconds())),
+			)
+		}
 
 		m.emitEvent(eventChan, api.MissionEventData{
 			EventType: "mission.failed",
@@ -295,8 +348,28 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 	} else if result != nil {
 		// Use the status from the result
 		finalStatus = result.Status
+		findingsCount = len(result.FindingIDs)
+
 		if finalStatus == mission.MissionStatusFailed {
 			errorMsg = "workflow execution failed"
+
+			// Record error on span
+			if span != nil {
+				span.SetStatus(codes.Error, errorMsg)
+				span.SetAttributes(
+					attribute.Int("gibson.mission.findings_count", findingsCount),
+					attribute.Int("gibson.mission.duration_ms", int(missionDuration.Milliseconds())),
+				)
+			}
+		} else {
+			// Mission completed successfully
+			if span != nil {
+				span.SetStatus(codes.Ok, "mission completed")
+				span.SetAttributes(
+					attribute.Int("gibson.mission.findings_count", findingsCount),
+					attribute.Int("gibson.mission.duration_ms", int(missionDuration.Milliseconds())),
+				)
+			}
 		}
 
 		m.emitEvent(eventChan, api.MissionEventData{
@@ -309,6 +382,15 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 		// No result returned - treat as failed
 		finalStatus = mission.MissionStatusFailed
 		errorMsg = "no result returned from orchestrator"
+
+		// Record error on span
+		if span != nil {
+			span.RecordError(fmt.Errorf("%s", errorMsg))
+			span.SetStatus(codes.Error, errorMsg)
+			span.SetAttributes(
+				attribute.Int("gibson.mission.duration_ms", int(missionDuration.Milliseconds())),
+			)
+		}
 
 		m.emitEvent(eventChan, api.MissionEventData{
 			EventType: "mission.failed",
@@ -325,7 +407,7 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 	active.mission.CompletedAt = &now
 
 	if m.missionStore != nil {
-		if saveErr := m.missionStore.Save(ctx, active.mission); saveErr != nil {
+		if saveErr := m.missionStore.Update(ctx, active.mission); saveErr != nil {
 			m.logger.Warn("failed to update mission in store", "error", saveErr)
 		}
 	}
@@ -383,7 +465,7 @@ func (m *missionManager) Pause(ctx context.Context, missionID string, force bool
 			now := time.Now()
 			active.mission.CompletedAt = &now
 			if m.missionStore != nil {
-				if err := m.missionStore.Save(ctx, active.mission); err != nil {
+				if err := m.missionStore.Update(ctx, active.mission); err != nil {
 					m.logger.Warn("failed to update mission status to paused", "error", err)
 				}
 			}
@@ -466,7 +548,7 @@ func (m *missionManager) Resume(ctx context.Context, missionID string) (<-chan a
 	startedAt := time.Now()
 	missionRecord.StartedAt = &startedAt
 
-	if err := m.missionStore.Save(ctx, missionRecord); err != nil {
+	if err := m.missionStore.Update(ctx, missionRecord); err != nil {
 		m.logger.Warn("failed to update mission status", "error", err)
 	}
 
@@ -529,7 +611,7 @@ func (m *missionManager) Stop(ctx context.Context, missionID string, force bool)
 	active.mission.CompletedAt = &now
 
 	if m.missionStore != nil {
-		if err := m.missionStore.Save(ctx, active.mission); err != nil {
+		if err := m.missionStore.Update(ctx, active.mission); err != nil {
 			m.logger.Warn("failed to update mission in store", "error", err)
 		}
 	}

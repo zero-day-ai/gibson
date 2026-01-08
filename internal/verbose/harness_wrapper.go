@@ -508,5 +508,25 @@ func truncateContent(content string, maxChars int) string {
 	return content[:maxChars-3] + "..."
 }
 
+// MissionExecutionContext returns comprehensive mission execution information.
+func (w *VerboseHarnessWrapper) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return w.inner.MissionExecutionContext()
+}
+
+// GetMissionRunHistory returns all runs for the current mission name.
+func (w *VerboseHarnessWrapper) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return w.inner.GetMissionRunHistory(ctx)
+}
+
+// GetPreviousRunFindings retrieves findings from the previous mission run.
+func (w *VerboseHarnessWrapper) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return w.inner.GetPreviousRunFindings(ctx, filter)
+}
+
+// GetAllRunFindings retrieves findings from all runs of this mission.
+func (w *VerboseHarnessWrapper) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return w.inner.GetAllRunFindings(ctx, filter)
+}
+
 // Ensure VerboseHarnessWrapper implements AgentHarness at compile time
 var _ harness.AgentHarness = (*VerboseHarnessWrapper)(nil)

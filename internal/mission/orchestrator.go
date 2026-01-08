@@ -15,6 +15,14 @@ import (
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
 
+// TargetStore provides access to target entities needed by the orchestrator.
+// This interface allows the orchestrator to load full target details including
+// connection parameters that agents need for testing.
+type TargetStore interface {
+	// Get retrieves a target by ID, returning the full target entity with connection details
+	Get(ctx context.Context, id types.ID) (*types.Target, error)
+}
+
 // MissionOrchestrator coordinates mission execution.
 type MissionOrchestrator interface {
 	// Execute runs the mission workflow and manages all orchestration
@@ -24,6 +32,7 @@ type MissionOrchestrator interface {
 // DefaultMissionOrchestrator implements MissionOrchestrator.
 type DefaultMissionOrchestrator struct {
 	store                MissionStore
+	targetStore          TargetStore // For loading full target entities with connection details
 	emitter              EventEmitter
 	eventStore           EventStore
 	workflowExecutor     *workflow.WorkflowExecutor
@@ -80,6 +89,13 @@ func WithPlanningOrchestrator(po *planning.PlanningOrchestrator) OrchestratorOpt
 func WithEventStore(store EventStore) OrchestratorOption {
 	return func(o *DefaultMissionOrchestrator) {
 		o.eventStore = store
+	}
+}
+
+// WithTargetStore sets the target store for loading target entities.
+func WithTargetStore(store TargetStore) OrchestratorOption {
+	return func(o *DefaultMissionOrchestrator) {
+		o.targetStore = store
 	}
 }
 
@@ -294,7 +310,41 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 
 		// Create mission context and target info for harness
 		missionCtx := harness.NewMissionContext(mission.ID, mission.Name, "")
-		targetInfo := harness.NewTargetInfo(mission.TargetID, "mission-target", "", "")
+
+		// Load target entity to get connection details
+		var targetInfo harness.TargetInfo
+		if o.targetStore != nil {
+			target, err := o.targetStore.Get(ctx, mission.TargetID)
+			if err != nil {
+				result.Status = MissionStatusFailed
+				mission.Status = MissionStatusFailed
+				mission.Error = fmt.Sprintf("failed to load target: %v", err)
+				completedAt := time.Now()
+				mission.CompletedAt = &completedAt
+				mission.Metrics.Duration = completedAt.Sub(startedAt)
+
+				// Emit and persist mission failed event
+				o.emitAndPersist(ctx, NewFailedEvent(mission.ID, err))
+
+				if updateErr := o.store.Update(ctx, mission); updateErr != nil {
+					return nil, fmt.Errorf("failed to update mission after target load error: %w", updateErr)
+				}
+
+				return result, fmt.Errorf("failed to load target: %w", err)
+			}
+
+			// Create TargetInfo with full connection details from target entity
+			targetInfo = harness.NewTargetInfoFull(
+				target.ID,
+				target.Name,
+				target.URL,
+				target.Type,
+				target.Config, // Config contains connection parameters
+			)
+		} else {
+			// Fallback if no target store configured (backward compatibility)
+			targetInfo = harness.NewTargetInfo(mission.TargetID, "mission-target", "", "")
+		}
 
 		// Create harness for workflow execution
 		// Use first agent in workflow or empty string if no agents
@@ -786,7 +836,41 @@ func (o *DefaultMissionOrchestrator) ExecuteFromCheckpoint(ctx context.Context, 
 
 		// Create mission context and target info for harness
 		missionCtx := harness.NewMissionContext(mission.ID, mission.Name, "")
-		targetInfo := harness.NewTargetInfo(mission.TargetID, "mission-target", "", "")
+
+		// Load target entity to get connection details
+		var targetInfo harness.TargetInfo
+		if o.targetStore != nil {
+			target, err := o.targetStore.Get(ctx, mission.TargetID)
+			if err != nil {
+				result.Status = MissionStatusFailed
+				mission.Status = MissionStatusFailed
+				mission.Error = fmt.Sprintf("failed to load target: %v", err)
+				completedAt := time.Now()
+				mission.CompletedAt = &completedAt
+				mission.Metrics.Duration = completedAt.Sub(startedAt)
+
+				failedEvent := NewFailedEvent(mission.ID, err)
+				o.emitAndPersist(ctx, failedEvent)
+
+				if updateErr := o.store.Update(ctx, mission); updateErr != nil {
+					return nil, fmt.Errorf("failed to update mission after target load error: %w", updateErr)
+				}
+
+				return result, fmt.Errorf("failed to load target: %w", err)
+			}
+
+			// Create TargetInfo with full connection details from target entity
+			targetInfo = harness.NewTargetInfoFull(
+				target.ID,
+				target.Name,
+				target.URL,
+				target.Type,
+				target.Config, // Config contains connection parameters
+			)
+		} else {
+			// Fallback if no target store configured (backward compatibility)
+			targetInfo = harness.NewTargetInfo(mission.TargetID, "mission-target", "", "")
+		}
 
 		// Create harness for workflow execution
 		agentName := ""

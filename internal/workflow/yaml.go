@@ -394,6 +394,12 @@ func convertAgentNode(yamlNode *YAMLNode, node *WorkflowNode) error {
 		if desc, ok := yamlNode.Task["description"].(string); ok {
 			task.Description = desc
 		}
+		if goal, ok := yamlNode.Task["goal"].(string); ok {
+			task.Goal = goal
+		}
+		if context, ok := yamlNode.Task["context"].(map[string]any); ok {
+			task.Context = context
+		}
 		if priority, ok := yamlNode.Task["priority"].(int); ok {
 			task.Priority = priority
 		}

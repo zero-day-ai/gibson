@@ -23,6 +23,9 @@ const (
 	// GibsonMissionName is the name of the mission
 	GibsonMissionName = "gibson.mission.name"
 
+	// GibsonWorkflowName is the name of the workflow being executed
+	GibsonWorkflowName = "gibson.workflow.name"
+
 	// GibsonTurnNumber is the turn number in the agent's execution
 	GibsonTurnNumber = "gibson.turn.number"
 
@@ -56,6 +59,9 @@ const (
 
 // Gibson span name constants for various operations
 const (
+	// SpanMissionExecute represents a mission execution operation
+	SpanMissionExecute = "gibson.mission.execute"
+
 	// SpanAgentDelegate represents an agent delegation operation
 	SpanAgentDelegate = "gibson.agent.delegate"
 

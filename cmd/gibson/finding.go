@@ -14,6 +14,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/finding/export"
+	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -51,6 +52,7 @@ var (
 	listCategory string
 	listMission  string
 	listStatus   string
+	listScope    string
 )
 
 // Flags for finding export
@@ -71,6 +73,7 @@ func init() {
 	findingListCmd.Flags().StringVar(&listCategory, "category", "", "Filter by category (e.g., jailbreak, prompt_injection)")
 	findingListCmd.Flags().StringVar(&listMission, "mission", "", "Filter by mission ID")
 	findingListCmd.Flags().StringVar(&listStatus, "status", "", "Filter by status (open, confirmed, resolved, false_positive)")
+	findingListCmd.Flags().StringVar(&listScope, "scope", "all", "Filter scope: current_run, same_mission, all")
 
 	// Export command flags
 	findingExportCmd.Flags().StringVar(&exportFormat, "format", "json", "Export format (json, sarif, csv, html)")
@@ -133,28 +136,52 @@ func runFindingList(cmd *cobra.Command, args []string) error {
 		filter.WithStatus(status)
 	}
 
-	// Get mission ID if specified
-	var missionID types.ID
+	// Validate scope flag
+	var scope string
+	switch listScope {
+	case "current_run", "same_mission", "all", "":
+		scope = listScope
+		if scope == "" {
+			scope = "all"
+		}
+	default:
+		return fmt.Errorf("invalid scope: %s (must be current_run, same_mission, or all)", listScope)
+	}
+
+	// Get mission IDs based on scope
+	var missionIDs []types.ID
 	if listMission != "" {
-		missionID, err = types.ParseID(listMission)
+		// If mission flag is provided, use it directly (ignoring scope)
+		missionID, err := types.ParseID(listMission)
 		if err != nil {
 			return fmt.Errorf("invalid mission ID: %w", err)
 		}
-	} else {
-		// If no mission specified, use a zero ID to get all findings
-		// This requires modifying the List method to handle empty mission ID
-		missionID = types.ID("")
+		missionIDs = []types.ID{missionID}
+	} else if scope != "all" {
+		// Determine mission IDs based on scope
+		missionIDs, err = resolveMissionIDsForScope(ctx, db, scope)
+		if err != nil {
+			return fmt.Errorf("failed to resolve mission IDs for scope %s: %w", scope, err)
+		}
+		if len(missionIDs) == 0 {
+			cmd.Println("No findings found.")
+			return nil
+		}
 	}
 
 	// Query findings
 	var findings []finding.EnhancedFinding
-	if listMission != "" {
-		findings, err = store.List(ctx, missionID, filter)
-		if err != nil {
-			return fmt.Errorf("failed to list findings: %w", err)
+	if len(missionIDs) > 0 {
+		// Collect findings from all mission IDs
+		for _, missionID := range missionIDs {
+			missionFindings, err := store.List(ctx, missionID, filter)
+			if err != nil {
+				return fmt.Errorf("failed to list findings for mission %s: %w", missionID, err)
+			}
+			findings = append(findings, missionFindings...)
 		}
 	} else {
-		// List all findings across all missions
+		// List all findings across all missions (scope == "all" and no mission flag)
 		findings, err = listAllFindings(ctx, store, filter)
 		if err != nil {
 			return fmt.Errorf("failed to list findings: %w", err)
@@ -567,4 +594,89 @@ func listAllFindings(ctx context.Context, store *finding.DBFindingStore, filter 
 	// 2. Query all missions and aggregate their findings
 	// For now, we'll use an empty mission ID which should be handled by the store
 	return store.List(ctx, types.ID(""), filter)
+}
+
+// resolveMissionIDsForScope resolves mission IDs based on the scope parameter.
+// - "current_run": returns the current running mission ID (or most recent if none running)
+// - "same_mission": returns all mission IDs with the same name as the current/most recent mission
+// - "all": returns empty slice (caller should handle all missions)
+func resolveMissionIDsForScope(ctx context.Context, db *database.DB, scope string) ([]types.ID, error) {
+	missionStore := mission.NewDBMissionStore(db)
+
+	switch scope {
+	case "current_run":
+		// Get the most recent running mission, or the most recent mission overall
+		activeMissions, err := missionStore.GetActive(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get active missions: %w", err)
+		}
+
+		if len(activeMissions) > 0 {
+			// Return the first active mission (most recent)
+			return []types.ID{activeMissions[0].ID}, nil
+		}
+
+		// No active missions, get the most recent completed mission
+		filter := mission.NewMissionFilter().WithPagination(1, 0)
+		missions, err := missionStore.List(ctx, filter)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get recent missions: %w", err)
+		}
+
+		if len(missions) == 0 {
+			return nil, fmt.Errorf("no missions found")
+		}
+
+		return []types.ID{missions[0].ID}, nil
+
+	case "same_mission":
+		// First, get the current or most recent mission to determine the mission name
+		activeMissions, err := missionStore.GetActive(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get active missions: %w", err)
+		}
+
+		var missionName string
+		if len(activeMissions) > 0 {
+			missionName = activeMissions[0].Name
+		} else {
+			// No active missions, get the most recent mission
+			filter := mission.NewMissionFilter().WithPagination(1, 0)
+			missions, err := missionStore.List(ctx, filter)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get recent missions: %w", err)
+			}
+
+			if len(missions) == 0 {
+				return nil, fmt.Errorf("no missions found")
+			}
+
+			missionName = missions[0].Name
+		}
+
+		// Now get all missions with the same name
+		missions, err := missionStore.ListByName(ctx, missionName, 0) // 0 = no limit
+		if err != nil {
+			return nil, fmt.Errorf("failed to list missions by name: %w", err)
+		}
+
+		if len(missions) == 0 {
+			return nil, fmt.Errorf("no missions found with name: %s", missionName)
+		}
+
+		// Extract mission IDs
+		missionIDs := make([]types.ID, len(missions))
+		for i, m := range missions {
+			missionIDs[i] = m.ID
+		}
+
+		return missionIDs, nil
+
+	case "all":
+		// Return empty slice - caller should handle listing all findings
+		return nil, nil
+
+	default:
+		return nil, fmt.Errorf("invalid scope: %s", scope)
+	}
 }

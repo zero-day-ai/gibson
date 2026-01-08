@@ -14,6 +14,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/observability"
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -22,6 +23,7 @@ import (
 
 // targetStore is an interface for target data access
 type targetStore interface {
+	Get(ctx context.Context, id types.ID) (*types.Target, error)
 	GetByName(ctx context.Context, name string) (*types.Target, error)
 }
 
@@ -289,6 +291,7 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 			workflow.WithLogger(d.logger.With("component", "workflow-executor")),
 		)),
 		mission.WithEventEmitter(mission.NewDefaultEventEmitter()),
+		mission.WithTargetStore(d.targetStore),
 	)
 	payloadRegistry := payload.NewPayloadRegistryWithDefaults(d.db)
 
@@ -375,8 +378,17 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 func (d *daemonImpl) Stop(ctx context.Context) error {
 	d.logger.Info("stopping Gibson daemon")
 
+	// Create shutdown context with timeout if the passed context doesn't have one
+	shutdownCtx := ctx
+	if ctx.Err() == nil {
+		// Use a reasonable timeout for graceful shutdown (10 seconds)
+		var cancel context.CancelFunc
+		shutdownCtx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+	}
+
 	// Stop services
-	d.stopServices(ctx)
+	d.stopServices(shutdownCtx)
 
 	// Clean up state files
 	d.logger.Info("removing daemon state files")
@@ -430,6 +442,26 @@ func (d *daemonImpl) stopServices(ctx context.Context) {
 		d.logger.Info("closing event bus")
 		if err := d.eventBus.Close(); err != nil {
 			d.logger.Warn("error closing event bus", "error", err)
+		}
+	}
+
+	// Shutdown tracing - flushes pending spans to Langfuse
+	if d.infrastructure != nil && d.infrastructure.tracerProvider != nil {
+		d.logger.Info("shutting down tracing")
+		if err := observability.ShutdownTracing(ctx, d.infrastructure.tracerProvider); err != nil {
+			d.logger.Warn("failed to shutdown tracing", "error", err)
+		} else {
+			d.logger.Debug("tracing shutdown complete")
+		}
+	}
+
+	// Close Neo4j connection
+	if d.infrastructure != nil && d.infrastructure.graphRAGClient != nil {
+		d.logger.Info("closing Neo4j connection")
+		if err := d.infrastructure.graphRAGClient.Close(ctx); err != nil {
+			d.logger.Warn("failed to close Neo4j connection", "error", err)
+		} else {
+			d.logger.Debug("Neo4j connection closed")
 		}
 	}
 

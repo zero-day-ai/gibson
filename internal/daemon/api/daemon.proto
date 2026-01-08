@@ -155,6 +155,10 @@ message RunMissionRequest {
 
   // variables contains workflow variables to override
   map<string, string> variables = 3;
+
+  // memory_continuity defines how agent memory is shared across mission runs
+  // Valid values: "isolated" (default), "inherit", "shared"
+  string memory_continuity = 4;
 }
 
 // MissionEvent represents a mission execution event.

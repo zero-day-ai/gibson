@@ -504,7 +504,7 @@ func sdkQueryToInternal(q sdkgraphrag.Query) graphrag.GraphRAGQuery {
 		nodeTypes = append(nodeTypes, graphrag.NodeType(nt))
 	}
 
-	return graphrag.GraphRAGQuery{
+	internalQuery := graphrag.GraphRAGQuery{
 		Text:         q.Text,
 		Embedding:    q.Embedding,
 		TopK:         q.TopK,
@@ -515,11 +515,25 @@ func sdkQueryToInternal(q sdkgraphrag.Query) graphrag.GraphRAGQuery {
 		VectorWeight: q.VectorWeight,
 		GraphWeight:  q.GraphWeight,
 	}
+
+	// Convert mission scope - SDK and internal use the same string values
+	if q.MissionScope != "" {
+		internalQuery.MissionScope = graphrag.MissionScope(q.MissionScope)
+	}
+
+	// Set mission name for scope filtering
+	internalQuery.MissionName = q.MissionName
+
+	// Note: RunNumber is handled by the store layer for filtering
+	// The bridge doesn't need to explicitly convert it since it's used
+	// by the query executor to filter results, not in the query struct itself
+
+	return internalQuery
 }
 
 // internalResultToSDK converts internal GraphRAGResult to SDK Result.
 func internalResultToSDK(r graphrag.GraphRAGResult) sdkgraphrag.Result {
-	return sdkgraphrag.Result{
+	result := sdkgraphrag.Result{
 		Node:        internalNodeToSDK(r.Node),
 		Score:       r.Score,
 		VectorScore: r.VectorScore,
@@ -527,6 +541,18 @@ func internalResultToSDK(r graphrag.GraphRAGResult) sdkgraphrag.Result {
 		Path:        internalIDsToStrings(r.Path),
 		Distance:    r.Distance,
 	}
+
+	// Include run metadata if available
+	// GetRunMetadata returns nil if no mission_name is set (backwards compatibility)
+	if metadata := r.Node.GetRunMetadata(); metadata != nil {
+		result.RunMetadata = &sdkgraphrag.RunMetadata{
+			MissionName:  metadata.MissionName,
+			RunNumber:    metadata.RunNumber,
+			DiscoveredAt: metadata.DiscoveredAt,
+		}
+	}
+
+	return result
 }
 
 // internalNodeToSDK converts internal GraphNode to SDK GraphNode.

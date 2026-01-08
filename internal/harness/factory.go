@@ -137,6 +137,11 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		}
 	}
 
+	// Apply optional memory wrapper (e.g., TracedMemoryManager)
+	if memoryStore != nil && f.config.MemoryWrapper != nil {
+		memoryStore = f.config.MemoryWrapper(memoryStore)
+	}
+
 	// Create self-referential factory for child harness creation during delegation
 	selfFactory := func(ctx context.Context, childMissionCtx MissionContext, childTarget TargetInfo) (AgentHarness, error) {
 		childAgentName := childMissionCtx.CurrentAgent
@@ -147,7 +152,7 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 	}
 
 	// Create and return DefaultAgentHarness
-	harness := &DefaultAgentHarness{
+	var harness AgentHarness = &DefaultAgentHarness{
 		slotManager:         f.config.SlotManager,
 		llmRegistry:         f.config.LLMRegistry,
 		toolRegistry:        f.config.ToolRegistry,
@@ -164,6 +169,11 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		tokenUsage:          tokenTracker,
 		graphRAGBridge:      f.config.GraphRAGBridge,
 		graphRAGQueryBridge: f.config.GraphRAGQueryBridge,
+	}
+
+	// Apply optional harness wrapper (e.g., TracedAgentHarness, VerboseHarnessWrapper)
+	if f.config.HarnessWrapper != nil {
+		harness = f.config.HarnessWrapper(harness)
 	}
 
 	return harness, nil

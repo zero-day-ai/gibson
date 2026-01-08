@@ -75,6 +75,7 @@ func (d *daemonImpl) ensureMissionManager() error {
 			harnessFactory,
 			d.targetStore,
 			runLinker,
+			d.infrastructure,
 		)
 
 		d.logger.Info("mission manager initialized")
@@ -91,8 +92,8 @@ func (d *daemonImpl) ensureMissionManager() error {
 
 // RunMissionWithManager starts a mission using the mission manager.
 // This is the implementation for the DaemonInterface.RunMission method.
-func (d *daemonImpl) RunMissionWithManager(ctx context.Context, workflowPath string, missionID string, variables map[string]string) (<-chan api.MissionEventData, error) {
-	d.logger.Info("RunMission called", "workflow_path", workflowPath, "mission_id", missionID)
+func (d *daemonImpl) RunMissionWithManager(ctx context.Context, workflowPath string, missionID string, variables map[string]string, memoryContinuity string) (<-chan api.MissionEventData, error) {
+	d.logger.Info("RunMission called", "workflow_path", workflowPath, "mission_id", missionID, "memory_continuity", memoryContinuity)
 
 	// Initialize mission manager if not already done
 	if err := d.ensureMissionManager(); err != nil {
@@ -101,7 +102,7 @@ func (d *daemonImpl) RunMissionWithManager(ctx context.Context, workflowPath str
 	}
 
 	// Delegate to mission manager
-	eventChan, err := d.missionManager.Run(ctx, workflowPath, missionID, variables)
+	eventChan, err := d.missionManager.Run(ctx, workflowPath, missionID, variables, memoryContinuity)
 	if err != nil {
 		d.logger.Error("failed to start mission", "error", err, "workflow_path", workflowPath)
 		return nil, err

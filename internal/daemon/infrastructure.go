@@ -6,12 +6,14 @@ import (
 	"os"
 
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/plan"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // Infrastructure holds the daemon's infrastructure components that are shared
@@ -40,6 +42,18 @@ type Infrastructure struct {
 
 	// runLinker manages relationships between mission runs with the same name
 	runLinker mission.MissionRunLinker
+
+	// tracerProvider for distributed tracing (Langfuse or OTLP)
+	tracerProvider *sdktrace.TracerProvider
+
+	// graphRAGClient for Neo4j knowledge graph operations
+	graphRAGClient *graph.Neo4jClient
+
+	// graphRAGBridge adapts Neo4j client for harness interface (async storage)
+	graphRAGBridge harness.GraphRAGBridge
+
+	// graphRAGQueryBridge for querying the knowledge graph
+	graphRAGQueryBridge harness.GraphRAGQueryBridge
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -87,6 +101,44 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 	}
 	d.logger.Info("initialized memory manager factory")
 
+	// Initialize Neo4j GraphRAG first if enabled (needed by tracer provider)
+	var graphRAGClient *graph.Neo4jClient
+	var graphRAGBridge harness.GraphRAGBridge
+	var graphRAGQueryBridge harness.GraphRAGQueryBridge
+	if d.config != nil && d.config.GraphRAG.Enabled {
+		var err error
+		graphRAGClient, err = d.initGraphRAG(ctx)
+		if err != nil {
+			d.logger.Warn("failed to initialize Neo4j GraphRAG, continuing without knowledge graph",
+				"error", err)
+		} else {
+			d.logger.Info("initialized Neo4j GraphRAG",
+				"uri", d.config.GraphRAG.Neo4j.URI)
+			// Create bridge adapters
+			// TODO: Complete GraphRAG store setup with provider and embedder
+			// For now, log that bridges need full store implementation
+			d.logger.Info("Neo4j client initialized, bridge setup requires GraphRAGStore implementation")
+		}
+	}
+
+	// Initialize Langfuse tracing if enabled
+	// Pass Neo4j client to enable dual export (Langfuse + Neo4j graph recording)
+	var tracerProvider *sdktrace.TracerProvider
+	if d.config != nil && d.config.Langfuse.Enabled {
+		var err error
+		tracerProvider, err = d.initLangfuseTracing(ctx, graphRAGClient)
+		if err != nil {
+			d.logger.Warn("failed to initialize Langfuse tracing, continuing without tracing",
+				"error", err)
+		} else {
+			d.logger.Info("initialized Langfuse tracing",
+				"host", d.config.Langfuse.Host)
+			if graphRAGClient != nil {
+				d.logger.Info("Langfuse tracing configured with Neo4j graph span recording")
+			}
+		}
+	}
+
 	// Create plan executor with dependencies
 	// TODO: Add executor config to Config struct when implementing
 	planExecutor := plan.NewPlanExecutor(
@@ -101,6 +153,10 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		llmRegistry:          llmRegistry,
 		slotManager:          slotManager,
 		memoryManagerFactory: memoryFactory,
+		tracerProvider:       tracerProvider,
+		graphRAGClient:       graphRAGClient,
+		graphRAGBridge:       graphRAGBridge,
+		graphRAGQueryBridge:  graphRAGQueryBridge,
 	}
 	d.infrastructure = infra
 

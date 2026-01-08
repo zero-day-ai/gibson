@@ -158,6 +158,35 @@ func (m *mockAgentHarness) ReportStepHints(ctx context.Context, hints *StepHints
 	return args.Error(0)
 }
 
+func (m *mockAgentHarness) MissionExecutionContext() MissionExecutionContextSDK {
+	args := m.Called()
+	return args.Get(0).(MissionExecutionContextSDK)
+}
+
+func (m *mockAgentHarness) GetMissionRunHistory(ctx context.Context) ([]MissionRunSummarySDK, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]MissionRunSummarySDK), args.Error(1)
+}
+
+func (m *mockAgentHarness) GetPreviousRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	args := m.Called(ctx, filter)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]agent.Finding), args.Error(1)
+}
+
+func (m *mockAgentHarness) GetAllRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	args := m.Called(ctx, filter)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]agent.Finding), args.Error(1)
+}
+
 // ─── Test Cases ──────────────────────────────────────────────────────────────
 
 func TestNewPlanningHarnessWrapper(t *testing.T) {

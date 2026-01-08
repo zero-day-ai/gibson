@@ -256,8 +256,8 @@ func (d *daemonImpl) ListPlugins(ctx context.Context) ([]api.PluginInfoInternal,
 }
 
 // RunMission starts a mission and returns an event channel.
-func (d *daemonImpl) RunMission(ctx context.Context, workflowPath string, missionID string, variables map[string]string) (<-chan api.MissionEventData, error) {
-	return d.RunMissionWithManager(ctx, workflowPath, missionID, variables)
+func (d *daemonImpl) RunMission(ctx context.Context, workflowPath string, missionID string, variables map[string]string, memoryContinuity string) (<-chan api.MissionEventData, error) {
+	return d.RunMissionWithManager(ctx, workflowPath, missionID, variables, memoryContinuity)
 }
 
 // StopMission stops a running mission.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,46 @@ import (
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
+
+// Memory continuity errors
+var (
+	// ErrNoPreviousRun is returned when attempting to access prior run data but no prior run exists
+	ErrNoPreviousRun = errors.New("no previous run exists")
+
+	// ErrContinuityNotSupported is returned when attempting continuity operations in isolated mode
+	ErrContinuityNotSupported = errors.New("memory continuity not supported in isolated mode")
+)
+
+// MemoryContinuityMode defines how memory state is handled across multiple runs
+type MemoryContinuityMode string
+
+const (
+	// MemoryIsolated indicates that each run has completely isolated memory (default)
+	MemoryIsolated MemoryContinuityMode = "isolated"
+
+	// MemoryInherit indicates that new runs can read memory from prior runs
+	// but cannot modify the shared state (copy-on-write semantics)
+	MemoryInherit MemoryContinuityMode = "inherit"
+
+	// MemoryShared indicates that all runs share the same memory namespace
+	// with full read and write access
+	MemoryShared MemoryContinuityMode = "shared"
+)
+
+// HistoricalValue represents a value retrieved from a previous run's memory
+type HistoricalValue struct {
+	// Value is the actual data stored in memory
+	Value any `json:"value"`
+
+	// RunNumber is the sequential run number within the mission (1-based)
+	RunNumber int `json:"run_number"`
+
+	// MissionID is the unique identifier of the mission this value belongs to
+	MissionID string `json:"mission_id"`
+
+	// StoredAt is the timestamp when this value was stored
+	StoredAt time.Time `json:"stored_at"`
+}
 
 // MissionMemory provides persistent per-mission storage with FTS
 type MissionMemory interface {
@@ -35,6 +76,23 @@ type MissionMemory interface {
 
 	// MissionID returns the mission this memory is scoped to
 	MissionID() types.ID
+
+	// Memory Continuity Methods
+
+	// ContinuityMode returns the current memory continuity mode
+	// Returns MemoryIsolated if not explicitly configured
+	ContinuityMode() MemoryContinuityMode
+
+	// GetPreviousRunValue retrieves a value from the prior run's memory
+	// Only works if continuity mode is 'inherit' or 'shared'
+	// Returns ErrNoPreviousRun if no prior run exists
+	// Returns ErrContinuityNotSupported if mode is 'isolated'
+	GetPreviousRunValue(ctx context.Context, key string) (any, error)
+
+	// GetValueHistory returns values for a key across all runs
+	// Returns in chronological order with run metadata
+	// Returns empty slice if key was never stored
+	GetValueHistory(ctx context.Context, key string) ([]HistoricalValue, error)
 }
 
 // DefaultMissionMemory implements MissionMemory using SQLite with FTS5 and LRU cache
@@ -42,6 +100,11 @@ type DefaultMissionMemory struct {
 	db        *database.DB
 	missionID types.ID
 	cache     *missionMemoryCache
+
+	// Memory continuity fields
+	continuityMode    MemoryContinuityMode
+	previousMissionID *types.ID // ID of prior run for inherit mode
+	missionName       string    // Mission name for shared mode
 }
 
 // missionMemoryCache is an LRU cache for mission memory items
@@ -461,4 +524,241 @@ func escapeFTS5Query(query string) string {
 	// and escape internal quotes
 	query = strings.ReplaceAll(query, `"`, `""`)
 	return `"` + query + `"`
+}
+
+// Memory Continuity Methods
+
+// ContinuityMode returns the current memory continuity mode
+// Returns MemoryIsolated if not explicitly configured
+func (m *DefaultMissionMemory) ContinuityMode() MemoryContinuityMode {
+	if m.continuityMode == "" {
+		return MemoryIsolated
+	}
+	return m.continuityMode
+}
+
+// GetPreviousRunValue retrieves a value from the prior run's memory
+// Only works if continuity mode is 'inherit' or 'shared'
+// Returns ErrNoPreviousRun if no prior run exists
+// Returns ErrContinuityNotSupported if mode is 'isolated'
+func (m *DefaultMissionMemory) GetPreviousRunValue(ctx context.Context, key string) (any, error) {
+	// Check if continuity is supported
+	if m.ContinuityMode() == MemoryIsolated {
+		return nil, ErrContinuityNotSupported
+	}
+
+	// Check if previous run exists
+	if m.previousMissionID == nil {
+		return nil, ErrNoPreviousRun
+	}
+
+	// Query the database for key with previous mission ID
+	query := `
+		SELECT value
+		FROM mission_memory
+		WHERE mission_id = ? AND key = ?
+	`
+
+	var valueJSON sql.NullString
+	err := m.db.Conn().QueryRowContext(ctx, query, *m.previousMissionID, key).Scan(&valueJSON)
+
+	if err == sql.ErrNoRows {
+		return nil, NewMissionMemoryNotFoundError(key)
+	}
+	if err != nil {
+		return nil, NewMissionMemoryStoreError("failed to retrieve previous run value", err)
+	}
+
+	// Unmarshal value
+	var value any
+	if valueJSON.Valid {
+		if err := json.Unmarshal([]byte(valueJSON.String), &value); err != nil {
+			return nil, NewMissionMemoryStoreError("failed to unmarshal previous run value", err)
+		}
+	}
+
+	return value, nil
+}
+
+// GetValueHistory returns values for a key across all runs
+// Returns in chronological order with run metadata
+// Returns empty slice if key was never stored
+func (m *DefaultMissionMemory) GetValueHistory(ctx context.Context, key string) ([]HistoricalValue, error) {
+	// For shared mode, we need to query all missions with the same name
+	// For inherit mode, we need to follow the chain of previous runs
+	// For isolated mode, there's no history (just current run)
+
+	if m.ContinuityMode() == MemoryIsolated {
+		// In isolated mode, only return current run's value if it exists
+		item, err := m.Retrieve(ctx, key)
+		if err != nil {
+			// Key doesn't exist in current run, return empty history
+			if NewMissionMemoryNotFoundError(key).Error() == err.Error() {
+				return []HistoricalValue{}, nil
+			}
+			return nil, err
+		}
+
+		return []HistoricalValue{
+			{
+				Value:     item.Value,
+				RunNumber: 1, // In isolated mode, always run 1
+				MissionID: string(m.missionID),
+				StoredAt:  item.CreatedAt,
+			},
+		}, nil
+	}
+
+	// For shared and inherit modes, we need to query across multiple mission IDs
+	// First, get the list of mission IDs based on mode
+	var missionIDs []types.ID
+	var err error
+
+	if m.ContinuityMode() == MemoryShared && m.missionName != "" {
+		// Shared mode: get all missions with the same name
+		missionIDs, err = m.getMissionIDsByName(ctx, m.missionName)
+		if err != nil {
+			return nil, NewMissionMemoryStoreError("failed to retrieve mission IDs by name", err)
+		}
+	} else if m.ContinuityMode() == MemoryInherit {
+		// Inherit mode: follow the chain of previous runs
+		missionIDs, err = m.getMissionChain(ctx)
+		if err != nil {
+			return nil, NewMissionMemoryStoreError("failed to retrieve mission chain", err)
+		}
+	}
+
+	// Query all values for this key across all mission IDs
+	if len(missionIDs) == 0 {
+		return []HistoricalValue{}, nil
+	}
+
+	// Build placeholders for IN clause
+	placeholders := make([]string, len(missionIDs))
+	args := make([]interface{}, len(missionIDs)+1)
+	args[0] = key
+	for i, id := range missionIDs {
+		placeholders[i] = "?"
+		args[i+1] = id
+	}
+
+	query := `
+		SELECT value, mission_id, created_at
+		FROM mission_memory
+		WHERE key = ? AND mission_id IN (` + strings.Join(placeholders, ",") + `)
+		ORDER BY created_at ASC
+	`
+
+	rows, err := m.db.Conn().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, NewMissionMemoryStoreError("failed to query value history", err)
+	}
+	defer rows.Close()
+
+	var history []HistoricalValue
+	runNumber := 1
+	for rows.Next() {
+		var valueJSON sql.NullString
+		var missionID string
+		var createdAt time.Time
+
+		if err := rows.Scan(&valueJSON, &missionID, &createdAt); err != nil {
+			return nil, NewMissionMemoryStoreError("failed to scan history row", err)
+		}
+
+		// Unmarshal value
+		var value any
+		if valueJSON.Valid {
+			if err := json.Unmarshal([]byte(valueJSON.String), &value); err != nil {
+				return nil, NewMissionMemoryStoreError("failed to unmarshal historical value", err)
+			}
+		}
+
+		history = append(history, HistoricalValue{
+			Value:     value,
+			RunNumber: runNumber,
+			MissionID: missionID,
+			StoredAt:  createdAt,
+		})
+		runNumber++
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, NewMissionMemoryStoreError("error iterating history rows", err)
+	}
+
+	return history, nil
+}
+
+// getMissionIDsByName retrieves all mission IDs with the given name
+func (m *DefaultMissionMemory) getMissionIDsByName(ctx context.Context, name string) ([]types.ID, error) {
+	// Query the database directly for all missions with the given name
+	query := `
+		SELECT id
+		FROM missions
+		WHERE name = ?
+		ORDER BY created_at ASC
+	`
+
+	rows, err := m.db.Conn().QueryContext(ctx, query, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []types.ID
+	for rows.Next() {
+		var id types.ID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	return ids, rows.Err()
+}
+
+// getMissionChain follows the chain of previous runs to build the history
+func (m *DefaultMissionMemory) getMissionChain(ctx context.Context) ([]types.ID, error) {
+	var chain []types.ID
+
+	// Start with the current mission and walk backwards through previous runs
+	currentID := m.missionID
+
+	// Query to get previous run ID
+	query := `
+		SELECT previous_run_id
+		FROM missions
+		WHERE id = ?
+	`
+
+	// Build the chain by following previous_run_id links
+	seen := make(map[types.ID]bool)
+	maxIterations := 1000 // Prevent infinite loops
+
+	for i := 0; i < maxIterations; i++ {
+		// Prevent cycles
+		if seen[currentID] {
+			break
+		}
+		seen[currentID] = true
+
+		// Add current ID to the beginning of the chain (we're walking backwards)
+		chain = append([]types.ID{currentID}, chain...)
+
+		// Get previous run ID
+		var previousRunID sql.NullString
+		err := m.db.Conn().QueryRowContext(ctx, query, currentID).Scan(&previousRunID)
+		if err == sql.ErrNoRows || !previousRunID.Valid {
+			// No more previous runs
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		currentID = types.ID(previousRunID.String)
+	}
+
+	return chain, nil
 }

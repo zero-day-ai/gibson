@@ -5,7 +5,9 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/observability"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // newHarnessFactory creates a new HarnessFactory with all required dependencies.
@@ -29,6 +31,28 @@ import (
 //   - error: Non-nil if factory creation fails (e.g., invalid configuration)
 func (d *daemonImpl) newHarnessFactory(ctx context.Context) (harness.HarnessFactoryInterface, error) {
 	d.logger.Debug("creating harness factory")
+
+	// Get tracer from provider if available
+	var tracer trace.Tracer
+	if d.infrastructure != nil && d.infrastructure.tracerProvider != nil {
+		tracer = d.infrastructure.tracerProvider.Tracer("gibson")
+	}
+
+	// Create harness wrapper if tracer is available
+	var harnessWrapper func(harness.AgentHarness) harness.AgentHarness
+	if tracer != nil {
+		harnessWrapper = func(h harness.AgentHarness) harness.AgentHarness {
+			return observability.NewTracedAgentHarness(h, observability.WithTracer(tracer))
+		}
+	}
+
+	// Create memory wrapper if tracer is available
+	var memoryWrapper func(memory.MemoryManager) memory.MemoryManager
+	if tracer != nil {
+		memoryWrapper = func(mm memory.MemoryManager) memory.MemoryManager {
+			return memory.NewTracedMemoryManager(mm, tracer)
+		}
+	}
 
 	// Build HarnessConfig with all required dependencies
 	config := harness.HarnessConfig{
@@ -67,12 +91,18 @@ func (d *daemonImpl) newHarnessFactory(ctx context.Context) (harness.HarnessFact
 
 		// Observability components
 		Logger:  d.logger.With("component", "harness"),
-		Tracer:  nil, // Will be defaulted by ApplyDefaults() to no-op tracer
-		Metrics: nil, // Will be defaulted by ApplyDefaults() to no-op metrics
+		Tracer:  tracer,                     // May be nil, will be defaulted by ApplyDefaults() to no-op tracer
+		Metrics: nil,                        // Will be defaulted by ApplyDefaults() to no-op metrics
 
-		// GraphRAG components (optional, will be defaulted to no-op)
-		GraphRAGBridge:      nil, // Will be defaulted by ApplyDefaults()
-		GraphRAGQueryBridge: nil, // Will be defaulted by ApplyDefaults()
+		// Harness wrapper for adding observability (TracedAgentHarness)
+		HarnessWrapper: harnessWrapper, // May be nil (no wrapping)
+
+		// Memory wrapper for adding observability (TracedMemoryManager)
+		MemoryWrapper: memoryWrapper, // May be nil (no wrapping)
+
+		// GraphRAG components (optional, will be defaulted to no-op if nil)
+		GraphRAGBridge:      d.infrastructure.graphRAGBridge,      // May be nil, will be defaulted by ApplyDefaults()
+		GraphRAGQueryBridge: d.infrastructure.graphRAGQueryBridge, // May be nil, will be defaulted by ApplyDefaults()
 	}
 
 	// Create the factory with validation

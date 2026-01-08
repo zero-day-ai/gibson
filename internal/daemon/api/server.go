@@ -52,7 +52,7 @@ type DaemonInterface interface {
 	ListPlugins(ctx context.Context) ([]PluginInfoInternal, error)
 
 	// RunMission starts a mission and returns an event channel
-	RunMission(ctx context.Context, workflowPath string, missionID string, variables map[string]string) (<-chan MissionEventData, error)
+	RunMission(ctx context.Context, workflowPath string, missionID string, variables map[string]string, memoryContinuity string) (<-chan MissionEventData, error)
 
 	// StopMission stops a running mission
 	StopMission(ctx context.Context, missionID string, force bool) error
@@ -348,10 +348,11 @@ func (s *DaemonServer) RunMission(req *RunMissionRequest, stream grpc.ServerStre
 	s.logger.Info("mission run request received",
 		"workflow_path", req.WorkflowPath,
 		"mission_id", req.MissionId,
+		"memory_continuity", req.MemoryContinuity,
 	)
 
 	// Start mission and get event channel
-	eventChan, err := s.daemon.RunMission(stream.Context(), req.WorkflowPath, req.MissionId, req.Variables)
+	eventChan, err := s.daemon.RunMission(stream.Context(), req.WorkflowPath, req.MissionId, req.Variables, req.MemoryContinuity)
 	if err != nil {
 		s.logger.Error("failed to start mission", "error", err)
 		return status_grpc.Errorf(codes.Internal, "failed to start mission: %v", err)

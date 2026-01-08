@@ -3,8 +3,10 @@ package graphrag
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/zero-day-ai/gibson/internal/memory/embedder"
+	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // QueryProcessor orchestrates the full GraphRAG query pipeline.
@@ -39,21 +41,33 @@ type QueryProcessor interface {
 type DefaultQueryProcessor struct {
 	embedder embedder.Embedder // For generating query embeddings
 	reranker MergeReranker     // For merging and scoring results
+	scoper   QueryScoper       // For resolving mission scope (optional)
+	logger   *slog.Logger      // For logging warnings and debug info
 }
 
 // NewDefaultQueryProcessor creates a new query processor.
 // The embedder is used to generate embeddings from query text.
 // The reranker combines vector and graph results with configured weights.
-func NewDefaultQueryProcessor(emb embedder.Embedder, reranker MergeReranker) *DefaultQueryProcessor {
+// The logger is used for warnings and debug info (pass slog.Default() if needed).
+func NewDefaultQueryProcessor(emb embedder.Embedder, reranker MergeReranker, logger *slog.Logger) *DefaultQueryProcessor {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &DefaultQueryProcessor{
 		embedder: emb,
 		reranker: reranker,
+		logger:   logger,
 	}
 }
 
 // NewQueryProcessorFromConfig creates a QueryProcessor from GraphRAG configuration.
 // Automatically configures the reranker weights from config.Query settings.
-func NewQueryProcessorFromConfig(config GraphRAGConfig, emb embedder.Embedder) (*DefaultQueryProcessor, error) {
+// The logger is used for warnings and debug info (pass slog.Default() if needed).
+func NewQueryProcessorFromConfig(config GraphRAGConfig, emb embedder.Embedder, logger *slog.Logger) (*DefaultQueryProcessor, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	// Apply defaults to query config
 	config.Query.ApplyDefaults()
 
@@ -71,22 +85,33 @@ func NewQueryProcessorFromConfig(config GraphRAGConfig, emb embedder.Embedder) (
 	return &DefaultQueryProcessor{
 		embedder: emb,
 		reranker: reranker,
+		logger:   logger,
 	}, nil
+}
+
+// WithScoper sets the query scoper for mission scope filtering.
+// Returns the processor for method chaining.
+// The scoper is optional; if nil, scope filtering will be skipped.
+func (p *DefaultQueryProcessor) WithScoper(scoper QueryScoper) *DefaultQueryProcessor {
+	p.scoper = scoper
+	return p
 }
 
 // ProcessQuery executes the full GraphRAG hybrid query pipeline.
 //
 // Pipeline:
 // 1. Validate query
-// 2. Generate embedding (if query.Text is set)
-// 3. Execute vector search
-// 4. Expand results via graph traversal
-// 5. Merge and rerank results
-// 6. Apply filters and return top-K
+// 2. Resolve mission scope (if specified)
+// 3. Generate embedding (if query.Text is set)
+// 4. Execute vector search
+// 5. Expand results via graph traversal
+// 6. Merge and rerank results
+// 7. Apply filters and return top-K
 //
 // Graceful degradation:
 // - If graph traversal fails, returns vector-only results
 // - If vector search fails but embedding exists, attempts graph-only search
+// - If scope resolution fails, falls back to ScopeAll (no filtering)
 // - Returns error only if both stages fail or query is invalid
 func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAGQuery, provider GraphRAGProvider) ([]GraphRAGResult, error) {
 	// Step 1: Validate the query
@@ -94,7 +119,37 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 		return nil, NewInvalidQueryError(fmt.Sprintf("query validation failed: %v", err))
 	}
 
-	// Step 2: Generate embedding if needed (query has Text but no Embedding)
+	// Step 2: Resolve mission scope filtering
+	// Only apply scope filtering if:
+	// - Scope is not empty and not "all"
+	// - Scoper is configured
+	// - MissionID is provided (required for current_run scope)
+	if query.MissionScope != "" && query.MissionScope != ScopeAll && p.scoper != nil {
+		// For current_run scope, we need a mission ID
+		var currentMissionID types.ID
+		if query.MissionID != nil {
+			currentMissionID = *query.MissionID
+		}
+
+		// Resolve scope to mission IDs
+		missionIDs, err := p.scoper.ResolveScope(ctx, query.MissionScope, query.MissionName, currentMissionID)
+		if err != nil {
+			// Log warning and continue without filtering (graceful degradation)
+			p.logger.Warn("failed to resolve mission scope, continuing without filter",
+				"scope", query.MissionScope,
+				"mission_name", query.MissionName,
+				"mission_id", currentMissionID,
+				"error", err)
+		} else if len(missionIDs) > 0 {
+			// Scope resolution succeeded and returned IDs - apply filter
+			query.MissionIDFilter = missionIDs
+			p.logger.Debug("resolved mission scope",
+				"scope", query.MissionScope,
+				"mission_count", len(missionIDs))
+		}
+	}
+
+	// Step 3: Generate embedding if needed (query has Text but no Embedding)
 	queryEmbedding := query.Embedding
 	if query.Text != "" && len(query.Embedding) == 0 {
 		emb, err := p.embedder.Embed(ctx, query.Text)
@@ -106,9 +161,20 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 
 	// Prepare filters for vector search
 	vectorFilters := make(map[string]any)
-	if query.MissionID != nil {
+
+	// Apply mission ID filter based on scope resolution
+	if len(query.MissionIDFilter) > 0 {
+		// Scope filtering resolved to multiple mission IDs
+		missionIDStrings := make([]string, len(query.MissionIDFilter))
+		for i, id := range query.MissionIDFilter {
+			missionIDStrings[i] = id.String()
+		}
+		vectorFilters["mission_id"] = missionIDStrings
+	} else if query.MissionID != nil {
+		// Legacy single mission ID filter (backwards compatibility)
 		vectorFilters["mission_id"] = query.MissionID.String()
 	}
+
 	if len(query.NodeTypes) > 0 {
 		// Convert NodeTypes to strings for filter
 		nodeTypeStrs := make([]string, len(query.NodeTypes))
@@ -118,7 +184,7 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 		vectorFilters["node_type"] = nodeTypeStrs
 	}
 
-	// Step 3: Execute vector similarity search
+	// Step 4: Execute vector similarity search
 	vectorResults, err := provider.VectorSearch(ctx, queryEmbedding, query.TopK, vectorFilters)
 	if err != nil {
 		return nil, NewQueryError(fmt.Sprintf("vector search failed: %v", err), err)
@@ -142,14 +208,14 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 		return []GraphRAGResult{}, nil
 	}
 
-	// Step 4: Expand graph from vector results (if MaxHops > 0)
+	// Step 5: Expand graph from vector results (if MaxHops > 0)
 	var graphResults []GraphNode
 	if query.MaxHops > 0 {
 		graphResults, err = p.expandGraph(ctx, filteredVectorResults, query, provider)
 		if err != nil {
 			// Graceful degradation: if graph expansion fails, continue with vector-only results
-			// Log the error (in production, use a logger)
-			// For now, we'll create GraphRAGResults from vector results only
+			p.logger.Warn("graph expansion failed, falling back to vector-only results",
+				"error", err)
 			return p.vectorOnlyResults(ctx, filteredVectorResults, provider, query)
 		}
 	} else {
@@ -157,16 +223,16 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 		return p.vectorOnlyResults(ctx, filteredVectorResults, provider, query)
 	}
 
-	// Step 5: Merge and rerank results
+	// Step 6: Merge and rerank results
 	merged := p.reranker.Merge(filteredVectorResults, graphResults)
 	reranked := p.reranker.Rerank(merged, query.Text, query.TopK)
 
-	// Step 6: Apply node type filter if specified
+	// Step 7: Apply node type filter if specified
 	if len(query.NodeTypes) > 0 {
 		reranked = p.filterByNodeType(reranked, query.NodeTypes)
 	}
 
-	// Step 7: Ensure we don't exceed TopK
+	// Step 8: Ensure we don't exceed TopK
 	if len(reranked) > query.TopK {
 		reranked = reranked[:query.TopK]
 	}
@@ -207,7 +273,9 @@ func (p *DefaultQueryProcessor) expandGraph(
 		nodes, err := provider.TraverseGraph(ctx, startNodeID, query.MaxHops, query.Filters)
 		if err != nil {
 			// Partial failure: log and continue with other starting points
-			// In production, use proper logging
+			p.logger.Warn("graph traversal failed for starting point, continuing with others",
+				"start_node_id", startNodeID,
+				"error", err)
 			continue
 		}
 

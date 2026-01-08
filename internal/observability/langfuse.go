@@ -331,65 +331,97 @@ func (e *LangfuseExporter) sendWithRetry(ctx context.Context, payload []byte) er
 	return NewExporterConnectionError(url, fmt.Errorf("max retries exceeded: %w", lastErr))
 }
 
-// convertSpans converts OpenTelemetry spans to Langfuse trace format.
+// convertSpans converts OpenTelemetry spans to Langfuse ingestion event format.
+// The Langfuse API expects events with a "type" field indicating the event type
+// (trace-create, span-create, generation-create, etc.) and a "body" field with the data.
 func (e *LangfuseExporter) convertSpans(spans []sdktrace.ReadOnlySpan) []map[string]interface{} {
 	e.sessionMu.RLock()
 	sessionID := e.sessionID
 	userID := e.userID
 	e.sessionMu.RUnlock()
 
-	traces := make([]map[string]interface{}, 0, len(spans))
+	events := make([]map[string]interface{}, 0, len(spans)*2)
+
+	// Group spans by trace ID to create trace-create events
+	tracesSeen := make(map[string]bool)
 
 	for _, span := range spans {
-		// Extract span info
 		spanCtx := span.SpanContext()
 		parentCtx := span.Parent()
+		traceID := spanCtx.TraceID().String()
 
-		trace := map[string]interface{}{
+		// Create trace-create event for new traces (root spans without parent)
+		if !tracesSeen[traceID] {
+			tracesSeen[traceID] = true
+
+			traceEvent := map[string]interface{}{
+				"type":      "trace-create",
+				"id":        "trace-" + traceID[:8], // Use first 8 chars of trace ID as unique event ID
+				"timestamp": span.StartTime().Format(time.RFC3339Nano),
+				"body": map[string]interface{}{
+					"id":        traceID,
+					"name":      span.Name(),
+					"timestamp": span.StartTime().Format(time.RFC3339Nano),
+				},
+			}
+
+			// Add session ID if set
+			if sessionID != "" {
+				traceEvent["body"].(map[string]interface{})["sessionId"] = sessionID
+			}
+
+			// Add user ID if set
+			if userID != "" {
+				traceEvent["body"].(map[string]interface{})["userId"] = userID
+			}
+
+			events = append(events, traceEvent)
+		}
+
+		// Create span or generation event based on span type
+		eventType := "span-create"
+		if span.SpanKind() == trace.SpanKindClient {
+			eventType = "generation-create"
+		}
+
+		body := map[string]interface{}{
 			"id":        spanCtx.SpanID().String(),
-			"traceId":   spanCtx.TraceID().String(),
+			"traceId":   traceID,
 			"name":      span.Name(),
 			"startTime": span.StartTime().Format(time.RFC3339Nano),
 			"endTime":   span.EndTime().Format(time.RFC3339Nano),
-			"metadata":  make(map[string]interface{}),
 		}
 
 		// Add parent span if exists
 		if parentCtx.IsValid() {
-			trace["parentObservationId"] = parentCtx.SpanID().String()
+			body["parentObservationId"] = parentCtx.SpanID().String()
 		}
-
-		// Add session ID if set
-		if sessionID != "" {
-			trace["sessionId"] = sessionID
-		}
-
-		// Add user ID if set
-		if userID != "" {
-			trace["userId"] = userID
-		}
-
-		// Add span kind
-		trace["type"] = spanKindToLangfuse(span.SpanKind())
 
 		// Add attributes as metadata
 		metadata := make(map[string]interface{})
 		for _, attr := range span.Attributes() {
 			metadata[string(attr.Key)] = attr.Value.AsInterface()
 		}
-		trace["metadata"] = metadata
+		body["metadata"] = metadata
 
 		// Add status
 		status := span.Status()
-		trace["level"] = statusCodeToLevel(status.Code)
+		body["level"] = statusCodeToLevel(status.Code)
 		if status.Description != "" {
-			trace["statusMessage"] = status.Description
+			body["statusMessage"] = status.Description
 		}
 
-		traces = append(traces, trace)
+		spanEvent := map[string]interface{}{
+			"type":      eventType,
+			"id":        "span-" + spanCtx.SpanID().String()[:8],
+			"timestamp": span.StartTime().Format(time.RFC3339Nano),
+			"body":      body,
+		}
+
+		events = append(events, spanEvent)
 	}
 
-	return traces
+	return events
 }
 
 // spanKindToLangfuse converts OpenTelemetry span kind to Langfuse observation type.

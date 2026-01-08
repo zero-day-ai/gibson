@@ -7,6 +7,15 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
+// MissionScope defines the scope for mission filtering in GraphRAG queries.
+type MissionScope string
+
+const (
+	ScopeCurrentRun  MissionScope = "current_run"  // Only data from current mission run
+	ScopeSameMission MissionScope = "same_mission" // All runs of the same mission
+	ScopeAll         MissionScope = "all"          // All missions (no filtering)
+)
+
 // GraphRAGQuery represents a hybrid graph + vector search query.
 // Combines semantic search (embeddings) with graph traversal for contextual retrieval.
 type GraphRAGQuery struct {
@@ -23,6 +32,11 @@ type GraphRAGQuery struct {
 	Filters   TraversalFilters `json:"filters,omitempty"`
 	NodeTypes []NodeType       `json:"node_types,omitempty"` // Filter by node types
 	MissionID *types.ID        `json:"mission_id,omitempty"` // Filter by mission
+
+	// Mission scope filtering
+	MissionScope    MissionScope `json:"mission_scope,omitempty"`     // Query scope
+	MissionName     string       `json:"mission_name,omitempty"`      // Mission name for same_mission scope
+	MissionIDFilter []types.ID   `json:"mission_id_filter,omitempty"` // Resolved mission IDs to filter by
 
 	// Scoring weights
 	VectorWeight float64 `json:"vector_weight,omitempty"` // Weight for vector similarity (0-1)
@@ -98,6 +112,24 @@ func (q *GraphRAGQuery) WithWeights(vectorWeight, graphWeight float64) *GraphRAG
 	return q
 }
 
+// WithMissionScope sets the mission scope for the query.
+func (q *GraphRAGQuery) WithMissionScope(scope MissionScope) *GraphRAGQuery {
+	q.MissionScope = scope
+	return q
+}
+
+// WithMissionName sets the mission name for same_mission scope filtering.
+func (q *GraphRAGQuery) WithMissionName(name string) *GraphRAGQuery {
+	q.MissionName = name
+	return q
+}
+
+// WithMissionIDFilter sets the resolved mission IDs to filter by.
+func (q *GraphRAGQuery) WithMissionIDFilter(ids []types.ID) *GraphRAGQuery {
+	q.MissionIDFilter = ids
+	return q
+}
+
 // Validate validates the GraphRAGQuery fields.
 func (q *GraphRAGQuery) Validate() error {
 	// Must have either Text or Embedding
@@ -129,6 +161,23 @@ func (q *GraphRAGQuery) Validate() error {
 	for _, nt := range q.NodeTypes {
 		if !nt.IsValid() {
 			return NewInvalidQueryError(fmt.Sprintf("invalid node type: %s", nt))
+		}
+	}
+
+	// Validate mission scope
+	if q.MissionScope != "" {
+		validScopes := map[MissionScope]bool{
+			ScopeCurrentRun:  true,
+			ScopeSameMission: true,
+			ScopeAll:         true,
+		}
+		if !validScopes[q.MissionScope] {
+			return NewInvalidQueryError(fmt.Sprintf("invalid mission scope: %s", q.MissionScope))
+		}
+
+		// If scope is same_mission, mission_name should be provided
+		if q.MissionScope == ScopeSameMission && q.MissionName == "" {
+			return NewInvalidQueryError("mission_name is required when mission_scope is 'same_mission'")
 		}
 	}
 

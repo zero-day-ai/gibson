@@ -30,6 +30,21 @@ const (
 	MissionStatusCancelled MissionStatus = "cancelled"
 )
 
+// Memory continuity modes define how agent memory is shared across mission runs.
+const (
+	// MemoryContinuityIsolated indicates each mission run has isolated memory.
+	// This is the default mode for backwards compatibility.
+	MemoryContinuityIsolated = "isolated"
+
+	// MemoryContinuityInherit indicates the mission inherits memory from previous runs.
+	// Memory is read-only from previous runs.
+	MemoryContinuityInherit = "inherit"
+
+	// MemoryContinuityShared indicates the mission shares a common memory pool.
+	// All runs with this mode can read and write to the shared memory.
+	MemoryContinuityShared = "shared"
+)
+
 // String returns the string representation of the mission status.
 func (s MissionStatus) String() string {
 	return string(s)
@@ -129,6 +144,13 @@ type Mission struct {
 
 	// PreviousRunID links to the previous run of this mission (for run history).
 	PreviousRunID *types.ID `json:"previous_run_id,omitempty"`
+
+	// MemoryContinuity defines how agent memory is shared across mission runs.
+	// Valid values: "isolated" (default), "inherit", "shared".
+	// - isolated: Each mission run has isolated memory
+	// - inherit: Mission inherits read-only memory from previous runs
+	// - shared: Mission shares a common memory pool with other runs
+	MemoryContinuity string `json:"memory_continuity,omitempty"`
 
 	// CheckpointAt is the timestamp of the last checkpoint save.
 	CheckpointAt *time.Time `json:"checkpoint_at,omitempty"`
@@ -295,6 +317,17 @@ func (m *Mission) Validate() error {
 	if m.Status == "" {
 		return fmt.Errorf("mission status is required")
 	}
+
+	// Validate memory continuity mode if specified
+	if m.MemoryContinuity != "" {
+		switch m.MemoryContinuity {
+		case MemoryContinuityIsolated, MemoryContinuityInherit, MemoryContinuityShared:
+			// valid
+		default:
+			return fmt.Errorf("invalid memory_continuity: %s (must be isolated, inherit, or shared)", m.MemoryContinuity)
+		}
+	}
+
 	return nil
 }
 
@@ -344,4 +377,20 @@ func (m *Mission) GetDuration() time.Duration {
 	}
 
 	return endTime.Sub(*m.StartedAt)
+}
+
+// GetMemoryContinuity returns the memory continuity mode, defaulting to isolated.
+// This ensures backwards compatibility for missions created before this feature.
+func (m *Mission) GetMemoryContinuity() string {
+	if m.MemoryContinuity == "" {
+		return MemoryContinuityIsolated
+	}
+	return m.MemoryContinuity
+}
+
+// WithMemoryContinuity sets the memory continuity mode and returns the mission
+// for method chaining. This enables fluent API usage when building missions.
+func (m *Mission) WithMemoryContinuity(mode string) *Mission {
+	m.MemoryContinuity = mode
+	return m
 }

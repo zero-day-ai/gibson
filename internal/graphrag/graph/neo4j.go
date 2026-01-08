@@ -302,6 +302,57 @@ func (c *Neo4jClient) DeleteNode(ctx context.Context, nodeID string) error {
 	return nil
 }
 
+// ExecuteWrite executes a Cypher write query with the given parameters.
+// This method is useful for executing custom write operations like MERGE, CREATE, SET, DELETE, etc.
+// The query is executed within a write transaction for consistency and automatic retries.
+func (c *Neo4jClient) ExecuteWrite(ctx context.Context, cypher string, params map[string]any) (QueryResult, error) {
+	if c.driver == nil {
+		return QueryResult{}, types.NewError(ErrCodeGraphConnectionClosed,
+			"driver not connected")
+	}
+
+	startTime := time.Now()
+
+	// Create session
+	session := c.driver.NewSession(ctx, neo4j.SessionConfig{
+		DatabaseName: c.config.Database,
+	})
+	defer session.Close(ctx)
+
+	// Execute query in a write transaction
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		neoResult, err := tx.Run(ctx, cypher, params)
+		if err != nil {
+			return nil, err
+		}
+
+		// Collect all records
+		records, err := neoResult.Collect(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		// Get result summary
+		summary, err := neoResult.Consume(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		// Convert Neo4j records to our QueryResult format
+		return convertNeo4jResult(records, summary), nil
+	})
+
+	if err != nil {
+		return QueryResult{}, types.WrapError(ErrCodeGraphQueryFailed,
+			"write query execution failed", err)
+	}
+
+	queryResult := result.(QueryResult)
+	queryResult.Summary.ExecutionTime = time.Since(startTime)
+
+	return queryResult, nil
+}
+
 // convertNeo4jResult converts Neo4j records and summary to our QueryResult format.
 func convertNeo4jResult(records []*neo4j.Record, summary neo4j.ResultSummary) QueryResult {
 	result := QueryResult{

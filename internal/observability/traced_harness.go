@@ -716,6 +716,30 @@ func (h *TracedAgentHarness) TokenUsage() *llm.TokenTracker {
 	return h.inner.TokenUsage()
 }
 
+// MissionExecutionContext returns comprehensive mission execution information.
+// This is a pass-through operation without additional tracing.
+func (h *TracedAgentHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return h.inner.MissionExecutionContext()
+}
+
+// GetMissionRunHistory returns all runs for the current mission name.
+// This is a pass-through operation without additional tracing.
+func (h *TracedAgentHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return h.inner.GetMissionRunHistory(ctx)
+}
+
+// GetPreviousRunFindings retrieves findings from the previous mission run.
+// This is a pass-through operation without additional tracing.
+func (h *TracedAgentHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return h.inner.GetPreviousRunFindings(ctx, filter)
+}
+
+// GetAllRunFindings retrieves findings from all runs of this mission.
+// This is a pass-through operation without additional tracing.
+func (h *TracedAgentHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return h.inner.GetAllRunFindings(ctx, filter)
+}
+
 // formatMessagesForLogging converts messages to a human-readable format for logging.
 // This is used when capturePrompt is enabled.
 func formatMessagesForLogging(messages []llm.Message) string {
@@ -816,5 +840,41 @@ func truncateForSpan(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// agent.AgentHarness Interface Implementation (minimal interface for agents)
+// ────────────────────────────────────────────────────────────────────────────
+
+// ExecuteTool implements the minimal agent.AgentHarness interface method.
+// It delegates to CallTool with tracing.
+func (h *TracedAgentHarness) ExecuteTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
+	return h.CallTool(ctx, name, input)
+}
+
+// Log implements the minimal agent.AgentHarness interface method.
+// It writes a structured log message using the traced logger.
+func (h *TracedAgentHarness) Log(level, message string, fields map[string]any) {
+	attrs := make([]any, 0, len(fields)*2)
+	for k, v := range fields {
+		attrs = append(attrs, slog.Any(k, v))
+	}
+
+	ctx := context.Background()
+	switch level {
+	case "debug":
+		h.logger.Debug(ctx, message, attrs...)
+	case "info":
+		h.logger.Info(ctx, message, attrs...)
+	case "warn":
+		h.logger.Warn(ctx, message, attrs...)
+	case "error":
+		h.logger.Error(ctx, message, attrs...)
+	default:
+		h.logger.Info(ctx, message, attrs...)
+	}
+}
+
 // Ensure TracedAgentHarness implements AgentHarness at compile time
 var _ harness.AgentHarness = (*TracedAgentHarness)(nil)
+
+// Ensure TracedAgentHarness implements agent.AgentHarness at compile time
+var _ agent.AgentHarness = (*TracedAgentHarness)(nil)

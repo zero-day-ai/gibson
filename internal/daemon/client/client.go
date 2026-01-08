@@ -460,6 +460,7 @@ type MissionEvent struct {
 // Parameters:
 //   - ctx: Context for the mission execution (cancellation stops the mission)
 //   - workflowPath: Path to the workflow YAML file
+//   - memoryContinuity: Memory continuity mode (isolated, inherit, shared) - empty defaults to isolated
 //
 // Returns:
 //   - <-chan MissionEvent: Channel receiving mission events
@@ -467,7 +468,7 @@ type MissionEvent struct {
 //
 // Example:
 //
-//	events, err := client.RunMission(ctx, "/path/to/workflow.yaml")
+//	events, err := client.RunMission(ctx, "/path/to/workflow.yaml", "isolated")
 //	if err != nil {
 //	    return err
 //	}
@@ -475,10 +476,11 @@ type MissionEvent struct {
 //	for event := range events {
 //	    fmt.Printf("[%s] %s: %s\n", event.Timestamp, event.Type, event.Message)
 //	}
-func (c *Client) RunMission(ctx context.Context, workflowPath string) (<-chan MissionEvent, error) {
+func (c *Client) RunMission(ctx context.Context, workflowPath string, memoryContinuity string) (<-chan MissionEvent, error) {
 	// Start streaming RPC
 	stream, err := c.daemon.RunMission(ctx, &api.RunMissionRequest{
-		WorkflowPath: workflowPath,
+		WorkflowPath:      workflowPath,
+		MemoryContinuity: memoryContinuity,
 	})
 	if err != nil {
 		// Wrap error with user-friendly message

@@ -62,8 +62,9 @@ type DefaultAgentHarness struct {
 	factory HarnessFactory
 
 	// Context information
-	missionCtx MissionContext
-	targetInfo TargetInfo
+	missionCtx      MissionContext
+	targetInfo      TargetInfo
+	contextProvider MissionContextProvider
 
 	// Observability
 	tracer     trace.Tracer
@@ -1407,6 +1408,169 @@ func (h *DefaultAgentHarness) ReportStepHints(ctx context.Context, hints *StepHi
 	// A full implementation would pass these to the orchestrator's OnStepComplete method.
 
 	return nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Mission Context Methods
+// ────────────────────────────────────────────────────────────────────────────
+
+// MissionExecutionContext returns comprehensive mission execution information.
+// This includes run history, resume status, and memory continuity indicators
+// to help agents make informed decisions based on mission history.
+func (h *DefaultAgentHarness) MissionExecutionContext() MissionExecutionContextSDK {
+	ctx := context.Background()
+
+	// Try to get context from provider
+	if h.contextProvider != nil {
+		execCtx, err := h.contextProvider.GetContext(ctx)
+		if err != nil {
+			h.logger.Warn("failed to get mission execution context", "error", err)
+			// Fall through to basic context
+		} else {
+			// Convert internal context to SDK type
+			return convertToSDKContext(execCtx)
+		}
+	}
+
+	// Return basic context from existing Mission() method
+	m := h.Mission()
+	return MissionExecutionContextSDK{
+		MissionID:            m.ID.String(),
+		MissionName:          m.Name,
+		RunNumber:            1,
+		IsResumed:            false,
+		PreviousRunID:        "",
+		PreviousRunStatus:    "",
+		TotalFindingsAllRuns: 0,
+		MemoryContinuity:     "first_run",
+	}
+}
+
+// GetMissionRunHistory returns all runs for the current mission name.
+// Results are ordered by run number descending (most recent first).
+func (h *DefaultAgentHarness) GetMissionRunHistory(ctx context.Context) ([]MissionRunSummarySDK, error) {
+	ctx, span := h.tracer.Start(ctx, "AgentHarness.GetMissionRunHistory")
+	defer span.End()
+
+	if h.contextProvider == nil {
+		h.logger.Debug("mission context provider not available")
+		return []MissionRunSummarySDK{}, nil
+	}
+
+	runs, err := h.contextProvider.GetRunHistory(ctx)
+	if err != nil {
+		h.logger.Error("failed to get run history", "error", err)
+		return nil, fmt.Errorf("failed to get mission run history: %w", err)
+	}
+
+	// Convert internal runs to SDK type
+	result := make([]MissionRunSummarySDK, len(runs))
+	for i, r := range runs {
+		result[i] = convertToSDKRunSummary(r)
+	}
+
+	h.logger.Debug("retrieved mission run history", "count", len(result))
+	return result, nil
+}
+
+// GetPreviousRunFindings retrieves findings from the previous mission run.
+// This enables agents to understand what was discovered in prior attempts.
+func (h *DefaultAgentHarness) GetPreviousRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	ctx, span := h.tracer.Start(ctx, "AgentHarness.GetPreviousRunFindings")
+	defer span.End()
+
+	if h.contextProvider == nil {
+		h.logger.Debug("mission context provider not available")
+		return []agent.Finding{}, nil
+	}
+
+	prevRun, err := h.contextProvider.GetPreviousRun(ctx)
+	if err != nil || prevRun == nil {
+		h.logger.Debug("no previous run available")
+		return []agent.Finding{}, nil // No previous run
+	}
+
+	// Use the finding store to retrieve findings
+	if h.findingStore == nil {
+		h.logger.Warn("finding store not available")
+		return []agent.Finding{}, nil
+	}
+
+	findings, err := h.findingStore.Get(ctx, prevRun.MissionID, filter)
+	if err != nil {
+		h.logger.Error("failed to get previous run findings",
+			"previous_run_id", prevRun.MissionID.String(),
+			"error", err)
+		return nil, fmt.Errorf("failed to get previous run findings: %w", err)
+	}
+
+	h.logger.Debug("retrieved previous run findings",
+		"previous_run_id", prevRun.MissionID.String(),
+		"count", len(findings))
+	return findings, nil
+}
+
+// GetAllRunFindings retrieves findings from all runs of this mission.
+// This provides complete historical context across all mission executions.
+func (h *DefaultAgentHarness) GetAllRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	ctx, span := h.tracer.Start(ctx, "AgentHarness.GetAllRunFindings")
+	defer span.End()
+
+	if h.contextProvider == nil {
+		h.logger.Debug("mission context provider not available")
+		return []agent.Finding{}, nil
+	}
+
+	if h.findingStore == nil {
+		h.logger.Warn("finding store not available")
+		return []agent.Finding{}, nil
+	}
+
+	// Get all runs for this mission
+	runs, err := h.contextProvider.GetRunHistory(ctx)
+	if err != nil {
+		h.logger.Error("failed to get run history", "error", err)
+		return nil, fmt.Errorf("failed to get run history: %w", err)
+	}
+
+	// Collect all findings from all runs
+	var allFindings []agent.Finding
+	for _, run := range runs {
+		findings, err := h.findingStore.Get(ctx, run.MissionID, filter)
+		if err != nil {
+			h.logger.Warn("failed to get findings for run",
+				"run_id", run.MissionID.String(),
+				"error", err)
+			continue // Skip this run but continue with others
+		}
+
+		allFindings = append(allFindings, findings...)
+	}
+
+	h.logger.Debug("retrieved findings from all runs",
+		"total_runs", len(runs),
+		"total_findings", len(allFindings))
+	return allFindings, nil
+}
+
+// QueryGraphRAGScoped performs a GraphRAG query with mission scope filtering.
+// This is a convenience method that sets the mission scope and name on the query
+// before delegating to QueryGraphRAG.
+func (h *DefaultAgentHarness) QueryGraphRAGScoped(ctx context.Context, query sdkgraphrag.Query, scope sdkgraphrag.MissionScope) ([]sdkgraphrag.Result, error) {
+	ctx, span := h.tracer.Start(ctx, "AgentHarness.QueryGraphRAGScoped")
+	defer span.End()
+
+	// Set the mission scope on the query
+	query.MissionScope = scope
+	query.MissionName = h.Mission().Name
+
+	h.logger.Debug("querying graphrag with scope",
+		"query_text", query.Text,
+		"scope", scope,
+		"mission_name", query.MissionName)
+
+	// Delegate to the standard QueryGraphRAG method
+	return h.QueryGraphRAG(ctx, query)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

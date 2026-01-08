@@ -102,6 +102,23 @@ type HarnessConfig struct {
 	// If nil, a NoopGraphRAGQueryBridge will be created (GraphRAG operations will return ErrGraphRAGNotEnabled).
 	// To enable queries, provide a DefaultGraphRAGQueryBridge created with the same GraphRAGStore as GraphRAGBridge.
 	GraphRAGQueryBridge GraphRAGQueryBridge
+
+	// HarnessWrapper is an optional function that wraps newly created harnesses.
+	// This enables composition patterns like adding observability (TracedAgentHarness),
+	// verbosity (VerboseHarnessWrapper), or other cross-cutting concerns.
+	// The wrapper is applied AFTER the DefaultAgentHarness is created but BEFORE it's returned.
+	// If nil, no wrapping is performed and the harness is returned as-is.
+	// Optional: defaults to nil (no wrapping).
+	HarnessWrapper func(AgentHarness) AgentHarness
+
+	// MemoryWrapper is an optional function that wraps MemoryManager instances.
+	// This enables composition patterns like adding observability (TracedMemoryManager)
+	// or other cross-cutting concerns to memory operations.
+	// The wrapper is applied when a MemoryManager is created or obtained, either from
+	// MemoryFactory or MemoryManager field.
+	// If nil, no wrapping is performed and the memory manager is used as-is.
+	// Optional: defaults to nil (no wrapping).
+	MemoryWrapper func(memory.MemoryManager) memory.MemoryManager
 }
 
 // Validate checks that required fields are set and returns an error if validation fails.

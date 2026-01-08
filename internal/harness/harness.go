@@ -376,6 +376,74 @@ type AgentHarness interface {
 	//   logger.Info("Executing mission", "name", mission.Name, "phase", mission.Phase)
 	Mission() MissionContext
 
+	// MissionExecutionContext returns comprehensive mission execution information.
+	// This includes run history, resume status, and memory continuity indicators
+	// to help agents make informed decisions based on mission history.
+	//
+	// Returns:
+	//   - MissionExecutionContextSDK: Enhanced mission context with run history
+	//
+	// Example:
+	//   execCtx := harness.MissionExecutionContext()
+	//   if execCtx.IsResumed {
+	//       logger.Info("Resuming mission", "run_number", execCtx.RunNumber)
+	//   }
+	//   if execCtx.MemoryContinuity == "new_run_with_history" {
+	//       // Query previous run findings for context
+	//   }
+	MissionExecutionContext() MissionExecutionContextSDK
+
+	// GetMissionRunHistory returns all runs for the current mission name.
+	// Results are ordered by run number descending (most recent first).
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//
+	// Returns:
+	//   - []MissionRunSummarySDK: Summary of all runs for this mission
+	//   - error: Non-nil if retrieval fails
+	//
+	// Example:
+	//   runs, err := harness.GetMissionRunHistory(ctx)
+	//   for _, run := range runs {
+	//       logger.Info("Previous run", "number", run.RunNumber, "status", run.Status, "findings", run.FindingsCount)
+	//   }
+	GetMissionRunHistory(ctx context.Context) ([]MissionRunSummarySDK, error)
+
+	// GetPreviousRunFindings retrieves findings from the previous mission run.
+	// This enables agents to understand what was discovered in prior attempts.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - filter: Filter criteria for findings (severity, category, etc.)
+	//
+	// Returns:
+	//   - []agent.Finding: Findings from the previous run matching the filter
+	//   - error: Non-nil if retrieval fails
+	//
+	// Example:
+	//   // Get all critical findings from previous run
+	//   filter := NewFindingFilter().WithSeverity(agent.SeverityCritical)
+	//   prevFindings, err := harness.GetPreviousRunFindings(ctx, *filter)
+	GetPreviousRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error)
+
+	// GetAllRunFindings retrieves findings from all runs of this mission.
+	// This provides complete historical context across all mission executions.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - filter: Filter criteria for findings (severity, category, etc.)
+	//
+	// Returns:
+	//   - []agent.Finding: Findings from all runs matching the filter
+	//   - error: Non-nil if retrieval fails
+	//
+	// Example:
+	//   // Get all findings across all runs
+	//   filter := NewFindingFilter()
+	//   allFindings, err := harness.GetAllRunFindings(ctx, *filter)
+	GetAllRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error)
+
 	// Target returns information about the current target.
 	// This provides target URL, authentication, and provider-specific metadata.
 	//

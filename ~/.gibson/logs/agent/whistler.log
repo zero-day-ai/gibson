@@ -1,0 +1,12 @@
+
+=== whistler started at 2026-01-07T16:25:33-06:00 ===
+Port: 50000
+Binary: /home/anthony/.gibson/agents/bin/whistler
+Args: [--port 50000]
+
+WHISTLER Reconnaissance Agent v0.1.0
+Git Commit: 0ab0513 | Build Date: 2026-01-07T22:25:27Z
+
+Starting WHISTLER agent v0.1.0 on port 50000...
+2026/01/07 16:25:33 INFO agent server started component=agent name=whistler version=0.1.0 port=50000
+2026/01/07 16:25:33 INFO registered with registry endpoint=localhost:50000 component=agent name=whistler
