@@ -320,12 +320,8 @@ func runTargetAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Store connection parameters in Config field for now
-	// TODO: Once Connection field is added to Target, use that instead
-	if target.Config == nil {
-		target.Config = make(map[string]interface{})
-	}
-	target.Config["connection"] = connection
+	// Store connection parameters in Connection field (schema-based connection params)
+	target.Connection = connection
 
 	// Handle credential if specified
 	if addCredential != "" {
