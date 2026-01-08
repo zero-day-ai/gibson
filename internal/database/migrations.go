@@ -120,6 +120,12 @@ func getMigrations() []migration {
 			up:      getResumableMissionArchitectureSchema(),
 			down:    getDownMigration12(),
 		},
+		{
+			version: 12,
+			name:    "add_target_connection",
+			up:      getTargetConnectionSchema(),
+			down:    getDownMigration13(),
+		},
 		// Future migrations will be added here
 	}
 
@@ -1680,5 +1686,24 @@ DROP INDEX IF EXISTS idx_missions_name_status;
 -- 3. Drop old table
 -- 4. Rename new table
 -- For simplicity, we're leaving the columns in place during rollback
+`
+}
+
+// getTargetConnectionSchema returns the schema for adding connection column to targets
+func getTargetConnectionSchema() string {
+	return `
+-- Migration 12: Add connection column to targets table
+-- Stores schema-based connection parameters (CIDR, URLs, hosts, etc.)
+
+ALTER TABLE targets ADD COLUMN connection TEXT DEFAULT '{}';
+`
+}
+
+// getDownMigration13 returns the rollback SQL for migration 12
+func getDownMigration13() string {
+	return `
+-- Rollback Migration 12: Target Connection Column
+-- Note: SQLite doesn't support DROP COLUMN directly
+-- The connection column will remain in place during rollback
 `
 }
