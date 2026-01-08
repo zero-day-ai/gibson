@@ -21,7 +21,7 @@ import (
 var targetCmd = &cobra.Command{
 	Use:   "target",
 	Short: "Manage attack targets",
-	Long:  `Manage LLM targets for red-team testing operations`,
+	Long:  `Manage targets (networks, LLMs, smart contracts, etc.) for red-team testing operations`,
 }
 
 var targetListCmd = &cobra.Command{

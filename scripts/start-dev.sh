@@ -1,14 +1,16 @@
 #!/bin/bash
-# start-dev.sh - Start Gibson daemon and agents for development
+# start-dev.sh - Start Gibson daemon, agents, and tools for development
 #
 # Usage:
-#   ./scripts/start-dev.sh        # Start daemon and agents
-#   ./scripts/start-dev.sh stop   # Stop everything
-#   ./scripts/start-dev.sh status # Show status
+#   ./scripts/start-dev.sh              # Start daemon, agents, and tools
+#   ./scripts/start-dev.sh stop         # Stop everything
+#   ./scripts/start-dev.sh status       # Show status
+#   ./scripts/start-dev.sh build-tools  # Build and install OSS tools
 #
 # Requirements:
 #   - Gibson binary built: make bin
 #   - Agents built with latest SDK
+#   - OSS tools repo cloned: git clone https://github.com/zero-day-ai/gibson-oss-tools
 
 set -e
 
@@ -16,6 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GIBSON_DIR="$(dirname "$SCRIPT_DIR")"
 GIBSON_BIN="$GIBSON_DIR/bin/gibson"
 AGENTS_DIR="/home/anthony/Code/zero-day.ai/enterprise/agents"
+TOOLS_DIR="/home/anthony/Code/zero-day.ai/opensource/gibson-oss-tools"
 LOG_DIR="/tmp/gibson-dev"
 
 # =============================================================================
@@ -61,6 +64,11 @@ stop_all() {
     pkill -f "crease" 2>/dev/null && log_info "Stopped crease" || true
     pkill -f "whistler" 2>/dev/null && log_info "Stopped whistler" || true
 
+    # Stop tools (match tool binaries from gibson-oss-tools)
+    for tool in subfinder httpx nuclei naabu katana; do
+        pkill -f "$tool" 2>/dev/null && log_info "Stopped $tool" || true
+    done
+
     # Stop daemon
     if [ -f "$GIBSON_BIN" ]; then
         "$GIBSON_BIN" daemon stop 2>/dev/null && log_info "Stopped daemon" || true
@@ -70,6 +78,107 @@ stop_all() {
     rm -f ~/.gibson/daemon.pid ~/.gibson/daemon.json 2>/dev/null || true
 
     log_info "All processes stopped"
+}
+
+# Build OSS tools
+build_tools() {
+    log_info "Building OSS tools from $TOOLS_DIR..."
+
+    if [ ! -d "$TOOLS_DIR" ]; then
+        log_warn "OSS tools directory not found: $TOOLS_DIR"
+        log_info "Clone it with: git clone https://github.com/zero-day-ai/gibson-oss-tools $TOOLS_DIR"
+        return 1
+    fi
+
+    cd "$TOOLS_DIR"
+
+    if [ -f "build.sh" ]; then
+        log_debug "Running build.sh..."
+        ./build.sh 2>&1 | while read line; do
+            echo "  $line"
+        done
+        log_info "OSS tools built successfully"
+    else
+        log_error "build.sh not found in $TOOLS_DIR"
+        return 1
+    fi
+}
+
+# Install OSS tools to Gibson
+install_tools() {
+    log_info "Installing OSS tools to Gibson..."
+
+    if [ ! -d "$TOOLS_DIR/bin" ]; then
+        log_warn "OSS tools bin directory not found. Run build first."
+        return 1
+    fi
+
+    # Install each tool binary
+    local tools_bin="$TOOLS_DIR/bin"
+    local gibson_tools="$HOME/.gibson/tools/bin"
+
+    mkdir -p "$gibson_tools"
+
+    for tool in "$tools_bin"/*; do
+        if [ -f "$tool" ] && [ -x "$tool" ]; then
+            local name=$(basename "$tool")
+            cp "$tool" "$gibson_tools/$name"
+            log_debug "Installed $name"
+        fi
+    done
+
+    log_info "OSS tools installed to $gibson_tools"
+}
+
+# Start a tool
+start_tool() {
+    local name=$1
+    local port=$2
+    local binary="$HOME/.gibson/tools/bin/$name"
+
+    if [ ! -f "$binary" ]; then
+        log_warn "Tool binary not found: $binary (skipping)"
+        return 1
+    fi
+
+    # Check if already running
+    if pgrep -f "$binary" > /dev/null 2>&1; then
+        log_warn "$name already running"
+        return 0
+    fi
+
+    log_info "Starting tool $name on port $port..."
+
+    # Start tool with registry endpoint
+    nohup "$binary" --port "$port" > "$LOG_DIR/$name.log" 2>&1 &
+
+    sleep 1
+
+    # Verify it's running
+    if pgrep -f "$binary" > /dev/null 2>&1; then
+        log_info "$name started"
+        return 0
+    else
+        log_error "$name failed to start. Check $LOG_DIR/$name.log"
+        return 1
+    fi
+}
+
+# Start all tools
+start_tools() {
+    log_info "Starting OSS tools..."
+
+    mkdir -p "$LOG_DIR"
+
+    # Start commonly used tools on different ports
+    # These are the tools most agents need for E2E testing
+    local port=50100
+    for tool in subfinder httpx nuclei naabu katana; do
+        if [ -f "$HOME/.gibson/tools/bin/$tool" ]; then
+            start_tool "$tool" $port || true
+            port=$((port + 1))
+        fi
+    done
 }
 
 # Start daemon
@@ -179,8 +288,12 @@ show_status() {
     "$GIBSON_BIN" agent list 2>/dev/null || echo "No agents or daemon not running"
 
     echo ""
+    log_info "=== Registered Tools ==="
+    "$GIBSON_BIN" tool list 2>/dev/null || echo "No tools or daemon not running"
+
+    echo ""
     log_info "=== Running Processes ==="
-    ps aux | grep -E "gibson daemon|k8skiller|bishop|carl|crease|whistler" | grep -v grep || echo "No processes running"
+    ps aux | grep -E "gibson daemon|k8skiller|bishop|carl|crease|whistler|subfinder|httpx|nuclei|naabu|katana" | grep -v grep || echo "No processes running"
 
     echo ""
     log_info "=== Log Files ==="
@@ -209,6 +322,7 @@ case "${1:-start}" in
         start_daemon
         sleep 2
         start_agents
+        start_tools
         sleep 2
         show_status
         echo ""
@@ -226,21 +340,34 @@ case "${1:-start}" in
         start_daemon
         sleep 2
         start_agents
+        start_tools
         sleep 2
         show_status
         ;;
     logs)
         tail_logs
         ;;
+    build-tools)
+        build_tools
+        install_tools
+        ;;
+    install-tools)
+        install_tools
+        ;;
     *)
-        echo "Usage: $0 {start|stop|status|restart|logs}"
+        echo "Usage: $0 {start|stop|status|restart|logs|build-tools|install-tools}"
         echo ""
         echo "Commands:"
-        echo "  start   - Stop any running processes and start daemon + agents"
-        echo "  stop    - Stop all Gibson processes"
-        echo "  status  - Show current status of daemon and agents"
-        echo "  restart - Restart everything"
-        echo "  logs    - Tail all log files"
+        echo "  start         - Stop any running processes and start daemon + agents + tools"
+        echo "  stop          - Stop all Gibson processes"
+        echo "  status        - Show current status of daemon, agents, and tools"
+        echo "  restart       - Restart everything"
+        echo "  logs          - Tail all log files"
+        echo "  build-tools   - Build and install OSS tools from gibson-oss-tools repo"
+        echo "  install-tools - Install pre-built OSS tools to ~/.gibson/tools/bin"
+        echo ""
+        echo "OSS Tools repo: https://github.com/zero-day-ai/gibson-oss-tools"
+        echo "Expected at: $TOOLS_DIR"
         echo ""
         echo "Environment (set for verbose/debug):"
         echo "  GIBSON_LOG_LEVEL=debug"
