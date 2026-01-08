@@ -658,16 +658,6 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 	// Check if this is a gRPC agent and if callback is enabled
 	grpcAgent, isGRPCAgent := agentClient.(*GRPCAgentClient)
 
-	// Debug: Log callback manager state
-	if isGRPCAgent {
-		if a.callbackManager != nil {
-			// Log callback endpoint when manager is available
-			fmt.Printf("DEBUG: DelegateToAgent using callback endpoint: %s\n", a.callbackManager.CallbackEndpoint())
-		} else {
-			fmt.Printf("DEBUG: DelegateToAgent - callbackManager is nil, skipping callback\n")
-		}
-	}
-
 	if isGRPCAgent && a.callbackManager != nil {
 		// Try to extract mission context from the harness for mission-based registration
 		// The registry adapter works with agent.AgentHarness (minimal interface),
@@ -676,36 +666,43 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 		var missionPtr, targetPtr any
 		var missionID, agentName string
 
-		// Define local interface to avoid circular import with harness package
-		// This matches the Mission() and Target() methods from harness.AgentHarness
-		type contextProvider interface {
-			Mission() any // Returns harness.MissionContext
-			Target() any  // Returns harness.TargetInfo
+		// Use reflection to call Mission() and Target() methods
+		// This avoids circular imports between registry and harness packages
+		harnessValue := reflect.ValueOf(harness)
+
+		// Try to get Mission context using reflection
+		missionMethod := harnessValue.MethodByName("Mission")
+		if missionMethod.IsValid() {
+			missionResults := missionMethod.Call(nil)
+			if len(missionResults) > 0 {
+				missionPtr = missionResults[0].Interface()
+			}
 		}
 
-		// Attempt to get context if harness provides it
-		if provider, ok := harness.(contextProvider); ok {
-			mission := provider.Mission()
-			target := provider.Target()
-			missionPtr = &mission
-			targetPtr = &target
-
-			// Extract mission ID and agent name using reflection
-			// The mission is of type harness.MissionContext with fields ID and CurrentAgent
-			missionValue := reflect.ValueOf(mission)
-
-			// Get ID field and convert to string
-			if idField := missionValue.FieldByName("ID"); idField.IsValid() {
-				// ID is of type types.ID which has a String() method
-				if idStringer, ok := idField.Interface().(interface{ String() string }); ok {
-					missionID = idStringer.String()
-				}
+		// Try to get Target info using reflection
+		targetMethod := harnessValue.MethodByName("Target")
+		if targetMethod.IsValid() {
+			targetResults := targetMethod.Call(nil)
+			if len(targetResults) > 0 {
+				targetPtr = targetResults[0].Interface()
 			}
+		}
 
-			// Get CurrentAgent field
-			if agentField := missionValue.FieldByName("CurrentAgent"); agentField.IsValid() && agentField.Kind() == reflect.String {
-				agentName = agentField.String()
+		// Extract mission ID and agent name using reflection
+		// The mission is of type harness.MissionContext with fields ID and CurrentAgent
+		missionValue := reflect.ValueOf(missionPtr)
+
+		// Get ID field and convert to string
+		if idField := missionValue.FieldByName("ID"); idField.IsValid() {
+			// ID is of type types.ID which has a String() method
+			if idStringer, ok := idField.Interface().(interface{ String() string }); ok {
+				missionID = idStringer.String()
 			}
+		}
+
+		// Get CurrentAgent field
+		if agentField := missionValue.FieldByName("CurrentAgent"); agentField.IsValid() && agentField.Kind() == reflect.String {
+			agentName = agentField.String()
 		}
 
 		// Use mission-based registration if we have both mission ID and agent name
