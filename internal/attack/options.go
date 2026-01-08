@@ -9,13 +9,14 @@ import (
 )
 
 // AttackOptions contains all configuration for an attack execution.
-// It supports both direct URL-based attacks and saved target lookups,
-// with comprehensive control over agent behavior, payload filtering,
+// Attacks require a stored target (looked up by name) for security guardrails.
+// This provides comprehensive control over agent behavior, payload filtering,
 // execution constraints, and output formatting.
 type AttackOptions struct {
-	// Target configuration
-	TargetURL      string            // Direct URL to attack (e.g., "https://api.example.com")
-	TargetName     string            // Saved target lookup name (alternative to URL)
+	// Target configuration - stored targets only (security guardrail)
+	TargetID       types.ID          // Required: Target ID from stored target lookup
+	TargetName     string            // Target name used for lookup (for display/logging)
+	TargetURL      string            // Resolved URL from stored target
 	TargetType     types.TargetType  // Type of target (llm_chat, llm_api, rag, etc.)
 	TargetProvider string            // Provider name (openai, anthropic, etc.)
 	TargetHeaders  map[string]string // Custom HTTP headers for requests
@@ -74,7 +75,7 @@ func NewAttackOptions() *AttackOptions {
 // Validate checks that options are valid and internally consistent.
 // It returns an error if:
 // - AgentName is not specified
-// - Neither TargetURL nor TargetName is specified
+// - Neither TargetID nor TargetName is set (stored targets are required)
 // - Both Persist and NoPersist are set
 // - Both Verbose and Quiet are set
 // - Invalid values are provided for enums or constraints
@@ -84,14 +85,10 @@ func (o *AttackOptions) Validate() error {
 		return fmt.Errorf("agent name is required (use --agent flag)")
 	}
 
-	// Target is required (either URL or name)
-	if strings.TrimSpace(o.TargetURL) == "" && strings.TrimSpace(o.TargetName) == "" {
-		return fmt.Errorf("target is required (provide URL or use --target-name)")
-	}
-
-	// Cannot specify both URL and name
-	if strings.TrimSpace(o.TargetURL) != "" && strings.TrimSpace(o.TargetName) != "" {
-		return fmt.Errorf("cannot specify both target URL and target name")
+	// Stored target is required (security guardrail - no inline URLs)
+	// Either TargetID (resolved by daemon) or TargetName (to be resolved) must be set
+	if o.TargetID == "" && strings.TrimSpace(o.TargetName) == "" {
+		return fmt.Errorf("stored target is required: use 'gibson target add' to create a target, then reference it with --target <name>")
 	}
 
 	// Note: TargetType validation removed because the enum is deprecated.
@@ -160,14 +157,21 @@ func (o *AttackOptions) Validate() error {
 
 // Functional options for configuration
 
-// WithTargetURL sets the target URL.
+// WithTargetID sets the stored target ID.
+func WithTargetID(id types.ID) AttackOption {
+	return func(o *AttackOptions) {
+		o.TargetID = id
+	}
+}
+
+// WithTargetURL sets the resolved target URL (from stored target).
 func WithTargetURL(url string) AttackOption {
 	return func(o *AttackOptions) {
 		o.TargetURL = url
 	}
 }
 
-// WithTargetName sets the saved target name.
+// WithTargetName sets the target name (for display/logging).
 func WithTargetName(name string) AttackOption {
 	return func(o *AttackOptions) {
 		o.TargetName = name

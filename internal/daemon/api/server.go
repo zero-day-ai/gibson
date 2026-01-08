@@ -176,6 +176,7 @@ type AttackRequest struct {
 	AgentID       string
 	PayloadFilter string
 	Options       map[string]string
+	Goal          string
 }
 
 // AttackEventData represents attack event data from the daemon.
@@ -522,6 +523,7 @@ func (s *DaemonServer) RunAttack(req *RunAttackRequest, stream grpc.ServerStream
 		AgentID:       req.AgentId,
 		PayloadFilter: req.PayloadFilter,
 		Options:       req.Options,
+		Goal:          req.Goal,
 	}
 
 	// Start attack and get event channel

@@ -73,23 +73,31 @@ func (r *DefaultTargetResolver) Resolve(ctx context.Context, opts *AttackOptions
 		return nil, fmt.Errorf("attack options cannot be nil")
 	}
 
-	// Validate that we have a target URL
-	if strings.TrimSpace(opts.TargetURL) == "" {
-		return nil, fmt.Errorf("target URL is required")
-	}
-
-	// Parse and validate the URL
-	parsedURL, err := parseAndValidateURL(opts.TargetURL)
-	if err != nil {
-		return nil, fmt.Errorf("invalid target URL: %w", err)
-	}
-
 	// Initialize target config
 	config := &TargetConfig{
-		URL:      parsedURL.String(),
 		Type:     opts.TargetType,
 		Provider: opts.TargetProvider,
 		Headers:  make(map[string]string),
+	}
+
+	// URL is optional for some target types (e.g., 'network' uses subnet instead)
+	if strings.TrimSpace(opts.TargetURL) != "" {
+		// Parse and validate the URL
+		parsedURL, err := parseAndValidateURL(opts.TargetURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid target URL: %w", err)
+		}
+		config.URL = parsedURL.String()
+
+		// Detect target type if not specified (only when URL is available)
+		if config.Type == "" {
+			config.Type = detectTargetType(parsedURL)
+		}
+
+		// Detect provider if not specified (only when URL is available)
+		if config.Provider == "" {
+			config.Provider = detectProvider(parsedURL)
+		}
 	}
 
 	// Merge headers: start with provided headers, add defaults if not present
@@ -101,16 +109,6 @@ func (r *DefaultTargetResolver) Resolve(ctx context.Context, opts *AttackOptions
 
 	// Add default headers if not already present
 	addDefaultHeaders(config.Headers)
-
-	// Detect target type if not specified
-	if config.Type == "" {
-		config.Type = detectTargetType(parsedURL)
-	}
-
-	// Detect provider if not specified
-	if config.Provider == "" {
-		config.Provider = detectProvider(parsedURL)
-	}
 
 	// Resolve credential if specified
 	if opts.Credential != "" {

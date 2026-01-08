@@ -399,6 +399,9 @@ message RunAttackRequest {
 
   // target_name is the name of a stored target to look up from the database
   string target_name = 6;
+
+  // goal is the attack objective or what the agent should try to accomplish
+  string goal = 7;
 }
 
 // AttackEvent represents an attack execution event.

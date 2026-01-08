@@ -497,40 +497,38 @@ func (d *daemonImpl) validateAttackRequest(req api.AttackRequest) error {
 func (d *daemonImpl) buildAttackOptions(req api.AttackRequest) (*attack.AttackOptions, error) {
 	opts := attack.NewAttackOptions()
 
-	// Handle target resolution: prefer target_name lookup, fall back to inline target
-	if req.TargetName != "" {
-		// Look up target from database by name
-		target, err := d.targetStore.GetByName(context.Background(), req.TargetName)
-		if err != nil {
-			return nil, fmt.Errorf("failed to lookup target '%s': %w", req.TargetName, err)
-		}
+	// Target resolution: stored targets only (security guardrail)
+	if req.TargetName == "" {
+		return nil, fmt.Errorf("target name is required: use 'gibson target add' to create a target, then reference it with --target <name>")
+	}
 
-		// Extract URL from connection JSON
-		targetURL := target.GetURL()
-		if targetURL == "" {
-			return nil, fmt.Errorf("target '%s' has no URL configured", req.TargetName)
-		}
+	// Look up target from database by name
+	target, err := d.targetStore.GetByName(context.Background(), req.TargetName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup target '%s': %w", req.TargetName, err)
+	}
 
-		// Set target options from stored target
-		// Only set TargetURL - the name was used for lookup, URL is the resolved value
-		opts.TargetURL = targetURL
-		opts.TargetType = types.TargetType(target.Type)
+	// Extract URL from connection JSON (optional for some target types like 'network')
+	targetURL := target.GetURL()
 
-		// Set credential if target has one configured
-		if target.CredentialID != nil {
-			opts.Credential = target.CredentialID.String()
-		}
-	} else {
-		// Use inline target URL (backward compatibility)
-		opts.TargetURL = req.Target
+	// Set target options from stored target
+	opts.TargetID = target.ID
+	opts.TargetName = target.Name
+	opts.TargetURL = targetURL // May be empty for non-URL-based targets (e.g., network)
+	opts.TargetType = types.TargetType(target.Type)
+
+	// Set credential if target has one configured
+	if target.CredentialID != nil {
+		opts.Credential = target.CredentialID.String()
 	}
 
 	opts.AgentName = req.AgentID
 
-	// Map attack_type to agent configuration
-	// For now, we use the agent_id directly, but attack_type could be used
-	// to select a default agent or configure the attack strategy
-	if req.AttackType != "" {
+	// Set goal from request, with fallback to attack_type description
+	// User-provided goal takes precedence
+	if req.Goal != "" {
+		opts.Goal = req.Goal
+	} else if req.AttackType != "" {
 		opts.Goal = fmt.Sprintf("Execute %s attack", req.AttackType)
 	}
 

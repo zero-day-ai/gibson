@@ -673,12 +673,28 @@ func (m *mockHarnessWithFindings) GetFindings(ctx context.Context, filter harnes
 	return nil, nil
 }
 
+func (m *mockHarnessWithFindings) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+
+func (m *mockHarnessWithFindings) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return nil, nil
+}
+
+func (m *mockHarnessWithFindings) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+
 func (m *mockHarnessWithFindings) Memory() memory.MemoryStore {
 	return nil
 }
 
 func (m *mockHarnessWithFindings) Mission() harness.MissionContext {
 	return harness.MissionContext{ID: m.missionID}
+}
+
+func (m *mockHarnessWithFindings) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
 }
 
 func (m *mockHarnessWithFindings) Target() harness.TargetInfo {

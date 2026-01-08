@@ -663,6 +663,7 @@ type AttackOptions struct {
 	Payloads    []string
 	MaxDepth    int
 	Timeout     time.Duration
+	Goal        string
 }
 
 // AttackEvent represents an event from a running attack.
@@ -736,6 +737,7 @@ func (c *Client) RunAttack(ctx context.Context, opts AttackOptions) (<-chan Atta
 		TargetName: opts.TargetName,
 		AttackType: opts.AttackType,
 		AgentId:    opts.AttackType, // Use attack type as agent ID
+		Goal:       opts.Goal,
 	})
 	if err != nil {
 		// Wrap error with user-friendly message

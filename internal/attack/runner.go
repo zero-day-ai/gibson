@@ -339,12 +339,13 @@ func (r *DefaultAttackRunner) createEphemeralMission(
 
 	// Create mission with constraints from options
 	// Include mission ID suffix to ensure uniqueness (name is UNIQUE in DB)
+	// Use the real stored target ID (security guardrail - no ephemeral targets)
 	missionObj := &mission.Mission{
 		ID:           missionID,
 		Name:         fmt.Sprintf("Attack: %s on %s [%s]", opts.AgentName, targetConfig.URL, missionID.String()[:8]),
 		Description:  fmt.Sprintf("Ephemeral attack mission executing %s agent", opts.AgentName),
 		Status:       mission.MissionStatusPending,
-		TargetID:     types.NewID(), // Ephemeral target ID
+		TargetID:     opts.TargetID, // Use stored target ID
 		WorkflowID:   workflowObj.ID,
 		WorkflowJSON: string(workflowJSON),
 		Constraints:  r.buildConstraints(opts),

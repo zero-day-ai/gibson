@@ -1071,11 +1071,19 @@ func TestBuildAttackOptions(t *testing.T) {
 // mockTargetDAO is a mock implementation of TargetDAO for testing
 type mockTargetDAO struct {
 	getByNameFunc func(ctx context.Context, name string) (*types.Target, error)
+	getFunc       func(ctx context.Context, id types.ID) (*types.Target, error)
 }
 
 func (m *mockTargetDAO) GetByName(ctx context.Context, name string) (*types.Target, error) {
 	if m.getByNameFunc != nil {
 		return m.getByNameFunc(ctx, name)
+	}
+	return nil, fmt.Errorf("target not found")
+}
+
+func (m *mockTargetDAO) Get(ctx context.Context, id types.ID) (*types.Target, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, id)
 	}
 	return nil, fmt.Errorf("target not found")
 }
@@ -1277,6 +1285,70 @@ func TestBuildAttackOptions_TargetNameResolution(t *testing.T) {
 					tt.check(t, opts)
 				}
 			}
+		})
+	}
+}
+
+// TestBuildAttackOptions_GoalPropagation tests that user-provided goal takes precedence
+func TestBuildAttackOptions_GoalPropagation(t *testing.T) {
+	mockDAO := &mockTargetDAO{
+		getByNameFunc: func(ctx context.Context, name string) (*types.Target, error) {
+			return &types.Target{
+				ID:   types.NewID(),
+				Name: "test-target",
+				Type: "http_api",
+				Connection: map[string]any{
+					"url": "https://api.example.com",
+				},
+			}, nil
+		},
+	}
+
+	tests := []struct {
+		name          string
+		req           api.AttackRequest
+		expectedGoal  string
+	}{
+		{
+			name: "user-provided goal takes precedence",
+			req: api.AttackRequest{
+				TargetName: "test-target",
+				AgentID:    "test-agent",
+				AttackType: "sql-injection",
+				Goal:       "Find SQL injection vulnerabilities in the login form",
+			},
+			expectedGoal: "Find SQL injection vulnerabilities in the login form",
+		},
+		{
+			name: "fallback to attack type when goal not provided",
+			req: api.AttackRequest{
+				TargetName: "test-target",
+				AgentID:    "test-agent",
+				AttackType: "prompt-injection",
+			},
+			expectedGoal: "Execute prompt-injection attack",
+		},
+		{
+			name: "empty goal when neither goal nor attack_type provided",
+			req: api.AttackRequest{
+				TargetName: "test-target",
+				AgentID:    "test-agent",
+			},
+			expectedGoal: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			daemon := &daemonImpl{
+				targetStore: mockDAO,
+				logger:      slog.Default(),
+			}
+
+			opts, err := daemon.buildAttackOptions(tt.req)
+			require.NoError(t, err)
+			require.NotNil(t, opts)
+			assert.Equal(t, tt.expectedGoal, opts.Goal)
 		})
 	}
 }

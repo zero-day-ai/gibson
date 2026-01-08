@@ -26,7 +26,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
-	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
@@ -36,20 +35,24 @@ import (
 var attackCmd = &cobra.Command{
 	Use:   "attack",
 	Short: "Launch a quick single-agent attack against a target",
-	Long: `Launch an attack against a target using a specified agent.
+	Long: `Launch an attack against a stored target using a specified agent.
 This command creates an ephemeral mission that is automatically persisted
 if findings are discovered (unless --no-persist is set).
+
+SECURITY: Attacks require a stored target. Create targets with 'gibson target add'
+before running attacks. This ensures proper tracking and prevents accidental attacks
+against unintended systems.
 
 The attack command provides a quick way to test a target without creating
 a full mission workflow. It runs a single agent with optional payload
 filtering, execution constraints, and output formatting.
 
 Examples:
-  # Attack using a stored target
-  gibson attack --target my-api --agent web-scanner
+  # First, create a stored target
+  gibson target add my-api --type http_api --connection '{"url":"https://api.example.com"}'
 
-  # Attack with inline target definition
-  gibson attack --type http_api --connection '{"url":"https://example.com"}' --agent web-scanner
+  # Attack using the stored target
+  gibson attack --target my-api --agent web-scanner
 
   # Attack with specific goal and timeout
   gibson attack --target api-prod --agent prompt-injector \
@@ -75,13 +78,11 @@ Examples:
 
 // Attack command flags
 var (
-	// Target configuration
-	attackTargetName     string // --target flag for stored target name/ID
-	attackTargetType     string // --type flag for inline target type
-	attackConnection     string // --connection flag for inline target connection JSON
-	attackTargetProvider string
-	attackHeaders        string
-	attackCredential     string
+	// Target configuration - stored targets only (security guardrail)
+	attackTargetName     string // --target flag for stored target name (REQUIRED)
+	attackTargetProvider string // Optional provider override
+	attackHeaders        string // Optional additional headers
+	attackCredential     string // Optional credential override
 
 	// Agent configuration
 	attackAgent    string
@@ -123,13 +124,11 @@ var (
 // for harness registration and callback coordination during agent execution.
 
 func init() {
-	// Target configuration flags
-	attackCmd.Flags().StringVar(&attackTargetName, "target", "", "Stored target name or ID (required unless using --type and --connection)")
-	attackCmd.Flags().StringVar(&attackTargetType, "type", "", "Inline target type (http_api, kubernetes, smart_contract, etc.) - requires --connection")
-	attackCmd.Flags().StringVar(&attackConnection, "connection", "", "Inline target connection parameters as JSON - requires --type")
-	attackCmd.Flags().StringVar(&attackTargetProvider, "provider", "", "Target provider (openai, anthropic, custom, etc.)")
-	attackCmd.Flags().StringVar(&attackHeaders, "headers", "", "Custom HTTP headers as JSON object (e.g., '{\"X-API-Key\":\"value\"}')")
-	attackCmd.Flags().StringVar(&attackCredential, "credential", "", "Credential name or ID for authentication")
+	// Target configuration flags - stored targets only (security guardrail)
+	attackCmd.Flags().StringVar(&attackTargetName, "target", "", "Stored target name (REQUIRED) - create with 'gibson target add'")
+	attackCmd.Flags().StringVar(&attackTargetProvider, "provider", "", "Override target provider (openai, anthropic, custom, etc.)")
+	attackCmd.Flags().StringVar(&attackHeaders, "headers", "", "Additional HTTP headers as JSON object (e.g., '{\"X-API-Key\":\"value\"}')")
+	attackCmd.Flags().StringVar(&attackCredential, "credential", "", "Override credential name or ID for authentication")
 
 	// Agent configuration flags (--agent is required)
 	attackCmd.Flags().StringVar(&attackAgent, "agent", "", "Agent name to execute (REQUIRED)")
@@ -179,44 +178,24 @@ func runAttackCommand(cmd *cobra.Command, args []string) error {
 		return runListAgents(cmd, ctx)
 	}
 
-	// Reject positional URL arguments with clear migration error
+	// Reject positional URL arguments with clear error
 	if len(args) > 0 {
 		return internal.NewCLIError(attack.ExitConfigError,
-			"URL argument no longer supported. Use --target <name> or --type <type> --connection <json>\n\n"+
-				"Examples:\n"+
-				"  gibson attack --target my-api --agent web-scanner\n"+
-				"  gibson attack --type http_api --connection '{\"url\":\"https://example.com\"}' --agent web-scanner")
+			"URL arguments not supported. Use --target <name> with a stored target.\n\n"+
+				"First, create a target:\n"+
+				"  gibson target add my-api --type http_api --connection '{\"url\":\"https://example.com\"}'\n\n"+
+				"Then run attack:\n"+
+				"  gibson attack --target my-api --agent web-scanner")
 	}
 
-	// Validate target specification: require --target OR (--type AND --connection)
-	hasStoredTarget := attackTargetName != ""
-	hasInlineTarget := attackTargetType != "" && attackConnection != ""
-
-	if !hasStoredTarget && !hasInlineTarget {
+	// Validate target specification: require --target (stored targets only - security guardrail)
+	if attackTargetName == "" {
 		return internal.NewCLIError(attack.ExitConfigError,
-			"target specification required\n\n"+
-				"Either:\n"+
-				"  - Use --target <name> to reference a stored target, or\n"+
-				"  - Use --type <type> --connection <json> to define an inline target\n\n"+
-				"Examples:\n"+
-				"  gibson attack --target my-api --agent web-scanner\n"+
-				"  gibson attack --type http_api --connection '{\"url\":\"https://example.com\"}' --agent web-scanner")
-	}
-
-	if hasStoredTarget && hasInlineTarget {
-		return internal.NewCLIError(attack.ExitConfigError,
-			"cannot specify both --target and --type/--connection flags\n\n"+
-				"Use either:\n"+
-				"  --target <name> for stored target, or\n"+
-				"  --type <type> --connection <json> for inline target")
-	}
-
-	// Validate inline target has both flags
-	if (attackTargetType != "" && attackConnection == "") || (attackTargetType == "" && attackConnection != "") {
-		return internal.NewCLIError(attack.ExitConfigError,
-			"inline target requires both --type and --connection flags\n\n"+
-				"Example:\n"+
-				"  gibson attack --type http_api --connection '{\"url\":\"https://example.com\"}' --agent web-scanner")
+			"--target is required (stored targets only for security)\n\n"+
+				"First, create a target:\n"+
+				"  gibson target add my-api --type http_api --connection '{\"url\":\"https://example.com\"}'\n\n"+
+				"Then run attack:\n"+
+				"  gibson attack --target my-api --agent web-scanner")
 	}
 
 	// Task 15: Check for daemon client in context
@@ -327,6 +306,7 @@ func runAttackViaDaemon(cmd *cobra.Command, daemonClient interface{}) error {
 		AttackType: opts.AgentName,
 		MaxDepth:   opts.MaxTurns,
 		Timeout:    opts.Timeout,
+		Goal:       opts.Goal,
 	}
 
 	// Execute attack via daemon and stream events
@@ -388,25 +368,15 @@ func runAttackViaDaemon(cmd *cobra.Command, daemonClient interface{}) error {
 }
 
 // buildAttackOptions constructs AttackOptions from command-line flags (Task 8.1, 8.3)
+// Note: Target ID resolution happens in the daemon, not here. The CLI only passes the target name.
 func buildAttackOptions() (*attack.AttackOptions, error) {
 	opts := attack.NewAttackOptions()
 
-	// Target configuration
-	// For stored target: use TargetName
-	if attackTargetName != "" {
-		opts.TargetName = attackTargetName
-	}
+	// Target configuration - stored targets only (security guardrail)
+	// The target ID will be resolved by the daemon from the target name
+	opts.TargetName = attackTargetName
 
-	// For inline target: store type and connection JSON (will be validated later)
-	if attackTargetType != "" {
-		opts.TargetType = types.TargetType(attackTargetType)
-	}
-	if attackConnection != "" {
-		// Store connection JSON in TargetURL temporarily for backward compatibility
-		// TODO: Add TargetConnection field to AttackOptions in future refactor
-		opts.TargetURL = attackConnection
-	}
-
+	// Optional overrides
 	opts.TargetProvider = attackTargetProvider
 	opts.Credential = attackCredential
 

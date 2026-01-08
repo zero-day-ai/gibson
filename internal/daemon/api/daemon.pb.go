@@ -1617,7 +1617,9 @@ type RunAttackRequest struct {
 	// options contains attack-specific options
 	Options map[string]string `protobuf:"bytes,5,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// target_name is the name of a stored target to look up from the database
-	TargetName    string `protobuf:"bytes,6,opt,name=target_name,json=targetName,proto3" json:"target_name,omitempty"`
+	TargetName string `protobuf:"bytes,6,opt,name=target_name,json=targetName,proto3" json:"target_name,omitempty"`
+	// goal is the attack objective or what the agent should try to accomplish
+	Goal          string `protobuf:"bytes,7,opt,name=goal,proto3" json:"goal,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1690,6 +1692,13 @@ func (x *RunAttackRequest) GetOptions() map[string]string {
 func (x *RunAttackRequest) GetTargetName() string {
 	if x != nil {
 		return x.TargetName
+	}
+	return ""
+}
+
+func (x *RunAttackRequest) GetGoal() string {
+	if x != nil {
+		return x.Goal
 	}
 	return ""
 }
@@ -3428,7 +3437,7 @@ const file_daemon_proto_rawDesc = "" +
 	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12 \n" +
 	"\vdescription\x18\x05 \x01(\tR\vdescription\x12\x16\n" +
 	"\x06health\x18\x06 \x01(\tR\x06health\x12\x1b\n" +
-	"\tlast_seen\x18\a \x01(\x03R\blastSeen\"\xb5\x02\n" +
+	"\tlast_seen\x18\a \x01(\x03R\blastSeen\"\xc9\x02\n" +
 	"\x10RunAttackRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x1f\n" +
 	"\vattack_type\x18\x02 \x01(\tR\n" +
@@ -3437,7 +3446,8 @@ const file_daemon_proto_rawDesc = "" +
 	"\x0epayload_filter\x18\x04 \x01(\tR\rpayloadFilter\x12I\n" +
 	"\aoptions\x18\x05 \x03(\v2/.gibson.daemon.v1.RunAttackRequest.OptionsEntryR\aoptions\x12\x1f\n" +
 	"\vtarget_name\x18\x06 \x01(\tR\n" +
-	"targetName\x1a:\n" +
+	"targetName\x12\x12\n" +
+	"\x04goal\x18\a \x01(\tR\x04goal\x1a:\n" +
 	"\fOptionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9f\x02\n" +
