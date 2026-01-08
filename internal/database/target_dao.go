@@ -48,14 +48,19 @@ func (dao *TargetDAO) Create(ctx context.Context, target *types.Target) error {
 		return fmt.Errorf("failed to marshal tags: %w", err)
 	}
 
+	connectionJSON, err := json.Marshal(target.Connection)
+	if err != nil {
+		return fmt.Errorf("failed to marshal connection: %w", err)
+	}
+
 	query := `
 		INSERT INTO targets (
 			id, name, type, provider, url, model,
-			headers, config, capabilities,
+			headers, config, capabilities, connection,
 			auth_type, credential_id,
 			status, description, tags, timeout,
 			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err = dao.db.ExecContext(ctx, query,
@@ -68,6 +73,7 @@ func (dao *TargetDAO) Create(ctx context.Context, target *types.Target) error {
 		string(headersJSON),
 		string(configJSON),
 		string(capabilitiesJSON),
+		string(connectionJSON),
 		target.AuthType.String(),
 		nullableID(target.CredentialID),
 		target.Status.String(),
@@ -90,7 +96,7 @@ func (dao *TargetDAO) Get(ctx context.Context, id types.ID) (*types.Target, erro
 	query := `
 		SELECT
 			id, name, type, provider, url, model,
-			headers, config, capabilities,
+			headers, config, capabilities, connection,
 			auth_type, credential_id,
 			status, description, tags, timeout,
 			created_at, updated_at
@@ -107,7 +113,7 @@ func (dao *TargetDAO) GetByName(ctx context.Context, name string) (*types.Target
 	query := `
 		SELECT
 			id, name, type, provider, url, model,
-			headers, config, capabilities,
+			headers, config, capabilities, connection,
 			auth_type, credential_id,
 			status, description, tags, timeout,
 			created_at, updated_at
@@ -129,7 +135,7 @@ func (dao *TargetDAO) List(ctx context.Context, filter *types.TargetFilter) ([]*
 	query := `
 		SELECT
 			id, name, type, provider, url, model,
-			headers, config, capabilities,
+			headers, config, capabilities, connection,
 			auth_type, credential_id,
 			status, description, tags, timeout,
 			created_at, updated_at
@@ -209,6 +215,11 @@ func (dao *TargetDAO) Update(ctx context.Context, target *types.Target) error {
 		return fmt.Errorf("failed to marshal capabilities: %w", err)
 	}
 
+	connectionJSON, err := json.Marshal(target.Connection)
+	if err != nil {
+		return fmt.Errorf("failed to marshal connection: %w", err)
+	}
+
 	tagsJSON, err := json.Marshal(target.Tags)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tags: %w", err)
@@ -224,6 +235,7 @@ func (dao *TargetDAO) Update(ctx context.Context, target *types.Target) error {
 			headers = ?,
 			config = ?,
 			capabilities = ?,
+			connection = ?,
 			auth_type = ?,
 			credential_id = ?,
 			status = ?,
@@ -243,6 +255,7 @@ func (dao *TargetDAO) Update(ctx context.Context, target *types.Target) error {
 		string(headersJSON),
 		string(configJSON),
 		string(capabilitiesJSON),
+		string(connectionJSON),
 		target.AuthType.String(),
 		nullableID(target.CredentialID),
 		target.Status.String(),
@@ -316,7 +329,7 @@ func (dao *TargetDAO) scanTarget(row *sql.Row) (*types.Target, error) {
 	var target types.Target
 	var id, provider, authType, status, targetType string
 	var credentialID sql.NullString
-	var headersJSON, configJSON, capabilitiesJSON, tagsJSON string
+	var headersJSON, configJSON, capabilitiesJSON, connectionJSON, tagsJSON string
 
 	err := row.Scan(
 		&id,
@@ -328,6 +341,7 @@ func (dao *TargetDAO) scanTarget(row *sql.Row) (*types.Target, error) {
 		&headersJSON,
 		&configJSON,
 		&capabilitiesJSON,
+		&connectionJSON,
 		&authType,
 		&credentialID,
 		&status,
@@ -379,6 +393,10 @@ func (dao *TargetDAO) scanTarget(row *sql.Row) (*types.Target, error) {
 		return nil, fmt.Errorf("failed to unmarshal capabilities: %w", err)
 	}
 
+	if err := json.Unmarshal([]byte(connectionJSON), &target.Connection); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal connection: %w", err)
+	}
+
 	if err := json.Unmarshal([]byte(tagsJSON), &target.Tags); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal tags: %w", err)
 	}
@@ -391,7 +409,7 @@ func (dao *TargetDAO) scanTargetFromRows(rows *sql.Rows) (*types.Target, error) 
 	var target types.Target
 	var id, provider, authType, status, targetType string
 	var credentialID sql.NullString
-	var headersJSON, configJSON, capabilitiesJSON, tagsJSON string
+	var headersJSON, configJSON, capabilitiesJSON, connectionJSON, tagsJSON string
 
 	err := rows.Scan(
 		&id,
@@ -403,6 +421,7 @@ func (dao *TargetDAO) scanTargetFromRows(rows *sql.Rows) (*types.Target, error) 
 		&headersJSON,
 		&configJSON,
 		&capabilitiesJSON,
+		&connectionJSON,
 		&authType,
 		&credentialID,
 		&status,
@@ -449,6 +468,10 @@ func (dao *TargetDAO) scanTargetFromRows(rows *sql.Rows) (*types.Target, error) 
 
 	if err := json.Unmarshal([]byte(capabilitiesJSON), &target.Capabilities); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal capabilities: %w", err)
+	}
+
+	if err := json.Unmarshal([]byte(connectionJSON), &target.Connection); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal connection: %w", err)
 	}
 
 	if err := json.Unmarshal([]byte(tagsJSON), &target.Tags); err != nil {
