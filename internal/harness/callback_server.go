@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -77,8 +79,18 @@ func (s *CallbackServer) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to listen on port %d: %w", s.port, err)
 	}
 
-	// Create gRPC server with default options
-	s.server = grpc.NewServer()
+	// Create gRPC server with keepalive options
+	serverOpts := []grpc.ServerOption{
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			Time:    10 * time.Second,
+			Timeout: 5 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
+	}
+	s.server = grpc.NewServer(serverOpts...)
 
 	// Register HarnessCallbackService
 	pb.RegisterHarnessCallbackServiceServer(s.server, s.service)

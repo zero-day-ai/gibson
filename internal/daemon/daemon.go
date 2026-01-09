@@ -267,8 +267,30 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	regAdapter.SetCallbackManager(d.callback)
 	d.logger.Info("wired callback manager to registry adapter")
 
-	// Initialize infrastructure components FIRST (DAG executor, finding store, LLM registry, harness factory)
+	// Initialize and start Tool Executor Service BEFORE infrastructure
+	// This must happen before harness factory creation so tools can be wired in
+	d.logger.Info("initializing tool executor service")
+	toolsDir := filepath.Join(d.config.Core.HomeDir, "tools", "bin")
+	defaultTimeout := 5 * time.Minute
+	d.toolExecutorService = toolexec.NewToolExecutorService(
+		toolsDir,
+		defaultTimeout,
+		d.logger.With("component", "tool-executor"),
+	)
+	if err := d.toolExecutorService.Start(ctx); err != nil {
+		d.stopServices(ctx)
+		return fmt.Errorf("failed to start tool executor service: %w", err)
+	}
+	tools := d.toolExecutorService.ListTools()
+	d.logger.Info("tool executor service started successfully",
+		"tools_dir", toolsDir,
+		"total_tools", len(tools),
+		"default_timeout", defaultTimeout,
+	)
+
+	// Initialize infrastructure components (DAG executor, finding store, LLM registry, harness factory)
 	// This must happen before creating the orchestrator because the orchestrator needs the harness factory
+	// NOTE: Tool Executor Service is already started, so harness factory can access it
 	d.logger.Info("initializing infrastructure components")
 	infra, err := d.newInfrastructure(ctx)
 	if err != nil {
@@ -309,27 +331,6 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		attack.WithLogger(d.logger),
 	)
 	d.logger.Info("initialized attack runner")
-
-	// Initialize and start Tool Executor Service
-	d.logger.Info("initializing tool executor service")
-	toolsDir := filepath.Join(d.config.Core.HomeDir, "tools", "bin")
-	defaultTimeout := 5 * time.Minute
-	d.toolExecutorService = toolexec.NewToolExecutorService(
-		toolsDir,
-		defaultTimeout,
-		d.logger.With("component", "tool-executor"),
-	)
-	if err := d.toolExecutorService.Start(ctx); err != nil {
-		d.stopServices(ctx)
-		return fmt.Errorf("failed to start tool executor service: %w", err)
-	}
-	// Log the number of tools discovered (service logs this internally, but we can query it)
-	tools := d.toolExecutorService.ListTools()
-	d.logger.Info("tool executor service started successfully",
-		"tools_dir", toolsDir,
-		"total_tools", len(tools),
-		"default_timeout", defaultTimeout,
-	)
 
 	// Start callback server
 	if d.config.Callback.Enabled {

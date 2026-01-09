@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
@@ -659,43 +660,52 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 	grpcAgent, isGRPCAgent := agentClient.(*GRPCAgentClient)
 
 	if isGRPCAgent && a.callbackManager != nil {
-		// Define an extended harness interface with Mission and Target methods
-		// This avoids circular imports while providing type-safe access to context
-		// The harness.MissionContext and harness.TargetInfo are returned as 'any'
-		type contextProvider interface {
-			Mission() any // Returns harness.MissionContext
-			Target() any  // Returns harness.TargetInfo
-		}
-
-		// Extract mission context and target from the harness via type assertion
-		// These are used for mission-based registration and passed to the agent
+		// Extract mission context and target from the harness via reflection
+		// We use reflection because harness.MissionContext and harness.TargetInfo have specific
+		// return types that don't match a simple `any` interface, and we can't import
+		// the harness package here due to circular dependency issues.
 		var missionID, agentName string
 		var mission, target any
 
-		if cp, ok := harness.(contextProvider); ok {
-			mission = cp.Mission()
-			target = cp.Target()
+		// Use reflection to call Mission() and Target() methods on the harness
+		harnessVal := reflect.ValueOf(harness)
 
-			// Extract mission ID and agent name from the mission context
-			// The mission context has ID (with String() method) and CurrentAgent (string) fields
-			// We use a struct accessor interface to avoid reflection while not importing harness
-			type missionAccessor interface {
-				IDString() string
-				AgentName() string
+		// Call Mission() method
+		missionMethod := harnessVal.MethodByName("Mission")
+		if missionMethod.IsValid() {
+			results := missionMethod.Call(nil)
+			if len(results) > 0 {
+				mission = results[0].Interface()
 			}
+		}
 
-			// Since MissionContext doesn't have these methods, we access fields via type assertion
-			// The mission is a struct with exported ID and CurrentAgent fields
-			if m, ok := mission.(struct {
-				ID           interface{ String() string }
-				Name         string
-				CurrentAgent string
-				Phase        string
-				Constraints  []string
-				Metadata     map[string]any
-			}); ok {
-				missionID = m.ID.String()
-				agentName = m.CurrentAgent
+		// Call Target() method
+		targetMethod := harnessVal.MethodByName("Target")
+		if targetMethod.IsValid() {
+			results := targetMethod.Call(nil)
+			if len(results) > 0 {
+				target = results[0].Interface()
+			}
+		}
+
+		// Extract mission ID and agent name from the mission context via reflection
+		if mission != nil {
+			missionVal := reflect.ValueOf(mission)
+			// Get ID field and call String() on it
+			idField := missionVal.FieldByName("ID")
+			if idField.IsValid() {
+				stringMethod := idField.MethodByName("String")
+				if stringMethod.IsValid() {
+					results := stringMethod.Call(nil)
+					if len(results) > 0 {
+						missionID = results[0].String()
+					}
+				}
+			}
+			// Get CurrentAgent field
+			currentAgentField := missionVal.FieldByName("CurrentAgent")
+			if currentAgentField.IsValid() {
+				agentName = currentAgentField.String()
 			}
 		}
 
