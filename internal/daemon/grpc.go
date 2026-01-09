@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
@@ -891,4 +892,142 @@ func (d *daemonImpl) GetMissionCheckpoints(ctx context.Context, missionID string
 
 	d.logger.Debug("mission checkpoints retrieved", "mission_id", missionID, "count", 1)
 	return []api.CheckpointData{checkpoint}, nil
+}
+
+// ExecuteTool executes a tool via the Tool Executor Service.
+func (d *daemonImpl) ExecuteTool(ctx context.Context, name string, inputJSON string, timeoutMs int64) (api.ExecuteToolResult, error) {
+	d.logger.Debug("ExecuteTool called", "name", name, "timeout_ms", timeoutMs)
+
+	// Check if tool executor service is available
+	if d.toolExecutorService == nil {
+		d.logger.Error("tool executor service not initialized")
+		return api.ExecuteToolResult{}, fmt.Errorf("tool executor service not available")
+	}
+
+	// Parse input JSON to map[string]any
+	var input map[string]any
+	if inputJSON != "" {
+		if err := json.Unmarshal([]byte(inputJSON), &input); err != nil {
+			d.logger.Error("failed to parse input JSON", "error", err, "input", inputJSON)
+			return api.ExecuteToolResult{}, fmt.Errorf("invalid input JSON: %w", err)
+		}
+	}
+
+	// Determine timeout (0 = default 5 minutes)
+	timeout := 5 * time.Minute
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	// Record start time for duration calculation
+	startTime := time.Now()
+
+	// Execute tool
+	output, err := d.toolExecutorService.Execute(ctx, name, input, timeout)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		d.logger.Error("tool execution failed", "error", err, "name", name, "duration_ms", duration.Milliseconds())
+		return api.ExecuteToolResult{
+			Success:    false,
+			OutputJSON: "",
+			Error:      err.Error(),
+			DurationMs: duration.Milliseconds(),
+		}, nil // Return nil error since we're reporting the error in the result
+	}
+
+	// Marshal output to JSON
+	outputJSON := ""
+	if output != nil {
+		outputBytes, err := json.Marshal(output)
+		if err != nil {
+			d.logger.Error("failed to marshal output JSON", "error", err)
+			return api.ExecuteToolResult{
+				Success:    false,
+				OutputJSON: "",
+				Error:      fmt.Sprintf("failed to marshal output: %v", err),
+				DurationMs: duration.Milliseconds(),
+			}, nil
+		}
+		outputJSON = string(outputBytes)
+	}
+
+	d.logger.Debug("tool executed successfully", "name", name, "duration_ms", duration.Milliseconds())
+	return api.ExecuteToolResult{
+		Success:    true,
+		OutputJSON: outputJSON,
+		Error:      "",
+		DurationMs: duration.Milliseconds(),
+	}, nil
+}
+
+// GetAvailableTools returns all available tools from the Tool Executor Service.
+func (d *daemonImpl) GetAvailableTools(ctx context.Context) ([]api.AvailableToolData, error) {
+	d.logger.Debug("GetAvailableTools called")
+
+	// Check if tool executor service is available
+	if d.toolExecutorService == nil {
+		d.logger.Error("tool executor service not initialized")
+		return nil, fmt.Errorf("tool executor service not available")
+	}
+
+	// Get tools from service
+	tools := d.toolExecutorService.ListTools()
+
+	// Convert to API format
+	result := make([]api.AvailableToolData, len(tools))
+	for i, tool := range tools {
+		// Marshal schemas to JSON strings
+		inputSchemaJSON := ""
+		if tool.InputSchema.Type != "" {
+			inputBytes, err := json.Marshal(tool.InputSchema)
+			if err != nil {
+				d.logger.Warn("failed to marshal input schema", "error", err, "tool", tool.Name)
+			} else {
+				inputSchemaJSON = string(inputBytes)
+			}
+		}
+
+		outputSchemaJSON := ""
+		if tool.OutputSchema.Type != "" {
+			outputBytes, err := json.Marshal(tool.OutputSchema)
+			if err != nil {
+				d.logger.Warn("failed to marshal output schema", "error", err, "tool", tool.Name)
+			} else {
+				outputSchemaJSON = string(outputBytes)
+			}
+		}
+
+		// Build metrics
+		var metrics *api.ToolMetricsData
+		if tool.Metrics != nil {
+			lastExecutedAt := int64(0)
+			if tool.Metrics.LastExecutedAt != nil {
+				lastExecutedAt = tool.Metrics.LastExecutedAt.UnixMilli()
+			}
+
+			metrics = &api.ToolMetricsData{
+				TotalCalls:     tool.Metrics.TotalExecutions,
+				SuccessCalls:   tool.Metrics.SuccessfulExecutions,
+				FailedCalls:    tool.Metrics.FailedExecutions,
+				AvgDurationMs:  tool.Metrics.AverageDuration.Milliseconds(),
+				LastExecutedAt: lastExecutedAt,
+			}
+		}
+
+		result[i] = api.AvailableToolData{
+			Name:             tool.Name,
+			Version:          tool.Version,
+			Description:      tool.Description,
+			Tags:             tool.Tags,
+			InputSchemaJSON:  inputSchemaJSON,
+			OutputSchemaJSON: outputSchemaJSON,
+			Status:           tool.Status,
+			ErrorMessage:     tool.ErrorMessage,
+			Metrics:          metrics,
+		}
+	}
+
+	d.logger.Debug("available tools retrieved", "count", len(result))
+	return result, nil
 }

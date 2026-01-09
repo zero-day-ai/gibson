@@ -11,6 +11,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/attack"
 	"github.com/zero-day-ai/gibson/internal/config"
+	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/mission"
@@ -89,6 +90,10 @@ type daemonImpl struct {
 
 	// attackRunner executes ad-hoc attacks
 	attackRunner attack.AttackRunner
+
+	// toolExecutorService manages tool execution and discovery
+	// This will be wired in Task 8
+	toolExecutorService toolexec.ToolExecutorService
 
 	// pidFile is the path to the PID file (~/.gibson/daemon.pid)
 	pidFile string
@@ -305,6 +310,27 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	)
 	d.logger.Info("initialized attack runner")
 
+	// Initialize and start Tool Executor Service
+	d.logger.Info("initializing tool executor service")
+	toolsDir := filepath.Join(d.config.Core.HomeDir, "tools", "bin")
+	defaultTimeout := 5 * time.Minute
+	d.toolExecutorService = toolexec.NewToolExecutorService(
+		toolsDir,
+		defaultTimeout,
+		d.logger.With("component", "tool-executor"),
+	)
+	if err := d.toolExecutorService.Start(ctx); err != nil {
+		d.stopServices(ctx)
+		return fmt.Errorf("failed to start tool executor service: %w", err)
+	}
+	// Log the number of tools discovered (service logs this internally, but we can query it)
+	tools := d.toolExecutorService.ListTools()
+	d.logger.Info("tool executor service started successfully",
+		"tools_dir", toolsDir,
+		"total_tools", len(tools),
+		"default_timeout", defaultTimeout,
+	)
+
 	// Start callback server
 	if d.config.Callback.Enabled {
 		d.logger.Info("starting callback server")
@@ -420,6 +446,14 @@ func (d *daemonImpl) stopServices(ctx context.Context) {
 		d.activeMissions = make(map[string]context.CancelFunc)
 	}
 	d.missionsMu.Unlock()
+
+	// Stop Tool Executor Service (no new tool executions)
+	if d.toolExecutorService != nil {
+		d.logger.Info("stopping tool executor service")
+		if err := d.toolExecutorService.Stop(ctx); err != nil {
+			d.logger.Warn("error stopping tool executor service", "error", err)
+		}
+	}
 
 	// Stop gRPC server (no new client connections)
 	if d.grpcServer != nil {

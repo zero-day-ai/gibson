@@ -74,6 +74,16 @@ service DaemonService {
   // GetMissionCheckpoints returns all checkpoints for a specific mission,
   // providing visibility into saved execution states for resume capability.
   rpc GetMissionCheckpoints(GetMissionCheckpointsRequest) returns (GetMissionCheckpointsResponse);
+
+  // ExecuteTool executes a tool via the Tool Executor Service.
+  // Routes tool execution through the centralized tool executor which handles
+  // schema validation, timeout management, and execution tracking.
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+
+  // GetAvailableTools returns all available tools from the Tool Executor Service.
+  // Provides detailed information about each tool including schemas, capabilities,
+  // and execution metrics.
+  rpc GetAvailableTools(GetAvailableToolsRequest) returns (GetAvailableToolsResponse);
 }
 
 // ConnectRequest initiates a client connection to the daemon.
@@ -737,4 +747,89 @@ message CheckpointInfo {
 
   // version is the checkpoint format version
   int32 version = 6;
+}
+
+// ExecuteToolRequest executes a tool via the Tool Executor Service.
+message ExecuteToolRequest {
+  // name is the tool name to execute
+  string name = 1;
+
+  // input_json is the JSON-encoded input parameters for the tool
+  string input_json = 2;
+
+  // timeout_ms is the execution timeout in milliseconds (0 = default 5 minutes)
+  int64 timeout_ms = 3;
+}
+
+// ExecuteToolResponse returns the result of tool execution.
+message ExecuteToolResponse {
+  // success indicates if the tool executed successfully
+  bool success = 1;
+
+  // output_json is the JSON-encoded output from the tool (if success)
+  string output_json = 2;
+
+  // error is the error message (if !success)
+  string error = 3;
+
+  // duration_ms is the actual execution duration in milliseconds
+  int64 duration_ms = 4;
+}
+
+// GetAvailableToolsRequest queries available tools from the Tool Executor Service.
+message GetAvailableToolsRequest {}
+
+// GetAvailableToolsResponse returns all available tools with their capabilities.
+message GetAvailableToolsResponse {
+  // tools is the list of available tools with detailed information
+  repeated AvailableToolInfo tools = 1;
+}
+
+// AvailableToolInfo describes a tool's capabilities and execution metrics.
+// This is distinct from ToolInfo which represents registry information.
+message AvailableToolInfo {
+  // name is the tool name
+  string name = 1;
+
+  // version is the tool version
+  string version = 2;
+
+  // description is the tool description
+  string description = 3;
+
+  // tags are tool categorization tags
+  repeated string tags = 4;
+
+  // input_schema_json is the JSON-encoded JSON Schema for tool input
+  string input_schema_json = 5;
+
+  // output_schema_json is the JSON-encoded JSON Schema for tool output
+  string output_schema_json = 6;
+
+  // status is the tool readiness status ("ready", "schema-unknown", "error")
+  string status = 7;
+
+  // error_message is non-empty if status is "error"
+  string error_message = 8;
+
+  // metrics contains execution statistics for this tool
+  ToolExecutionMetrics metrics = 9;
+}
+
+// ToolExecutionMetrics tracks execution statistics for a tool.
+message ToolExecutionMetrics {
+  // total_calls is the total number of executions
+  int64 total_calls = 1;
+
+  // success_calls is the number of successful executions
+  int64 success_calls = 2;
+
+  // failed_calls is the number of failed executions
+  int64 failed_calls = 3;
+
+  // avg_duration_ms is the average execution duration in milliseconds
+  int64 avg_duration_ms = 4;
+
+  // last_executed_at is the Unix timestamp in milliseconds of the last execution
+  int64 last_executed_at = 5;
 }
