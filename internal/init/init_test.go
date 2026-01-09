@@ -274,6 +274,12 @@ func TestInitialize_Force(t *testing.T) {
 
 // TestInitialize_DefaultHomeDir tests initialization without explicit home directory
 func TestInitialize_DefaultHomeDir(t *testing.T) {
+	// Check if default home dir already exists - skip test to avoid destroying real data
+	defaultCfg := config.DefaultConfig()
+	if _, err := os.Stat(defaultCfg.Core.HomeDir); err == nil {
+		t.Skipf("Skipping test: default home dir %s already exists (would destroy real data)", defaultCfg.Core.HomeDir)
+	}
+
 	initializer := NewDefaultInitializer()
 	opts := InitOptions{
 		HomeDir:        "", // Use default
@@ -285,7 +291,6 @@ func TestInitialize_DefaultHomeDir(t *testing.T) {
 	require.NoError(t, err)
 
 	// Should use default home dir from config
-	defaultCfg := config.DefaultConfig()
 	assert.Equal(t, defaultCfg.Core.HomeDir, result.HomeDir)
 
 	// Clean up
