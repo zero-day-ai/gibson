@@ -6,6 +6,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/harness/middleware"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -47,14 +48,29 @@ func (d *daemonImpl) newHarnessFactory(ctx context.Context) (harness.HarnessFact
 		}
 	}
 
+	// Create tool registry and populate with daemon tools
+	toolRegistry := tool.NewToolRegistry()
+	if d.toolExecutorService != nil {
+		registered, err := harness.PopulateToolRegistryFromService(d.toolExecutorService, toolRegistry)
+		if err != nil {
+			d.logger.Warn("failed to populate tool registry from daemon",
+				"error", err.Error(),
+			)
+		} else {
+			d.logger.Info("populated tool registry with daemon tools",
+				"tools_registered", registered,
+			)
+		}
+	}
+
 	// Build HarnessConfig with all required dependencies
 	config := harness.HarnessConfig{
 		// LLM components
 		LLMRegistry: d.infrastructure.llmRegistry,
 		SlotManager: d.infrastructure.slotManager,
 
-		// Component registries (will be defaulted by ApplyDefaults())
-		ToolRegistry:   nil,
+		// Component registries
+		ToolRegistry:   toolRegistry,
 		PluginRegistry: nil,
 
 		// Registry adapter for component discovery

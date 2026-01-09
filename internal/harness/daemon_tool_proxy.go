@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/daemon/api"
+	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -308,6 +309,121 @@ func (f *DaemonToolProxyFactory) PopulateToolRegistry(ctx context.Context, regis
 
 	registered := 0
 	for _, proxy := range proxies {
+		if err := registry.RegisterInternal(proxy); err != nil {
+			// Tool may already be registered, skip but continue
+			continue
+		}
+		registered++
+	}
+
+	return registered, nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Direct ToolExecutorService Integration (no gRPC needed)
+// ────────────────────────────────────────────────────────────────────────────
+
+// DirectToolProxy implements tool.Tool by directly calling the ToolExecutorService.
+// This is used when running inside the daemon to avoid gRPC round-trips.
+type DirectToolProxy struct {
+	service        toolexec.ToolExecutorService
+	name           string
+	description    string
+	version        string
+	tags           []string
+	inputSchema    schema.JSONSchema
+	outputSchema   schema.JSONSchema
+	defaultTimeout time.Duration
+}
+
+// Ensure DirectToolProxy implements tool.Tool at compile time
+var _ tool.Tool = (*DirectToolProxy)(nil)
+
+// NewDirectToolProxy creates a tool proxy that directly uses the ToolExecutorService.
+func NewDirectToolProxy(
+	service toolexec.ToolExecutorService,
+	descriptor toolexec.ToolDescriptor,
+	toolSchema *toolexec.ToolSchema,
+	defaultTimeout time.Duration,
+) *DirectToolProxy {
+	if defaultTimeout == 0 {
+		defaultTimeout = 5 * time.Minute
+	}
+
+	var inputSchema, outputSchema schema.JSONSchema
+	if toolSchema != nil {
+		inputSchema = toolSchema.InputSchema
+		outputSchema = toolSchema.OutputSchema
+	}
+
+	return &DirectToolProxy{
+		service:        service,
+		name:           descriptor.Name,
+		description:    descriptor.Description,
+		version:        descriptor.Version,
+		tags:           descriptor.Tags,
+		inputSchema:    inputSchema,
+		outputSchema:   outputSchema,
+		defaultTimeout: defaultTimeout,
+	}
+}
+
+func (p *DirectToolProxy) Name() string                   { return p.name }
+func (p *DirectToolProxy) Description() string            { return p.description }
+func (p *DirectToolProxy) Version() string                { return p.version }
+func (p *DirectToolProxy) Tags() []string                 { return p.tags }
+func (p *DirectToolProxy) InputSchema() schema.JSONSchema { return p.inputSchema }
+func (p *DirectToolProxy) OutputSchema() schema.JSONSchema { return p.outputSchema }
+
+func (p *DirectToolProxy) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
+	// Determine timeout
+	timeout := p.defaultTimeout
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > 0 {
+			timeout = remaining
+		}
+	}
+
+	// Execute directly via service
+	output, err := p.service.Execute(ctx, p.name, input, timeout)
+	if err != nil {
+		return nil, types.NewError(
+			ErrProxyExecutionFailed,
+			fmt.Sprintf("tool execution failed: %v", err),
+		)
+	}
+
+	return output, nil
+}
+
+func (p *DirectToolProxy) Health(ctx context.Context) types.HealthStatus {
+	return types.Healthy(fmt.Sprintf("Tool %s available via daemon", p.name))
+}
+
+// PopulateToolRegistryFromService populates a tool registry directly from a ToolExecutorService.
+// This is the preferred method when running inside the daemon as it avoids gRPC overhead.
+func PopulateToolRegistryFromService(
+	service toolexec.ToolExecutorService,
+	registry tool.ToolRegistry,
+) (int, error) {
+	descriptors := service.ListTools()
+
+	registered := 0
+	for _, desc := range descriptors {
+		// Skip tools that aren't ready
+		if desc.Status != "ready" {
+			continue
+		}
+
+		// Get schema for the tool
+		toolSchema, err := service.GetToolSchema(desc.Name)
+		if err != nil {
+			// Skip tools without valid schemas
+			continue
+		}
+
+		proxy := NewDirectToolProxy(service, desc, toolSchema, 5*time.Minute)
 		if err := registry.RegisterInternal(proxy); err != nil {
 			// Tool may already be registered, skip but continue
 			continue
