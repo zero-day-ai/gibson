@@ -13,7 +13,7 @@
 //   - Logging: Structured logging with automatic trace correlation
 //   - Health: Component health monitoring with state change detection
 //   - Cost: LLM cost tracking and budget management
-//   - Traced Harness: Automatic instrumentation wrapper for AgentHarness
+//   - Middleware: Harness middleware for automatic instrumentation (see harness/middleware package)
 //
 // # Distributed Tracing
 //
@@ -200,35 +200,33 @@
 //	    Host      string // Langfuse API host
 //	}
 //
-// # TracedAgentHarness
+// # Harness Middleware
 //
-// TracedAgentHarness wraps an AgentHarness to add automatic tracing and metrics:
+// Harness operations are instrumented via middleware (see harness/middleware package).
+// The middleware approach provides tracing, logging, and event emission:
 //
-//	// Create inner harness (your implementation)
-//	innerHarness := myHarnessImplementation()
+//	import "github.com/zero-day-ai/gibson/internal/harness/middleware"
 //
-//	// Wrap with tracing
-//	tracedHarness := NewTracedAgentHarness(
-//	    innerHarness,
-//	    WithTracer(tracer),
-//	    WithMetrics(metricsRecorder),
-//	    WithLogger(tracedLogger),
-//	    WithPromptCapture(false), // Set to true for debugging
+//	// Build middleware chain
+//	mw := middleware.Chain(
+//	    middleware.TracingMiddleware(tracer),
+//	    middleware.LoggingMiddleware(logger, middleware.LevelNormal),
+//	    middleware.EventMiddleware(eventBus, errorHandler),
 //	)
 //
-//	// Use normally - all operations are automatically traced
-//	resp, err := tracedHarness.Complete(ctx, "primary", messages)
-//	result, err := tracedHarness.CallTool(ctx, "nmap_scan", input)
-//	err = tracedHarness.SubmitFinding(ctx, finding)
+//	// Configure harness factory with middleware
+//	config := harness.HarnessConfig{
+//	    // ... other config
+//	    Middleware: mw,
+//	}
 //
-// TracedAgentHarness automatically:
+// The middleware automatically:
 //
 //   - Creates spans for all harness operations
 //   - Records GenAI and Gibson attributes
-//   - Tracks token usage and costs
-//   - Records metrics (latency, counts, etc.)
-//   - Correlates logs with traces
-//   - Propagates context to sub-agents
+//   - Tracks token usage via span attributes
+//   - Emits structured logs with operation details
+//   - Publishes events to the EventBus
 //
 // # Health Monitoring
 //
@@ -346,16 +344,20 @@
 //	costTracker := NewCostTracker(tokenTracker, logger)
 //	costTracker.SetThreshold(missionID, 100.0)
 //
-//	// 6. Wrap harness with tracing
-//	harness := NewTracedAgentHarness(
-//	    innerHarness,
-//	    WithTracer(tracer),
-//	    WithMetrics(recorder),
-//	    WithLogger(logger),
+//	// 6. Configure harness with middleware
+//	mw := middleware.Chain(
+//	    middleware.TracingMiddleware(tracer),
+//	    middleware.LoggingMiddleware(logger, middleware.LevelNormal),
 //	)
 //
+//	config := harness.HarnessConfig{
+//	    // ... other config
+//	    Middleware: mw,
+//	}
+//
 //	// 7. Execute agent with full observability
-//	result, err := agent.Execute(ctx, task, harness)
+//	h, _ := harness.NewHarnessFactory(config).Create("agent", missionCtx, targetInfo)
+//	result, err := agent.Execute(ctx, task, h)
 //
 // # Best Practices
 //

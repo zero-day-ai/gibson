@@ -2,7 +2,7 @@ package main
 
 import (
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/internal/verbose"
+	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 )
 
 // OutputFormat represents the output format for CLI commands
@@ -78,30 +78,30 @@ func (f *GlobalFlags) IsQuiet() bool {
 // The hierarchy is:
 //   - Quiet mode: LevelNone
 //   - Debug (-vvv or --debug-verbose): LevelDebug (3)
-//   - Very verbose (-vv or --very-verbose): LevelVeryVerbose (2)
-//   - Verbose (-v or --verbose): LevelVerbose (1)
+//   - Very verbose (-vv or --very-verbose): LevelVerbose (2)
+//   - Verbose (-v or --verbose): LevelBasic (1)
 //   - Default: LevelNone (0)
-func (f *GlobalFlags) VerbosityLevel() verbose.VerboseLevel {
+func (f *GlobalFlags) VerbosityLevel() internal.VerboseLevel {
 	// Quiet mode disables all verbose output
 	if f.Quiet {
-		return verbose.LevelNone
+		return internal.LevelNone
 	}
 
 	// Debug takes highest precedence
 	if f.DebugVerbose {
-		return verbose.LevelDebug
+		return internal.LevelDebug
 	}
 
 	// Very verbose is next
 	if f.VeryVerbose {
-		return verbose.LevelVeryVerbose
+		return internal.LevelVerbose
 	}
 
 	// Regular verbose
 	if f.Verbose {
-		return verbose.LevelVerbose
+		return internal.LevelBasic
 	}
 
 	// Default: no verbose output
-	return verbose.LevelNone
+	return internal.LevelNone
 }

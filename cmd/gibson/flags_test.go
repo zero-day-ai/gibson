@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"github.com/zero-day-ai/gibson/internal/verbose"
+	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 )
 
 func TestGlobalFlags_VerbosityLevel(t *testing.T) {
@@ -13,7 +13,7 @@ func TestGlobalFlags_VerbosityLevel(t *testing.T) {
 		veryVerbose   bool
 		debugVerbose  bool
 		quiet         bool
-		expectedLevel verbose.VerboseLevel
+		expectedLevel internal.VerboseLevel
 	}{
 		{
 			name:          "All flags false returns LevelNone",
@@ -21,7 +21,7 @@ func TestGlobalFlags_VerbosityLevel(t *testing.T) {
 			veryVerbose:   false,
 			debugVerbose:  false,
 			quiet:         false,
-			expectedLevel: verbose.LevelNone,
+			expectedLevel: internal.LevelNone,
 		},
 		{
 			name:          "Quiet mode returns LevelNone",
@@ -29,23 +29,23 @@ func TestGlobalFlags_VerbosityLevel(t *testing.T) {
 			veryVerbose:   true,
 			debugVerbose:  true,
 			quiet:         true,
-			expectedLevel: verbose.LevelNone,
+			expectedLevel: internal.LevelNone,
 		},
 		{
-			name:          "Verbose returns LevelVerbose",
+			name:          "Verbose returns LevelBasic",
 			verbose:       true,
 			veryVerbose:   false,
 			debugVerbose:  false,
 			quiet:         false,
-			expectedLevel: verbose.LevelVerbose,
+			expectedLevel: internal.LevelBasic,
 		},
 		{
-			name:          "VeryVerbose returns LevelVeryVerbose",
+			name:          "VeryVerbose returns LevelVerbose",
 			verbose:       false,
 			veryVerbose:   true,
 			debugVerbose:  false,
 			quiet:         false,
-			expectedLevel: verbose.LevelVeryVerbose,
+			expectedLevel: internal.LevelVerbose,
 		},
 		{
 			name:          "DebugVerbose returns LevelDebug",
@@ -53,7 +53,7 @@ func TestGlobalFlags_VerbosityLevel(t *testing.T) {
 			veryVerbose:   false,
 			debugVerbose:  true,
 			quiet:         false,
-			expectedLevel: verbose.LevelDebug,
+			expectedLevel: internal.LevelDebug,
 		},
 		{
 			name:          "DebugVerbose takes precedence over VeryVerbose",
@@ -61,7 +61,7 @@ func TestGlobalFlags_VerbosityLevel(t *testing.T) {
 			veryVerbose:   true,
 			debugVerbose:  true,
 			quiet:         false,
-			expectedLevel: verbose.LevelDebug,
+			expectedLevel: internal.LevelDebug,
 		},
 		{
 			name:          "VeryVerbose takes precedence over Verbose",
@@ -69,7 +69,7 @@ func TestGlobalFlags_VerbosityLevel(t *testing.T) {
 			veryVerbose:   true,
 			debugVerbose:  false,
 			quiet:         false,
-			expectedLevel: verbose.LevelVeryVerbose,
+			expectedLevel: internal.LevelVerbose,
 		},
 	}
 
@@ -84,9 +84,7 @@ func TestGlobalFlags_VerbosityLevel(t *testing.T) {
 
 			level := flags.VerbosityLevel()
 			if level != tt.expectedLevel {
-				t.Errorf("Expected level %v (%s), got %v (%s)",
-					tt.expectedLevel, tt.expectedLevel.String(),
-					level, level.String())
+				t.Errorf("Expected level %v, got %v", tt.expectedLevel, level)
 			}
 		})
 	}

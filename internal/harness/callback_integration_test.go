@@ -90,8 +90,24 @@ func (m *mockIntegrationHarness) GetFindings(ctx context.Context, filter Finding
 	return nil, fmt.Errorf("GetFindings not implemented in mock harness")
 }
 
+func (m *mockIntegrationHarness) GetAllRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	return nil, fmt.Errorf("GetAllRunFindings not implemented in mock harness")
+}
+
+func (m *mockIntegrationHarness) GetMissionRunHistory(ctx context.Context) ([]MissionRunSummarySDK, error) {
+	return nil, fmt.Errorf("GetMissionRunHistory not implemented in mock harness")
+}
+
+func (m *mockIntegrationHarness) GetPreviousRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
+	return nil, fmt.Errorf("GetPreviousRunFindings not implemented in mock harness")
+}
+
 func (m *mockIntegrationHarness) Mission() MissionContext {
 	return MissionContext{}
+}
+
+func (m *mockIntegrationHarness) MissionExecutionContext() MissionExecutionContextSDK {
+	return MissionExecutionContextSDK{}
 }
 
 func (m *mockIntegrationHarness) Target() TargetInfo {
@@ -127,8 +143,9 @@ func TestCallbackIntegration(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 
-	// Step 1: Start CallbackServer on the available port
-	server := NewCallbackServer(logger, port)
+	// Step 1: Create registry and start CallbackServer with registry support
+	registry := NewCallbackHarnessRegistry()
+	server := NewCallbackServerWithRegistry(logger, port, registry)
 	require.NotNil(t, server, "CallbackServer should be created")
 
 	// Start server in background
@@ -164,10 +181,14 @@ func TestCallbackIntegration(t *testing.T) {
 		tracer: noop.NewTracerProvider().Tracer("test"),
 	}
 
-	// Step 3: Register harness with a task ID
+	// Step 3: Register harness with mission ID and agent name (via registry)
 	taskID := "integration-test-task-123"
-	server.RegisterHarness(taskID, harness)
-	defer server.UnregisterHarness(taskID)
+	missionID := "integration-test-mission-456"
+	agentName := "test-agent"
+	registryKey := registry.Register(missionID, agentName, harness)
+	defer registry.Unregister(registryKey)
+
+	t.Logf("Registered harness: mission_id=%s agent_name=%s key=%s", missionID, agentName, registryKey)
 
 	// Step 4: Create SDK CallbackClient and connect
 	endpoint := fmt.Sprintf("127.0.0.1:%d", port)
@@ -182,8 +203,8 @@ func TestCallbackIntegration(t *testing.T) {
 	require.NoError(t, err, "CallbackClient should connect successfully")
 	defer client.Close()
 
-	// Step 5: Set task context on the callback client
-	client.SetTaskContext(taskID, "test-agent", "trace-123", "span-456")
+	// Step 5: Set task context on the callback client (including mission ID)
+	client.SetTaskContext(taskID, agentName, missionID, "trace-123", "span-456")
 
 	// Step 6: Test MemorySet callback
 	testKey := "test-key"

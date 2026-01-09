@@ -1,8 +1,13 @@
 package observability
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
+
+	"github.com/zero-day-ai/gibson/internal/harness"
 )
 
 // ObservabilityErrorCode represents error codes specific to observability operations.
@@ -159,4 +164,192 @@ func NewShutdownTimeoutError(component string) *ObservabilityError {
 		Retryable: false,
 		Cause:     nil,
 	}
+}
+
+// ErrorStrategy defines how observability errors should be handled when they occur.
+// This allows the system to continue operating even when observability infrastructure fails.
+type ErrorStrategy int
+
+const (
+	// StrategyLog logs the error at warn level and continues execution (default).
+	// This is the safest default strategy as it never silently fails.
+	StrategyLog ErrorStrategy = iota
+
+	// StrategyMetric emits a metric about the error and continues execution.
+	// Useful for tracking observability failures in the metrics system itself.
+	StrategyMetric
+
+	// StrategyIgnore silently discards the error and continues execution.
+	// Use with caution - only when you explicitly want to suppress observability failures.
+	StrategyIgnore
+
+	// StrategyFailFast returns the error immediately, failing the operation.
+	// Use in critical contexts where observability failures must not be ignored.
+	StrategyFailFast
+)
+
+// ErrorHandler provides centralized handling of observability failures.
+// It allows the system to continue operating even when observability infrastructure fails,
+// with configurable strategies for different failure modes.
+//
+// Thread-safety: All methods are safe for concurrent use.
+//
+// Example usage:
+//
+//	handler := NewErrorHandler(
+//	    WithErrorStrategy(StrategyLog),
+//	    WithErrorLogger(slog.Default()),
+//	    WithErrorMetrics(metricsRecorder),
+//	)
+//
+//	if err := handler.Handle(ctx, "event_emission", err); err != nil {
+//	    // Only non-nil if strategy is StrategyFailFast
+//	    return err
+//	}
+type ErrorHandler struct {
+	strategy ErrorStrategy
+	logger   *slog.Logger
+	metrics  harness.MetricsRecorder
+	mu       sync.RWMutex
+}
+
+// ErrorHandlerOption is a functional option for configuring ErrorHandler.
+type ErrorHandlerOption func(*ErrorHandler)
+
+// WithErrorStrategy sets the error handling strategy.
+func WithErrorStrategy(s ErrorStrategy) ErrorHandlerOption {
+	return func(h *ErrorHandler) {
+		h.strategy = s
+	}
+}
+
+// WithErrorLogger sets the fallback logger for StrategyLog.
+func WithErrorLogger(l *slog.Logger) ErrorHandlerOption {
+	return func(h *ErrorHandler) {
+		h.logger = l
+	}
+}
+
+// WithErrorMetrics sets the metrics recorder for StrategyMetric.
+func WithErrorMetrics(m harness.MetricsRecorder) ErrorHandlerOption {
+	return func(h *ErrorHandler) {
+		h.metrics = m
+	}
+}
+
+// NewErrorHandler creates a new ErrorHandler with the given options.
+// Defaults to StrategyLog with slog.Default() logger.
+func NewErrorHandler(opts ...ErrorHandlerOption) *ErrorHandler {
+	h := &ErrorHandler{
+		strategy: StrategyLog,
+		logger:   slog.Default(),
+		metrics:  nil,
+	}
+
+	for _, opt := range opts {
+		opt(h)
+	}
+
+	return h
+}
+
+// Handle processes an observability error according to the configured strategy.
+//
+// Parameters:
+//   - ctx: Context for logging and metrics (may contain trace information)
+//   - operation: Name of the operation that failed (e.g., "event_emission", "log_emission", "trace_recording")
+//   - err: The error that occurred
+//
+// Returns:
+//   - nil for StrategyLog, StrategyMetric, and StrategyIgnore
+//   - the original error for StrategyFailFast
+//
+// Thread-safe: Safe to call from multiple goroutines.
+func (h *ErrorHandler) Handle(ctx context.Context, operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	h.mu.RLock()
+	strategy := h.strategy
+	logger := h.logger
+	metrics := h.metrics
+	h.mu.RUnlock()
+
+	switch strategy {
+	case StrategyLog:
+		if logger != nil {
+			logger.WarnContext(ctx, "observability operation failed",
+				"operation", operation,
+				"error", err.Error(),
+			)
+		}
+		return nil
+
+	case StrategyMetric:
+		if metrics != nil {
+			metrics.RecordCounter("observability_error", 1, map[string]string{
+				"operation": operation,
+			})
+		}
+		return nil
+
+	case StrategyIgnore:
+		return nil
+
+	case StrategyFailFast:
+		return err
+
+	default:
+		// Fallback to log strategy for unknown strategies
+		if logger != nil {
+			logger.WarnContext(ctx, "observability operation failed (unknown strategy)",
+				"operation", operation,
+				"error", err.Error(),
+				"strategy", strategy,
+			)
+		}
+		return nil
+	}
+}
+
+// DefaultErrorHandler is the package-level default error handler.
+// It uses StrategyLog to ensure no errors are silently ignored by default.
+// Applications can replace this with a custom handler if needed.
+var DefaultErrorHandler = NewErrorHandler()
+
+// HandleEventEmissionError is a convenience function for handling event emission failures.
+// It uses the DefaultErrorHandler to process the error.
+//
+// Example:
+//
+//	if err := bus.Emit(ctx, event); err != nil {
+//	    _ = HandleEventEmissionError(ctx, err)
+//	}
+func HandleEventEmissionError(ctx context.Context, err error) error {
+	return DefaultErrorHandler.Handle(ctx, "event_emission", err)
+}
+
+// HandleLogEmissionError is a convenience function for handling log emission failures.
+// It uses the DefaultErrorHandler to process the error.
+//
+// Example:
+//
+//	if err := logger.Emit(ctx, record); err != nil {
+//	    _ = HandleLogEmissionError(ctx, err)
+//	}
+func HandleLogEmissionError(ctx context.Context, err error) error {
+	return DefaultErrorHandler.Handle(ctx, "log_emission", err)
+}
+
+// HandleTraceError is a convenience function for handling trace recording failures.
+// It uses the DefaultErrorHandler to process the error.
+//
+// Example:
+//
+//	if err := tracer.RecordSpan(ctx, span); err != nil {
+//	    _ = HandleTraceError(ctx, err)
+//	}
+func HandleTraceError(ctx context.Context, err error) error {
+	return DefaultErrorHandler.Handle(ctx, "trace_recording", err)
 }

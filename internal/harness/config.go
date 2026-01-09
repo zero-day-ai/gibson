@@ -3,6 +3,7 @@ package harness
 import (
 	"log/slog"
 
+	"github.com/zero-day-ai/gibson/internal/harness/middleware"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/plugin"
@@ -103,13 +104,19 @@ type HarnessConfig struct {
 	// To enable queries, provide a DefaultGraphRAGQueryBridge created with the same GraphRAGStore as GraphRAGBridge.
 	GraphRAGQueryBridge GraphRAGQueryBridge
 
-	// HarnessWrapper is an optional function that wraps newly created harnesses.
-	// This enables composition patterns like adding observability (TracedAgentHarness),
-	// verbosity (VerboseHarnessWrapper), or other cross-cutting concerns.
-	// The wrapper is applied AFTER the DefaultAgentHarness is created but BEFORE it's returned.
-	// If nil, no wrapping is performed and the harness is returned as-is.
-	// Optional: defaults to nil (no wrapping).
-	HarnessWrapper func(AgentHarness) AgentHarness
+	// Middleware is the middleware chain to apply to harness operations.
+	// When set, operations are routed through the configured middleware chain
+	// for cross-cutting concerns like tracing, logging, and event emission.
+	//
+	// Build the chain using middleware.Chain() with the desired middleware:
+	//   middleware.Chain(
+	//       middleware.TracingMiddleware(tracer),
+	//       middleware.LoggingMiddleware(logger, level),
+	//       middleware.EventMiddleware(eventBus, errorHandler),
+	//   )
+	//
+	// Optional: defaults to nil (no middleware).
+	Middleware middleware.Middleware
 
 	// MemoryWrapper is an optional function that wraps MemoryManager instances.
 	// This enables composition patterns like adding observability (TracedMemoryManager)

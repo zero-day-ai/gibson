@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
@@ -22,23 +21,24 @@ import (
 // It receives harness operation requests from remote agents via gRPC and
 // delegates them to the appropriate registered harness instance.
 //
-// The service supports two modes of harness lookup:
-//  1. Task-based lookup (legacy): Uses activeHarnesses sync.Map keyed by task ID
-//  2. Mission-based lookup (new): Uses CallbackHarnessRegistry keyed by "missionID:agentName"
+// The service uses mission-based harness lookup via CallbackHarnessRegistry,
+// requiring explicit mission_id and agent_name in the callback context.
+// This enforces clean separation and supports concurrent execution of the
+// same agent in different missions.
 //
 // When an agent running in standalone mode makes a harness call, the SDK's
-// CallbackClient sends a gRPC request with context information (task ID or
-// mission ID + agent name), which is used to look up the correct harness instance.
+// CallbackClient sends a gRPC request with context information (mission ID
+// and agent name), which is used to look up the correct harness instance.
 //
 // To register this service with a gRPC server:
 //
-//	service := harness.NewHarnessCallbackService(logger)
+//	service := harness.NewHarnessCallbackServiceWithRegistry(logger, registry)
 //	pb.RegisterHarnessCallbackServiceServer(grpcServer, service)
 //
 // Before executing an agent task, register its harness:
 //
-//	service.RegisterHarness(taskID, harness)
-//	defer service.UnregisterHarness(taskID)
+//	registry.RegisterHarnessForMission(missionID, agentName, harness)
+//	defer registry.UnregisterHarnessForMission(missionID, agentName)
 type HarnessCallbackService struct {
 	pb.UnimplementedHarnessCallbackServiceServer
 
@@ -104,13 +104,9 @@ func (s *HarnessCallbackService) UnregisterHarness(taskID string) {
 
 // getHarness retrieves the harness for a request based on the context information.
 //
-// This method supports two lookup modes:
-//  1. Mission-based (preferred): Uses registry with missionID + agentName
-//  2. Task-based (legacy): Uses activeHarnesses sync.Map with taskID
-//
-// The method tries mission-based lookup first if both missionID and agentName
-// are provided. If the registry doesn't find a harness, it falls back to
-// task-based lookup using the taskID.
+// This method requires explicit mission ID and agent name for harness lookup via registry.
+// The legacy string parsing and task-based lookup have been removed to enforce the use
+// of the explicit mission_id field in ContextInfo.
 //
 // Parameters:
 //   - ctx: Request context
@@ -124,61 +120,37 @@ func (s *HarnessCallbackService) getHarness(ctx context.Context, contextInfo *pb
 		return nil, status.Error(codes.InvalidArgument, "missing context info in request")
 	}
 
-	// Try mission-based lookup first if registry is configured
-	// Note: Mission-based lookup requires both mission ID and agent name in the context.
-	// The mission ID is typically extracted from the task ID (format: "missionID:taskID")
-	// or passed explicitly in a future version of the protocol.
-	if s.registry != nil && contextInfo.TaskId != "" && contextInfo.AgentName != "" {
-		// Extract mission ID from task ID if it follows the format "missionID:taskName"
-		// For now, we'll use the task_id as-is since the registry registration
-		// happens with the actual mission ID extracted from the harness context.
-		// This is a temporary approach until we add mission_id to the ContextInfo proto.
-
-		// Try to extract mission ID from task ID (if it contains a colon separator)
-		taskParts := strings.Split(contextInfo.TaskId, ":")
-		if len(taskParts) >= 2 {
-			missionID := taskParts[0]
-			harness, err := s.registry.Lookup(missionID, contextInfo.AgentName)
-			if err == nil {
-				s.logger.Debug("harness lookup succeeded via mission-based registry",
-					"mission_id", missionID,
-					"agent_name", contextInfo.AgentName,
-					"task_id", contextInfo.TaskId,
-					"lookup_mode", "mission-based",
-				)
-				return harness, nil
-			}
-
-			s.logger.Debug("mission-based harness lookup failed, trying task-based fallback",
-				"mission_id", missionID,
-				"agent_name", contextInfo.AgentName,
-				"task_id", contextInfo.TaskId,
-				"error", err,
-			)
-		}
+	// Require explicit mission ID and agent name
+	if contextInfo.MissionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "missing mission_id in context info - ensure agent SDK is v0.7.0+")
 	}
 
-	// Fall back to task-based lookup (legacy mode)
-	if contextInfo.TaskId == "" {
-		return nil, status.Error(codes.InvalidArgument, "missing task ID and mission ID/agent name in request context")
+	if contextInfo.AgentName == "" {
+		return nil, status.Error(codes.InvalidArgument, "missing agent_name in context info")
 	}
 
-	taskID := contextInfo.TaskId
-	value, ok := s.activeHarnesses.Load(taskID)
-	if !ok {
-		s.logger.Error("harness not found for task", "task_id", taskID)
-		return nil, status.Errorf(codes.NotFound, "no active harness for task: %s", taskID)
+	// Registry must be configured for mission-based lookup
+	if s.registry == nil {
+		return nil, status.Error(codes.Internal, "callback registry not configured")
 	}
 
-	harness, ok := value.(AgentHarness)
-	if !ok {
-		s.logger.Error("invalid harness type", "task_id", taskID)
-		return nil, status.Error(codes.Internal, "invalid harness type")
+	// Perform registry lookup with explicit mission ID and agent name
+	harness, err := s.registry.Lookup(contextInfo.MissionId, contextInfo.AgentName)
+	if err != nil {
+		s.logger.Error("harness lookup failed",
+			"mission_id", contextInfo.MissionId,
+			"agent_name", contextInfo.AgentName,
+			"task_id", contextInfo.TaskId,
+			"error", err,
+		)
+		return nil, status.Errorf(codes.NotFound, "no active harness for mission %s, agent %s: %v",
+			contextInfo.MissionId, contextInfo.AgentName, err)
 	}
 
 	s.logger.Debug("harness lookup succeeded",
-		"task_id", taskID,
-		"lookup_mode", "task-based",
+		"mission_id", contextInfo.MissionId,
+		"agent_name", contextInfo.AgentName,
+		"task_id", contextInfo.TaskId,
 	)
 
 	return harness, nil

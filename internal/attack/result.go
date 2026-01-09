@@ -68,6 +68,10 @@ type AttackResult struct {
 	Status   AttackStatus `json:"status"`
 	Error    error        `json:"error,omitempty"`
 	ExitCode int          `json:"exit_code"`
+
+	// Agent failure details
+	AgentOutput string   `json:"agent_output,omitempty"`
+	FailedNodes []string `json:"failed_nodes,omitempty"`
 }
 
 // NewAttackResult creates a new AttackResult with default values
@@ -124,6 +128,19 @@ func (r *AttackResult) WithError(err error) *AttackResult {
 // WithExitCode sets the exit code
 func (r *AttackResult) WithExitCode(code int) *AttackResult {
 	r.ExitCode = code
+	return r
+}
+
+// WithAgentFailure sets the result as failed with agent output details.
+// It sets the status to failed, stores the agent output and failed node IDs,
+// and sets the exit code to 1 if not already set.
+func (r *AttackResult) WithAgentFailure(output string, failedNodes []string) *AttackResult {
+	r.Status = AttackStatusFailed
+	r.AgentOutput = output
+	r.FailedNodes = failedNodes
+	if r.ExitCode == 0 {
+		r.ExitCode = 1
+	}
 	return r
 }
 

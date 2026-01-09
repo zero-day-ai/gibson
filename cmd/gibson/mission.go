@@ -468,7 +468,7 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 
 	// Setup verbose logging infrastructure
 	jsonOutput := flags.OutputFormat == "json"
-	_, cleanup := internal.SetupVerbose(cmd, flags.VerbosityLevel(), jsonOutput)
+	cleanup := internal.SetupVerbose(cmd, flags.VerbosityLevel(), jsonOutput)
 	defer cleanup()
 
 	verbose := flags.IsVerbose()
@@ -564,7 +564,7 @@ func runMissionResume(cmd *cobra.Command, args []string) error {
 
 	// Setup verbose logging infrastructure
 	jsonOutput := flags.OutputFormat == "json"
-	_, cleanup := internal.SetupVerbose(cmd, flags.VerbosityLevel(), jsonOutput)
+	cleanup := internal.SetupVerbose(cmd, flags.VerbosityLevel(), jsonOutput)
 	defer cleanup()
 
 	verbose := flags.IsVerbose()

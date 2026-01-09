@@ -65,21 +65,48 @@ func (l *viperConfigLoader) Load(path string) (*Config, error) {
 
 // LoadWithDefaults loads configuration from the specified file path.
 // If the file doesn't exist, returns default configuration.
+// If the file exists, it merges file values on top of defaults (missing sections get defaults).
 func (l *viperConfigLoader) LoadWithDefaults(path string) (*Config, error) {
+	// Start with defaults
+	cfg := DefaultConfig()
+
 	// Check if file exists
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		cfg := DefaultConfig()
-		// Validate default configuration
+		// No file, just validate and return defaults
 		if err := l.validator.Validate(cfg); err != nil {
 			return nil, fmt.Errorf("default configuration validation failed: %w", err)
 		}
 		return cfg, nil
 	}
 
-	// File exists, load it normally
-	cfg, err := l.Load(path)
-	if err != nil {
-		return nil, err
+	// File exists, load and merge on top of defaults
+	v := viper.New()
+	v.SetConfigFile(path)
+	v.SetConfigType("yaml")
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read config file: %w", err)
+	}
+
+	// Unmarshal into the cfg struct (which already has defaults)
+	if err := v.Unmarshal(cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Read raw config into map for environment variable interpolation
+	rawConfig := v.AllSettings()
+	interpolatedConfig := interpolateEnvVars(rawConfig)
+
+	// Apply environment variable interpolation to the unmarshaled config
+	if interpolatedMap, ok := interpolatedConfig.(map[string]interface{}); ok {
+		if err := applyInterpolation(cfg, interpolatedMap); err != nil {
+			return nil, fmt.Errorf("failed to apply environment variable interpolation: %w", err)
+		}
+	}
+
+	// Validate the loaded configuration
+	if err := l.validator.Validate(cfg); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
 	}
 
 	return cfg, nil

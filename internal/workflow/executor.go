@@ -254,6 +254,10 @@ func (e *WorkflowExecutor) executeNodeBatch(
 					nodeErr = err
 				}
 				state.MarkNodeFailed(n.ID, nodeErr)
+				// Also store the result so we can extract output/error details later
+				if result != nil {
+					state.StoreResult(n.ID, result)
+				}
 				// Emit node failed event
 				e.emitNodeEvent(ctx, n, "failed", nodeDuration, nodeErr)
 			} else if result.Status == NodeStatusSkipped {

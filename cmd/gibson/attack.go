@@ -26,7 +26,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
-	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -169,8 +168,8 @@ func init() {
 func runAttackCommand(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
-	// Setup verbose logging (Phase 5, Task 13)
-	vw, cleanup := internal.SetupVerbose(cmd, globalFlags.VerbosityLevel(), globalFlags.OutputFormat == "json")
+	// Setup verbose logging
+	cleanup := internal.SetupVerbose(cmd, globalFlags.VerbosityLevel(), globalFlags.OutputFormat == "json")
 	defer cleanup()
 
 	// Handle --list-agents subcommand (Task 8.2, Task 14)
@@ -231,7 +230,7 @@ func runAttackCommand(cmd *cobra.Command, args []string) error {
 	outputHandler := attack.NewOutputHandler(opts.OutputFormat, cmd.OutOrStdout(), opts.Verbose, opts.Quiet)
 
 	// Create attack runner with dependencies
-	runner, err := createAttackRunner(ctx, vw)
+	runner, err := createAttackRunner(ctx)
 	if err != nil {
 		return internal.WrapError(attack.ExitError, "failed to create attack runner", err)
 	}
@@ -432,7 +431,7 @@ func buildAttackOptions() (*attack.AttackOptions, error) {
 }
 
 // createAttackRunner creates an AttackRunner with all dependencies (Task 4.1, 4.2)
-func createAttackRunner(ctx context.Context, vw *verbose.VerboseWriter) (attack.AttackRunner, error) {
+func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
 	if err != nil {
@@ -487,11 +486,8 @@ func createAttackRunner(ctx context.Context, vw *verbose.VerboseWriter) (attack.
 		return nil, fmt.Errorf("failed to create harness factory: %w", err)
 	}
 
-	// Wrap harness factory with verbose events if verbose is enabled (Phase 5, Task 13)
-	var harnessFactory harness.HarnessFactoryInterface = baseHarnessFactory
-	if vw != nil {
-		harnessFactory = verbose.WrapHarnessFactory(harnessFactory, vw.Bus(), globalFlags.VerbosityLevel())
-	}
+	// Use the base harness factory directly - middleware handles observability
+	harnessFactory := baseHarnessFactory
 
 	// Step 5: Create workflow executor
 	// NOTE (Task 7): When CallbackManager is available (Task 5), pass it to the workflow executor
@@ -515,11 +511,6 @@ func createAttackRunner(ctx context.Context, vw *verbose.VerboseWriter) (attack.
 	runnerOpts := []attack.RunnerOption{
 		attack.WithLogger(slog.Default()),
 		attack.WithTracer(trace.NewNoopTracerProvider().Tracer("attack-runner")),
-	}
-
-	// Add verbose bus if enabled (Phase 5, Task 14)
-	if vw != nil {
-		runnerOpts = append(runnerOpts, attack.WithVerboseBus(vw.Bus()))
 	}
 
 	// Step 8: Create and return attack runner

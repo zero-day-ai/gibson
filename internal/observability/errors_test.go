@@ -1,12 +1,17 @@
 package observability
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/gibson/internal/harness"
 )
 
 // TestObservabilityErrorCode_Constants verifies all error codes are defined correctly.
@@ -539,4 +544,404 @@ func TestErrorMessage_ContainsCode(t *testing.T) {
 			assert.Contains(t, errMsg, string(err.Code))
 		})
 	}
+}
+
+// --- ErrorHandler Tests ---
+
+// errorHandlerMockMetrics is a test double for harness.MetricsRecorder.
+type errorHandlerMockMetrics struct {
+	mu       sync.Mutex
+	counters map[string]int64
+	labels   map[string]map[string]string
+}
+
+func newErrorHandlerMockMetrics() *errorHandlerMockMetrics {
+	return &errorHandlerMockMetrics{
+		counters: make(map[string]int64),
+		labels:   make(map[string]map[string]string),
+	}
+}
+
+func (m *errorHandlerMockMetrics) RecordCounter(name string, value int64, labels map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.counters[name] += value
+	m.labels[name] = labels
+}
+
+func (m *errorHandlerMockMetrics) RecordGauge(name string, value float64, labels map[string]string) {}
+
+func (m *errorHandlerMockMetrics) RecordHistogram(name string, value float64, labels map[string]string) {}
+
+func (m *errorHandlerMockMetrics) getCounter(name string) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.counters[name]
+}
+
+func (m *errorHandlerMockMetrics) getLabels(name string) map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.labels[name]
+}
+
+var _ harness.MetricsRecorder = (*errorHandlerMockMetrics)(nil)
+
+// TestNewErrorHandler tests default ErrorHandler creation.
+func TestNewErrorHandler(t *testing.T) {
+	handler := NewErrorHandler()
+
+	assert.NotNil(t, handler)
+	assert.Equal(t, StrategyLog, handler.strategy)
+	assert.NotNil(t, handler.logger)
+}
+
+// TestNewErrorHandler_WithOptions tests ErrorHandler creation with options.
+func TestNewErrorHandler_WithOptions(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	metrics := newErrorHandlerMockMetrics()
+
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyMetric),
+		WithErrorLogger(logger),
+		WithErrorMetrics(metrics),
+	)
+
+	assert.Equal(t, StrategyMetric, handler.strategy)
+	assert.Equal(t, logger, handler.logger)
+	assert.Equal(t, metrics, handler.metrics)
+}
+
+// TestErrorHandler_Handle_StrategyLog tests StrategyLog behavior.
+func TestErrorHandler_Handle_StrategyLog(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyLog),
+		WithErrorLogger(logger),
+	)
+
+	testErr := errors.New("test error")
+	result := handler.Handle(context.Background(), "event_emission", testErr)
+
+	// Should return nil (continue execution)
+	assert.Nil(t, result)
+
+	// Should have logged the error
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "observability operation failed")
+	assert.Contains(t, logOutput, "event_emission")
+	assert.Contains(t, logOutput, "test error")
+}
+
+// TestErrorHandler_Handle_StrategyMetric tests StrategyMetric behavior.
+func TestErrorHandler_Handle_StrategyMetric(t *testing.T) {
+	metrics := newErrorHandlerMockMetrics()
+
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyMetric),
+		WithErrorMetrics(metrics),
+	)
+
+	testErr := errors.New("test error")
+	result := handler.Handle(context.Background(), "log_emission", testErr)
+
+	// Should return nil (continue execution)
+	assert.Nil(t, result)
+
+	// Should have recorded a metric
+	assert.Equal(t, int64(1), metrics.getCounter("observability_error"))
+	labels := metrics.getLabels("observability_error")
+	assert.Equal(t, "log_emission", labels["operation"])
+}
+
+// TestErrorHandler_Handle_StrategyIgnore tests StrategyIgnore behavior.
+func TestErrorHandler_Handle_StrategyIgnore(t *testing.T) {
+	handler := NewErrorHandler(WithErrorStrategy(StrategyIgnore))
+
+	testErr := errors.New("test error")
+	result := handler.Handle(context.Background(), "trace_recording", testErr)
+
+	// Should return nil and do nothing
+	assert.Nil(t, result)
+}
+
+// TestErrorHandler_Handle_StrategyFailFast tests StrategyFailFast behavior.
+func TestErrorHandler_Handle_StrategyFailFast(t *testing.T) {
+	handler := NewErrorHandler(WithErrorStrategy(StrategyFailFast))
+
+	testErr := errors.New("test error")
+	result := handler.Handle(context.Background(), "event_emission", testErr)
+
+	// Should return the original error
+	assert.Equal(t, testErr, result)
+}
+
+// TestErrorHandler_Handle_NilError tests handling of nil errors.
+func TestErrorHandler_Handle_NilError(t *testing.T) {
+	handler := NewErrorHandler(WithErrorStrategy(StrategyFailFast))
+
+	result := handler.Handle(context.Background(), "operation", nil)
+
+	// Should return nil for nil input
+	assert.Nil(t, result)
+}
+
+// TestErrorHandler_Handle_Concurrent tests thread-safety.
+func TestErrorHandler_Handle_Concurrent(t *testing.T) {
+	metrics := newErrorHandlerMockMetrics()
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyMetric),
+		WithErrorMetrics(metrics),
+	)
+
+	const goroutines = 100
+	const errorsPerGoroutine = 10
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < errorsPerGoroutine; j++ {
+				testErr := errors.New("concurrent error")
+				_ = handler.Handle(context.Background(), "test_op", testErr)
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Should have recorded all errors
+	expected := int64(goroutines * errorsPerGoroutine)
+	assert.Equal(t, expected, metrics.getCounter("observability_error"))
+}
+
+// TestErrorHandler_DefaultErrorHandler tests the package-level default.
+func TestErrorHandler_DefaultErrorHandler(t *testing.T) {
+	assert.NotNil(t, DefaultErrorHandler)
+	assert.Equal(t, StrategyLog, DefaultErrorHandler.strategy)
+}
+
+// TestHandleEventEmissionError tests the convenience function.
+func TestHandleEventEmissionError(t *testing.T) {
+	testErr := errors.New("event emission failed")
+	result := HandleEventEmissionError(context.Background(), testErr)
+
+	// Should use default handler (StrategyLog) and return nil
+	assert.Nil(t, result)
+}
+
+// TestHandleLogEmissionError tests the convenience function.
+func TestHandleLogEmissionError(t *testing.T) {
+	testErr := errors.New("log emission failed")
+	result := HandleLogEmissionError(context.Background(), testErr)
+
+	// Should use default handler (StrategyLog) and return nil
+	assert.Nil(t, result)
+}
+
+// TestHandleTraceError tests the convenience function.
+func TestHandleTraceError(t *testing.T) {
+	testErr := errors.New("trace recording failed")
+	result := HandleTraceError(context.Background(), testErr)
+
+	// Should use default handler (StrategyLog) and return nil
+	assert.Nil(t, result)
+}
+
+// TestErrorHandler_Handle_StrategyMetric_NilMetrics tests metric strategy with nil recorder.
+func TestErrorHandler_Handle_StrategyMetric_NilMetrics(t *testing.T) {
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyMetric),
+		WithErrorMetrics(nil),
+	)
+
+	testErr := errors.New("test error")
+	result := handler.Handle(context.Background(), "operation", testErr)
+
+	// Should handle nil metrics gracefully and return nil
+	assert.Nil(t, result)
+}
+
+// TestErrorHandler_Handle_StrategyLog_NilLogger tests log strategy with nil logger.
+func TestErrorHandler_Handle_StrategyLog_NilLogger(t *testing.T) {
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyLog),
+		WithErrorLogger(nil),
+	)
+
+	testErr := errors.New("test error")
+	result := handler.Handle(context.Background(), "operation", testErr)
+
+	// Should handle nil logger gracefully and return nil
+	assert.Nil(t, result)
+}
+
+// TestErrorHandler_Handle_MultipleStrategies tests switching strategies.
+func TestErrorHandler_Handle_MultipleStrategies(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	metrics := newErrorHandlerMockMetrics()
+
+	tests := []struct {
+		name     string
+		strategy ErrorStrategy
+		wantLog  bool
+		wantErr  bool
+	}{
+		{
+			name:     "log strategy logs",
+			strategy: StrategyLog,
+			wantLog:  true,
+			wantErr:  false,
+		},
+		{
+			name:     "metric strategy does not log",
+			strategy: StrategyMetric,
+			wantLog:  false,
+			wantErr:  false,
+		},
+		{
+			name:     "ignore strategy does nothing",
+			strategy: StrategyIgnore,
+			wantLog:  false,
+			wantErr:  false,
+		},
+		{
+			name:     "failfast strategy returns error",
+			strategy: StrategyFailFast,
+			wantLog:  false,
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf.Reset()
+			handler := NewErrorHandler(
+				WithErrorStrategy(tt.strategy),
+				WithErrorLogger(logger),
+				WithErrorMetrics(metrics),
+			)
+
+			testErr := errors.New("test error")
+			result := handler.Handle(context.Background(), "operation", testErr)
+
+			if tt.wantErr {
+				assert.Equal(t, testErr, result)
+			} else {
+				assert.Nil(t, result)
+			}
+
+			if tt.wantLog {
+				assert.Contains(t, buf.String(), "observability operation failed")
+			} else {
+				assert.Empty(t, buf.String())
+			}
+		})
+	}
+}
+
+// TestErrorHandler_Handle_WithContext tests context propagation.
+func TestErrorHandler_Handle_WithContext(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyLog),
+		WithErrorLogger(logger),
+	)
+
+	ctx := context.Background()
+	testErr := errors.New("test error")
+	result := handler.Handle(ctx, "operation_with_context", testErr)
+
+	assert.Nil(t, result)
+	logOutput := buf.String()
+	assert.Contains(t, logOutput, "operation_with_context")
+}
+
+// BenchmarkErrorHandler_Handle_StrategyLog benchmarks log strategy.
+func BenchmarkErrorHandler_Handle_StrategyLog(b *testing.B) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyLog),
+		WithErrorLogger(logger),
+	)
+	testErr := errors.New("benchmark error")
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = handler.Handle(ctx, "operation", testErr)
+	}
+}
+
+// BenchmarkErrorHandler_Handle_StrategyMetric benchmarks metric strategy.
+func BenchmarkErrorHandler_Handle_StrategyMetric(b *testing.B) {
+	metrics := newErrorHandlerMockMetrics()
+	handler := NewErrorHandler(
+		WithErrorStrategy(StrategyMetric),
+		WithErrorMetrics(metrics),
+	)
+	testErr := errors.New("benchmark error")
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = handler.Handle(ctx, "operation", testErr)
+	}
+}
+
+// BenchmarkErrorHandler_Handle_StrategyIgnore benchmarks ignore strategy.
+func BenchmarkErrorHandler_Handle_StrategyIgnore(b *testing.B) {
+	handler := NewErrorHandler(WithErrorStrategy(StrategyIgnore))
+	testErr := errors.New("benchmark error")
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = handler.Handle(ctx, "operation", testErr)
+	}
+}
+
+// BenchmarkErrorHandler_Handle_StrategyFailFast benchmarks failfast strategy.
+func BenchmarkErrorHandler_Handle_StrategyFailFast(b *testing.B) {
+	handler := NewErrorHandler(WithErrorStrategy(StrategyFailFast))
+	testErr := errors.New("benchmark error")
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = handler.Handle(ctx, "operation", testErr)
+	}
+}
+
+// BenchmarkConvenienceFunctions benchmarks the package-level convenience functions.
+func BenchmarkConvenienceFunctions(b *testing.B) {
+	testErr := errors.New("benchmark error")
+	ctx := context.Background()
+
+	b.Run("HandleEventEmissionError", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = HandleEventEmissionError(ctx, testErr)
+		}
+	})
+
+	b.Run("HandleLogEmissionError", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = HandleLogEmissionError(ctx, testErr)
+		}
+	})
+
+	b.Run("HandleTraceError", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			_ = HandleTraceError(ctx, testErr)
+		}
+	})
 }

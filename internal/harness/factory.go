@@ -171,9 +171,9 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		graphRAGQueryBridge: f.config.GraphRAGQueryBridge,
 	}
 
-	// Apply optional harness wrapper (e.g., TracedAgentHarness, VerboseHarnessWrapper)
-	if f.config.HarnessWrapper != nil {
-		harness = f.config.HarnessWrapper(harness)
+	// Apply middleware if configured
+	if f.config.Middleware != nil {
+		harness = NewMiddlewareHarness(harness, f.config.Middleware)
 	}
 
 	return harness, nil

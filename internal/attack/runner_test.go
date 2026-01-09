@@ -878,3 +878,214 @@ func TestShouldPersistMission(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckNodeFailures tests the checkNodeFailures method
+func TestCheckNodeFailures(t *testing.T) {
+	runner := &DefaultAttackRunner{}
+
+	tests := []struct {
+		name          string
+		missionResult *mission.MissionResult
+		wantFailed    bool
+		wantOutput    string
+		wantNodes     []string
+	}{
+		{
+			name: "no failures - nil WorkflowResult",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: nil,
+			},
+			wantFailed: false,
+			wantOutput: "",
+			wantNodes:  nil,
+		},
+		{
+			name: "no failures - empty node_results",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{},
+				},
+			},
+			wantFailed: false,
+			wantOutput: "",
+			wantNodes:  nil,
+		},
+		{
+			name: "no failures - all nodes succeeded",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{
+						"node-1": map[string]any{
+							"status": "completed",
+							"output": map[string]any{
+								"output": "success message",
+							},
+						},
+					},
+				},
+			},
+			wantFailed: false,
+			wantOutput: "",
+			wantNodes:  nil,
+		},
+		{
+			name: "single failed node with output",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{
+						"attack-node-1": map[string]any{
+							"status": "failed",
+							"output": map[string]any{
+								"output": "Harness is nil - callback endpoint not received",
+							},
+						},
+					},
+				},
+			},
+			wantFailed: true,
+			wantOutput: "Harness is nil - callback endpoint not received",
+			wantNodes:  []string{"attack-node-1"},
+		},
+		{
+			name: "failed node with message field instead of output",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{
+						"node-1": map[string]any{
+							"status": "failed",
+							"output": map[string]any{
+								"message": "Agent initialization failed",
+							},
+						},
+					},
+				},
+			},
+			wantFailed: true,
+			wantOutput: "Agent initialization failed",
+			wantNodes:  []string{"node-1"},
+		},
+		{
+			name: "failed node with error field",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{
+						"node-1": map[string]any{
+							"status": "error",
+							"error": map[string]any{
+								"message": "Execution error occurred",
+							},
+						},
+					},
+				},
+			},
+			wantFailed: true,
+			wantOutput: "Execution error occurred",
+			wantNodes:  []string{"node-1"},
+		},
+		{
+			name: "multiple failed nodes",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{
+						"node-1": map[string]any{
+							"status": "failed",
+							"output": map[string]any{
+								"output": "First error",
+							},
+						},
+						"node-2": map[string]any{
+							"status": "completed",
+							"output": map[string]any{
+								"output": "Success",
+							},
+						},
+						"node-3": map[string]any{
+							"status": "error",
+							"error": map[string]any{
+								"message": "Second error",
+							},
+						},
+					},
+				},
+			},
+			wantFailed: true,
+			wantOutput: "First error; Second error",
+			wantNodes:  []string{"node-1", "node-3"},
+		},
+		{
+			name: "failed node with empty output",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{
+						"node-1": map[string]any{
+							"status": "failed",
+							"output": map[string]any{
+								"output": "",
+							},
+						},
+					},
+				},
+			},
+			wantFailed: true,
+			wantOutput: "",
+			wantNodes:  []string{"node-1"},
+		},
+		{
+			name: "malformed WorkflowResult - node_results not a map",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": "not a map",
+				},
+			},
+			wantFailed: false,
+			wantOutput: "",
+			wantNodes:  nil,
+		},
+		{
+			name: "malformed WorkflowResult - node result not a map",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"node_results": map[string]any{
+						"node-1": "not a map",
+					},
+				},
+			},
+			wantFailed: false,
+			wantOutput: "",
+			wantNodes:  nil,
+		},
+		{
+			name: "missing node_results key",
+			missionResult: &mission.MissionResult{
+				WorkflowResult: map[string]any{
+					"other_field": "value",
+				},
+			},
+			wantFailed: false,
+			wantOutput: "",
+			wantNodes:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			failed, output, nodes := runner.checkNodeFailures(tt.missionResult)
+			assert.Equal(t, tt.wantFailed, failed, "failed mismatch")
+
+			// For multiple nodes, the order might vary (map iteration)
+			if len(tt.wantNodes) > 1 && len(nodes) > 1 {
+				assert.ElementsMatch(t, tt.wantNodes, nodes, "failed nodes mismatch")
+			} else {
+				assert.Equal(t, tt.wantNodes, nodes, "failed nodes mismatch")
+			}
+
+			// For multiple outputs, check that output contains expected parts
+			if len(tt.wantNodes) > 1 && tt.wantOutput != "" {
+				// Just verify we got output, exact order may vary
+				assert.NotEmpty(t, output, "output should not be empty for multiple failures")
+			} else {
+				assert.Equal(t, tt.wantOutput, output, "output mismatch")
+			}
+		})
+	}
+}

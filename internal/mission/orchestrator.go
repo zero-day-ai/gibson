@@ -456,6 +456,52 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 	})
 
 	result.CompletedAt = completedAt
+
+	// Populate WorkflowResult so attack runner can check for node failures
+	if workflowResult != nil {
+		// Convert workflow result to map[string]any for storage
+		workflowResultMap := make(map[string]any)
+		workflowResultMap["workflow_id"] = workflowResult.WorkflowID.String()
+		workflowResultMap["status"] = string(workflowResult.Status)
+		workflowResultMap["nodes_executed"] = workflowResult.NodesExecuted
+		workflowResultMap["nodes_failed"] = workflowResult.NodesFailed
+		workflowResultMap["nodes_skipped"] = workflowResult.NodesSkipped
+		workflowResultMap["total_duration"] = workflowResult.TotalDuration.String()
+
+		// Convert node results
+		if workflowResult.NodeResults != nil {
+			nodeResultsMap := make(map[string]any)
+			for nodeID, nodeResult := range workflowResult.NodeResults {
+				nodeMap := make(map[string]any)
+				nodeMap["node_id"] = nodeResult.NodeID
+				nodeMap["status"] = string(nodeResult.Status)
+				nodeMap["duration"] = nodeResult.Duration.String()
+				nodeMap["retry_count"] = nodeResult.RetryCount
+				if nodeResult.Output != nil {
+					nodeMap["output"] = nodeResult.Output
+				}
+				if nodeResult.Error != nil {
+					nodeMap["error"] = map[string]any{
+						"code":    nodeResult.Error.Code,
+						"message": nodeResult.Error.Message,
+					}
+				}
+				nodeResultsMap[nodeID] = nodeMap
+			}
+			workflowResultMap["node_results"] = nodeResultsMap
+		}
+
+		// Add error if present
+		if workflowResult.Error != nil {
+			workflowResultMap["error"] = map[string]any{
+				"code":    string(workflowResult.Error.Code),
+				"message": workflowResult.Error.Message,
+			}
+		}
+
+		result.WorkflowResult = workflowResultMap
+	}
+
 	return result, nil
 }
 

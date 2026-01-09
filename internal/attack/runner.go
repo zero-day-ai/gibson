@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
@@ -13,7 +14,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -40,9 +40,8 @@ type DefaultAttackRunner struct {
 	targetResolver  TargetResolver
 	agentSelector   AgentSelector
 	payloadFilter   PayloadFilter
-	logger          *slog.Logger
-	tracer          trace.Tracer
-	verboseBus      verbose.VerboseEventBus // optional, may be nil (Phase 5, Task 14)
+	logger *slog.Logger
+	tracer trace.Tracer
 }
 
 // RunnerOption is a functional option for configuring the AttackRunner.
@@ -90,12 +89,6 @@ func WithComponentDiscovery(discovery registry.ComponentDiscovery) RunnerOption 
 	}
 }
 
-// WithVerboseBus sets the verbose event bus for emitting verbose events (Phase 5, Task 14).
-func WithVerboseBus(bus verbose.VerboseEventBus) RunnerOption {
-	return func(r *DefaultAttackRunner) {
-		r.verboseBus = bus
-	}
-}
 
 // NewAttackRunner creates a new DefaultAttackRunner with the provided dependencies.
 // It uses functional options for optional configuration.
@@ -181,12 +174,6 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 		"type", targetConfig.Type,
 		"provider", targetConfig.Provider)
 
-	// Emit verbose event: target validated (Phase 5, Task 13)
-	r.emitSystemEvent(ctx, "attack.target.validated", map[string]any{
-		"target_url":  targetConfig.URL,
-		"target_type": string(targetConfig.Type),
-		"provider":    targetConfig.Provider,
-	})
 
 	// Step 2: Select agent
 	selectedAgent, err := r.agentSelector.Select(ctx, opts.AgentName)
@@ -197,11 +184,6 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 
 	r.logger.Debug("Agent selected", "agent", opts.AgentName)
 
-	// Emit verbose event: agent selected (Phase 5, Task 13)
-	r.emitSystemEvent(ctx, "attack.agent.selected", map[string]any{
-		"agent_name": opts.AgentName,
-	})
-
 	// Step 3: Filter payloads
 	filteredPayloads, err := r.payloadFilter.Filter(ctx, opts)
 	if err != nil {
@@ -211,9 +193,6 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 
 	r.logger.Debug("Payloads filtered", "count", len(filteredPayloads))
 
-	// Emit verbose event: payload filtering complete (Phase 5, Task 14)
-	r.emitPayloadFilterEvent(ctx, opts, len(filteredPayloads))
-
 	// Return early if dry-run mode
 	if opts.DryRun {
 		r.logger.Info("Dry-run mode: attack validation successful")
@@ -222,10 +201,6 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 	}
 
 	// Step 4: Create ephemeral mission
-	r.emitSystemEvent(ctx, "attack.phase.mission_creation", map[string]any{
-		"agent": opts.AgentName,
-	})
-
 	missionObj, err := r.createEphemeralMission(ctx, opts, targetConfig, selectedAgent)
 	if err != nil {
 		r.logger.Error("Failed to create ephemeral mission", "error", err)
@@ -241,11 +216,6 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 	}
 
 	// Step 5: Execute mission through orchestrator
-	r.emitSystemEvent(ctx, "attack.phase.execution", map[string]any{
-		"mission_id": missionObj.ID.String(),
-		"timeout":    opts.Timeout.String(),
-	})
-
 	// Create a cancellable context with timeout if specified
 	execCtx := ctx
 	var cancel context.CancelFunc
@@ -275,6 +245,27 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 
 		r.logger.Error("Mission execution failed", "error", err)
 		return result.WithError(fmt.Errorf("mission execution failed: %w", err)), nil
+	}
+
+	// Check for node failures before collecting findings
+	r.logger.Info("Checking node failures",
+		"workflow_result_nil", missionResult.WorkflowResult == nil,
+		"workflow_result_len", len(missionResult.WorkflowResult),
+	)
+	failed, agentOutput, failedNodes := r.checkNodeFailures(missionResult)
+	r.logger.Info("Node failure check result",
+		"failed", failed,
+		"agent_output", agentOutput,
+		"failed_nodes", failedNodes,
+	)
+	if failed {
+		r.logger.Error("Agent execution failed",
+			"failed_nodes", failedNodes,
+			"agent_output", agentOutput,
+		)
+		result.WithAgentFailure(agentOutput, failedNodes)
+		result.Error = fmt.Errorf("agent failed: %s", agentOutput)
+		// Continue to collect findings - some may have been submitted before failure
 	}
 
 	// Step 6: Collect findings from the mission
@@ -375,9 +366,10 @@ func (r *DefaultAttackRunner) createSingleNodeWorkflow(
 
 	agentTask := agent.NewTask(
 		opts.AgentName,
-		opts.Goal,
+		opts.Goal, // description
 		taskInput,
 	)
+	agentTask.Goal = opts.Goal // Set the Goal field explicitly
 
 	if opts.Timeout > 0 {
 		agentTask = agentTask.WithTimeout(opts.Timeout)
@@ -457,6 +449,79 @@ func (r *DefaultAttackRunner) executeMission(
 	return result, nil
 }
 
+// checkNodeFailures examines the mission result for failed nodes
+// and returns failure details if any nodes failed.
+// It parses the WorkflowResult map to extract node statuses and output messages.
+func (r *DefaultAttackRunner) checkNodeFailures(
+	missionResult *mission.MissionResult,
+) (failed bool, agentOutput string, failedNodes []string) {
+	// WorkflowResult is stored as map[string]any
+	if missionResult.WorkflowResult == nil {
+		r.logger.Debug("checkNodeFailures: WorkflowResult is nil")
+		return false, "", nil
+	}
+
+	// Debug: log all keys in WorkflowResult
+	var keys []string
+	for k := range missionResult.WorkflowResult {
+		keys = append(keys, k)
+	}
+	r.logger.Info("checkNodeFailures: WorkflowResult keys", "keys", keys)
+
+	// Extract node_results from the map
+	nodeResultsRaw, ok := missionResult.WorkflowResult["node_results"]
+	if !ok {
+		r.logger.Info("checkNodeFailures: no node_results key found")
+		return false, "", nil
+	}
+
+	r.logger.Info("checkNodeFailures: node_results type", "type", fmt.Sprintf("%T", nodeResultsRaw))
+
+	nodeResults, ok := nodeResultsRaw.(map[string]any)
+	if !ok {
+		r.logger.Info("checkNodeFailures: node_results is not map[string]any", "actual_type", fmt.Sprintf("%T", nodeResultsRaw))
+		return false, "", nil
+	}
+
+	r.logger.Info("checkNodeFailures: found node_results", "count", len(nodeResults))
+
+	var outputs []string
+	for nodeID, resultRaw := range nodeResults {
+		result, ok := resultRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		// Check status
+		status, _ := result["status"].(string)
+		if status == "failed" || status == "error" {
+			failedNodes = append(failedNodes, nodeID)
+
+			// Extract output from multiple possible locations
+			// 1. Check result["output"]["output"] or result["output"]["message"]
+			if output, ok := result["output"].(map[string]any); ok {
+				if msg, ok := output["output"].(string); ok && msg != "" {
+					outputs = append(outputs, msg)
+				} else if msg, ok := output["message"].(string); ok && msg != "" {
+					outputs = append(outputs, msg)
+				}
+			}
+
+			// 2. Check result["error"]["message"]
+			if errObj, ok := result["error"].(map[string]any); ok {
+				if msg, ok := errObj["message"].(string); ok && msg != "" {
+					outputs = append(outputs, msg)
+				}
+			}
+		}
+	}
+
+	if len(failedNodes) > 0 {
+		return true, strings.Join(outputs, "; "), failedNodes
+	}
+	return false, "", nil
+}
+
 // collectFindings retrieves all findings from the mission result.
 // For now, this is a placeholder that returns an empty list.
 // In a full implementation, it would query the finding store or
@@ -532,60 +597,6 @@ func (r *DefaultAttackRunner) persistMission(
 	}
 
 	return nil
-}
-
-// emitSystemEvent emits a system-level verbose event if verbose bus is available (Phase 5, Task 13).
-func (r *DefaultAttackRunner) emitSystemEvent(ctx context.Context, eventType string, data map[string]any) {
-	if r.verboseBus == nil {
-		return
-	}
-
-	// Create a generic system event
-	event := verbose.VerboseEvent{
-		Type:      verbose.VerboseEventType(eventType),
-		Level:     verbose.LevelVerbose,
-		Timestamp: time.Now(),
-		Payload:   data,
-	}
-
-	// Emit non-blocking (ignore errors since this is optional telemetry)
-	_ = r.verboseBus.Emit(ctx, event)
-}
-
-// emitPayloadFilterEvent emits a verbose event for payload filtering (Phase 5, Task 14).
-func (r *DefaultAttackRunner) emitPayloadFilterEvent(ctx context.Context, opts *AttackOptions, selectedCount int) {
-	if r.verboseBus == nil {
-		return
-	}
-
-	// Build filter criteria description
-	filterCriteria := make([]string, 0)
-	if len(opts.PayloadIDs) > 0 {
-		filterCriteria = append(filterCriteria, fmt.Sprintf("ids=%d", len(opts.PayloadIDs)))
-	}
-	if opts.PayloadCategory != "" {
-		filterCriteria = append(filterCriteria, fmt.Sprintf("category=%s", opts.PayloadCategory))
-	}
-	if len(opts.Techniques) > 0 {
-		filterCriteria = append(filterCriteria, fmt.Sprintf("techniques=%d", len(opts.Techniques)))
-	}
-
-	data := map[string]any{
-		"selected_count":   selectedCount,
-		"filter_criteria":  filterCriteria,
-		"category_filter":  opts.PayloadCategory,
-		"id_filter_count":  len(opts.PayloadIDs),
-		"technique_filter": opts.Techniques,
-	}
-
-	event := verbose.VerboseEvent{
-		Type:      verbose.VerboseEventType("attack.payload.filtered"),
-		Level:     verbose.LevelVerbose,
-		Timestamp: time.Now(),
-		Payload:   data,
-	}
-
-	_ = r.verboseBus.Emit(ctx, event)
 }
 
 // Ensure DefaultAttackRunner implements AttackRunner at compile time.

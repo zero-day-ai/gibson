@@ -210,6 +210,18 @@ func (ws *WorkflowState) MarkNodeSkipped(nodeID string, reason string) {
 	}
 }
 
+// StoreResult stores a node result. This is useful for storing results from failed
+// nodes so we can extract error output details later.
+// This method is thread-safe and uses a write lock.
+func (ws *WorkflowState) StoreResult(nodeID string, result *NodeResult) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	if result != nil {
+		ws.Results[nodeID] = result
+	}
+}
+
 // IsComplete returns true if all nodes in the workflow have reached a terminal status
 // (completed, failed, or skipped).
 // This method is thread-safe and uses a read lock.

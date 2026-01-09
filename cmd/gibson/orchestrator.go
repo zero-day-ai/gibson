@@ -16,7 +16,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
-	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -46,8 +45,8 @@ type OrchestratorBundle struct {
 
 // OrchestratorOptions contains optional configuration for orchestrator creation.
 type OrchestratorOptions struct {
-	VerboseBus   verbose.VerboseEventBus
-	VerboseLevel verbose.VerboseLevel
+	// Tracer is an optional OpenTelemetry tracer for distributed tracing
+	Tracer trace.Tracer
 }
 
 // createOrchestrator initializes all dependencies and returns an OrchestratorBundle
@@ -126,6 +125,12 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 	}
 
 	// Step 5: Create harness factory
+	// Use provided tracer or create a no-op one
+	tracer := opts.Tracer
+	if tracer == nil {
+		tracer = trace.NewNoopTracerProvider().Tracer("orchestrator")
+	}
+
 	harnessConfig := harness.HarnessConfig{
 		LLMRegistry:     llmRegistry,
 		SlotManager:     slotManager,
@@ -134,31 +139,19 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 		RegistryAdapter: registryAdapter,
 		FindingStore:    nil, // Will be created per-harness if needed
 		Logger:          slog.Default(),
-		Tracer:          trace.NewNoopTracerProvider().Tracer("orchestrator"),
+		Tracer:          tracer,
 	}
 
-	baseFactory, err := harness.NewDefaultHarnessFactory(harnessConfig)
+	harnessFactory, err := harness.NewDefaultHarnessFactory(harnessConfig)
 	if err != nil {
 		cleanup()
 		return nil, fmt.Errorf("failed to create harness factory: %w", err)
 	}
 
-	// Wrap harness factory with verbose wrapper if verbose is enabled
-	var harnessFactory harness.HarnessFactoryInterface = baseFactory
-	if opts.VerboseBus != nil && opts.VerboseLevel != verbose.LevelNone {
-		harnessFactory = verbose.WrapHarnessFactory(harnessFactory, opts.VerboseBus, opts.VerboseLevel)
-	}
-
 	// Step 6: Create workflow executor
 	executorOpts := []workflow.ExecutorOption{
 		workflow.WithLogger(slog.Default()),
-		workflow.WithTracer(trace.NewNoopTracerProvider().Tracer("workflow")),
-	}
-
-	// Add verbose event bus if provided (wrapped in adapter to match workflow interface)
-	if opts.VerboseBus != nil {
-		adapter := verbose.NewWorkflowVerboseAdapter(opts.VerboseBus)
-		executorOpts = append(executorOpts, workflow.WithVerboseEventBus(adapter))
+		workflow.WithTracer(tracer),
 	}
 
 	workflowExecutor := workflow.NewWorkflowExecutor(executorOpts...)

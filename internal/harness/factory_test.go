@@ -2,19 +2,18 @@ package harness
 
 import (
 	"context"
-	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/harness/middleware"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -942,29 +941,24 @@ func TestFactory_Create_WithoutRegistryAdapter(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
-// TestHarnessFactory_WithHarnessWrapper tests that the HarnessWrapper function is applied
+// TestHarnessFactory_WithMiddleware tests that the Middleware is applied
 // when creating harnesses.
-func TestHarnessFactory_WithHarnessWrapper(t *testing.T) {
+func TestHarnessFactory_WithMiddleware(t *testing.T) {
 	// Create a mock slot manager
 	llmRegistry := llm.NewLLMRegistry()
 	slotManager := llm.NewSlotManager(llmRegistry)
 
-	// Create a wrapper tracking variable
-	wrapperCalled := false
-	var wrappedHarness AgentHarness
-
-	// Create a wrapper function that wraps the harness
-	wrapperFunc := func(h AgentHarness) AgentHarness {
-		wrapperCalled = true
-		wrappedHarness = h
-		// Return a mock wrapper that delegates to the original
-		return &mockHarnessWrapper{inner: h}
+	// Create a simple pass-through middleware
+	testMiddleware := func(next middleware.Operation) middleware.Operation {
+		return func(ctx context.Context, req any) (any, error) {
+			return next(ctx, req)
+		}
 	}
 
-	// Create config with wrapper
+	// Create config with middleware
 	config := HarnessConfig{
-		SlotManager:    slotManager,
-		HarnessWrapper: wrapperFunc,
+		SlotManager: slotManager,
+		Middleware:  testMiddleware,
 	}
 
 	// Create factory
@@ -987,30 +981,21 @@ func TestHarnessFactory_WithHarnessWrapper(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, harness)
 
-	// Verify wrapper was called
-	assert.True(t, wrapperCalled, "wrapper function should have been called")
-	assert.NotNil(t, wrappedHarness, "wrapper should have received a harness")
-
-	// Verify the wrapped harness is a DefaultAgentHarness
-	_, ok := wrappedHarness.(*DefaultAgentHarness)
-	assert.True(t, ok, "wrapped harness should be *DefaultAgentHarness")
-
-	// Verify returned harness is the wrapper
-	wrapper, ok := harness.(*mockHarnessWrapper)
-	assert.True(t, ok, "returned harness should be *mockHarnessWrapper")
-	assert.Equal(t, wrappedHarness, wrapper.inner)
+	// Verify returned harness is a MiddlewareHarness
+	_, ok := harness.(*MiddlewareHarness)
+	assert.True(t, ok, "returned harness should be *MiddlewareHarness when middleware is configured")
 }
 
-// TestHarnessFactory_WithoutHarnessWrapper tests that harnesses work without a wrapper.
-func TestHarnessFactory_WithoutHarnessWrapper(t *testing.T) {
+// TestHarnessFactory_WithoutMiddleware tests that harnesses work without middleware.
+func TestHarnessFactory_WithoutMiddleware(t *testing.T) {
 	// Create a mock slot manager
 	llmRegistry := llm.NewLLMRegistry()
 	slotManager := llm.NewSlotManager(llmRegistry)
 
-	// Create config without wrapper
+	// Create config without middleware
 	config := HarnessConfig{
-		SlotManager:    slotManager,
-		HarnessWrapper: nil, // No wrapper
+		SlotManager: slotManager,
+		Middleware:  nil, // No middleware
 	}
 
 	// Create factory
@@ -1035,100 +1020,6 @@ func TestHarnessFactory_WithoutHarnessWrapper(t *testing.T) {
 
 	// Verify harness is unwrapped DefaultAgentHarness
 	_, ok := harness.(*DefaultAgentHarness)
-	assert.True(t, ok, "harness should be *DefaultAgentHarness when no wrapper is configured")
+	assert.True(t, ok, "harness should be *DefaultAgentHarness when no middleware is configured")
 }
 
-// mockHarnessWrapper is a simple wrapper for testing
-type mockHarnessWrapper struct {
-	inner AgentHarness
-}
-
-func (m *mockHarnessWrapper) Complete(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (*llm.CompletionResponse, error) {
-	return m.inner.Complete(ctx, slot, messages, opts...)
-}
-
-func (m *mockHarnessWrapper) CompleteWithTools(ctx context.Context, slot string, messages []llm.Message, tools []llm.ToolDef, opts ...CompletionOption) (*llm.CompletionResponse, error) {
-	return m.inner.CompleteWithTools(ctx, slot, messages, tools, opts...)
-}
-
-func (m *mockHarnessWrapper) Stream(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (<-chan llm.StreamChunk, error) {
-	return m.inner.Stream(ctx, slot, messages, opts...)
-}
-
-func (m *mockHarnessWrapper) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	return m.inner.CallTool(ctx, name, input)
-}
-
-func (m *mockHarnessWrapper) QueryPlugin(ctx context.Context, name string, method string, params map[string]any) (any, error) {
-	return m.inner.QueryPlugin(ctx, name, method, params)
-}
-
-func (m *mockHarnessWrapper) DelegateToAgent(ctx context.Context, name string, task agent.Task) (agent.Result, error) {
-	return m.inner.DelegateToAgent(ctx, name, task)
-}
-
-func (m *mockHarnessWrapper) SubmitFinding(ctx context.Context, finding agent.Finding) error {
-	return m.inner.SubmitFinding(ctx, finding)
-}
-
-func (m *mockHarnessWrapper) GetFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
-	return m.inner.GetFindings(ctx, filter)
-}
-
-func (m *mockHarnessWrapper) Memory() memory.MemoryStore {
-	return m.inner.Memory()
-}
-
-func (m *mockHarnessWrapper) Mission() MissionContext {
-	return m.inner.Mission()
-}
-
-func (m *mockHarnessWrapper) Target() TargetInfo {
-	return m.inner.Target()
-}
-
-func (m *mockHarnessWrapper) ListTools() []ToolDescriptor {
-	return m.inner.ListTools()
-}
-
-func (m *mockHarnessWrapper) ListPlugins() []PluginDescriptor {
-	return m.inner.ListPlugins()
-}
-
-func (m *mockHarnessWrapper) ListAgents() []AgentDescriptor {
-	return m.inner.ListAgents()
-}
-
-func (m *mockHarnessWrapper) Tracer() trace.Tracer {
-	return m.inner.Tracer()
-}
-
-func (m *mockHarnessWrapper) Logger() *slog.Logger {
-	return m.inner.Logger()
-}
-
-func (m *mockHarnessWrapper) Metrics() MetricsRecorder {
-	return m.inner.Metrics()
-}
-
-func (m *mockHarnessWrapper) TokenUsage() *llm.TokenTracker {
-	return m.inner.TokenUsage()
-}
-
-func (m *mockHarnessWrapper) MissionExecutionContext() MissionExecutionContextSDK {
-	return m.inner.MissionExecutionContext()
-}
-
-func (m *mockHarnessWrapper) GetMissionRunHistory(ctx context.Context) ([]MissionRunSummarySDK, error) {
-	return m.inner.GetMissionRunHistory(ctx)
-}
-
-func (m *mockHarnessWrapper) GetPreviousRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
-	return m.inner.GetPreviousRunFindings(ctx, filter)
-}
-
-func (m *mockHarnessWrapper) GetAllRunFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
-	return m.inner.GetAllRunFindings(ctx, filter)
-}
-
-var _ AgentHarness = (*mockHarnessWrapper)(nil)

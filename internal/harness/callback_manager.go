@@ -97,8 +97,8 @@ func NewCallbackManager(cfg CallbackConfig, logger *slog.Logger) *CallbackManage
 	// Create registry for mission-based harness lookup
 	registry := NewCallbackHarnessRegistry()
 
-	// Create server
-	server := NewCallbackServer(logger, port)
+	// Create server with registry for mission-based harness lookup
+	server := NewCallbackServerWithRegistry(logger, port, registry)
 
 	return &CallbackManager{
 		server:      server,
@@ -258,9 +258,11 @@ func (m *CallbackManager) RegisterHarnessForMission(missionID, agentName string,
 // RegisterHarness registers a harness for a specific task and returns the
 // callback endpoint that should be passed to the agent.
 //
-// DEPRECATED: This method is maintained for backwards compatibility with
-// the legacy task-based registration. New code should use
-// RegisterHarnessForMission for external agents.
+// Deprecated: Use RegisterHarnessForMission instead.
+//
+// This method is maintained for backwards compatibility with legacy task-based
+// registration. New code should use RegisterHarnessForMission(missionID, agentName, harness)
+// for external agents to enable proper mission-based harness lookup.
 //
 // Parameters:
 //   - taskID: Unique identifier for the agent task

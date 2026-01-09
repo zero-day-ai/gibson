@@ -270,6 +270,16 @@ func (h *TextOutputHandler) OnComplete(result *AttackResult) {
 		fmt.Fprintf(h.writer, "%sTokens Used:%s  %d\n", colorBold, colorReset, result.TokensUsed)
 	}
 
+	// Show agent error if present
+	if result.AgentOutput != "" {
+		fmt.Fprintf(h.writer, "\n%s%sAgent Error:%s\n", colorBold, colorRed, colorReset)
+		fmt.Fprintf(h.writer, "  %s\n", result.AgentOutput)
+
+		if len(result.FailedNodes) > 0 {
+			fmt.Fprintf(h.writer, "\n%sFailed Nodes:%s %s\n", colorBold, colorReset, strings.Join(result.FailedNodes, ", "))
+		}
+	}
+
 	// Show findings summary
 	if result.HasFindings() {
 		fmt.Fprintf(h.writer, "\n%sFindings:%s      %d total\n", colorBold, colorReset, result.FindingCount())

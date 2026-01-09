@@ -83,6 +83,12 @@ type DaemonInterface interface {
 
 	// GetMissionCheckpoints returns all checkpoints for a mission
 	GetMissionCheckpoints(ctx context.Context, missionID string) ([]CheckpointData, error)
+
+	// ExecuteTool executes a tool via the Tool Executor Service
+	ExecuteTool(ctx context.Context, name string, inputJSON string, timeoutMs int64) (ExecuteToolResult, error)
+
+	// GetAvailableTools returns all available tools from the Tool Executor Service
+	GetAvailableTools(ctx context.Context) ([]AvailableToolData, error)
 }
 
 // DaemonStatus represents daemon status information.
@@ -265,6 +271,36 @@ type CheckpointData struct {
 	TotalNodes     int
 	FindingsCount  int
 	Version        int
+}
+
+// ExecuteToolResult represents the result of tool execution.
+type ExecuteToolResult struct {
+	Success    bool
+	OutputJSON string
+	Error      string
+	DurationMs int64
+}
+
+// AvailableToolData describes a tool's capabilities and execution metrics.
+type AvailableToolData struct {
+	Name             string
+	Version          string
+	Description      string
+	Tags             []string
+	InputSchemaJSON  string
+	OutputSchemaJSON string
+	Status           string
+	ErrorMessage     string
+	Metrics          *ToolMetricsData
+}
+
+// ToolMetricsData tracks execution statistics for a tool.
+type ToolMetricsData struct {
+	TotalCalls     int64
+	SuccessCalls   int64
+	FailedCalls    int64
+	AvgDurationMs  int64
+	LastExecutedAt int64
 }
 
 // NewDaemonServer creates a new gRPC server that exposes daemon functionality.
@@ -1000,5 +1036,83 @@ func (s *DaemonServer) GetMissionCheckpoints(ctx context.Context, req *GetMissio
 
 	return &GetMissionCheckpointsResponse{
 		Checkpoints: protoCheckpoints,
+	}, nil
+}
+
+// ExecuteTool executes a tool via the Tool Executor Service.
+func (s *DaemonServer) ExecuteTool(ctx context.Context, req *ExecuteToolRequest) (*ExecuteToolResponse, error) {
+	s.logger.Debug("tool execution request received",
+		"name", req.Name,
+		"timeout_ms", req.TimeoutMs,
+	)
+
+	// Validate request
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "tool name is required")
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.ExecuteTool(ctx, req.Name, req.InputJson, req.TimeoutMs)
+	if err != nil {
+		s.logger.Error("failed to execute tool", "error", err, "name", req.Name)
+		return nil, status_grpc.Errorf(codes.Internal, "failed to execute tool: %v", err)
+	}
+
+	s.logger.Debug("tool execution completed",
+		"name", req.Name,
+		"success", result.Success,
+		"duration_ms", result.DurationMs,
+	)
+
+	return &ExecuteToolResponse{
+		Success:    result.Success,
+		OutputJson: result.OutputJSON,
+		Error:      result.Error,
+		DurationMs: result.DurationMs,
+	}, nil
+}
+
+// GetAvailableTools returns all available tools from the Tool Executor Service.
+func (s *DaemonServer) GetAvailableTools(ctx context.Context, req *GetAvailableToolsRequest) (*GetAvailableToolsResponse, error) {
+	s.logger.Debug("get available tools request received")
+
+	// Call daemon implementation
+	tools, err := s.daemon.GetAvailableTools(ctx)
+	if err != nil {
+		s.logger.Error("failed to get available tools", "error", err)
+		return nil, status_grpc.Errorf(codes.Internal, "failed to get available tools: %v", err)
+	}
+
+	// Convert internal types to proto types
+	protoTools := make([]*AvailableToolInfo, len(tools))
+	for i, tool := range tools {
+		var protoMetrics *ToolExecutionMetrics
+		if tool.Metrics != nil {
+			protoMetrics = &ToolExecutionMetrics{
+				TotalCalls:     tool.Metrics.TotalCalls,
+				SuccessCalls:   tool.Metrics.SuccessCalls,
+				FailedCalls:    tool.Metrics.FailedCalls,
+				AvgDurationMs:  tool.Metrics.AvgDurationMs,
+				LastExecutedAt: tool.Metrics.LastExecutedAt,
+			}
+		}
+
+		protoTools[i] = &AvailableToolInfo{
+			Name:             tool.Name,
+			Version:          tool.Version,
+			Description:      tool.Description,
+			Tags:             tool.Tags,
+			InputSchemaJson:  tool.InputSchemaJSON,
+			OutputSchemaJson: tool.OutputSchemaJSON,
+			Status:           tool.Status,
+			ErrorMessage:     tool.ErrorMessage,
+			Metrics:          protoMetrics,
+		}
+	}
+
+	s.logger.Debug("available tools retrieved", "count", len(protoTools))
+
+	return &GetAvailableToolsResponse{
+		Tools: protoTools,
 	}, nil
 }

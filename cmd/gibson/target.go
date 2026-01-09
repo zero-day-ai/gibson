@@ -15,7 +15,6 @@ import (
 	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/verbose"
 )
 
 var targetCmd = &cobra.Command{
@@ -666,17 +665,6 @@ func runTargetTest(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	targetName := args[0]
 
-	// Parse global flags for verbose logging
-	flags, err := ParseGlobalFlags(cmd)
-	if err != nil {
-		return fmt.Errorf("failed to parse flags: %w", err)
-	}
-
-	// Setup verbose logging
-	verboseLevel := flags.VerbosityLevel()
-	writer, cleanup := internal.SetupVerbose(cmd, verboseLevel, flags.OutputFormat == "json")
-	defer cleanup()
-
 	// Get Gibson home directory
 	homeDir, err := getGibsonHome()
 	if err != nil {
@@ -698,40 +686,7 @@ func runTargetTest(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get target: %w", err)
 	}
 
-	// Emit verbose event for provider detection
-	if writer != nil && target.URL != "" {
-		// Parse URL to detect provider
-		parsedURL, _ := url.Parse(target.URL)
-		if parsedURL != nil {
-			detectedProvider := detectProvider(parsedURL)
-			event := verbose.NewVerboseEvent(
-				"target.provider_detected", // Custom event type
-				verbose.LevelVerbose,
-				map[string]interface{}{
-					"target_name": target.Name,
-					"target_url":  truncateString(target.URL, 100),
-					"provider":    detectedProvider,
-				},
-			)
-			writer.Bus().Emit(ctx, event)
-		}
-	}
-
 	cmd.Printf("Testing connectivity to %s...\n", target.Name)
-
-	// Emit verbose event for connectivity check start
-	if writer != nil {
-		event := verbose.NewVerboseEvent(
-			"target.connectivity_check", // Custom event type
-			verbose.LevelVerbose,
-			map[string]interface{}{
-				"target_name": target.Name,
-				"target_url":  truncateString(target.URL, 100),
-				"timeout":     target.Timeout,
-			},
-		)
-		writer.Bus().Emit(ctx, event)
-	}
 
 	// Create HTTP client with timeout
 	client := &http.Client{
@@ -757,20 +712,6 @@ func runTargetTest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		cmd.Printf("Failed: %v\n", err)
 
-		// Emit verbose event for failed check
-		if writer != nil {
-			event := verbose.NewVerboseEvent(
-				"target.connectivity_failed", // Custom event type
-				verbose.LevelVerbose,
-				map[string]interface{}{
-					"target_name": target.Name,
-					"error":       err.Error(),
-					"duration":    duration.String(),
-				},
-			)
-			writer.Bus().Emit(ctx, event)
-		}
-
 		// Update target status to error
 		target.Status = types.TargetStatusError
 		dao.Update(ctx, target)
@@ -782,21 +723,6 @@ func runTargetTest(cmd *cobra.Command, args []string) error {
 	// Check response
 	if resp.StatusCode >= 200 && resp.StatusCode < 500 {
 		cmd.Printf("Success: Connected in %v (Status: %d)\n", duration, resp.StatusCode)
-
-		// Emit verbose event for successful check
-		if writer != nil {
-			event := verbose.NewVerboseEvent(
-				"target.connectivity_success", // Custom event type
-				verbose.LevelVerbose,
-				map[string]interface{}{
-					"target_name":   target.Name,
-					"status_code":   resp.StatusCode,
-					"duration":      duration.String(),
-					"response_time": duration.Milliseconds(),
-				},
-			)
-			writer.Bus().Emit(ctx, event)
-		}
 
 		// Update target status to active
 		if target.Status != types.TargetStatusActive {

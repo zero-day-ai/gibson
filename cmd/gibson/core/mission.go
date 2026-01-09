@@ -8,7 +8,6 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/verbose"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 	"gopkg.in/yaml.v3"
 )
@@ -91,14 +90,7 @@ type MissionRunResult struct {
 }
 
 // MissionRun creates and runs a new mission from a workflow YAML file.
-// This is the non-verbose version that calls MissionRunWithVerbose with nil verbose writer.
 func MissionRun(cc *CommandContext, workflowFile string, targetFlag string) (*CommandResult, error) {
-	return MissionRunWithVerbose(cc, workflowFile, targetFlag, nil, verbose.LevelNone)
-}
-
-// MissionRunWithVerbose creates and runs a new mission from a workflow YAML file with verbose logging support.
-// If vw is non-nil, it integrates verbose event logging for mission events and DAG node execution.
-func MissionRunWithVerbose(cc *CommandContext, workflowFile string, targetFlag string, vw *verbose.VerboseWriter, level verbose.VerboseLevel) (*CommandResult, error) {
 	// Validate mission store
 	if cc.MissionStore == nil {
 		return nil, fmt.Errorf("mission store not initialized")
@@ -175,20 +167,6 @@ func MissionRunWithVerbose(cc *CommandContext, workflowFile string, targetFlag s
 			Error: fmt.Errorf("failed to start mission: %w", err),
 		}, nil
 	}
-
-	// If verbose is enabled, set up mission event bridge
-	// Note: This would require having access to the orchestrator and its event emitter.
-	// Since the current implementation doesn't actually execute the mission (just creates it),
-	// we'll add a TODO for when mission execution is integrated.
-	// TODO: When mission execution is integrated:
-	//   if vw != nil {
-	//       bridge := verbose.NewMissionEventBridge(orchestrator.EventEmitter(), vw.Bus())
-	//       bridge.Start(cc.Ctx)
-	//       defer bridge.Stop()
-	//
-	//       // Wrap harness factory for verbose events
-	//       harnessFactory = verbose.WrapHarnessFactory(harnessFactory, vw.Bus(), level)
-	//   }
 
 	// TODO: Actually execute the mission with orchestrator
 	// For now, this just creates and saves the mission without executing it

@@ -3,7 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
-	"reflect"
+	"log/slog"
 	"strings"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
@@ -659,54 +659,53 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 	grpcAgent, isGRPCAgent := agentClient.(*GRPCAgentClient)
 
 	if isGRPCAgent && a.callbackManager != nil {
-		// Try to extract mission context from the harness for mission-based registration
-		// The registry adapter works with agent.AgentHarness (minimal interface),
-		// but we need the full harness for context methods and mission-based registration.
-		// We use type assertions to check for the extended interface.
-		var missionPtr, targetPtr any
+		// Define an extended harness interface with Mission and Target methods
+		// This avoids circular imports while providing type-safe access to context
+		// The harness.MissionContext and harness.TargetInfo are returned as 'any'
+		type contextProvider interface {
+			Mission() any // Returns harness.MissionContext
+			Target() any  // Returns harness.TargetInfo
+		}
+
+		// Extract mission context and target from the harness via type assertion
+		// These are used for mission-based registration and passed to the agent
 		var missionID, agentName string
+		var mission, target any
 
-		// Use reflection to call Mission() and Target() methods
-		// This avoids circular imports between registry and harness packages
-		harnessValue := reflect.ValueOf(harness)
+		if cp, ok := harness.(contextProvider); ok {
+			mission = cp.Mission()
+			target = cp.Target()
 
-		// Try to get Mission context using reflection
-		missionMethod := harnessValue.MethodByName("Mission")
-		if missionMethod.IsValid() {
-			missionResults := missionMethod.Call(nil)
-			if len(missionResults) > 0 {
-				missionPtr = missionResults[0].Interface()
+			// Extract mission ID and agent name from the mission context
+			// The mission context has ID (with String() method) and CurrentAgent (string) fields
+			// We use a struct accessor interface to avoid reflection while not importing harness
+			type missionAccessor interface {
+				IDString() string
+				AgentName() string
 			}
-		}
 
-		// Try to get Target info using reflection
-		targetMethod := harnessValue.MethodByName("Target")
-		if targetMethod.IsValid() {
-			targetResults := targetMethod.Call(nil)
-			if len(targetResults) > 0 {
-				targetPtr = targetResults[0].Interface()
+			// Since MissionContext doesn't have these methods, we access fields via type assertion
+			// The mission is a struct with exported ID and CurrentAgent fields
+			if m, ok := mission.(struct {
+				ID           interface{ String() string }
+				Name         string
+				CurrentAgent string
+				Phase        string
+				Constraints  []string
+				Metadata     map[string]any
+			}); ok {
+				missionID = m.ID.String()
+				agentName = m.CurrentAgent
 			}
-		}
-
-		// Extract mission ID and agent name using reflection
-		// The mission is of type harness.MissionContext with fields ID and CurrentAgent
-		missionValue := reflect.ValueOf(missionPtr)
-
-		// Get ID field and convert to string
-		if idField := missionValue.FieldByName("ID"); idField.IsValid() {
-			// ID is of type types.ID which has a String() method
-			if idStringer, ok := idField.Interface().(interface{ String() string }); ok {
-				missionID = idStringer.String()
-			}
-		}
-
-		// Get CurrentAgent field
-		if agentField := missionValue.FieldByName("CurrentAgent"); agentField.IsValid() && agentField.Kind() == reflect.String {
-			agentName = agentField.String()
 		}
 
 		// Use mission-based registration if we have both mission ID and agent name
 		var registrationKey string
+		slog.Info("harness registration context",
+			"mission_id", missionID,
+			"agent_name", agentName,
+			"task_id", task.ID.String(),
+		)
 		if missionID != "" && agentName != "" && a.callbackManager != nil {
 			// Check if callback manager supports mission-based registration
 			type missionRegistrar interface {
@@ -730,12 +729,12 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 		// Ensure unregistration happens even on failure
 		defer a.callbackManager.UnregisterHarness(registrationKey)
 
-		// Create callback info with endpoint and optional context
+		// Create callback info with endpoint and context
 		callbackInfo := &CallbackInfo{
 			Endpoint: a.callbackManager.CallbackEndpoint(),
 			Token:    "", // TODO: Add token support when authentication is implemented
-			Mission:  missionPtr,
-			Target:   targetPtr,
+			Mission:  mission,
+			Target:   target,
 		}
 
 		// Execute with callback support

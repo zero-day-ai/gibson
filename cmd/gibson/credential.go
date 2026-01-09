@@ -18,7 +18,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/verbose"
 	"golang.org/x/term"
 )
 
@@ -449,7 +448,7 @@ func runCredentialTest(cmd *cobra.Command, args []string) error {
 
 	// Setup verbose logging
 	verboseLevel := flags.VerbosityLevel()
-	writer, cleanup := internal.SetupVerbose(cmd, verboseLevel, flags.OutputFormat == "json")
+	cleanup := internal.SetupVerbose(cmd, verboseLevel, flags.OutputFormat == "json")
 	defer cleanup()
 
 	// Load configuration
@@ -473,20 +472,6 @@ func runCredentialTest(cmd *cobra.Command, args []string) error {
 			return internal.NewCLIError(internal.ExitNotFound, fmt.Sprintf("credential not found: %s", credName))
 		}
 		return internal.WrapError(internal.ExitDatabaseError, "failed to get credential", err)
-	}
-
-	// Emit verbose event for validation start (NO SECRETS)
-	if writer != nil {
-		event := verbose.NewVerboseEvent(
-			"credential.validation_started", // Custom event type
-			verbose.LevelVerbose,
-			map[string]interface{}{
-				"credential_name": credName,
-				"credential_type": string(cred.Type),
-				"provider":        cred.Provider,
-			},
-		)
-		writer.Bus().Emit(ctx, event)
 	}
 
 	// Get master key and decrypt credential
@@ -519,7 +504,6 @@ func runCredentialTest(cmd *cobra.Command, args []string) error {
 
 	var testResult string
 	var testErr error
-	testStart := time.Now()
 
 	switch strings.ToLower(cred.Provider) {
 	case "anthropic":
@@ -535,40 +519,9 @@ func runCredentialTest(cmd *cobra.Command, args []string) error {
 		return formatter.PrintError(fmt.Sprintf("credential testing not supported for provider: %s", cred.Provider))
 	}
 
-	testDuration := time.Since(testStart)
-
 	// Clear credential from memory
 	for i := range credValue {
 		credValue[i] = 0
-	}
-
-	// Emit verbose event for validation result (NO SECRETS)
-	if writer != nil {
-		if testErr != nil {
-			event := verbose.NewVerboseEvent(
-				"credential.validation_failed", // Custom event type
-				verbose.LevelVerbose,
-				map[string]interface{}{
-					"credential_name": credName,
-					"provider":        cred.Provider,
-					"error":           testErr.Error(),
-					"duration":        testDuration.String(),
-				},
-			)
-			writer.Bus().Emit(ctx, event)
-		} else {
-			event := verbose.NewVerboseEvent(
-				"credential.validation_success", // Custom event type
-				verbose.LevelVerbose,
-				map[string]interface{}{
-					"credential_name": credName,
-					"provider":        cred.Provider,
-					"duration":        testDuration.String(),
-					"result":          testResult,
-				},
-			)
-			writer.Bus().Emit(ctx, event)
-		}
 	}
 
 	if testErr != nil {
