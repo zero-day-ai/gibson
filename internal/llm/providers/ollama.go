@@ -8,7 +8,12 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// OllamaProvider implements LLMProvider for local Ollama models
+// OllamaProvider implements LLMProvider for local Ollama models.
+//
+// NOTE: OllamaProvider does NOT implement StructuredOutputProvider.
+// Ollama does not have native structured output support (no JSON mode).
+// Attempting to use structured output with Ollama will fail with
+// ErrStructuredOutputNotSupported at the SDK/manager level.
 type OllamaProvider struct {
 	client *ollama.LLM
 	config llm.ProviderConfig

@@ -11,6 +11,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -96,6 +97,11 @@ func (m *mockAgentHarness) Memory() memory.MemoryStore {
 func (m *mockAgentHarness) Mission() MissionContext {
 	args := m.Called()
 	return args.Get(0).(MissionContext)
+}
+
+func (m *mockAgentHarness) MissionID() types.ID {
+	args := m.Called()
+	return args.Get(0).(types.ID)
 }
 
 func (m *mockAgentHarness) Target() TargetInfo {
@@ -185,6 +191,11 @@ func (m *mockAgentHarness) GetAllRunFindings(ctx context.Context, filter Finding
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]agent.Finding), args.Error(1)
+}
+
+func (m *mockAgentHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error) {
+	args := m.Called(ctx, slot, messages, schemaType, opts)
+	return args.Get(0), args.Error(1)
 }
 
 // ─── Test Cases ──────────────────────────────────────────────────────────────

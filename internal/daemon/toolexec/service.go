@@ -158,21 +158,35 @@ func (s *toolExecutorServiceImpl) Execute(ctx context.Context, name string, inpu
 		)
 	}
 
-	// Use default timeout if not specified
-	if timeout == 0 {
-		timeout = s.defaultTimeout
+	// Validate requested timeout against tool's configured bounds
+	if timeout > 0 {
+		if err := entry.info.Timeout.ValidateTimeout(timeout); err != nil {
+			return nil, types.WrapError(
+				ErrInvalidTimeout,
+				fmt.Sprintf("tool %s: %s", name, err.Error()),
+				nil,
+			)
+		}
+	}
+
+	// Resolve effective timeout (requested > tool default > SDK default)
+	effectiveTimeout := entry.info.Timeout.ResolveTimeout(timeout)
+
+	// Fallback to service default if no timeout is resolved
+	if effectiveTimeout == 0 {
+		effectiveTimeout = s.defaultTimeout
 	}
 
 	s.logger.Debug("executing tool",
 		"name", name,
 		"path", entry.info.Path,
-		"timeout", timeout)
+		"timeout", effectiveTimeout)
 
 	// Prepare execution request
 	req := &ExecuteRequest{
 		BinaryPath: entry.info.Path,
 		Input:      input,
-		Timeout:    timeout,
+		Timeout:    effectiveTimeout,
 		Env:        os.Environ(),
 	}
 
@@ -185,10 +199,15 @@ func (s *toolExecutorServiceImpl) Execute(ctx context.Context, name string, inpu
 	s.updateMetrics(name, duration, err)
 
 	if err != nil {
+		stderr := ""
+		if result != nil {
+			stderr = result.Stderr
+		}
 		s.logger.Error("tool execution failed",
 			"name", name,
 			"duration", duration,
-			"error", err)
+			"error", err,
+			"stderr", stderr)
 		return nil, err
 	}
 
@@ -230,6 +249,7 @@ func (s *toolExecutorServiceImpl) ListTools() []ToolDescriptor {
 			OutputSchema: entry.info.OutputSchema,
 			BinaryPath:   entry.info.Path,
 			Metrics:      s.cloneMetrics(&entry.metrics),
+			Timeout:      entry.info.Timeout,
 		}
 
 		// Determine status

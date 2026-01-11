@@ -133,6 +133,10 @@ func addPreExecutionAttributes(span trace.Span, ctx context.Context, opType Oper
 		if slot := GetSlotName(ctx); slot != "" {
 			span.SetAttributes(attribute.String(AttrLLMSlot, slot))
 		}
+		// Add prompt/messages to span for LLM observability
+		if messages := GetMessages(ctx); len(messages) > 0 {
+			addPromptAttribute(span, messages)
+		}
 	case OpCallTool:
 		if toolName := GetToolName(ctx); toolName != "" {
 			span.SetAttributes(attribute.String(AttrToolName, toolName))
@@ -155,24 +159,167 @@ func addPreExecutionAttributes(span trace.Span, ctx context.Context, opType Oper
 func addPostExecutionAttributes(span trace.Span, ctx context.Context, opType OperationType, resp any) {
 	switch opType {
 	case OpComplete, OpCompleteWithTools:
-		if resp != nil {
-			if completionResp, ok := resp.(*llm.CompletionResponse); ok {
-				span.SetAttributes(
-					attribute.String("gen_ai.response.id", completionResp.ID),
-					attribute.String("gen_ai.request.model", completionResp.Model),
-					attribute.String("gen_ai.response.finish_reason", string(completionResp.FinishReason)),
-					attribute.Int("gen_ai.usage.input_tokens", completionResp.Usage.PromptTokens),
-					attribute.Int("gen_ai.usage.output_tokens", completionResp.Usage.CompletionTokens),
-				)
-				if opType == OpCompleteWithTools && len(completionResp.Message.ToolCalls) > 0 {
-					span.SetAttributes(attribute.Int("gen_ai.response.tool_calls.count", len(completionResp.Message.ToolCalls)))
-					toolCallNames := make([]string, len(completionResp.Message.ToolCalls))
-					for i, tc := range completionResp.Message.ToolCalls {
-						toolCallNames[i] = tc.Name
-					}
-					span.SetAttributes(attribute.StringSlice("gen_ai.response.tool_calls.names", toolCallNames))
+		if resp == nil {
+			return
+		}
+
+		// Try to extract completion result from various response types
+		var result *CompletionResult
+
+		switch v := resp.(type) {
+		case *llm.CompletionResponse:
+			// Direct type - best case
+			result = &CompletionResult{
+				ID:           v.ID,
+				Model:        v.Model,
+				Content:      v.Message.Content,
+				FinishReason: string(v.FinishReason),
+				InputTokens:  v.Usage.PromptTokens,
+				OutputTokens: v.Usage.CompletionTokens,
+			}
+			if len(v.Message.ToolCalls) > 0 {
+				result.ToolCallCount = len(v.Message.ToolCalls)
+				result.ToolCallNames = make([]string, len(v.Message.ToolCalls))
+				for i, tc := range v.Message.ToolCalls {
+					result.ToolCallNames[i] = tc.Name
 				}
+			}
+
+		case map[string]interface{}:
+			// Serialized response - extract fields from map
+			result = extractCompletionFromMap(v)
+
+		case *map[string]interface{}:
+			// Pointer to serialized response
+			if v != nil {
+				result = extractCompletionFromMap(*v)
+			}
+		}
+
+		// Apply attributes if we successfully extracted the result
+		if result != nil {
+			if result.ID != "" {
+				span.SetAttributes(attribute.String("gen_ai.response.id", result.ID))
+			}
+			if result.Model != "" {
+				span.SetAttributes(attribute.String("gen_ai.response.model", result.Model))
+			}
+			if result.FinishReason != "" {
+				span.SetAttributes(attribute.String("gen_ai.response.finish_reason", result.FinishReason))
+			}
+			if result.InputTokens > 0 {
+				span.SetAttributes(attribute.Int("gen_ai.usage.input_tokens", result.InputTokens))
+			}
+			if result.OutputTokens > 0 {
+				span.SetAttributes(attribute.Int("gen_ai.usage.output_tokens", result.OutputTokens))
+			}
+			if result.Content != "" {
+				span.SetAttributes(attribute.String("gen_ai.completion", result.Content))
+			}
+			if result.ToolCallCount > 0 {
+				span.SetAttributes(attribute.Int("gen_ai.response.tool_calls.count", result.ToolCallCount))
+				span.SetAttributes(attribute.StringSlice("gen_ai.response.tool_calls.names", result.ToolCallNames))
 			}
 		}
 	}
 }
+
+// extractCompletionFromMap extracts completion result from a map[string]interface{}.
+// This handles cases where the response was serialized (e.g., through JSON/gRPC).
+func extractCompletionFromMap(m map[string]interface{}) *CompletionResult {
+	result := &CompletionResult{}
+
+	// Try to extract fields with common naming conventions
+	if id, ok := m["id"].(string); ok {
+		result.ID = id
+	} else if id, ok := m["ID"].(string); ok {
+		result.ID = id
+	}
+
+	if model, ok := m["model"].(string); ok {
+		result.Model = model
+	} else if model, ok := m["Model"].(string); ok {
+		result.Model = model
+	}
+
+	if content, ok := m["content"].(string); ok {
+		result.Content = content
+	} else if content, ok := m["Content"].(string); ok {
+		result.Content = content
+	}
+
+	if finishReason, ok := m["finish_reason"].(string); ok {
+		result.FinishReason = finishReason
+	} else if finishReason, ok := m["FinishReason"].(string); ok {
+		result.FinishReason = finishReason
+	}
+
+	// Extract usage from nested object or top-level fields
+	if usage, ok := m["usage"].(map[string]interface{}); ok {
+		if input, ok := usage["input_tokens"].(float64); ok {
+			result.InputTokens = int(input)
+		} else if input, ok := usage["InputTokens"].(float64); ok {
+			result.InputTokens = int(input)
+		} else if input, ok := usage["prompt_tokens"].(float64); ok {
+			result.InputTokens = int(input)
+		}
+		if output, ok := usage["output_tokens"].(float64); ok {
+			result.OutputTokens = int(output)
+		} else if output, ok := usage["OutputTokens"].(float64); ok {
+			result.OutputTokens = int(output)
+		} else if output, ok := usage["completion_tokens"].(float64); ok {
+			result.OutputTokens = int(output)
+		}
+	} else if usage, ok := m["Usage"].(map[string]interface{}); ok {
+		if input, ok := usage["InputTokens"].(float64); ok {
+			result.InputTokens = int(input)
+		} else if input, ok := usage["PromptTokens"].(float64); ok {
+			result.InputTokens = int(input)
+		}
+		if output, ok := usage["OutputTokens"].(float64); ok {
+			result.OutputTokens = int(output)
+		} else if output, ok := usage["CompletionTokens"].(float64); ok {
+			result.OutputTokens = int(output)
+		}
+	}
+
+	// Extract tool calls if present
+	if toolCalls, ok := m["tool_calls"].([]interface{}); ok {
+		result.ToolCallCount = len(toolCalls)
+		result.ToolCallNames = make([]string, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			if tcMap, ok := tc.(map[string]interface{}); ok {
+				if name, ok := tcMap["name"].(string); ok {
+					result.ToolCallNames = append(result.ToolCallNames, name)
+				}
+			}
+		}
+	}
+
+	// Check if we extracted any useful data
+	if result.ID == "" && result.Model == "" && result.Content == "" &&
+		result.InputTokens == 0 && result.OutputTokens == 0 {
+		return nil
+	}
+
+	return result
+}
+
+// addPromptAttribute adds the gen_ai.prompt attribute with the messages as text.
+// This is called separately from pre-execution because we need the request data.
+func addPromptAttribute(span trace.Span, messages []Message) {
+	if len(messages) == 0 {
+		return
+	}
+
+	// Build a simple representation of messages for the prompt
+	var promptBuilder string
+	for i, msg := range messages {
+		if i > 0 {
+			promptBuilder += "\n---\n"
+		}
+		promptBuilder += fmt.Sprintf("[%s]: %s", msg.Role, msg.Content)
+	}
+	span.SetAttributes(attribute.String("gen_ai.prompt", promptBuilder))
+}
+

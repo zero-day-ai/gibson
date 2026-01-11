@@ -1,0 +1,31 @@
+# Gibson GraphRAG Taxonomy
+# This is the root taxonomy configuration file that defines the complete taxonomy
+# for GraphRAG node types, relationship types, and attack techniques.
+#
+# Version: The taxonomy version is tied to the Gibson binary version to ensure
+# reproducible behavior across deployments of the same Gibson release.
+
+version: "0.15.0"
+
+metadata:
+  name: "Gibson GraphRAG Taxonomy"
+  description: "Canonical node and relationship types for Zero-Day.AI security testing platform"
+  updated_at: "2026-01-10"
+
+# Includes define the modular taxonomy files to be loaded.
+# Files are processed in order, and definitions are merged into a unified taxonomy.
+includes:
+  # Node type definitions
+  - "nodes/assets.yaml"
+  - "nodes/findings.yaml"
+  - "nodes/execution.yaml"
+  - "nodes/attack.yaml"
+
+  # Relationship type definitions
+  - "relationships/asset_hierarchy.yaml"
+  - "relationships/finding_links.yaml"
+  - "relationships/execution_context.yaml"
+
+  # Attack technique definitions
+  - "techniques/mitre_enterprise.yaml"
+  - "techniques/arcanum_pi.yaml"

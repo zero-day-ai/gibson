@@ -14,6 +14,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/config"
 	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	"github.com/zero-day-ai/gibson/internal/harness"
+	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/registry"
 )
 
@@ -52,6 +53,18 @@ func loadConfig(cmd *cobra.Command, args []string) error {
 	flags, err := ParseGlobalFlags(cmd)
 	if err != nil {
 		return err
+	}
+
+	// Initialize taxonomy early - required by all commands except standalone
+	// This loads and validates the embedded taxonomy (and custom extensions if provided)
+	if err := initTaxonomy(flags); err != nil {
+		return fmt.Errorf("taxonomy initialization failed: %w", err)
+	}
+
+	// If --validate-taxonomy flag is set, exit after validation
+	if flags.ValidateTaxonomy {
+		cmd.Println("✓ Taxonomy validation successful")
+		os.Exit(0)
 	}
 
 	// Determine home directory
@@ -264,4 +277,33 @@ PowerShell:
 			_ = cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
 		}
 	},
+}
+
+// initTaxonomy initializes the taxonomy system during Gibson startup.
+// This loads the embedded taxonomy and optionally merges custom extensions.
+// Returns an error if taxonomy loading or validation fails.
+func initTaxonomy(flags *GlobalFlags) error {
+	customPath := flags.TaxonomyPath
+
+	// For validate-only mode, use the validation-specific function
+	if flags.ValidateTaxonomy {
+		return taxonomyinit.ValidateTaxonomyOnly(customPath)
+	}
+
+	// Normal initialization - load and validate
+	if err := taxonomyinit.InitTaxonomy(customPath); err != nil {
+		return err
+	}
+
+	// Log taxonomy info if verbose
+	if flags.IsVerbose() {
+		registry := taxonomyinit.GetTaxonomyRegistry()
+		if registry != nil {
+			fmt.Fprintf(os.Stderr, "Taxonomy loaded: version %s\n", registry.Version())
+			fmt.Fprintf(os.Stderr, "  Node types: %d\n", len(registry.NodeTypes()))
+			fmt.Fprintf(os.Stderr, "  Relationships: %d\n", len(registry.RelationshipTypes()))
+		}
+	}
+
+	return nil
 }

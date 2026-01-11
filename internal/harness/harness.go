@@ -7,6 +7,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -135,6 +136,34 @@ type AgentHarness interface {
 	//       fmt.Print(chunk.Delta.Content)
 	//   }
 	Stream(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (<-chan llm.StreamChunk, error)
+
+	// CompleteStructuredAny performs a completion with provider-native structured output.
+	// The response is guaranteed to match the provided schema using provider-specific
+	// mechanisms (tool_use for Anthropic, response_format for OpenAI).
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - slot: Name of the LLM slot to use
+	//   - messages: Conversation history (should be natural language, no JSON instructions)
+	//   - schemaType: An instance of the struct type to populate (e.g., MyStruct{})
+	//   - opts: Optional configuration
+	//
+	// Returns:
+	//   - any: A pointer to the populated struct instance (e.g., *MyStruct)
+	//   - error: Non-nil if completion fails or response doesn't match schema
+	//
+	// The prompt should be natural language - the harness handles schema enforcement.
+	// For Anthropic: uses tool_use pattern with forced tool choice
+	// For OpenAI: uses response_format with json_schema
+	//
+	// Example:
+	//   type Analysis struct {
+	//       RiskLevel   string   `json:"risk_level"`
+	//       Findings    []string `json:"findings"`
+	//   }
+	//   result, err := harness.CompleteStructuredAny(ctx, "primary", messages, Analysis{})
+	//   analysis := result.(*Analysis)
+	CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error)
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// Tool Execution
@@ -364,6 +393,16 @@ type AgentHarness interface {
 	// ────────────────────────────────────────────────────────────────────────────
 	// Context Access
 	// ────────────────────────────────────────────────────────────────────────────
+
+	// MissionID returns the mission ID for the current execution context.
+	//
+	// Returns:
+	//   - types.ID: The unique identifier for the current mission
+	//
+	// Example:
+	//   missionID := harness.MissionID()
+	//   logger.Info("Executing mission", "mission_id", missionID)
+	MissionID() types.ID
 
 	// Mission returns the current mission context.
 	// This provides mission-level metadata, phase information, and constraints.

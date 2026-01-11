@@ -1,0 +1,148 @@
+# Asset Hierarchy Relationships
+# These relationships define how assets relate to each other in a hierarchical structure.
+# They enable traversal queries for attack surface mapping and asset discovery visualization.
+
+relationship_types:
+  # HAS_SUBDOMAIN: domain -> subdomain
+  - id: rel.asset.has_subdomain
+    name: HAS_SUBDOMAIN
+    type: HAS_SUBDOMAIN
+    category: asset_hierarchy
+    description: "Domain has a subdomain"
+    from_types: [domain]
+    to_types: [subdomain]
+    bidirectional: false
+    properties:
+      - name: discovered_at
+        type: string
+        required: false
+        description: "When this relationship was discovered (ISO 8601)"
+
+  # RESOLVES_TO: subdomain|domain -> host
+  - id: rel.asset.resolves_to
+    name: RESOLVES_TO
+    type: RESOLVES_TO
+    category: asset_hierarchy
+    description: "Domain or subdomain resolves to an IP address (host)"
+    from_types: [domain, subdomain]
+    to_types: [host]
+    bidirectional: false
+    properties:
+      - name: record_type
+        type: string
+        required: false
+        description: "DNS record type (A, AAAA, CNAME)"
+      - name: ttl
+        type: int
+        required: false
+        description: "DNS record TTL in seconds"
+      - name: discovered_at
+        type: string
+        required: false
+        description: "When this resolution was discovered (ISO 8601)"
+
+  # HAS_PORT: host -> port
+  - id: rel.asset.has_port
+    name: HAS_PORT
+    type: HAS_PORT
+    category: asset_hierarchy
+    description: "Host has an open port"
+    from_types: [host]
+    to_types: [port]
+    bidirectional: false
+    properties:
+      - name: scan_timestamp
+        type: string
+        required: false
+        description: "When the port was discovered (ISO 8601)"
+
+  # RUNS_SERVICE: port -> service
+  - id: rel.asset.runs_service
+    name: RUNS_SERVICE
+    type: RUNS_SERVICE
+    category: asset_hierarchy
+    description: "Port runs a specific service"
+    from_types: [port]
+    to_types: [service]
+    bidirectional: false
+    properties:
+      - name: confidence
+        type: float64
+        required: false
+        description: "Confidence in service identification (0.0-1.0)"
+      - name: detection_method
+        type: string
+        required: false
+        description: "How the service was detected (banner, probe, fingerprint)"
+
+  # HAS_ENDPOINT: service -> endpoint
+  - id: rel.asset.has_endpoint
+    name: HAS_ENDPOINT
+    type: HAS_ENDPOINT
+    category: asset_hierarchy
+    description: "Service has a web endpoint or URL"
+    from_types: [service]
+    to_types: [endpoint]
+    bidirectional: false
+    properties:
+      - name: discovery_method
+        type: string
+        required: false
+        description: "How the endpoint was discovered (crawl, fuzzing, spec)"
+
+  # USES_TECHNOLOGY: service|endpoint -> technology
+  - id: rel.asset.uses_technology
+    name: USES_TECHNOLOGY
+    type: USES_TECHNOLOGY
+    category: asset_hierarchy
+    description: "Service or endpoint uses a specific technology or framework"
+    from_types: [service, endpoint]
+    to_types: [technology]
+    bidirectional: false
+    properties:
+      - name: confidence
+        type: float64
+        required: false
+        description: "Confidence in technology detection (0.0-1.0)"
+      - name: detection_method
+        type: string
+        required: false
+        description: "How the technology was detected (header, fingerprint, response)"
+
+  # SERVES_CERTIFICATE: host -> certificate
+  - id: rel.asset.serves_certificate
+    name: SERVES_CERTIFICATE
+    type: SERVES_CERTIFICATE
+    category: asset_hierarchy
+    description: "Host serves a TLS/SSL certificate"
+    from_types: [host]
+    to_types: [certificate]
+    bidirectional: false
+    properties:
+      - name: port
+        type: int
+        required: false
+        description: "Port where certificate was discovered"
+      - name: captured_at
+        type: string
+        required: false
+        description: "When the certificate was captured (ISO 8601)"
+
+  # HOSTS: cloud_asset -> host|service
+  - id: rel.asset.hosts
+    name: HOSTS
+    type: HOSTS
+    category: asset_hierarchy
+    description: "Cloud asset hosts a service or host instance"
+    from_types: [cloud_asset]
+    to_types: [host, service]
+    bidirectional: false
+    properties:
+      - name: region
+        type: string
+        required: false
+        description: "Cloud region where resource is hosted"
+      - name: discovered_at
+        type: string
+        required: false
+        description: "When this hosting relationship was discovered (ISO 8601)"

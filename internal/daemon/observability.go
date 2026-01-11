@@ -13,18 +13,19 @@ import (
 
 // initLangfuseTracing initializes Langfuse tracing exporter with optional Neo4j graph span processor.
 // If neo4jClient is provided, spans will be recorded to both Langfuse and Neo4j for observability.
-func (d *daemonImpl) initLangfuseTracing(ctx context.Context, neo4jClient *graph.Neo4jClient) (*sdktrace.TracerProvider, error) {
+// Returns the tracer provider and a slice of span processors that were registered.
+func (d *daemonImpl) initLangfuseTracing(ctx context.Context, neo4jClient *graph.Neo4jClient) (*sdktrace.TracerProvider, []sdktrace.SpanProcessor, error) {
 	cfg := d.config.Langfuse
 
 	// Validate required Langfuse configuration fields
 	if cfg.Host == "" {
-		return nil, fmt.Errorf("langfuse.host is required when langfuse.enabled = true")
+		return nil, nil, fmt.Errorf("langfuse.host is required when langfuse.enabled = true")
 	}
 	if cfg.PublicKey == "" {
-		return nil, fmt.Errorf("langfuse.public_key is required when langfuse.enabled = true")
+		return nil, nil, fmt.Errorf("langfuse.public_key is required when langfuse.enabled = true")
 	}
 	if cfg.SecretKey == "" {
-		return nil, fmt.Errorf("langfuse.secret_key is required when langfuse.enabled = true")
+		return nil, nil, fmt.Errorf("langfuse.secret_key is required when langfuse.enabled = true")
 	}
 
 	d.logger.Info("langfuse observability enabled",
@@ -49,8 +50,11 @@ func (d *daemonImpl) initLangfuseTracing(ctx context.Context, neo4jClient *graph
 	// Initialize the tracer provider with Langfuse exporter
 	tracerProvider, err := observability.InitTracing(ctx, tracingCfg, &langfuseCfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
+	// Track span processors for callback service
+	var spanProcessors []sdktrace.SpanProcessor
 
 	// If Neo4j client is available, register GraphSpanProcessor for dual export
 	if neo4jClient != nil {
@@ -69,10 +73,13 @@ func (d *daemonImpl) initLangfuseTracing(ctx context.Context, neo4jClient *graph
 		// This enables dual export: spans go to both Langfuse (via exporter) and Neo4j (via processor)
 		tracerProvider.RegisterSpanProcessor(graphProcessor)
 
+		// Track the processor so it can be passed to callback service
+		spanProcessors = append(spanProcessors, graphProcessor)
+
 		d.logger.Info("GraphSpanProcessor registered successfully")
 	}
 
-	return tracerProvider, nil
+	return tracerProvider, spanProcessors, nil
 }
 
 // initGraphRAG initializes Neo4j client for GraphRAG.

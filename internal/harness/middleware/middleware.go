@@ -140,6 +140,9 @@ const (
 
 	// CtxAgentTargetName stores the target agent name for delegation operations
 	CtxAgentTargetName ctxKey = "agent_target_name"
+
+	// CtxMessages stores the LLM messages for LLM operations
+	CtxMessages ctxKey = "messages"
 )
 
 // WithOperationType returns a new context with the operation type set.
@@ -361,4 +364,56 @@ func GetAgentTargetName(ctx context.Context) string {
 // WithAgentTargetName returns a new context with the target agent name set.
 func WithAgentTargetName(ctx context.Context, name string) context.Context {
 	return context.WithValue(ctx, CtxAgentTargetName, name)
+}
+
+// GetMessages retrieves the LLM messages from the context.
+// Returns nil if not set.
+func GetMessages(ctx context.Context) []Message {
+	if msgs, ok := ctx.Value(CtxMessages).([]Message); ok {
+		return msgs
+	}
+	return nil
+}
+
+// WithMessages returns a new context with the LLM messages set.
+func WithMessages(ctx context.Context, msgs []Message) context.Context {
+	return context.WithValue(ctx, CtxMessages, msgs)
+}
+
+// Message is a simplified message type for context storage.
+// This avoids importing llm package in middleware to prevent cycles.
+type Message struct {
+	Role    string
+	Content string
+}
+
+// CompletionResult holds the essential response data for LLM completions.
+// This allows the middleware to capture response attributes without
+// depending on specific types that may be serialized during transport.
+type CompletionResult struct {
+	ID            string
+	Model         string
+	Content       string
+	FinishReason  string
+	InputTokens   int
+	OutputTokens  int
+	ToolCallCount int
+	ToolCallNames []string
+}
+
+// CtxCompletionResult is the context key for the completion result
+const CtxCompletionResult ctxKey = "completion_result"
+
+// WithCompletionResult returns a new context with the completion result set.
+func WithCompletionResult(ctx context.Context, result *CompletionResult) context.Context {
+	return context.WithValue(ctx, CtxCompletionResult, result)
+}
+
+// GetCompletionResult retrieves the completion result from the context.
+// Returns nil if not set.
+func GetCompletionResult(ctx context.Context) *CompletionResult {
+	if result, ok := ctx.Value(CtxCompletionResult).(*CompletionResult); ok {
+		return result
+	}
+	return nil
 }

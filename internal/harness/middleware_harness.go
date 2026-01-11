@@ -2,12 +2,15 @@ package harness
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/harness/middleware"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/types"
+	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -33,6 +36,7 @@ func (h *MiddlewareHarness) Complete(ctx context.Context, slot string, messages 
 	ctx = middleware.WithOperationType(ctx, middleware.OpComplete)
 	ctx = middleware.WithSlotName(ctx, slot)
 	ctx = middleware.WithMissionContext(ctx, h.inner.Mission().ID.String(), h.inner.Mission().CurrentAgent)
+	ctx = middleware.WithMessages(ctx, toMiddlewareMessages(messages))
 
 	innerOp := func(ctx context.Context, req any) (any, error) {
 		return h.inner.Complete(ctx, slot, messages, opts...)
@@ -52,6 +56,7 @@ func (h *MiddlewareHarness) CompleteWithTools(ctx context.Context, slot string, 
 	ctx = middleware.WithOperationType(ctx, middleware.OpCompleteWithTools)
 	ctx = middleware.WithSlotName(ctx, slot)
 	ctx = middleware.WithMissionContext(ctx, h.inner.Mission().ID.String(), h.inner.Mission().CurrentAgent)
+	ctx = middleware.WithMessages(ctx, toMiddlewareMessages(messages))
 
 	innerOp := func(ctx context.Context, req any) (any, error) {
 		return h.inner.CompleteWithTools(ctx, slot, messages, tools, opts...)
@@ -71,6 +76,7 @@ func (h *MiddlewareHarness) Stream(ctx context.Context, slot string, messages []
 	ctx = middleware.WithOperationType(ctx, middleware.OpStream)
 	ctx = middleware.WithSlotName(ctx, slot)
 	ctx = middleware.WithMissionContext(ctx, h.inner.Mission().ID.String(), h.inner.Mission().CurrentAgent)
+	ctx = middleware.WithMessages(ctx, toMiddlewareMessages(messages))
 
 	innerOp := func(ctx context.Context, req any) (any, error) {
 		return h.inner.Stream(ctx, slot, messages, opts...)
@@ -84,6 +90,19 @@ func (h *MiddlewareHarness) Stream(ctx context.Context, slot string, messages []
 		return nil, nil
 	}
 	return result.(<-chan llm.StreamChunk), nil
+}
+
+func (h *MiddlewareHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error) {
+	ctx = middleware.WithOperationType(ctx, middleware.OpCompleteWithTools) // Reuse tools op type since structured uses tool_use
+	ctx = middleware.WithSlotName(ctx, slot)
+	ctx = middleware.WithMissionContext(ctx, h.inner.Mission().ID.String(), h.inner.Mission().CurrentAgent)
+	ctx = middleware.WithMessages(ctx, toMiddlewareMessages(messages))
+
+	innerOp := func(ctx context.Context, req any) (any, error) {
+		return h.inner.CompleteStructuredAny(ctx, slot, messages, schemaType, opts...)
+	}
+
+	return h.wrapOperation(innerOp)(ctx, nil)
 }
 
 func (h *MiddlewareHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
@@ -151,6 +170,7 @@ func (h *MiddlewareHarness) GetFindings(ctx context.Context, filter FindingFilte
 }
 func (h *MiddlewareHarness) Memory() memory.MemoryStore            { return h.inner.Memory() }
 func (h *MiddlewareHarness) Mission() MissionContext               { return h.inner.Mission() }
+func (h *MiddlewareHarness) MissionID() types.ID                   { return h.inner.MissionID() }
 func (h *MiddlewareHarness) Target() TargetInfo                    { return h.inner.Target() }
 func (h *MiddlewareHarness) ListTools() []ToolDescriptor           { return h.inner.ListTools() }
 func (h *MiddlewareHarness) ListPlugins() []PluginDescriptor       { return h.inner.ListPlugins() }
@@ -199,3 +219,109 @@ func (h *MiddlewareHarness) Log(level, message string, fields map[string]any) {
 
 var _ AgentHarness = (*MiddlewareHarness)(nil)
 var _ agent.AgentHarness = (*MiddlewareHarness)(nil)
+
+// GraphRAGSupport interface implementation - pass through to inner harness
+// These methods enable GraphRAG operations for external agents using callback RPCs.
+
+func (h *MiddlewareHarness) QueryGraphRAG(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	if inner, ok := h.inner.(interface {
+		QueryGraphRAG(context.Context, sdkgraphrag.Query) ([]sdkgraphrag.Result, error)
+	}); ok {
+		return inner.QueryGraphRAG(ctx, query)
+	}
+	return nil, fmt.Errorf("QueryGraphRAG not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) FindSimilarAttacks(ctx context.Context, content string, topK int) ([]sdkgraphrag.AttackPattern, error) {
+	if inner, ok := h.inner.(interface {
+		FindSimilarAttacks(context.Context, string, int) ([]sdkgraphrag.AttackPattern, error)
+	}); ok {
+		return inner.FindSimilarAttacks(ctx, content, topK)
+	}
+	return nil, fmt.Errorf("FindSimilarAttacks not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) FindSimilarFindings(ctx context.Context, findingID string, topK int) ([]sdkgraphrag.FindingNode, error) {
+	if inner, ok := h.inner.(interface {
+		FindSimilarFindings(context.Context, string, int) ([]sdkgraphrag.FindingNode, error)
+	}); ok {
+		return inner.FindSimilarFindings(ctx, findingID, topK)
+	}
+	return nil, fmt.Errorf("FindSimilarFindings not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) GetAttackChains(ctx context.Context, techniqueID string, maxDepth int) ([]sdkgraphrag.AttackChain, error) {
+	if inner, ok := h.inner.(interface {
+		GetAttackChains(context.Context, string, int) ([]sdkgraphrag.AttackChain, error)
+	}); ok {
+		return inner.GetAttackChains(ctx, techniqueID, maxDepth)
+	}
+	return nil, fmt.Errorf("GetAttackChains not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) GetRelatedFindings(ctx context.Context, findingID string) ([]sdkgraphrag.FindingNode, error) {
+	if inner, ok := h.inner.(interface {
+		GetRelatedFindings(context.Context, string) ([]sdkgraphrag.FindingNode, error)
+	}); ok {
+		return inner.GetRelatedFindings(ctx, findingID)
+	}
+	return nil, fmt.Errorf("GetRelatedFindings not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) StoreGraphNode(ctx context.Context, node sdkgraphrag.GraphNode) (string, error) {
+	if inner, ok := h.inner.(interface {
+		StoreGraphNode(context.Context, sdkgraphrag.GraphNode) (string, error)
+	}); ok {
+		return inner.StoreGraphNode(ctx, node)
+	}
+	return "", fmt.Errorf("StoreGraphNode not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) CreateGraphRelationship(ctx context.Context, rel sdkgraphrag.Relationship) error {
+	if inner, ok := h.inner.(interface {
+		CreateGraphRelationship(context.Context, sdkgraphrag.Relationship) error
+	}); ok {
+		return inner.CreateGraphRelationship(ctx, rel)
+	}
+	return fmt.Errorf("CreateGraphRelationship not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) StoreGraphBatch(ctx context.Context, batch sdkgraphrag.Batch) ([]string, error) {
+	if inner, ok := h.inner.(interface {
+		StoreGraphBatch(context.Context, sdkgraphrag.Batch) ([]string, error)
+	}); ok {
+		return inner.StoreGraphBatch(ctx, batch)
+	}
+	return nil, fmt.Errorf("StoreGraphBatch not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) TraverseGraph(ctx context.Context, startNodeID string, opts sdkgraphrag.TraversalOptions) ([]sdkgraphrag.TraversalResult, error) {
+	if inner, ok := h.inner.(interface {
+		TraverseGraph(context.Context, string, sdkgraphrag.TraversalOptions) ([]sdkgraphrag.TraversalResult, error)
+	}); ok {
+		return inner.TraverseGraph(ctx, startNodeID, opts)
+	}
+	return nil, fmt.Errorf("TraverseGraph not supported by inner harness")
+}
+
+func (h *MiddlewareHarness) GraphRAGHealth(ctx context.Context) types.HealthStatus {
+	if inner, ok := h.inner.(interface {
+		GraphRAGHealth(context.Context) types.HealthStatus
+	}); ok {
+		return inner.GraphRAGHealth(ctx)
+	}
+	return types.Unhealthy("GraphRAGHealth not supported by inner harness")
+}
+
+// toMiddlewareMessages converts llm.Message slice to middleware.Message slice
+// for passing through context to tracing middleware.
+func toMiddlewareMessages(messages []llm.Message) []middleware.Message {
+	result := make([]middleware.Message, len(messages))
+	for i, m := range messages {
+		result[i] = middleware.Message{
+			Role:    string(m.Role),
+			Content: m.Content,
+		}
+	}
+	return result
+}

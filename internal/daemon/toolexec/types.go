@@ -6,6 +6,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	sdktypes "github.com/zero-day-ai/sdk/types"
 )
 
 // ToolExecutorService orchestrates tool discovery, caching, and subprocess-based execution.
@@ -61,6 +62,10 @@ type ToolBinaryInfo struct {
 
 	// OutputSchema defines the structure of the tool's output.
 	OutputSchema schema.JSONSchema
+
+	// Timeout defines the timeout configuration for this tool.
+	// Zero value means no timeout constraints are configured.
+	Timeout sdktypes.TimeoutConfig
 
 	// Error captures any error that occurred during tool discovery or schema fetching.
 	// A non-nil error indicates the tool may not be usable.
@@ -142,6 +147,10 @@ type ToolDescriptor struct {
 
 	// Metrics tracks execution statistics for monitoring.
 	Metrics *ToolMetrics `json:"metrics,omitempty"`
+
+	// Timeout defines the timeout configuration for this tool.
+	// Zero value means no timeout constraints are configured.
+	Timeout sdktypes.TimeoutConfig `json:"timeout,omitempty"`
 }
 
 // ToolMetrics tracks execution statistics for a tool.
@@ -174,4 +183,5 @@ const (
 	ErrInvalidToolOutput    types.ErrorCode = "TOOL_INVALID_OUTPUT"
 	ErrToolSpawnFailed      types.ErrorCode = "TOOL_SPAWN_FAILED"
 	ErrToolSchemaFetchError types.ErrorCode = "TOOL_SCHEMA_FETCH_ERROR"
+	ErrInvalidTimeout       types.ErrorCode = "TOOL_INVALID_TIMEOUT"
 )

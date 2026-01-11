@@ -50,16 +50,17 @@ func NewCallbackServer(logger *slog.Logger, port int) *CallbackServer {
 //   - logger: Structured logger for server events
 //   - port: The port to listen on for gRPC connections
 //   - registry: The harness registry for mission-based lookups
+//   - opts: Optional callback service configuration options (e.g., WithTracerProvider)
 //
 // Returns:
 //   - *CallbackServer: A new server instance ready to be started
-func NewCallbackServerWithRegistry(logger *slog.Logger, port int, registry *CallbackHarnessRegistry) *CallbackServer {
+func NewCallbackServerWithRegistry(logger *slog.Logger, port int, registry *CallbackHarnessRegistry, opts ...CallbackServiceOption) *CallbackServer {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return &CallbackServer{
-		service: NewHarnessCallbackServiceWithRegistry(logger, registry),
+		service: NewHarnessCallbackServiceWithRegistry(logger, registry, opts...),
 		logger:  logger.With("component", "callback_server"),
 		port:    port,
 	}
@@ -141,4 +142,10 @@ func (s *CallbackServer) RegisterHarness(taskID string, harness AgentHarness) {
 // UnregisterHarness removes a harness registration when a task completes.
 func (s *CallbackServer) UnregisterHarness(taskID string) {
 	s.service.UnregisterHarness(taskID)
+}
+
+// SetCredentialStore sets the credential store for secure credential retrieval.
+// This must be called before starting the server.
+func (s *CallbackServer) SetCredentialStore(store CredentialStore) {
+	s.service.credentialStore = store
 }

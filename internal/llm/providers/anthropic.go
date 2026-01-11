@@ -2,17 +2,21 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/tmc/langchaingo/llms/anthropic"
+	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // AnthropicProvider implements LLMProvider for Anthropic's Claude models
 type AnthropicProvider struct {
-	client *anthropic.LLM
-	config llm.ProviderConfig
+	client       *anthropic.LLM
+	directClient *AnthropicDirectClient
+	config       llm.ProviderConfig
 }
 
 // NewAnthropicProvider creates a new Anthropic provider
@@ -40,8 +44,9 @@ func NewAnthropicProvider(cfg llm.ProviderConfig) (*AnthropicProvider, error) {
 	}
 
 	return &AnthropicProvider{
-		client: client,
-		config: cfg,
+		client:       client,
+		directClient: NewAnthropicDirectClient(apiKey),
+		config:       cfg,
 	}, nil
 }
 
@@ -57,25 +62,25 @@ func (p *AnthropicProvider) Models(ctx context.Context) ([]llm.ModelInfo, error)
 			Name:          "claude-sonnet-4-5-20250929",
 			ContextWindow: 200000,
 			MaxOutput:     8192,
-			Features:      []string{"chat", "streaming", "tools", "vision"},
+			Features:      []string{"chat", "streaming", "tools", "vision", "json_mode"},
 		},
 		{
 			Name:          "claude-opus-4-20250514",
 			ContextWindow: 200000,
 			MaxOutput:     4096,
-			Features:      []string{"chat", "streaming", "tools", "vision"},
+			Features:      []string{"chat", "streaming", "tools", "vision", "json_mode"},
 		},
 		{
 			Name:          "claude-sonnet-4-20250514",
 			ContextWindow: 200000,
 			MaxOutput:     4096,
-			Features:      []string{"chat", "streaming", "tools", "vision"},
+			Features:      []string{"chat", "streaming", "tools", "vision", "json_mode"},
 		},
 		{
 			Name:          "claude-3-haiku-20240307",
 			ContextWindow: 200000,
 			MaxOutput:     4096,
-			Features:      []string{"chat", "streaming", "tools", "vision"},
+			Features:      []string{"chat", "streaming", "tools", "vision", "json_mode"},
 		},
 	}
 	return models, nil
@@ -156,3 +161,71 @@ func (p *AnthropicProvider) Health(ctx context.Context) types.HealthStatus {
 
 	return types.NewHealthStatus(types.HealthStateHealthy, "")
 }
+
+// SupportsStructuredOutput returns true for json_schema format.
+// Anthropic uses the tool_use pattern which effectively supports json_schema.
+func (p *AnthropicProvider) SupportsStructuredOutput(format sdktypes.ResponseFormatType) bool {
+	return format == sdktypes.ResponseFormatJSONSchema
+}
+
+// CompleteStructured performs a completion using tool_use pattern for structured output.
+// This method converts the response schema to a tool definition and forces the model
+// to use it, guaranteeing structured JSON output matching the schema.
+//
+// This uses the direct Anthropic HTTP client instead of langchaingo because
+// langchaingo v0.1.10's Anthropic provider does not support tool_choice.
+//
+// Requirement 2.1: Anthropic provider uses tool_use pattern with single tool matching response schema
+func (p *AnthropicProvider) CompleteStructured(ctx context.Context, req llm.CompletionRequest) (*llm.CompletionResponse, error) {
+	// Validate that ResponseFormat is provided
+	if req.ResponseFormat == nil {
+		return nil, llm.NewStructuredOutputError("complete", "anthropic", "", llm.ErrSchemaRequiredSentinel)
+	}
+
+	// Validate the response format
+	if err := req.ResponseFormat.Validate(); err != nil {
+		return nil, llm.NewStructuredOutputError("complete", "anthropic", "", err)
+	}
+
+	// Check if format is supported
+	if !p.SupportsStructuredOutput(req.ResponseFormat.Type) {
+		return nil, llm.NewStructuredOutputError("complete", "anthropic", "",
+			llm.ErrStructuredOutputNotSupportedSentinel)
+	}
+
+	// Convert response schema to a tool definition
+	// The tool represents the structured output format we want
+	tool := convertResponseFormatToTool(req.ResponseFormat)
+
+	// Use the direct Anthropic client which properly supports tool_choice
+	// This bypasses langchaingo which lacks tool_choice support
+	resp, err := p.directClient.CompleteWithForcedTool(ctx, req, tool)
+	if err != nil {
+		return nil, llm.NewStructuredOutputError("complete", "anthropic", "", err)
+	}
+
+	// Extract tool call arguments as the structured response
+	if len(resp.Message.ToolCalls) == 0 {
+		return nil, llm.NewStructuredOutputError("complete", "anthropic", resp.Message.Content,
+			fmt.Errorf("no tool call in response despite forced tool choice"))
+	}
+
+	// The tool call arguments ARE the structured response
+	toolCall := resp.Message.ToolCalls[0]
+	rawJSON := toolCall.Arguments
+	resp.RawJSON = rawJSON
+
+	// Parse to verify it's valid JSON
+	var structuredData any
+	if err := json.Unmarshal([]byte(rawJSON), &structuredData); err != nil {
+		return nil, llm.NewParseError("anthropic", rawJSON, 0, err)
+	}
+	resp.StructuredData = structuredData
+
+	// Update the message content to contain the JSON
+	// This provides a consistent interface with other providers
+	resp.Message.Content = rawJSON
+
+	return resp, nil
+}
+

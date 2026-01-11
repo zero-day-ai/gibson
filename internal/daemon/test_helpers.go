@@ -188,6 +188,10 @@ func (m *mockAgentHarness) Stream(ctx context.Context, slot string, messages []l
 	return nil, fmt.Errorf("not implemented in mock")
 }
 
+func (m *mockAgentHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (any, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
 func (m *mockAgentHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
 	return nil, fmt.Errorf("not implemented in mock")
 }
@@ -226,6 +230,10 @@ func (m *mockAgentHarness) Memory() memory.MemoryStore {
 
 func (m *mockAgentHarness) Mission() harness.MissionContext {
 	return harness.MissionContext{}
+}
+
+func (m *mockAgentHarness) MissionID() types.ID {
+	return types.ID("")
 }
 
 func (m *mockAgentHarness) Target() harness.TargetInfo {

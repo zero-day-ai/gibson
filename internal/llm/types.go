@@ -3,6 +3,8 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+
+	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
 )
 
 // Role represents the role of a message in a conversation
@@ -161,6 +163,10 @@ type CompletionRequest struct {
 	SystemPrompt  string         `json:"system_prompt,omitempty"`
 	Stream        bool           `json:"stream,omitempty"`
 	Metadata      map[string]any `json:"metadata,omitempty"`
+
+	// ResponseFormat specifies structured output requirements
+	// nil = standard text completion (backward compatible)
+	ResponseFormat *sdktypes.ResponseFormat `json:"response_format,omitempty"`
 }
 
 // Validate checks if the completion request is valid
@@ -222,6 +228,14 @@ type CompletionResponse struct {
 
 	// Metadata contains arbitrary metadata from the provider
 	Metadata map[string]any `json:"metadata,omitempty"`
+
+	// StructuredData contains parsed JSON when ResponseFormat was specified
+	// nil for standard text completions
+	StructuredData any `json:"-"`
+
+	// RawJSON contains the raw JSON string before parsing
+	// Useful for debugging validation failures
+	RawJSON string `json:"-"`
 }
 
 // FinishReason indicates why LLM generation stopped

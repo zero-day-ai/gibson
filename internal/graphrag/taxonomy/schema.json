@@ -1,0 +1,280 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Zero-Day.AI GraphRAG Taxonomy Schema",
+  "description": "JSON Schema for validating GraphRAG taxonomy YAML files",
+  "definitions": {
+    "property": {
+      "type": "object",
+      "required": ["name", "type", "required", "description"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Property name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["string", "int", "float64", "bool", "[]string", "map[string]any"],
+          "description": "Property type (Go type)"
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the property is required"
+        },
+        "description": {
+          "type": "string",
+          "description": "Property description"
+        },
+        "enum": {
+          "type": "array",
+          "description": "Allowed values for constrained properties",
+          "items": {}
+        },
+        "default": {
+          "description": "Default value if not provided"
+        }
+      }
+    },
+    "nodeType": {
+      "type": "object",
+      "required": ["id", "name", "type", "category", "description", "id_template", "properties"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^node_[a-z_]+$",
+          "description": "Unique node type identifier (e.g., node_domain)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "type": {
+          "type": "string",
+          "description": "GraphRAG node type string"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["asset", "finding", "execution", "attack"],
+          "description": "Node category for grouping"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the node type"
+        },
+        "id_template": {
+          "type": "string",
+          "description": "Template for generating node IDs (e.g., domain:{name})"
+        },
+        "properties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/property"
+          },
+          "description": "Property definitions for this node type"
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Example node instances"
+        }
+      }
+    },
+    "relationshipType": {
+      "type": "object",
+      "required": ["id", "name", "type", "description", "from_types", "to_types", "bidirectional"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^rel_[a-z_]+$",
+          "description": "Unique relationship identifier (e.g., rel_has_subdomain)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name"
+        },
+        "type": {
+          "type": "string",
+          "description": "GraphRAG relationship type string (e.g., HAS_SUBDOMAIN)"
+        },
+        "category": {
+          "type": "string",
+          "description": "Relationship category for grouping"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description of the relationship"
+        },
+        "from_types": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "Valid source node types"
+        },
+        "to_types": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          },
+          "description": "Valid target node types"
+        },
+        "bidirectional": {
+          "type": "boolean",
+          "description": "Whether the relationship should be created in both directions"
+        },
+        "properties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/property"
+          },
+          "description": "Optional properties on the relationship"
+        }
+      }
+    },
+    "technique": {
+      "type": "object",
+      "required": ["technique_id", "name", "taxonomy", "description"],
+      "properties": {
+        "technique_id": {
+          "type": "string",
+          "pattern": "^(T[0-9]{4}|ARC-T[0-9]{3}|[A-Z]+-[0-9]+)$",
+          "description": "Technique identifier (e.g., T1190, ARC-T001)"
+        },
+        "name": {
+          "type": "string",
+          "description": "Technique name"
+        },
+        "taxonomy": {
+          "type": "string",
+          "enum": ["mitre", "arcanum", "custom"],
+          "description": "Taxonomy source"
+        },
+        "category": {
+          "type": "string",
+          "description": "Technique category"
+        },
+        "description": {
+          "type": "string",
+          "description": "Detailed description"
+        },
+        "tactic": {
+          "type": "string",
+          "description": "MITRE ATT&CK tactic (for MITRE techniques)"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Applicable platforms"
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Example applications"
+        },
+        "mitre_mapping": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Cross-reference to MITRE techniques (for Arcanum)"
+        },
+        "detection_strategies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "How to detect this technique"
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["version", "metadata", "includes"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-.+)?$",
+          "description": "Taxonomy version (semantic versioning)"
+        },
+        "metadata": {
+          "type": "object",
+          "required": ["name", "description", "updated_at"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Taxonomy name"
+            },
+            "description": {
+              "type": "string",
+              "description": "Taxonomy description"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date",
+              "description": "Last update date (YYYY-MM-DD)"
+            }
+          }
+        },
+        "includes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of included YAML files"
+        }
+      },
+      "description": "Root taxonomy.yaml file"
+    },
+    {
+      "type": "object",
+      "required": ["node_types"],
+      "properties": {
+        "node_types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/nodeType"
+          },
+          "description": "Node type definitions"
+        }
+      },
+      "description": "Node types file"
+    },
+    {
+      "type": "object",
+      "required": ["relationship_types"],
+      "properties": {
+        "relationship_types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/relationshipType"
+          },
+          "description": "Relationship type definitions"
+        }
+      },
+      "description": "Relationship types file"
+    },
+    {
+      "type": "object",
+      "required": ["techniques"],
+      "properties": {
+        "techniques": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/technique"
+          },
+          "description": "Technique definitions"
+        }
+      },
+      "description": "Techniques file"
+    }
+  ]
+}

@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // CallbackConfig contains configuration for the callback server.
@@ -335,7 +337,13 @@ func (m *CallbackManager) CallbackEndpoint() string {
 	if m.config.AdvertiseAddress != "" {
 		return m.config.AdvertiseAddress
 	}
-	return m.config.ListenAddress
+	// If ListenAddress uses 0.0.0.0 (bind all interfaces), convert to localhost
+	// since 0.0.0.0 is not a routable address that agents can connect to
+	addr := m.config.ListenAddress
+	if strings.HasPrefix(addr, "0.0.0.0:") {
+		return "localhost:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	}
+	return addr
 }
 
 // IsRunning returns whether the callback server is currently running.
@@ -349,4 +357,59 @@ func (m *CallbackManager) IsRunning() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.running
+}
+
+// AddSpanProcessors adds span processors to the callback service.
+// This allows the callback service to forward spans received from remote agents
+// to the registered span processors (e.g., for Langfuse export or Neo4j recording).
+//
+// This method should be called after NewCallbackManager but before Start().
+//
+// Parameters:
+//   - processors: Span processors to register with the callback service
+//
+// Thread-safe: Can be called from multiple goroutines.
+func (m *CallbackManager) AddSpanProcessors(processors ...sdktrace.SpanProcessor) {
+	if m.server != nil && m.server.service != nil {
+		m.server.service.mu.Lock()
+		defer m.server.service.mu.Unlock()
+		m.server.service.spanProcessors = append(m.server.service.spanProcessors, processors...)
+		m.logger.Debug("added span processors to callback service",
+			"count", len(processors))
+	}
+}
+
+// SetTracerProvider sets the TracerProvider on the callback service.
+// This is required for distributed tracing to work - proxy spans received from
+// remote agents are re-created as real spans using this provider.
+//
+// This method should be called after NewCallbackManager but before Start().
+//
+// Parameters:
+//   - tp: TracerProvider that will be used to create spans
+//
+// Thread-safe: Can be called from multiple goroutines.
+func (m *CallbackManager) SetTracerProvider(tp *sdktrace.TracerProvider) {
+	if m.server != nil && m.server.service != nil {
+		m.server.service.mu.Lock()
+		defer m.server.service.mu.Unlock()
+		m.server.service.tracerProvider = tp
+		m.logger.Debug("set tracer provider on callback service")
+	}
+}
+
+// SetCredentialStore sets the credential store on the callback service.
+// This enables agents and plugins to retrieve stored credentials securely.
+//
+// This method should be called after NewCallbackManager but before Start().
+//
+// Parameters:
+//   - store: CredentialStore implementation for credential retrieval
+//
+// Thread-safe: Can be called from multiple goroutines.
+func (m *CallbackManager) SetCredentialStore(store CredentialStore) {
+	if m.server != nil {
+		m.server.SetCredentialStore(store)
+		m.logger.Debug("set credential store on callback service")
+	}
 }

@@ -286,8 +286,8 @@ func (b *DefaultGraphRAGQueryBridge) CreateRelationship(ctx context.Context, rel
 		return fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
 	}
 
-	// Convert SDK relationship to internal relationship
-	internalRel, err := sdkRelationshipToInternal(rel)
+	// Convert SDK relationship to internal relationship (no batch mapping for standalone relationships)
+	internalRel, err := sdkRelationshipToInternal(rel, nil)
 	if err != nil {
 		return fmt.Errorf("relationship conversion failed: %w", err)
 	}
@@ -327,8 +327,14 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 	}
 
 	// Convert SDK batch to internal records
-	records := make([]graphrag.GraphRecord, len(batch.Nodes))
+	records := make([]*graphrag.GraphRecord, len(batch.Nodes))
 	nodeIDs := make([]string, len(batch.Nodes))
+
+	// Build maps for relationship mapping:
+	// - nodeIDToIndex: SDK node ID -> record index (for attaching relationships)
+	// - sdkIDToInternalID: SDK node ID -> internal UUID string (for ID translation)
+	nodeIDToIndex := make(map[string]int, len(batch.Nodes))
+	sdkIDToInternalID := make(map[string]types.ID, len(batch.Nodes))
 
 	for i, sdkNode := range batch.Nodes {
 		// Validate node
@@ -340,37 +346,55 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 		internalNode := sdkNodeToInternal(sdkNode, missionID, agentName)
 		nodeIDs[i] = internalNode.ID.String()
 
-		// Create record
+		// Map SDK node ID to record index and internal UUID
+		nodeIDToIndex[sdkNode.ID] = i
+		nodeIDToIndex[internalNode.ID.String()] = i
+		sdkIDToInternalID[sdkNode.ID] = internalNode.ID
+
+		// Create record (take address for pointer receiver methods)
 		record := graphrag.NewGraphRecord(*internalNode)
+		recordPtr := &record
 		if sdkNode.Content != "" {
-			record.WithEmbedContent(sdkNode.Content)
+			recordPtr.WithEmbedContent(sdkNode.Content)
 		}
-		records[i] = record
+		records[i] = recordPtr
 	}
 
-	// Add relationships to the appropriate records
+	// Add relationships to the appropriate records based on source node ID
 	for _, sdkRel := range batch.Relationships {
 		// Validate relationship
 		if err := sdkRel.Validate(); err != nil {
 			return nil, fmt.Errorf("%w: relationship validation failed: %v", sdkgraphrag.ErrInvalidQuery, err)
 		}
 
-		// Convert relationship
-		internalRel, err := sdkRelationshipToInternal(sdkRel)
+		// Convert relationship with batch ID mapping
+		internalRel, err := sdkRelationshipToInternal(sdkRel, sdkIDToInternalID)
 		if err != nil {
 			return nil, fmt.Errorf("relationship conversion failed: %w", err)
 		}
 
 		// Find the record for the source node and add the relationship
-		// We'll add it to the first record as a simplification
-		// In a real implementation, we'd match by node ID
-		if len(records) > 0 {
-			records[0].WithRelationship(*internalRel)
+		if idx, ok := nodeIDToIndex[sdkRel.FromID]; ok {
+			records[idx].WithRelationship(*internalRel)
+		} else {
+			// Source node not in this batch - store relationship separately
+			// This handles cross-batch relationships
+			orphanRecord := graphrag.NewGraphRecord(graphrag.GraphNode{})
+			orphanRecord.WithRelationship(*internalRel)
+			if err := b.store.Store(ctx, orphanRecord); err != nil {
+				return nil, fmt.Errorf("failed to store orphan relationship: %w", err)
+			}
 		}
 	}
 
+	// Convert pointer slice back to value slice for StoreBatch
+	valueRecords := make([]graphrag.GraphRecord, len(records))
+	for i, r := range records {
+		valueRecords[i] = *r
+	}
+
 	// Store batch
-	if err := b.store.StoreBatch(ctx, records); err != nil {
+	if err := b.store.StoreBatch(ctx, valueRecords); err != nil {
 		return nil, fmt.Errorf("%w: %v", sdkgraphrag.ErrStorageFailed, err)
 	}
 
@@ -631,20 +655,21 @@ func sdkNodeToInternal(n sdkgraphrag.GraphNode, missionID, agentName string) *gr
 }
 
 // sdkRelationshipToInternal converts SDK Relationship to internal Relationship.
-func sdkRelationshipToInternal(r sdkgraphrag.Relationship) (*graphrag.Relationship, error) {
-	fromID, err := types.ParseID(r.FromID)
+// Uses the optional idMapping to resolve batch-local node IDs to their internal UUIDs.
+// Pass nil for idMapping when creating standalone relationships (IDs must be valid UUIDs).
+func sdkRelationshipToInternal(r sdkgraphrag.Relationship, idMapping map[string]types.ID) (*graphrag.Relationship, error) {
+	fromID, err := resolveNodeID(r.FromID, idMapping)
 	if err != nil {
 		return nil, fmt.Errorf("invalid from_id: %w", err)
 	}
 
-	toID, err := types.ParseID(r.ToID)
+	toID, err := resolveNodeID(r.ToID, idMapping)
 	if err != nil {
 		return nil, fmt.Errorf("invalid to_id: %w", err)
 	}
 
 	rel := graphrag.NewRelationship(fromID, toID, graphrag.RelationType(r.Type))
 
-	// Set properties
 	if r.Properties != nil {
 		for k, v := range r.Properties {
 			rel.WithProperty(k, v)
@@ -652,6 +677,17 @@ func sdkRelationshipToInternal(r sdkgraphrag.Relationship) (*graphrag.Relationsh
 	}
 
 	return rel, nil
+}
+
+// resolveNodeID resolves an SDK node ID to an internal UUID.
+// First checks the idMapping for batch-local nodes, then parses as UUID.
+func resolveNodeID(id string, idMapping map[string]types.ID) (types.ID, error) {
+	if idMapping != nil {
+		if mappedID, ok := idMapping[id]; ok {
+			return mappedID, nil
+		}
+	}
+	return types.ParseID(id)
 }
 
 // internalAttackPatternToSDK converts internal AttackPattern to SDK AttackPattern.

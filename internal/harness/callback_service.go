@@ -6,16 +6,31 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/gibson/internal/types"
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
-	sdktypes "github.com/zero-day-ai/sdk/types"
+	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// CredentialStore provides access to stored credentials.
+// This interface is implemented by the daemon's credential manager
+// to provide secure credential retrieval with decryption.
+type CredentialStore interface {
+	// GetCredential retrieves a credential by name, decrypting it if necessary.
+	// Returns the credential with its secret value populated.
+	GetCredential(ctx context.Context, name string) (*types.Credential, string, error)
+}
 
 // HarnessCallbackService implements the gRPC HarnessCallbackService server.
 // It receives harness operation requests from remote agents via gRPC and
@@ -48,20 +63,65 @@ type HarnessCallbackService struct {
 	// registry provides mission-based harness lookup for external agents (new mode)
 	registry *CallbackHarnessRegistry
 
+	// credentialStore provides access to stored credentials
+	credentialStore CredentialStore
+
+	// spanProcessors receives spans exported from remote agents for tracing integration
+	spanProcessors []sdktrace.SpanProcessor
+
+	// tracerProvider for creating real spans from proxy span data
+	tracerProvider *sdktrace.TracerProvider
+
+	// mu protects spanProcessors for concurrent access
+	mu sync.RWMutex
+
 	// logger for service-level logging
 	logger *slog.Logger
 }
 
+// CallbackServiceOption configures the callback service.
+type CallbackServiceOption func(*HarnessCallbackService)
+
+// WithSpanProcessors adds span processors to receive tracing spans from remote agents.
+func WithSpanProcessors(processors ...sdktrace.SpanProcessor) CallbackServiceOption {
+	return func(s *HarnessCallbackService) {
+		s.spanProcessors = append(s.spanProcessors, processors...)
+	}
+}
+
+// WithTracerProvider sets the TracerProvider for creating real spans from proxy span data.
+// When set, proxy spans from remote agents are re-created as real spans and passed through
+// the TracerProvider's span processors (e.g., Langfuse exporter).
+func WithTracerProvider(tp *sdktrace.TracerProvider) CallbackServiceOption {
+	return func(s *HarnessCallbackService) {
+		s.tracerProvider = tp
+	}
+}
+
+// WithCredentialStore sets the credential store for secure credential retrieval.
+// When set, agents can retrieve stored credentials by name via the GetCredential RPC.
+func WithCredentialStore(store CredentialStore) CallbackServiceOption {
+	return func(s *HarnessCallbackService) {
+		s.credentialStore = store
+	}
+}
+
 // NewHarnessCallbackService creates a new callback service instance with
 // task-based harness lookup (legacy mode).
-func NewHarnessCallbackService(logger *slog.Logger) *HarnessCallbackService {
+func NewHarnessCallbackService(logger *slog.Logger, opts ...CallbackServiceOption) *HarnessCallbackService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return &HarnessCallbackService{
+	s := &HarnessCallbackService{
 		logger: logger.With("component", "harness_callback_service"),
 	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 // NewHarnessCallbackServiceWithRegistry creates a new callback service instance
@@ -73,18 +133,25 @@ func NewHarnessCallbackService(logger *slog.Logger) *HarnessCallbackService {
 // Parameters:
 //   - logger: Structured logger for service events
 //   - registry: The harness registry for mission-based lookups
+//   - opts: Optional configuration options (e.g., WithSpanProcessors)
 //
 // Returns:
 //   - *HarnessCallbackService: A new service instance ready to be registered
-func NewHarnessCallbackServiceWithRegistry(logger *slog.Logger, registry *CallbackHarnessRegistry) *HarnessCallbackService {
+func NewHarnessCallbackServiceWithRegistry(logger *slog.Logger, registry *CallbackHarnessRegistry, opts ...CallbackServiceOption) *HarnessCallbackService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return &HarnessCallbackService{
+	s := &HarnessCallbackService{
 		registry: registry,
 		logger:   logger.With("component", "harness_callback_service"),
 	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
 }
 
 // RegisterHarness registers a harness instance for a specific task.
@@ -319,6 +386,63 @@ func (s *HarnessCallbackService) LLMStream(req *pb.LLMStreamRequest, stream pb.H
 	}
 
 	return nil
+}
+
+// LLMCompleteStructured implements the structured LLM completion RPC.
+// This uses provider-native structured output mechanisms (tool_use for Anthropic,
+// response_format for OpenAI) to guarantee JSON responses matching the schema.
+func (s *HarnessCallbackService) LLMCompleteStructured(ctx context.Context, req *pb.LLMCompleteStructuredRequest) (*pb.LLMCompleteStructuredResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert proto messages to llm.Message
+	messages := s.protoToMessages(req.Messages)
+
+	// Parse the schema JSON to reconstruct the schema type
+	var schemaData map[string]any
+	if err := json.Unmarshal([]byte(req.SchemaJson), &schemaData); err != nil {
+		s.logger.Error("failed to parse schema JSON", "error", err, "task_id", req.Context.TaskId)
+		return &pb.LLMCompleteStructuredResponse{
+			Error: &pb.HarnessError{
+				Code:    "INVALID_ARGUMENT",
+				Message: fmt.Sprintf("invalid schema JSON: %v", err),
+			},
+		}, nil
+	}
+
+	// Execute structured completion
+	// The harness.CompleteStructured method takes a schema type instance
+	// For callback mode, we pass the parsed map which will be used to build the response format
+	result, err := harness.CompleteStructuredAny(ctx, req.Slot, messages, schemaData)
+	if err != nil {
+		s.logger.Error("LLM structured completion failed", "error", err, "task_id", req.Context.TaskId)
+		return &pb.LLMCompleteStructuredResponse{
+			Error: &pb.HarnessError{
+				Code:    "INTERNAL",
+				Message: err.Error(),
+			},
+		}, nil
+	}
+
+	// Serialize result to JSON
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		s.logger.Error("failed to serialize structured result", "error", err, "task_id", req.Context.TaskId)
+		return &pb.LLMCompleteStructuredResponse{
+			Error: &pb.HarnessError{
+				Code:    "INTERNAL",
+				Message: fmt.Sprintf("failed to serialize result: %v", err),
+			},
+		}, nil
+	}
+
+	return &pb.LLMCompleteStructuredResponse{
+		ResultJson: string(resultJSON),
+		// Note: Token usage would need to be extracted from the completion response
+		// For now we return nil usage since we don't have access to it from CompleteStructuredAny
+	}, nil
 }
 
 // ============================================================================
@@ -650,39 +774,112 @@ func (s *HarnessCallbackService) GetFindings(ctx context.Context, req *pb.GetFin
 // Memory Operations
 // ============================================================================
 
-// MemoryGet implements the memory get RPC.
+// MemoryGet implements the memory get RPC with tier routing.
 func (s *HarnessCallbackService) MemoryGet(ctx context.Context, req *pb.MemoryGetRequest) (*pb.MemoryGetResponse, error) {
 	harness, err := s.getHarness(ctx, req.Context)
 	if err != nil {
 		return nil, err
 	}
 
-	// Get value from working memory
-	value, found := harness.Memory().Working().Get(req.Key)
-	if !found {
-		return &pb.MemoryGetResponse{
-			Found: false,
-		}, nil
+	// Default to WORKING tier for backward compatibility
+	tier := req.Tier
+	if tier == pb.MemoryTier_MEMORY_TIER_UNSPECIFIED {
+		tier = pb.MemoryTier_MEMORY_TIER_WORKING
 	}
 
-	// Serialize value
-	valueJSON, err := json.Marshal(value)
-	if err != nil {
+	switch tier {
+	case pb.MemoryTier_MEMORY_TIER_WORKING:
+		// Working memory: existing logic
+		value, found := harness.Memory().Working().Get(req.Key)
+		if !found {
+			return &pb.MemoryGetResponse{
+				Found: false,
+			}, nil
+		}
+
+		// Serialize value
+		valueJSON, err := json.Marshal(value)
+		if err != nil {
+			return &pb.MemoryGetResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to serialize value: %v", err),
+				},
+			}, nil
+		}
+
+		return &pb.MemoryGetResponse{
+			ValueJson: string(valueJSON),
+			Found:     true,
+		}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_MISSION:
+		// Mission memory: use Retrieve method
+		item, err := harness.Memory().Mission().Retrieve(ctx, req.Key)
+		if err != nil {
+			// Check for not found error
+			if err.Error() == "memory: item not found" || err.Error() == "not found" {
+				return &pb.MemoryGetResponse{
+					Found: false,
+				}, nil
+			}
+			return &pb.MemoryGetResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to retrieve from mission memory: %v", err),
+				},
+			}, nil
+		}
+
+		// Serialize value and metadata to JSON
+		valueJSON, err := json.Marshal(item.Value)
+		if err != nil {
+			return &pb.MemoryGetResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to serialize value: %v", err),
+				},
+			}, nil
+		}
+
+		metadataJSON, err := json.Marshal(item.Metadata)
+		if err != nil {
+			return &pb.MemoryGetResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to serialize metadata: %v", err),
+				},
+			}, nil
+		}
+
+		return &pb.MemoryGetResponse{
+			ValueJson:    string(valueJSON),
+			MetadataJson: string(metadataJSON),
+			Found:        true,
+			CreatedAt:    item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:    item.UpdatedAt.Format(time.RFC3339),
+		}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_LONG_TERM:
+		// Long-term memory does not support Get by key
 		return &pb.MemoryGetResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
-				Message: fmt.Sprintf("failed to serialize value: %v", err),
+				Code:    "INVALID_ARGUMENT",
+				Message: "Long-term memory does not support Get by key. Use LongTermMemorySearch instead.",
+			},
+		}, nil
+
+	default:
+		return &pb.MemoryGetResponse{
+			Error: &pb.HarnessError{
+				Code:    "INVALID_ARGUMENT",
+				Message: fmt.Sprintf("unknown memory tier: %v", tier),
 			},
 		}, nil
 	}
-
-	return &pb.MemoryGetResponse{
-		ValueJson: string(valueJSON),
-		Found:     true,
-	}, nil
 }
 
-// MemorySet implements the memory set RPC.
+// MemorySet implements the memory set RPC with tier routing.
 func (s *HarnessCallbackService) MemorySet(ctx context.Context, req *pb.MemorySetRequest) (*pb.MemorySetResponse, error) {
 	harness, err := s.getHarness(ctx, req.Context)
 	if err != nil {
@@ -700,58 +897,412 @@ func (s *HarnessCallbackService) MemorySet(ctx context.Context, req *pb.MemorySe
 		}, nil
 	}
 
-	// Set value in working memory
-	if err := harness.Memory().Working().Set(req.Key, value); err != nil {
+	// Default to WORKING tier for backward compatibility
+	tier := req.Tier
+	if tier == pb.MemoryTier_MEMORY_TIER_UNSPECIFIED {
+		tier = pb.MemoryTier_MEMORY_TIER_WORKING
+	}
+
+	switch tier {
+	case pb.MemoryTier_MEMORY_TIER_WORKING:
+		// Working memory: existing logic
+		if err := harness.Memory().Working().Set(req.Key, value); err != nil {
+			return &pb.MemorySetResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to set value: %v", err),
+				},
+			}, nil
+		}
+		return &pb.MemorySetResponse{}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_MISSION:
+		// Mission memory: use Store method
+		// Deserialize metadata if provided
+		var metadata map[string]any
+		if req.MetadataJson != "" {
+			if err := json.Unmarshal([]byte(req.MetadataJson), &metadata); err != nil {
+				return &pb.MemorySetResponse{
+					Error: &pb.HarnessError{
+						Code:    "INVALID_ARGUMENT",
+						Message: fmt.Sprintf("invalid metadata JSON: %v", err),
+					},
+				}, nil
+			}
+		}
+
+		if err := harness.Memory().Mission().Store(ctx, req.Key, value, metadata); err != nil {
+			return &pb.MemorySetResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to store in mission memory: %v", err),
+				},
+			}, nil
+		}
+		return &pb.MemorySetResponse{}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_LONG_TERM:
+		// Long-term memory does not support Set by key
 		return &pb.MemorySetResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
-				Message: fmt.Sprintf("failed to set value: %v", err),
+				Code:    "INVALID_ARGUMENT",
+				Message: "Long-term memory does not support Set by key. Use LongTermMemoryStore instead.",
+			},
+		}, nil
+
+	default:
+		return &pb.MemorySetResponse{
+			Error: &pb.HarnessError{
+				Code:    "INVALID_ARGUMENT",
+				Message: fmt.Sprintf("unknown memory tier: %v", tier),
 			},
 		}, nil
 	}
-
-	return &pb.MemorySetResponse{}, nil
 }
 
-// MemoryDelete implements the memory delete RPC.
+// MemoryDelete implements the memory delete RPC with tier routing.
 func (s *HarnessCallbackService) MemoryDelete(ctx context.Context, req *pb.MemoryDeleteRequest) (*pb.MemoryDeleteResponse, error) {
 	harness, err := s.getHarness(ctx, req.Context)
 	if err != nil {
 		return nil, err
 	}
 
-	// Delete from working memory
-	harness.Memory().Working().Delete(req.Key)
+	// Default to WORKING tier for backward compatibility
+	tier := req.Tier
+	if tier == pb.MemoryTier_MEMORY_TIER_UNSPECIFIED {
+		tier = pb.MemoryTier_MEMORY_TIER_WORKING
+	}
 
-	return &pb.MemoryDeleteResponse{}, nil
+	switch tier {
+	case pb.MemoryTier_MEMORY_TIER_WORKING:
+		// Working memory: existing logic
+		harness.Memory().Working().Delete(req.Key)
+		return &pb.MemoryDeleteResponse{}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_MISSION:
+		// Mission memory: use Delete method
+		if err := harness.Memory().Mission().Delete(ctx, req.Key); err != nil {
+			return &pb.MemoryDeleteResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to delete from mission memory: %v", err),
+				},
+			}, nil
+		}
+		return &pb.MemoryDeleteResponse{}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_LONG_TERM:
+		// Long-term memory does not support Delete by key
+		return &pb.MemoryDeleteResponse{
+			Error: &pb.HarnessError{
+				Code:    "INVALID_ARGUMENT",
+				Message: "Long-term memory does not support Delete by key. Use LongTermMemoryDelete instead.",
+			},
+		}, nil
+
+	default:
+		return &pb.MemoryDeleteResponse{
+			Error: &pb.HarnessError{
+				Code:    "INVALID_ARGUMENT",
+				Message: fmt.Sprintf("unknown memory tier: %v", tier),
+			},
+		}, nil
+	}
 }
 
-// MemoryList implements the memory list RPC.
+// MemoryList implements the memory list RPC with tier routing.
 func (s *HarnessCallbackService) MemoryList(ctx context.Context, req *pb.MemoryListRequest) (*pb.MemoryListResponse, error) {
 	harness, err := s.getHarness(ctx, req.Context)
 	if err != nil {
 		return nil, err
 	}
 
-	// List keys from working memory
-	// Note: The proto request has a prefix field, but the working memory List() doesn't support prefix filtering
-	// We'll get all keys and filter by prefix if needed
-	allKeys := harness.Memory().Working().List()
-
-	// Filter by prefix if provided
-	var keys []string
-	if req.Prefix != "" {
-		for _, key := range allKeys {
-			if len(key) >= len(req.Prefix) && key[:len(req.Prefix)] == req.Prefix {
-				keys = append(keys, key)
-			}
-		}
-	} else {
-		keys = allKeys
+	// Default to WORKING tier for backward compatibility
+	tier := req.Tier
+	if tier == pb.MemoryTier_MEMORY_TIER_UNSPECIFIED {
+		tier = pb.MemoryTier_MEMORY_TIER_WORKING
 	}
 
-	return &pb.MemoryListResponse{
-		Keys: keys,
+	switch tier {
+	case pb.MemoryTier_MEMORY_TIER_WORKING:
+		// List keys from working memory
+		// Note: The proto request has a prefix field, but the working memory List() doesn't support prefix filtering
+		// We'll get all keys and filter by prefix if needed
+		allKeys := harness.Memory().Working().List()
+
+		// Filter by prefix if provided
+		var keys []string
+		if req.Prefix != "" {
+			for _, key := range allKeys {
+				if len(key) >= len(req.Prefix) && key[:len(req.Prefix)] == req.Prefix {
+					keys = append(keys, key)
+				}
+			}
+		} else {
+			keys = allKeys
+		}
+
+		return &pb.MemoryListResponse{
+			Keys: keys,
+		}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_MISSION:
+		// Mission memory: use Keys method
+		allKeys, err := harness.Memory().Mission().Keys(ctx)
+		if err != nil {
+			return &pb.MemoryListResponse{
+				Error: &pb.HarnessError{
+					Code:    "INTERNAL",
+					Message: fmt.Sprintf("failed to list keys from mission memory: %v", err),
+				},
+			}, nil
+		}
+
+		// Filter by prefix if provided
+		var keys []string
+		if req.Prefix != "" {
+			for _, key := range allKeys {
+				if len(key) >= len(req.Prefix) && key[:len(req.Prefix)] == req.Prefix {
+					keys = append(keys, key)
+				}
+			}
+		} else {
+			keys = allKeys
+		}
+
+		return &pb.MemoryListResponse{
+			Keys: keys,
+		}, nil
+
+	case pb.MemoryTier_MEMORY_TIER_LONG_TERM:
+		// Long-term memory does not support listing keys
+		return &pb.MemoryListResponse{
+			Error: &pb.HarnessError{
+				Code:    "INVALID_ARGUMENT",
+				Message: "Long-term memory does not support listing keys.",
+			},
+		}, nil
+
+	default:
+		return &pb.MemoryListResponse{
+			Error: &pb.HarnessError{
+				Code:    "INVALID_ARGUMENT",
+				Message: fmt.Sprintf("unknown memory tier: %v", tier),
+			},
+		}, nil
+	}
+}
+
+// LongTermMemoryStore implements the long-term memory store RPC.
+func (s *HarnessCallbackService) LongTermMemoryStore(ctx context.Context, req *pb.LongTermMemoryStoreRequest) (*pb.LongTermMemoryStoreResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	// Deserialize metadata
+	var metadata map[string]any
+	if req.MetadataJson != "" {
+		if err := json.Unmarshal([]byte(req.MetadataJson), &metadata); err != nil {
+			return &pb.LongTermMemoryStoreResponse{
+				Error: &pb.HarnessError{Code: "INVALID_ARGUMENT", Message: fmt.Sprintf("invalid metadata JSON: %v", err)},
+			}, nil
+		}
+	}
+
+	// Generate UUID for the content - SDK interface returns ID, daemon requires ID input
+	id := uuid.New().String()
+
+	// Daemon's LongTermMemory.Store takes (ctx, id, content, metadata)
+	err = harness.Memory().LongTerm().Store(ctx, id, req.Content, metadata)
+	if err != nil {
+		return &pb.LongTermMemoryStoreResponse{
+			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+		}, nil
+	}
+
+	return &pb.LongTermMemoryStoreResponse{Id: id}, nil
+}
+
+// LongTermMemorySearch implements the long-term memory search RPC.
+func (s *HarnessCallbackService) LongTermMemorySearch(ctx context.Context, req *pb.LongTermMemorySearchRequest) (*pb.LongTermMemorySearchResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	// Deserialize filters
+	var filters map[string]any
+	if req.FiltersJson != "" {
+		if err := json.Unmarshal([]byte(req.FiltersJson), &filters); err != nil {
+			return &pb.LongTermMemorySearchResponse{
+				Error: &pb.HarnessError{Code: "INVALID_ARGUMENT", Message: fmt.Sprintf("invalid filters JSON: %v", err)},
+			}, nil
+		}
+	}
+
+	results, err := harness.Memory().LongTerm().Search(ctx, req.Query, int(req.TopK), filters)
+	if err != nil {
+		return &pb.LongTermMemorySearchResponse{
+			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+		}, nil
+	}
+
+	pbResults := make([]*pb.LongTermMemoryResult, len(results))
+	for i, r := range results {
+		metadataJSON, _ := json.Marshal(r.Item.Metadata)
+		pbResults[i] = &pb.LongTermMemoryResult{
+			Id:           r.Item.Key,
+			Content:      r.Item.Value.(string), // Content is stored as string
+			MetadataJson: string(metadataJSON),
+			Score:        r.Score,
+			CreatedAt:    r.Item.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return &pb.LongTermMemorySearchResponse{Results: pbResults}, nil
+}
+
+// LongTermMemoryDelete implements the long-term memory delete RPC.
+func (s *HarnessCallbackService) LongTermMemoryDelete(ctx context.Context, req *pb.LongTermMemoryDeleteRequest) (*pb.LongTermMemoryDeleteResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	err = harness.Memory().LongTerm().Delete(ctx, req.Id)
+	if err != nil {
+		return &pb.LongTermMemoryDeleteResponse{
+			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+		}, nil
+	}
+
+	return &pb.LongTermMemoryDeleteResponse{}, nil
+}
+
+// MissionMemorySearch implements the mission memory search RPC.
+func (s *HarnessCallbackService) MissionMemorySearch(ctx context.Context, req *pb.MissionMemorySearchRequest) (*pb.MissionMemorySearchResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := harness.Memory().Mission().Search(ctx, req.Query, int(req.Limit))
+	if err != nil {
+		return &pb.MissionMemorySearchResponse{
+			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+		}, nil
+	}
+
+	pbResults := make([]*pb.MissionMemoryResult, len(results))
+	for i, r := range results {
+		valueJSON, _ := json.Marshal(r.Item.Value)
+		metadataJSON, _ := json.Marshal(r.Item.Metadata)
+		pbResults[i] = &pb.MissionMemoryResult{
+			Key:          r.Item.Key,
+			ValueJson:    string(valueJSON),
+			MetadataJson: string(metadataJSON),
+			Score:        r.Score,
+			CreatedAt:    r.Item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:    r.Item.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return &pb.MissionMemorySearchResponse{Results: pbResults}, nil
+}
+
+// MissionMemoryHistory implements the mission memory history RPC.
+func (s *HarnessCallbackService) MissionMemoryHistory(ctx context.Context, req *pb.MissionMemoryHistoryRequest) (*pb.MissionMemoryHistoryResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	items, err := harness.Memory().Mission().History(ctx, int(req.Limit))
+	if err != nil {
+		return &pb.MissionMemoryHistoryResponse{
+			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+		}, nil
+	}
+
+	pbItems := make([]*pb.MissionMemoryItem, len(items))
+	for i, item := range items {
+		valueJSON, _ := json.Marshal(item.Value)
+		metadataJSON, _ := json.Marshal(item.Metadata)
+		pbItems[i] = &pb.MissionMemoryItem{
+			Key:          item.Key,
+			ValueJson:    string(valueJSON),
+			MetadataJson: string(metadataJSON),
+			CreatedAt:    item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:    item.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return &pb.MissionMemoryHistoryResponse{Items: pbItems}, nil
+}
+
+// MissionMemoryGetPreviousRunValue implements the mission memory get previous run value RPC.
+func (s *HarnessCallbackService) MissionMemoryGetPreviousRunValue(ctx context.Context, req *pb.MissionMemoryGetPreviousRunValueRequest) (*pb.MissionMemoryGetPreviousRunValueResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	value, err := harness.Memory().Mission().GetPreviousRunValue(ctx, req.Key)
+	if err != nil {
+		// Check for specific errors
+		errMsg := err.Error()
+		return &pb.MissionMemoryGetPreviousRunValueResponse{
+			Found: false,
+			Error: &pb.HarnessError{Code: "NOT_FOUND", Message: errMsg},
+		}, nil
+	}
+
+	valueJSON, _ := json.Marshal(value)
+	return &pb.MissionMemoryGetPreviousRunValueResponse{
+		ValueJson: string(valueJSON),
+		Found:     true,
+	}, nil
+}
+
+// MissionMemoryGetValueHistory implements the mission memory get value history RPC.
+func (s *HarnessCallbackService) MissionMemoryGetValueHistory(ctx context.Context, req *pb.MissionMemoryGetValueHistoryRequest) (*pb.MissionMemoryGetValueHistoryResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	history, err := harness.Memory().Mission().GetValueHistory(ctx, req.Key)
+	if err != nil {
+		return &pb.MissionMemoryGetValueHistoryResponse{
+			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+		}, nil
+	}
+
+	pbValues := make([]*pb.HistoricalValueItem, len(history))
+	for i, h := range history {
+		valueJSON, _ := json.Marshal(h.Value)
+		pbValues[i] = &pb.HistoricalValueItem{
+			ValueJson: string(valueJSON),
+			RunNumber: int32(h.RunNumber),
+			MissionId: h.MissionID,
+			StoredAt:  h.StoredAt.Format(time.RFC3339),
+		}
+	}
+
+	return &pb.MissionMemoryGetValueHistoryResponse{Values: pbValues}, nil
+}
+
+// MissionMemoryContinuityMode implements the mission memory continuity mode RPC.
+func (s *HarnessCallbackService) MissionMemoryContinuityMode(ctx context.Context, req *pb.MissionMemoryContinuityModeRequest) (*pb.MissionMemoryContinuityModeResponse, error) {
+	harness, err := s.getHarness(ctx, req.Context)
+	if err != nil {
+		return nil, err
+	}
+
+	mode := harness.Memory().Mission().ContinuityMode()
+	return &pb.MissionMemoryContinuityModeResponse{
+		Mode: string(mode),
 	}, nil
 }
 
@@ -760,7 +1311,7 @@ func (s *HarnessCallbackService) MemoryList(ctx context.Context, req *pb.MemoryL
 // ============================================================================
 
 // GraphRAGSupport interface for harnesses that support GraphRAG operations.
-// The DefaultAgentHarness implements these methods.
+// The DefaultAgentHarness and MiddlewareHarness implement these methods.
 type GraphRAGSupport interface {
 	QueryGraphRAG(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error)
 	FindSimilarAttacks(ctx context.Context, content string, topK int) ([]sdkgraphrag.AttackPattern, error)
@@ -771,7 +1322,7 @@ type GraphRAGSupport interface {
 	CreateGraphRelationship(ctx context.Context, rel sdkgraphrag.Relationship) error
 	StoreGraphBatch(ctx context.Context, batch sdkgraphrag.Batch) ([]string, error)
 	TraverseGraph(ctx context.Context, startNodeID string, opts sdkgraphrag.TraversalOptions) ([]sdkgraphrag.TraversalResult, error)
-	GraphRAGHealth(ctx context.Context) sdktypes.HealthStatus
+	GraphRAGHealth(ctx context.Context) types.HealthStatus
 }
 
 // GraphRAGQuery implements the GraphRAG query RPC.
@@ -1179,10 +1730,86 @@ func (s *HarnessCallbackService) GraphRAGHealth(ctx context.Context, req *pb.Gra
 
 	return &pb.GraphRAGHealthResponse{
 		Status: &pb.HarnessHealthStatus{
-			State:   healthStatus.Status,
+			State:   string(healthStatus.State),
 			Message: healthStatus.Message,
 		},
 	}, nil
+}
+
+// ============================================================================
+// Distributed Tracing Operations
+// ============================================================================
+
+// RecordSpan implements the span recording RPC for distributed tracing.
+// It receives spans from remote agents and forwards them to registered span processors.
+func (s *HarnessCallbackService) RecordSpan(ctx context.Context, req *pb.RecordSpanRequest) (*pb.RecordSpanResponse, error) {
+	if req.Span == nil {
+		return &pb.RecordSpanResponse{}, nil
+	}
+
+	// Convert proto span to span data and export
+	spanData := s.protoToSpanData(req.Span)
+	s.exportSpanData(spanData)
+
+	return &pb.RecordSpanResponse{}, nil
+}
+
+// RecordSpans implements the batch span recording RPC for distributed tracing.
+// It receives multiple spans from remote agents and forwards them to registered span processors.
+func (s *HarnessCallbackService) RecordSpans(ctx context.Context, req *pb.RecordSpansRequest) (*pb.RecordSpansResponse, error) {
+	for _, protoSpan := range req.Spans {
+		if protoSpan == nil {
+			continue
+		}
+
+		// Convert proto span to span data and export
+		spanData := s.protoToSpanData(protoSpan)
+		s.exportSpanData(spanData)
+	}
+
+	return &pb.RecordSpansResponse{}, nil
+}
+
+// exportSpanData creates a real span using the TracerProvider and immediately ends it.
+// This allows the span to be processed by registered span processors.
+func (s *HarnessCallbackService) exportSpanData(data *proxySpanData) {
+	if data == nil || s.tracerProvider == nil {
+		return
+	}
+
+	// Create parent context with the original trace context
+	parentCtx := trace.ContextWithSpanContext(context.Background(), data.Parent)
+
+	// Get tracer from the provider
+	tracer := s.tracerProvider.Tracer("gibson-agent-proxy")
+
+	// Create span with original attributes and timing
+	_, span := tracer.Start(parentCtx, data.Name,
+		trace.WithSpanKind(data.SpanKind),
+		trace.WithTimestamp(data.StartTime),
+		trace.WithAttributes(data.Attributes...),
+	)
+
+	// Add events
+	for _, event := range data.Events {
+		span.AddEvent(event.Name, trace.WithTimestamp(event.Time), trace.WithAttributes(event.Attributes...))
+	}
+
+	// Set status
+	span.SetStatus(otelcodes.Code(data.Status.Code), data.Status.Description)
+
+	// End span with original end time
+	span.End(trace.WithTimestamp(data.EndTime))
+}
+
+// exportSpan forwards a span to all registered span processors.
+// Deprecated: Use exportSpanData instead for proxy spans.
+func (s *HarnessCallbackService) exportSpan(span sdktrace.ReadOnlySpan) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, processor := range s.spanProcessors {
+		processor.OnEnd(span)
+	}
 }
 
 // ============================================================================
@@ -1303,4 +1930,268 @@ func (s *HarnessCallbackService) protoToRelationship(protoRel *pb.Relationship) 
 		Properties:    props,
 		Bidirectional: protoRel.Bidirectional,
 	}
+}
+
+// protoToSpanData converts a proto Span to a proxySpanData container.
+// Since sdktrace.ReadOnlySpan has an unexported method, we can't implement it directly.
+// Instead, we extract the data and export it directly via the Langfuse exporter.
+func (s *HarnessCallbackService) protoToSpanData(protoSpan *pb.Span) *proxySpanData {
+	// Parse trace ID and span ID from hex strings
+	var traceID trace.TraceID
+	var spanID trace.SpanID
+	var parentSpanID trace.SpanID
+
+	// Convert hex string to TraceID (16 bytes)
+	if len(protoSpan.TraceId) == 32 {
+		for i := 0; i < 16; i++ {
+			_, _ = fmt.Sscanf(protoSpan.TraceId[i*2:i*2+2], "%02x", &traceID[i])
+		}
+	}
+
+	// Convert hex string to SpanID (8 bytes)
+	if len(protoSpan.SpanId) == 16 {
+		for i := 0; i < 8; i++ {
+			_, _ = fmt.Sscanf(protoSpan.SpanId[i*2:i*2+2], "%02x", &spanID[i])
+		}
+	}
+
+	// Convert parent span ID if present
+	hasParent := false
+	if len(protoSpan.ParentSpanId) == 16 {
+		hasParent = true
+		for i := 0; i < 8; i++ {
+			_, _ = fmt.Sscanf(protoSpan.ParentSpanId[i*2:i*2+2], "%02x", &parentSpanID[i])
+		}
+	}
+
+	// Create span context
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: traceID,
+		SpanID:  spanID,
+	})
+
+	// Create parent span context
+	var parentContext trace.SpanContext
+	if hasParent {
+		parentContext = trace.NewSpanContext(trace.SpanContextConfig{
+			TraceID: traceID,
+			SpanID:  parentSpanID,
+		})
+	}
+
+	// Create proxy span data container
+	return s.createProxySpanData(
+		protoSpan.Name,
+		spanContext,
+		parentContext,
+		s.protoSpanKindToOtel(protoSpan.Kind),
+		time.Unix(0, protoSpan.StartTimeUnixNano),
+		time.Unix(0, protoSpan.EndTimeUnixNano),
+		s.protoAttributesToOtel(protoSpan.Attributes),
+		s.protoEventsToOtel(protoSpan.Events),
+		sdktrace.Status{
+			Code:        s.protoStatusCodeToOtel(protoSpan.StatusCode),
+			Description: protoSpan.StatusMessage,
+		},
+	)
+}
+
+// protoSpanKindToOtel converts proto SpanKind to OpenTelemetry SpanKind.
+func (s *HarnessCallbackService) protoSpanKindToOtel(kind pb.SpanKind) trace.SpanKind {
+	switch kind {
+	case pb.SpanKind_SPAN_KIND_INTERNAL:
+		return trace.SpanKindInternal
+	case pb.SpanKind_SPAN_KIND_SERVER:
+		return trace.SpanKindServer
+	case pb.SpanKind_SPAN_KIND_CLIENT:
+		return trace.SpanKindClient
+	case pb.SpanKind_SPAN_KIND_PRODUCER:
+		return trace.SpanKindProducer
+	case pb.SpanKind_SPAN_KIND_CONSUMER:
+		return trace.SpanKindConsumer
+	default:
+		return trace.SpanKindUnspecified
+	}
+}
+
+// protoStatusCodeToOtel converts proto StatusCode to OpenTelemetry status code.
+func (s *HarnessCallbackService) protoStatusCodeToOtel(code pb.StatusCode) otelcodes.Code {
+	switch code {
+	case pb.StatusCode_STATUS_CODE_OK:
+		return otelcodes.Ok
+	case pb.StatusCode_STATUS_CODE_ERROR:
+		return otelcodes.Error
+	default:
+		return otelcodes.Unset
+	}
+}
+
+// protoAttributesToOtel converts proto KeyValue attributes to OpenTelemetry attributes.
+func (s *HarnessCallbackService) protoAttributesToOtel(protoAttrs []*pb.KeyValue) []attribute.KeyValue {
+	attrs := make([]attribute.KeyValue, 0, len(protoAttrs))
+	for _, protoAttr := range protoAttrs {
+		if protoAttr.Value == nil {
+			continue
+		}
+
+		key := attribute.Key(protoAttr.Key)
+		// Handle different value types from AnyValue
+		switch v := protoAttr.Value.Value.(type) {
+		case *pb.AnyValue_StringValue:
+			attrs = append(attrs, key.String(v.StringValue))
+		case *pb.AnyValue_BoolValue:
+			attrs = append(attrs, key.Bool(v.BoolValue))
+		case *pb.AnyValue_IntValue:
+			attrs = append(attrs, key.Int64(v.IntValue))
+		case *pb.AnyValue_DoubleValue:
+			attrs = append(attrs, key.Float64(v.DoubleValue))
+		}
+	}
+	return attrs
+}
+
+// protoEventsToOtel converts proto SpanEvents to OpenTelemetry Events.
+func (s *HarnessCallbackService) protoEventsToOtel(protoEvents []*pb.SpanEvent) []sdktrace.Event {
+	events := make([]sdktrace.Event, len(protoEvents))
+	for i, protoEvent := range protoEvents {
+		events[i] = sdktrace.Event{
+			Name:       protoEvent.Name,
+			Time:       time.Unix(0, protoEvent.TimeUnixNano),
+			Attributes: s.protoAttributesToOtel(protoEvent.Attributes),
+		}
+	}
+	return events
+}
+
+// ============================================================================
+// Span Data Container
+// ============================================================================
+
+// proxySpanData contains the data extracted from a proto span for export.
+// Since sdktrace.ReadOnlySpan has an unexported private() method that prevents
+// external implementation, we store the span data and export directly to Langfuse.
+type proxySpanData struct {
+	Name         string
+	SpanContext  trace.SpanContext
+	Parent       trace.SpanContext
+	SpanKind     trace.SpanKind
+	StartTime    time.Time
+	EndTime      time.Time
+	Attributes   []attribute.KeyValue
+	Events       []sdktrace.Event
+	Status       sdktrace.Status
+}
+
+// createProxySpanData creates a proxySpanData from the proto span data.
+func (s *HarnessCallbackService) createProxySpanData(
+	name string,
+	spanContext trace.SpanContext,
+	parent trace.SpanContext,
+	spanKind trace.SpanKind,
+	startTime time.Time,
+	endTime time.Time,
+	attributes []attribute.KeyValue,
+	events []sdktrace.Event,
+	status sdktrace.Status,
+) *proxySpanData {
+	return &proxySpanData{
+		Name:        name,
+		SpanContext: spanContext,
+		Parent:      parent,
+		SpanKind:    spanKind,
+		StartTime:   startTime,
+		EndTime:     endTime,
+		Attributes:  attributes,
+		Events:      events,
+		Status:      status,
+	}
+}
+
+// ============================================================================
+// Credential Operations
+// ============================================================================
+
+// GetCredential retrieves a credential by name from the credential store.
+// The credential is decrypted and returned with its secret value.
+func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetCredentialRequest) (*pb.GetCredentialResponse, error) {
+	// Validate context
+	if req.Context == nil {
+		return &pb.GetCredentialResponse{
+			Error: &pb.HarnessError{
+				Code:    string(codes.InvalidArgument),
+				Message: "missing context info in request",
+			},
+		}, nil
+	}
+
+	// Log request
+	s.logger.Debug("GetCredential request",
+		"name", req.Name,
+		"mission_id", req.Context.MissionId,
+		"agent_name", req.Context.AgentName,
+	)
+
+	// Check if credential store is configured
+	if s.credentialStore == nil {
+		s.logger.Warn("GetCredential called but credential store not configured")
+		return &pb.GetCredentialResponse{
+			Error: &pb.HarnessError{
+				Code:    string(codes.Unavailable),
+				Message: "credential store not available",
+			},
+		}, nil
+	}
+
+	// Retrieve credential
+	cred, secret, err := s.credentialStore.GetCredential(ctx, req.Name)
+	if err != nil {
+		s.logger.Warn("GetCredential failed", "name", req.Name, "error", err)
+		return &pb.GetCredentialResponse{
+			Error: &pb.HarnessError{
+				Code:    string(codes.NotFound),
+				Message: fmt.Sprintf("credential %q not found: %v", req.Name, err),
+			},
+		}, nil
+	}
+
+	// Map internal credential type to proto type
+	var credType pb.CredentialType
+	switch cred.Type {
+	case types.CredentialTypeAPIKey:
+		credType = pb.CredentialType_CREDENTIAL_TYPE_API_KEY
+	case types.CredentialTypeBearer:
+		credType = pb.CredentialType_CREDENTIAL_TYPE_BEARER
+	case types.CredentialTypeBasic:
+		credType = pb.CredentialType_CREDENTIAL_TYPE_BASIC
+	case types.CredentialTypeOAuth:
+		credType = pb.CredentialType_CREDENTIAL_TYPE_OAUTH
+	case types.CredentialTypeCustom:
+		credType = pb.CredentialType_CREDENTIAL_TYPE_CUSTOM
+	default:
+		credType = pb.CredentialType_CREDENTIAL_TYPE_API_KEY
+	}
+
+	// Encode metadata as JSON
+	var metadataJSON string
+	if cred.Tags != nil || cred.Provider != "" {
+		metadata := map[string]any{
+			"provider": cred.Provider,
+			"tags":     cred.Tags,
+		}
+		metadataBytes, err := json.Marshal(metadata)
+		if err == nil {
+			metadataJSON = string(metadataBytes)
+		}
+	}
+
+	s.logger.Debug("GetCredential succeeded", "name", req.Name)
+
+	return &pb.GetCredentialResponse{
+		Credential: &pb.Credential{
+			Name:         cred.Name,
+			Type:         credType,
+			Secret:       secret,
+			MetadataJson: metadataJSON,
+		},
+	}, nil
 }

@@ -256,8 +256,9 @@ type MockAgentHarness struct {
 	QueryPluginError      error
 
 	// Observability mocks
-	tracer trace.Tracer
-	logger *slog.Logger
+	tracer    trace.Tracer
+	logger    *slog.Logger
+	missionID types.ID
 }
 
 type DelegateToAgentCall struct {
@@ -295,6 +296,10 @@ func (m *MockAgentHarness) CompleteWithTools(ctx context.Context, slot string, m
 }
 
 func (m *MockAgentHarness) Stream(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (<-chan llm.StreamChunk, error) {
+	return nil, errors.New("not implemented in mock")
+}
+
+func (m *MockAgentHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (any, error) {
 	return nil, errors.New("not implemented in mock")
 }
 
@@ -351,12 +356,32 @@ func (m *MockAgentHarness) GetFindings(ctx context.Context, filter harness.Findi
 	return []agent.Finding{}, nil
 }
 
+func (m *MockAgentHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return []harness.MissionRunSummarySDK{}, nil
+}
+
+func (m *MockAgentHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return []agent.Finding{}, nil
+}
+
+func (m *MockAgentHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return []agent.Finding{}, nil
+}
+
 func (m *MockAgentHarness) Memory() memory.MemoryStore {
 	return nil
 }
 
 func (m *MockAgentHarness) Mission() harness.MissionContext {
 	return harness.MissionContext{}
+}
+
+func (m *MockAgentHarness) MissionID() types.ID {
+	return m.missionID
+}
+
+func (m *MockAgentHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
 }
 
 func (m *MockAgentHarness) Target() harness.TargetInfo {

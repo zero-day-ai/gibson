@@ -42,6 +42,28 @@ const (
 
 	// GenAICompletion is the full response from the LLM (may contain sensitive data)
 	GenAICompletion = "gen_ai.completion"
+
+	// Structured output attribute keys
+	// GenAIResponseFormat is the type of response format requested (text, json_object, json_schema)
+	GenAIResponseFormat = "gen_ai.response_format"
+
+	// GenAISchemaName is the name of the JSON schema used for structured output
+	GenAISchemaName = "gen_ai.schema_name"
+
+	// GenAISchemaStrict indicates whether strict schema validation is enforced
+	GenAISchemaStrict = "gen_ai.schema_strict"
+
+	// GenAIValidated indicates whether the response was validated against the schema
+	GenAIValidated = "gen_ai.response_validated"
+
+	// GenAIValidationError contains the validation error message if validation failed
+	GenAIValidationError = "gen_ai.validation_error"
+
+	// GenAIValidationErrorPath contains the JSON path where validation failed
+	GenAIValidationErrorPath = "gen_ai.validation_error_path"
+
+	// GenAIRawJSON contains the raw JSON response before validation (for debugging)
+	GenAIRawJSON = "gen_ai.raw_json"
 )
 
 // Span name constants for GenAI operations

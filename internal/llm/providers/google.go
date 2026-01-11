@@ -9,7 +9,12 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// GoogleProvider implements LLMProvider for Google's Gemini models
+// GoogleProvider implements LLMProvider for Google's Gemini models.
+//
+// NOTE: GoogleProvider does NOT implement StructuredOutputProvider.
+// Google Gemini API integration does not currently support native structured
+// output through langchaingo. Attempting to use structured output with Google
+// will fail with ErrStructuredOutputNotSupported at the SDK/manager level.
 type GoogleProvider struct {
 	client *googleai.GoogleAI
 	config llm.ProviderConfig

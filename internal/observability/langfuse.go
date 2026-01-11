@@ -378,9 +378,17 @@ func (e *LangfuseExporter) convertSpans(spans []sdktrace.ReadOnlySpan) []map[str
 			events = append(events, traceEvent)
 		}
 
+		// Determine if this is an LLM generation span
+		// Check by span name first, but also detect by presence of gen_ai.* attributes
+		// which indicates this span contains LLM completion data
+		spanName := span.Name()
+		isGeneration := spanName == SpanGenAIChat || spanName == SpanGenAIChatStream ||
+			span.SpanKind() == trace.SpanKindClient ||
+			hasGenAIAttributes(span)
+
 		// Create span or generation event based on span type
 		eventType := "span-create"
-		if span.SpanKind() == trace.SpanKindClient {
+		if isGeneration {
 			eventType = "generation-create"
 		}
 
@@ -397,12 +405,74 @@ func (e *LangfuseExporter) convertSpans(spans []sdktrace.ReadOnlySpan) []map[str
 			body["parentObservationId"] = parentCtx.SpanID().String()
 		}
 
-		// Add attributes as metadata
+		// Add attributes as metadata, extracting Langfuse-specific fields
 		metadata := make(map[string]interface{})
+
+		// Track structured output attributes separately for special handling
+		var structuredOutput map[string]interface{}
+
+		// Track LLM-specific fields for Langfuse generation events
+		var promptTokens, completionTokens int64
+		var model, input, output string
+
 		for _, attr := range span.Attributes() {
-			metadata[string(attr.Key)] = attr.Value.AsInterface()
+			key := string(attr.Key)
+			value := attr.Value.AsInterface()
+
+			// Extract LLM-specific attributes for Langfuse generation fields
+			switch key {
+			case GenAIPrompt:
+				input = attr.Value.AsString()
+			case GenAICompletion:
+				output = attr.Value.AsString()
+			case GenAIResponseModel:
+				model = attr.Value.AsString()
+			case GenAIUsageInputTokens:
+				promptTokens = attr.Value.AsInt64()
+			case GenAIUsageOutputTokens:
+				completionTokens = attr.Value.AsInt64()
+			case GenAIResponseFormat, GenAISchemaName, GenAISchemaStrict,
+				GenAIValidated, GenAIValidationError, GenAIValidationErrorPath, GenAIRawJSON:
+				// Extract structured output attributes into a nested object for better organization
+				if structuredOutput == nil {
+					structuredOutput = make(map[string]interface{})
+				}
+				// Strip prefix for cleaner metadata keys
+				cleanKey := key
+				if len(key) > len("gen_ai.") && key[:len("gen_ai.")] == "gen_ai." {
+					cleanKey = key[len("gen_ai."):]
+				}
+				structuredOutput[cleanKey] = value
+			default:
+				metadata[key] = value
+			}
 		}
+
+		// Add structured output metadata if present
+		if len(structuredOutput) > 0 {
+			metadata["structured_output"] = structuredOutput
+		}
+
 		body["metadata"] = metadata
+
+		// Add LLM-specific fields for generation events
+		if isGeneration {
+			if input != "" {
+				body["input"] = input
+			}
+			if output != "" {
+				body["output"] = output
+			}
+			if model != "" {
+				body["model"] = model
+			}
+			if promptTokens > 0 {
+				body["promptTokens"] = promptTokens
+			}
+			if completionTokens > 0 {
+				body["completionTokens"] = completionTokens
+			}
+		}
 
 		// Add status
 		status := span.Status()
@@ -448,4 +518,19 @@ func statusCodeToLevel(code codes.Code) string {
 	default:
 		return "DEFAULT"
 	}
+}
+
+// hasGenAIAttributes checks if a span has LLM-related attributes that indicate
+// it should be treated as a generation event in Langfuse.
+func hasGenAIAttributes(span sdktrace.ReadOnlySpan) bool {
+	for _, attr := range span.Attributes() {
+		key := string(attr.Key)
+		// Check for key gen_ai attributes that indicate LLM completion data
+		switch key {
+		case GenAIPrompt, GenAICompletion, GenAIResponseModel,
+			GenAIUsageInputTokens, GenAIUsageOutputTokens:
+			return true
+		}
+	}
+	return false
 }

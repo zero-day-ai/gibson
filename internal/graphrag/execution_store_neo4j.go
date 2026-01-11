@@ -114,8 +114,10 @@ func (s *Neo4jExecutionGraphStore) RecordAgentStart(ctx context.Context, event A
 		    a.started_at = $started_at,
 		    a.status = 'running'
 		WITH a
-		MATCH (m:Mission {id: $mission_id})
-		MERGE (m)-[:HAS_EXECUTION]->(a)
+		OPTIONAL MATCH (m:Mission {id: $mission_id})
+		FOREACH (_ IN CASE WHEN m IS NOT NULL THEN [1] ELSE [] END |
+		    MERGE (m)-[:HAS_EXECUTION]->(a)
+		)
 		RETURN a
 	`
 
@@ -185,12 +187,14 @@ func (s *Neo4jExecutionGraphStore) RecordLLMCall(ctx context.Context, event LLMC
 		    l.latency_ms = $latency_ms,
 		    l.timestamp = $timestamp
 		WITH l
-		MATCH (a:AgentExecution {mission_id: $mission_id})
+		OPTIONAL MATCH (a:AgentExecution {mission_id: $mission_id})
 		WHERE a.agent_name = $agent_name AND a.status = 'running'
 		WITH l, a
 		ORDER BY a.started_at DESC
 		LIMIT 1
-		MERGE (a)-[:MADE_LLM_CALL]->(l)
+		FOREACH (_ IN CASE WHEN a IS NOT NULL THEN [1] ELSE [] END |
+		    MERGE (a)-[:MADE_LLM_CALL]->(l)
+		)
 		RETURN l
 	`
 
@@ -232,12 +236,14 @@ func (s *Neo4jExecutionGraphStore) RecordToolCall(ctx context.Context, event Too
 		    t.error = $error,
 		    t.timestamp = $timestamp
 		WITH t
-		MATCH (a:AgentExecution {mission_id: $mission_id})
+		OPTIONAL MATCH (a:AgentExecution {mission_id: $mission_id})
 		WHERE a.agent_name = $agent_name AND a.status = 'running'
 		WITH t, a
 		ORDER BY a.started_at DESC
 		LIMIT 1
-		MERGE (a)-[:CALLED_TOOL]->(t)
+		FOREACH (_ IN CASE WHEN a IS NOT NULL THEN [1] ELSE [] END |
+		    MERGE (a)-[:CALLED_TOOL]->(t)
+		)
 		RETURN t
 	`
 

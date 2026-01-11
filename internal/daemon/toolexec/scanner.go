@@ -113,6 +113,37 @@ func (s *defaultBinaryScanner) Scan(ctx context.Context, toolsDir string) ([]Too
 			toolInfo.OutputSchema = schema.OutputSchema
 		}
 
+		// Look for component.yaml in the tool's directory
+		toolDir := filepath.Dir(path)
+		componentPath := filepath.Join(toolDir, "component.yaml")
+
+		if _, err := os.Stat(componentPath); err == nil {
+			// component.yaml exists, try to parse it
+			component, err := ParseComponentYAML(componentPath)
+			if err != nil {
+				slog.Warn("failed to parse component.yaml",
+					"tool", toolName,
+					"path", componentPath,
+					"error", err)
+			} else {
+				// Extract timeout config
+				timeoutCfg, err := component.TimeoutConfig()
+				if err != nil {
+					slog.Warn("invalid timeout config in component.yaml",
+						"tool", toolName,
+						"path", componentPath,
+						"error", err)
+				} else {
+					toolInfo.Timeout = timeoutCfg
+					slog.Debug("loaded timeout config for tool",
+						"tool", toolName,
+						"default", timeoutCfg.Default,
+						"min", timeoutCfg.Min,
+						"max", timeoutCfg.Max)
+				}
+			}
+		}
+
 		tools = append(tools, toolInfo)
 		return nil
 	})

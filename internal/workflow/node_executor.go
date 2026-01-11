@@ -118,31 +118,51 @@ func (we *WorkflowExecutor) executeAgentNode(
 	node *WorkflowNode,
 	harness harness.AgentHarness,
 ) (*NodeResult, error) {
+	// Create agent execution span for Neo4j graph tracking
+	ctx, agentSpan := harness.Tracer().Start(ctx, "gibson.agent.execute",
+		trace.WithAttributes(
+			attribute.String("gibson.mission.id", harness.MissionID().String()),
+			attribute.String("gibson.agent.name", node.AgentName),
+		),
+	)
+	defer agentSpan.End()
+
+	// Add task ID attribute if available
+	if node.AgentTask != nil {
+		agentSpan.SetAttributes(attribute.String("gibson.task.id", node.AgentTask.ID.String()))
+	}
+
 	startTime := time.Now()
 
 	// Validate agent node configuration
 	if node.AgentName == "" {
-		return nil, &NodeError{
+		err := &NodeError{
 			Code:    "INVALID_AGENT_NODE",
 			Message: "agent_name is required for agent nodes",
 		}
+		agentSpan.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
 
 	if node.AgentTask == nil {
-		return nil, &NodeError{
+		err := &NodeError{
 			Code:    "INVALID_AGENT_NODE",
 			Message: "agent_task is required for agent nodes",
 		}
+		agentSpan.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
 
 	// Delegate to the agent
 	agentResult, err := harness.DelegateToAgent(ctx, node.AgentName, *node.AgentTask)
 	if err != nil {
-		return nil, &NodeError{
+		nodeErr := &NodeError{
 			Code:    "AGENT_EXECUTION_FAILED",
 			Message: fmt.Sprintf("failed to execute agent %s: %v", node.AgentName, err),
 			Cause:   err,
 		}
+		agentSpan.SetStatus(codes.Error, nodeErr.Error())
+		return nil, nodeErr
 	}
 
 	// Convert agent result to node result
@@ -169,7 +189,12 @@ func (we *WorkflowExecutor) executeAgentNode(
 				Message: agentResult.Error.Message,
 				Details: agentResult.Error.Details,
 			}
+			agentSpan.SetStatus(codes.Error, nodeResult.Error.Error())
+		} else {
+			agentSpan.SetStatus(codes.Error, "agent execution failed")
 		}
+	} else {
+		agentSpan.SetStatus(codes.Ok, "agent executed successfully")
 	}
 
 	return nodeResult, nil

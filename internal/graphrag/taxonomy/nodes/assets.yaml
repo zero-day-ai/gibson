@@ -1,0 +1,355 @@
+# Asset Node Types
+# These node types represent discovered assets during reconnaissance and scanning operations.
+# Asset types form hierarchies (domain -> subdomain -> host -> port -> service) that enable
+# traversal queries for attack surface mapping.
+
+node_types:
+  # Domain represents a registered root domain
+  - id: node.asset.domain
+    name: Domain
+    type: domain
+    category: asset
+    description: "Root domain entity representing a registered domain name"
+    id_template: "domain:{name}"
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Fully qualified domain name (e.g., example.com)"
+      - name: registrar
+        type: string
+        required: false
+        description: "Domain registrar name"
+      - name: created_date
+        type: string
+        required: false
+        description: "Domain registration date (ISO 8601)"
+      - name: expires_date
+        type: string
+        required: false
+        description: "Domain expiration date (ISO 8601)"
+      - name: nameservers
+        type: "[]string"
+        required: false
+        description: "List of authoritative nameservers"
+    examples:
+      - name: "example.com"
+        registrar: "GoDaddy"
+        nameservers: ["ns1.example.com", "ns2.example.com"]
+
+  # Subdomain represents a discovered subdomain under a root domain
+  - id: node.asset.subdomain
+    name: Subdomain
+    type: subdomain
+    category: asset
+    description: "Subdomain discovered under a root domain"
+    id_template: "subdomain:{name}"
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Fully qualified subdomain (e.g., api.example.com)"
+      - name: parent_domain
+        type: string
+        required: true
+        description: "Parent domain name"
+      - name: discovery_method
+        type: string
+        required: false
+        description: "How the subdomain was discovered (dns, cert, bruteforce, crawl)"
+      - name: is_wildcard
+        type: bool
+        required: false
+        description: "Whether this is a wildcard subdomain"
+    examples:
+      - name: "api.example.com"
+        parent_domain: "example.com"
+        discovery_method: "dns"
+        is_wildcard: false
+
+  # Host represents an IP address or hostname
+  - id: node.asset.host
+    name: Host
+    type: host
+    category: asset
+    description: "IP address or hostname representing a network host"
+    id_template: "host:{ip}"
+    properties:
+      - name: ip
+        type: string
+        required: true
+        description: "IPv4 or IPv6 address"
+      - name: version
+        type: string
+        required: false
+        description: "IP version (ipv4 or ipv6)"
+      - name: hostname
+        type: string
+        required: false
+        description: "Reverse DNS hostname if available"
+      - name: is_cloud
+        type: bool
+        required: false
+        description: "Whether host is in a cloud provider"
+      - name: cloud_provider
+        type: string
+        required: false
+        description: "Cloud provider name (AWS, GCP, Azure, etc.)"
+      - name: asn
+        type: string
+        required: false
+        description: "Autonomous System Number"
+      - name: geo_location
+        type: string
+        required: false
+        description: "Geographic location (country, city)"
+    examples:
+      - ip: "192.0.2.1"
+        version: "ipv4"
+        hostname: "web.example.com"
+        is_cloud: true
+        cloud_provider: "AWS"
+
+  # Port represents an open network port on a host
+  - id: node.asset.port
+    name: Port
+    type: port
+    category: asset
+    description: "Network port on a host"
+    id_template: "port:{host_id}:{number}:{protocol}"
+    properties:
+      - name: number
+        type: int
+        required: true
+        description: "Port number (1-65535)"
+      - name: protocol
+        type: string
+        required: true
+        description: "Transport protocol (tcp or udp)"
+      - name: state
+        type: string
+        required: false
+        description: "Port state (open, closed, filtered)"
+      - name: host_id
+        type: string
+        required: true
+        description: "ID of the host this port belongs to"
+    examples:
+      - number: 443
+        protocol: "tcp"
+        state: "open"
+        host_id: "host:192.0.2.1"
+
+  # Service represents a service running on a port
+  - id: node.asset.service
+    name: Service
+    type: service
+    category: asset
+    description: "Service running on a network port"
+    id_template: "service:{port_id}:{name}"
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Service name (http, ssh, mysql, etc.)"
+      - name: version
+        type: string
+        required: false
+        description: "Service version string"
+      - name: banner
+        type: string
+        required: false
+        description: "Service banner or identification string"
+      - name: port_id
+        type: string
+        required: true
+        description: "ID of the port this service runs on"
+      - name: cpe
+        type: string
+        required: false
+        description: "Common Platform Enumeration identifier"
+    examples:
+      - name: "https"
+        version: "nginx/1.18.0"
+        banner: "nginx/1.18.0"
+        port_id: "port:host:192.0.2.1:443:tcp"
+        cpe: "cpe:2.3:a:nginx:nginx:1.18.0"
+
+  # Endpoint represents a web endpoint or URL
+  - id: node.asset.endpoint
+    name: Endpoint
+    type: endpoint
+    category: asset
+    description: "Web endpoint or URL discovered through crawling or fuzzing"
+    id_template: "endpoint:{sha256(method:url)[:16]}"
+    properties:
+      - name: url
+        type: string
+        required: true
+        description: "Full URL of the endpoint"
+      - name: method
+        type: string
+        required: true
+        description: "HTTP method (GET, POST, PUT, DELETE, etc.)"
+      - name: status_code
+        type: int
+        required: false
+        description: "HTTP status code from probe"
+      - name: content_type
+        type: string
+        required: false
+        description: "Content-Type header value"
+      - name: parameters
+        type: "[]string"
+        required: false
+        description: "List of discovered parameters"
+      - name: auth_required
+        type: bool
+        required: false
+        description: "Whether authentication is required"
+    examples:
+      - url: "https://api.example.com/v1/users"
+        method: "GET"
+        status_code: 200
+        content_type: "application/json"
+        parameters: ["page", "limit"]
+        auth_required: true
+
+  # API represents a web API service
+  - id: node.asset.api
+    name: API
+    type: api
+    category: asset
+    description: "Web API service with multiple endpoints"
+    id_template: "api:{base_url}"
+    properties:
+      - name: base_url
+        type: string
+        required: true
+        description: "Base URL of the API (e.g., https://api.example.com)"
+      - name: spec_type
+        type: string
+        required: false
+        description: "API specification type (openapi, swagger, graphql, rest)"
+      - name: version
+        type: string
+        required: false
+        description: "API version string"
+      - name: auth_type
+        type: string
+        required: false
+        description: "Authentication type (jwt, oauth2, apikey, basic, none)"
+    examples:
+      - base_url: "https://api.example.com"
+        spec_type: "openapi"
+        version: "v1"
+        auth_type: "jwt"
+
+  # Technology represents detected software or framework
+  - id: node.asset.technology
+    name: Technology
+    type: technology
+    category: asset
+    description: "Software, framework, or technology stack component detected on an asset"
+    id_template: "technology:{name}:{version}"
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Technology name (e.g., React, WordPress, Apache)"
+      - name: version
+        type: string
+        required: false
+        description: "Version string if detected"
+      - name: category
+        type: string
+        required: false
+        description: "Technology category (framework, cms, library, server, etc.)"
+      - name: cpe
+        type: string
+        required: false
+        description: "Common Platform Enumeration identifier"
+      - name: detection_confidence
+        type: float64
+        required: false
+        description: "Confidence score for detection (0.0-1.0)"
+    examples:
+      - name: "WordPress"
+        version: "5.8.0"
+        category: "cms"
+        detection_confidence: 0.95
+
+  # CloudAsset represents a cloud infrastructure resource
+  - id: node.asset.cloud_asset
+    name: CloudAsset
+    type: cloud_asset
+    category: asset
+    description: "Cloud infrastructure resource (AWS, GCP, Azure)"
+    id_template: "cloud_asset:{provider}:{resource_type}:{arn_or_id}"
+    properties:
+      - name: provider
+        type: string
+        required: true
+        description: "Cloud provider (aws, gcp, azure)"
+      - name: resource_type
+        type: string
+        required: true
+        description: "Resource type (ec2, s3, lambda, storage, etc.)"
+      - name: region
+        type: string
+        required: false
+        description: "Cloud region"
+      - name: arn_or_id
+        type: string
+        required: false
+        description: "Resource ARN or ID"
+      - name: public_exposure
+        type: bool
+        required: false
+        description: "Whether resource is publicly exposed"
+    examples:
+      - provider: "aws"
+        resource_type: "s3"
+        region: "us-east-1"
+        arn_or_id: "arn:aws:s3:::example-bucket"
+        public_exposure: true
+
+  # Certificate represents a TLS/SSL certificate
+  - id: node.asset.certificate
+    name: Certificate
+    type: certificate
+    category: asset
+    description: "TLS/SSL certificate discovered on a host or service"
+    id_template: "certificate:{fingerprint}"
+    properties:
+      - name: subject
+        type: string
+        required: true
+        description: "Certificate subject (Common Name)"
+      - name: issuer
+        type: string
+        required: false
+        description: "Certificate issuer"
+      - name: not_before
+        type: string
+        required: false
+        description: "Valid from date (ISO 8601)"
+      - name: not_after
+        type: string
+        required: false
+        description: "Valid until date (ISO 8601)"
+      - name: san_domains
+        type: "[]string"
+        required: false
+        description: "Subject Alternative Name domains"
+      - name: fingerprint
+        type: string
+        required: false
+        description: "Certificate fingerprint (SHA256)"
+    examples:
+      - subject: "example.com"
+        issuer: "Let's Encrypt"
+        not_before: "2024-01-01T00:00:00Z"
+        not_after: "2024-04-01T00:00:00Z"
+        san_domains: ["example.com", "www.example.com", "api.example.com"]
+        fingerprint: "AB:CD:EF:12:34:56:78:90"

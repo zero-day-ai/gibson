@@ -592,3 +592,110 @@ func TestSlotManager_MultipleProviders(t *testing.T) {
 		t.Errorf("expected provider2-model-2, got %q", model.Name)
 	}
 }
+
+func TestResolveSlot_JSONModeFeatureValidation(t *testing.T) {
+	registry := NewLLMRegistry()
+	provider := newMockProvider("test-provider", true)
+	if err := registry.RegisterProvider(provider); err != nil {
+		t.Fatalf("failed to register provider: %v", err)
+	}
+
+	manager := NewSlotManager(registry)
+	ctx := context.Background()
+
+	tests := []struct {
+		name         string
+		model        string
+		requireJSON  bool
+		expectError  bool
+		errorMessage string
+	}{
+		{
+			name:        "model without json_mode - no requirement",
+			model:       "test-provider-model-1", // has: tool_use, streaming
+			requireJSON: false,
+			expectError: false,
+		},
+		{
+			name:         "model without json_mode - with requirement",
+			model:        "test-provider-model-1", // has: tool_use, streaming
+			requireJSON:  true,
+			expectError:  true,
+			errorMessage: "json_mode",
+		},
+		{
+			name:        "model with json_mode - with requirement",
+			model:       "test-provider-model-3", // has: tool_use, streaming, json_mode
+			requireJSON: true,
+			expectError: false,
+		},
+		{
+			name:        "model with json_mode - no requirement",
+			model:       "test-provider-model-3", // has: tool_use, streaming, json_mode
+			requireJSON: false,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Build required features list
+			requiredFeatures := []string{}
+			if tt.requireJSON {
+				requiredFeatures = append(requiredFeatures, agent.FeatureJSONMode)
+			}
+
+			// Create slot definition
+			slot := agent.NewSlotDefinition("structured-output-slot", "Slot requiring structured output", true)
+			slot = slot.WithDefault(agent.SlotConfig{
+				Provider:    "test-provider",
+				Model:       tt.model,
+				Temperature: 0.7,
+				MaxTokens:   4096,
+			})
+			slot = slot.WithConstraints(agent.SlotConstraints{
+				MinContextWindow: 4096,
+				RequiredFeatures: requiredFeatures,
+			})
+
+			// Attempt to resolve the slot
+			_, modelInfo, err := manager.ResolveSlot(ctx, slot, nil)
+
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("expected error for missing json_mode feature, got nil")
+				}
+
+				var gibsonErr *types.GibsonError
+				if !errors.As(err, &gibsonErr) {
+					t.Fatalf("expected GibsonError, got %T", err)
+				}
+				if gibsonErr.Code != ErrNoMatchingProvider {
+					t.Errorf("expected error code %q, got %q", ErrNoMatchingProvider, gibsonErr.Code)
+				}
+
+				// Verify error message mentions the missing feature
+				if tt.errorMessage != "" {
+					errMsg := err.Error()
+					if !contains(errMsg, tt.errorMessage) {
+						t.Errorf("expected error message to contain %q, got: %s", tt.errorMessage, errMsg)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+
+				// Verify model was resolved correctly
+				if modelInfo.Name != tt.model {
+					t.Errorf("expected model %q, got %q", tt.model, modelInfo.Name)
+				}
+
+				// If json_mode was required, verify the model supports it
+				if tt.requireJSON && !modelInfo.SupportsJSONMode() {
+					t.Error("model should support json_mode but SupportsJSONMode() returned false")
+				}
+			}
+		})
+	}
+}

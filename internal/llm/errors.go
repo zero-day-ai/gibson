@@ -198,6 +198,22 @@ const (
 	ErrBudgetExceeded types.ErrorCode = "LLM_BUDGET_EXCEEDED"
 )
 
+// Structured output error codes
+const (
+	ErrStructuredOutputNotSupported types.ErrorCode = "LLM_STRUCTURED_OUTPUT_NOT_SUPPORTED"
+	ErrSchemaRequired               types.ErrorCode = "LLM_SCHEMA_REQUIRED"
+	ErrValidationFailed             types.ErrorCode = "LLM_VALIDATION_FAILED"
+	ErrStructuredOutputParseFailed  types.ErrorCode = "LLM_STRUCTURED_OUTPUT_PARSE_FAILED"
+	ErrStructuredOutputUnmarshal    types.ErrorCode = "LLM_STRUCTURED_OUTPUT_UNMARSHAL_FAILED"
+)
+
+// Sentinel errors for structured output operations
+var (
+	ErrStructuredOutputNotSupportedSentinel = errors.New("provider does not support structured output")
+	ErrSchemaRequiredSentinel               = errors.New("schema required for json_schema format")
+	ErrValidationFailedSentinel             = errors.New("response failed schema validation")
+)
+
 // Provider-specific error creation helpers for langchaingo integration
 
 // NewAuthError creates an authentication error for provider integration
@@ -256,5 +272,115 @@ func NewProviderUnauthorizedError(providerName string, cause error) *types.Gibso
 		Code:    ErrProviderUnauthorized,
 		Message: fmt.Sprintf("provider '%s' authentication failed", providerName),
 		Cause:   cause,
+	}
+}
+
+// StructuredOutputError is the base error type for structured output failures.
+// It provides detailed context for debugging structured output operations including
+// the operation that failed, provider name, raw response, and underlying error.
+type StructuredOutputError struct {
+	Op       string // Operation that failed (e.g., "parse", "validate", "unmarshal")
+	Provider string // Provider name
+	Raw      string // Raw response if available for debugging
+	Err      error  // Underlying error
+}
+
+// Error implements the error interface, returning a formatted error message.
+func (e *StructuredOutputError) Error() string {
+	if e.Provider != "" {
+		return fmt.Sprintf("structured output %s failed for %s: %v", e.Op, e.Provider, e.Err)
+	}
+	return fmt.Sprintf("structured output %s failed: %v", e.Op, e.Err)
+}
+
+// Unwrap returns the underlying error for error chain inspection.
+// This enables using errors.Is() and errors.As() with wrapped errors.
+func (e *StructuredOutputError) Unwrap() error {
+	return e.Err
+}
+
+// ParseError indicates the LLM returned invalid JSON despite native mode.
+// This error includes the position where parsing failed and the raw response
+// for debugging purposes. This satisfies requirement 2.4: provider SHALL return
+// a parse error with the raw response for debugging.
+type ParseError struct {
+	StructuredOutputError
+	Position int // Position in raw string where parse failed (0 if unknown)
+}
+
+// Error implements the error interface with parse-specific formatting.
+func (e *ParseError) Error() string {
+	if e.Position > 0 {
+		return fmt.Sprintf("failed to parse JSON at position %d: %v", e.Position, e.Err)
+	}
+	return fmt.Sprintf("failed to parse JSON: %v", e.Err)
+}
+
+// UnmarshalError indicates JSON was valid but couldn't unmarshal to target type.
+// This error distinguishes between parsing failures (invalid JSON) and type
+// mismatch failures (valid JSON but wrong structure).
+type UnmarshalError struct {
+	StructuredOutputError
+	TargetType string // Name of the Go type we tried to unmarshal to
+}
+
+// Error implements the error interface with unmarshal-specific formatting.
+func (e *UnmarshalError) Error() string {
+	if e.TargetType != "" {
+		return fmt.Sprintf("failed to unmarshal to %s: %v", e.TargetType, e.Err)
+	}
+	return fmt.Sprintf("failed to unmarshal: %v", e.Err)
+}
+
+// NewParseError creates a ParseError with the given details.
+// The raw parameter should contain the complete raw response for debugging.
+// The position parameter indicates where parsing failed (0 if unknown).
+func NewParseError(provider, raw string, position int, err error) *ParseError {
+	return &ParseError{
+		StructuredOutputError: StructuredOutputError{
+			Op:       "parse",
+			Provider: provider,
+			Raw:      raw,
+			Err:      err,
+		},
+		Position: position,
+	}
+}
+
+// NewUnmarshalError creates an UnmarshalError with the given details.
+// The raw parameter should contain the JSON that failed to unmarshal.
+// The targetType parameter should be the Go type name (e.g., "MyStruct", "*ResponseType").
+func NewUnmarshalError(provider, raw, targetType string, err error) *UnmarshalError {
+	return &UnmarshalError{
+		StructuredOutputError: StructuredOutputError{
+			Op:       "unmarshal",
+			Provider: provider,
+			Raw:      raw,
+			Err:      err,
+		},
+		TargetType: targetType,
+	}
+}
+
+// NewStructuredOutputError creates a general StructuredOutputError.
+// Use this for structured output failures that don't fit ParseError or UnmarshalError.
+func NewStructuredOutputError(op, provider, raw string, err error) *StructuredOutputError {
+	return &StructuredOutputError{
+		Op:       op,
+		Provider: provider,
+		Raw:      raw,
+		Err:      err,
+	}
+}
+
+// NewValidationError creates an error for schema validation failures.
+// This satisfies requirement 1.4: SDK SHALL return an error with details
+// about the validation failure.
+func NewValidationError(provider, raw string, err error) *StructuredOutputError {
+	return &StructuredOutputError{
+		Op:       "validate",
+		Provider: provider,
+		Raw:      raw,
+		Err:      errors.Join(ErrValidationFailedSentinel, err),
 	}
 }

@@ -2,13 +2,14 @@ package harness
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
-	"log/slog"
 )
 
 // PlanningHarnessWrapper wraps an existing AgentHarness to provide planning-aware
@@ -280,6 +281,11 @@ func (w *PlanningHarnessWrapper) Stream(ctx context.Context, slot string, messag
 	return w.inner.Stream(ctx, slot, messages, opts...)
 }
 
+// CompleteStructuredAny delegates to inner harness.
+func (w *PlanningHarnessWrapper) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error) {
+	return w.inner.CompleteStructuredAny(ctx, slot, messages, schemaType, opts...)
+}
+
 // CallTool delegates to inner harness.
 func (w *PlanningHarnessWrapper) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
 	return w.inner.CallTool(ctx, name, input)
@@ -328,6 +334,11 @@ func (w *PlanningHarnessWrapper) Memory() memory.MemoryStore {
 // Mission delegates to inner harness.
 func (w *PlanningHarnessWrapper) Mission() MissionContext {
 	return w.inner.Mission()
+}
+
+// MissionID delegates to inner harness.
+func (w *PlanningHarnessWrapper) MissionID() types.ID {
+	return w.inner.MissionID()
 }
 
 // Target delegates to inner harness.

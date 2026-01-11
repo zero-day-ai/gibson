@@ -1,0 +1,27 @@
+name: Debug Agent Test
+description: Test workflow for debug-agent structured output
+version: "1.0"
+
+config:
+  llm:
+    default_provider: anthropic
+    default_model: claude-sonnet-4-5-20250929
+
+target:
+  name: test-network
+  seeds:
+    - value: "192.168.50.0/24"
+      type: cidr
+      scope: in_scope
+
+nodes:
+  - id: debug_test
+    type: agent
+    name: Debug Agent Test
+    description: Run debug agent to test structured output
+    agent: debug-agent
+    timeout: 5m
+    task:
+      goal: "Run SDK comprehensive diagnostics"
+      context:
+        test_type: structured_output

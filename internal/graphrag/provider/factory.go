@@ -11,6 +11,12 @@ import (
 // Returns an error if the provider type is invalid or initialization fails.
 //
 // This is the main entry point for creating GraphRAG providers.
+//
+// The Provider field in config has two interpretations:
+//   - Graph database types: "neo4j", "neptune", "memgraph" - these map to deployment types
+//   - Deployment types: "local", "cloud", "hybrid", "noop"
+//
+// Mapping: neo4j -> local, neptune/memgraph -> cloud
 func NewProvider(config graphrag.GraphRAGConfig) (graphrag.GraphRAGProvider, error) {
 	if !config.Enabled {
 		return NewNoopProvider(), nil
@@ -25,6 +31,14 @@ func NewProvider(config graphrag.GraphRAGConfig) (graphrag.GraphRAGProvider, err
 	providerType := config.Provider
 	if providerType == "" {
 		providerType = "local" // Default to local
+	}
+
+	// Map graph database types to deployment types
+	switch providerType {
+	case "neo4j":
+		providerType = "local" // Neo4j uses local provider
+	case "neptune", "memgraph":
+		providerType = "cloud" // Cloud databases use cloud provider
 	}
 
 	// Create provider based on type

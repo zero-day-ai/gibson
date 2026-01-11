@@ -65,6 +65,9 @@ const (
 	// SpanAgentDelegate represents an agent delegation operation
 	SpanAgentDelegate = "gibson.agent.delegate"
 
+	// SpanAgentExecute represents an agent execution operation
+	SpanAgentExecute = "gibson.agent.execute"
+
 	// SpanFindingSubmit represents a finding submission operation
 	SpanFindingSubmit = "gibson.finding.submit"
 

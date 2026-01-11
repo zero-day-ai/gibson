@@ -300,6 +300,30 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	d.infrastructure = infra
 	d.logger.Info("infrastructure components initialized")
 
+	// Configure callback service with span processors for distributed tracing
+	if len(infra.spanProcessors) > 0 {
+		d.callback.AddSpanProcessors(infra.spanProcessors...)
+		d.logger.Info("configured callback service with span processors",
+			"count", len(infra.spanProcessors))
+	}
+
+	// Configure callback service with TracerProvider for proxy span creation
+	if infra.tracerProvider != nil {
+		d.callback.SetTracerProvider(infra.tracerProvider)
+		d.logger.Info("configured callback service with tracer provider")
+	}
+
+	// Configure callback service with credential store for secure credential retrieval
+	credentialDAO := database.NewCredentialDAO(d.db)
+	credentialStore, err := NewDaemonCredentialStore(credentialDAO, d.config.Core.HomeDir)
+	if err != nil {
+		d.logger.Warn("failed to initialize credential store (credentials will not be available)",
+			"error", err)
+	} else {
+		d.callback.SetCredentialStore(credentialStore)
+		d.logger.Info("configured callback service with credential store")
+	}
+
 	// Perform crash recovery: find any missions that were running when daemon stopped
 	// and transition them to paused status before accepting new connections
 	d.logger.Info("checking for missions to recover after daemon restart")

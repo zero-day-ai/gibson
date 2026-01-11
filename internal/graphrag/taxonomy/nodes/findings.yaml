@@ -1,0 +1,189 @@
+# Finding Node Types
+# These node types represent security findings, vulnerabilities, evidence, and mitigations
+# discovered during security assessments and penetration testing.
+
+node_types:
+  # Finding represents a security vulnerability or issue
+  - id: node.finding.finding
+    name: Finding
+    type: finding
+    category: finding
+    description: "Security finding, vulnerability, or security issue discovered during assessment"
+    id_template: "finding:{uuid}"
+    properties:
+      - name: title
+        type: string
+        required: true
+        description: "Brief title of the finding"
+      - name: severity
+        type: string
+        required: true
+        description: "Severity level of the finding"
+        enum: ["critical", "high", "medium", "low", "info"]
+      - name: confidence
+        type: float64
+        required: true
+        description: "Confidence score for the finding (0.0-1.0, where 1.0 is confirmed)"
+      - name: category
+        type: string
+        required: true
+        description: "Finding category (e.g., injection, auth, xss, misconfiguration)"
+      - name: cve_id
+        type: string
+        required: false
+        description: "CVE identifier if applicable (e.g., CVE-2024-1234)"
+      - name: cvss_score
+        type: float64
+        required: false
+        description: "CVSS base score (0.0-10.0)"
+      - name: cvss_vector
+        type: string
+        required: false
+        description: "CVSS vector string (e.g., CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H)"
+      - name: cwe_id
+        type: string
+        required: false
+        description: "CWE identifier if applicable (e.g., CWE-89)"
+      - name: description
+        type: string
+        required: false
+        description: "Detailed description of the finding"
+      - name: remediation
+        type: string
+        required: false
+        description: "Recommended remediation steps"
+      - name: references
+        type: "[]string"
+        required: false
+        description: "External references (URLs, CVE links, etc.)"
+      - name: affected_component
+        type: string
+        required: false
+        description: "Component or asset affected by this finding"
+    examples:
+      - title: "SQL Injection in login endpoint"
+        severity: "critical"
+        confidence: 0.95
+        category: "injection"
+        cve_id: "CVE-2024-5678"
+        cvss_score: 9.8
+        cvss_vector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+        cwe_id: "CWE-89"
+        description: "The login endpoint is vulnerable to SQL injection via the username parameter"
+        remediation: "Use parameterized queries or prepared statements"
+        references: ["https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-5678"]
+
+  # Evidence represents supporting evidence for a finding
+  - id: node.finding.evidence
+    name: Evidence
+    type: evidence
+    category: finding
+    description: "Supporting evidence for a security finding (requests, responses, screenshots, logs)"
+    id_template: "evidence:{uuid}"
+    properties:
+      - name: type
+        type: string
+        required: true
+        description: "Type of evidence"
+        enum: ["request", "response", "screenshot", "log", "payload", "output"]
+      - name: finding_id
+        type: string
+        required: true
+        description: "ID of the finding this evidence supports"
+      - name: content
+        type: string
+        required: false
+        description: "Evidence content (request/response body, log text, etc.)"
+      - name: timestamp
+        type: string
+        required: false
+        description: "When the evidence was captured (ISO 8601)"
+      - name: url
+        type: string
+        required: false
+        description: "URL where evidence was captured (if applicable)"
+      - name: hash
+        type: string
+        required: false
+        description: "Hash of evidence content for integrity verification"
+      - name: file_path
+        type: string
+        required: false
+        description: "Path to evidence file if stored externally"
+      - name: metadata
+        type: "map[string]any"
+        required: false
+        description: "Additional metadata about the evidence"
+    examples:
+      - type: "request"
+        finding_id: "finding:12345"
+        content: "POST /login HTTP/1.1\nHost: example.com\nContent-Type: application/x-www-form-urlencoded\n\nusername=admin' OR '1'='1&password=test"
+        timestamp: "2024-01-10T15:30:00Z"
+        url: "https://example.com/login"
+      - type: "screenshot"
+        finding_id: "finding:12345"
+        file_path: "/evidence/screenshot_20240110_153000.png"
+        timestamp: "2024-01-10T15:30:00Z"
+        hash: "sha256:abcdef123456"
+
+  # Mitigation represents a security control or remediation measure
+  - id: node.finding.mitigation
+    name: Mitigation
+    type: mitigation
+    category: finding
+    description: "Security control, patch, or remediation measure for a finding"
+    id_template: "mitigation:{uuid}"
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Name of the mitigation"
+      - name: finding_id
+        type: string
+        required: true
+        description: "ID of the finding this mitigation addresses"
+      - name: description
+        type: string
+        required: false
+        description: "Detailed description of the mitigation"
+      - name: effectiveness
+        type: string
+        required: false
+        description: "Effectiveness of the mitigation"
+        enum: ["complete", "partial", "workaround", "preventive"]
+      - name: implementation_status
+        type: string
+        required: false
+        description: "Current implementation status"
+        enum: ["proposed", "in_progress", "implemented", "verified", "rejected"]
+      - name: implementation_date
+        type: string
+        required: false
+        description: "When the mitigation was implemented (ISO 8601)"
+      - name: cost
+        type: string
+        required: false
+        description: "Relative cost to implement"
+        enum: ["low", "medium", "high"]
+      - name: priority
+        type: int
+        required: false
+        description: "Implementation priority (1=highest)"
+      - name: references
+        type: "[]string"
+        required: false
+        description: "References to patches, documentation, etc."
+      - name: responsible_party
+        type: string
+        required: false
+        description: "Team or individual responsible for implementation"
+    examples:
+      - name: "Implement parameterized queries"
+        finding_id: "finding:12345"
+        description: "Replace all string concatenation in SQL queries with parameterized queries using prepared statements"
+        effectiveness: "complete"
+        implementation_status: "proposed"
+        cost: "medium"
+        priority: 1
+        references: ["https://owasp.org/www-community/attacks/SQL_Injection"]
+        responsible_party: "Backend Development Team"

@@ -9,7 +9,9 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/graphrag"
+	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/types"
+	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 )
 
 // GraphRAGBridge defines the interface for storing findings to the GraphRAG
@@ -137,6 +139,9 @@ type DefaultGraphRAGBridge struct {
 // NewGraphRAGBridge creates a new DefaultGraphRAGBridge with the given dependencies.
 // The semaphore channel is initialized with size MaxConcurrent to limit concurrent operations.
 //
+// This function also initializes the SDK's taxonomy integration by calling SetTaxonomy
+// with the global taxonomy registry from the init package.
+//
 // Parameters:
 //   - store: The GraphRAG store for persisting findings
 //   - logger: Logger for diagnostic output (if nil, uses default logger)
@@ -147,6 +152,10 @@ func NewGraphRAGBridge(store graphrag.GraphRAGStore, logger *slog.Logger, config
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	// Initialize SDK taxonomy integration
+	// Get the taxonomy registry from the init package and pass it to the SDK
+	initTaxonomy()
 
 	return &DefaultGraphRAGBridge{
 		store:     store,
@@ -421,4 +430,21 @@ func (n *NoopGraphRAGBridge) Shutdown(_ context.Context) error {
 // Health returns a healthy status since no-op bridge has no failure modes.
 func (n *NoopGraphRAGBridge) Health(_ context.Context) types.HealthStatus {
 	return types.Healthy("graphrag bridge disabled (noop)")
+}
+
+// initTaxonomy initializes the SDK's taxonomy integration by passing the
+// Gibson taxonomy registry to the SDK. This enables agents to validate
+// node and relationship types against the canonical taxonomy.
+//
+// This function is called once during GraphRAGBridge initialization.
+// It's safe to call multiple times (the SDK maintains a global instance).
+func initTaxonomy() {
+	// Get the taxonomy registry from Gibson's init package
+	registry := taxonomyinit.GetTaxonomyRegistry()
+
+	// Pass it to the SDK for agent access
+	// The registry implements the SDK's TaxonomyReader interface
+	if registry != nil {
+		sdkgraphrag.SetTaxonomy(registry)
+	}
 }

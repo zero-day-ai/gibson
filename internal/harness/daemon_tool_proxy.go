@@ -376,29 +376,12 @@ func (p *DirectToolProxy) InputSchema() schema.JSONSchema { return p.inputSchema
 func (p *DirectToolProxy) OutputSchema() schema.JSONSchema { return p.outputSchema }
 
 func (p *DirectToolProxy) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	// Use default timeout - don't derive from context deadline
+	// Use default timeout - don't derive from context deadline or tool input
 	// The context deadline may be for the entire operation (e.g., module timeout)
-	// which shouldn't limit individual tool execution
+	// which shouldn't limit individual tool execution.
+	// Tool-specific timeout parameters (like ping's "timeout") are handled by the tool
+	// internally and should not affect the execution timeout.
 	timeout := p.defaultTimeout
-
-	// Check if tool input specifies a timeout (e.g., ping tool with "timeout": 1000)
-	// Tools can override via their input parameters
-	if inputTimeout, ok := input["timeout"]; ok {
-		switch v := inputTimeout.(type) {
-		case float64:
-			// JSON numbers are float64, interpret as milliseconds
-			timeout = time.Duration(v) * time.Millisecond
-		case int:
-			timeout = time.Duration(v) * time.Millisecond
-		case int64:
-			timeout = time.Duration(v) * time.Millisecond
-		case string:
-			// Parse duration string like "5m", "30s", etc.
-			if parsed, err := time.ParseDuration(v); err == nil {
-				timeout = parsed
-			}
-		}
-	}
 
 	// Execute directly via service
 	output, err := p.service.Execute(ctx, p.name, input, timeout)

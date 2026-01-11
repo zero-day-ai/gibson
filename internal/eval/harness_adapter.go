@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/zero-day-ai/sdk/agent"
 	"github.com/zero-day-ai/sdk/finding"
 	"github.com/zero-day-ai/sdk/graphrag"
 	"github.com/zero-day-ai/sdk/llm"
 	"github.com/zero-day-ai/sdk/memory"
+	"github.com/zero-day-ai/sdk/mission"
 	"github.com/zero-day-ai/sdk/planning"
 	"github.com/zero-day-ai/sdk/plugin"
 	"github.com/zero-day-ai/sdk/schema"
@@ -638,6 +640,71 @@ func convertFilterToGibson(filter finding.Filter) gibsonHarness.FindingFilter {
 // QueryGraphRAGScoped executes a GraphRAG query with explicit scope.
 func (a *GibsonHarnessAdapter) QueryGraphRAGScoped(ctx context.Context, query graphrag.Query, scope graphrag.MissionScope) ([]graphrag.Result, error) {
 	// Not yet implemented - requires full GraphRAG integration
+	return nil, ErrNotImplemented
+}
+
+// CallToolsParallel executes multiple tool calls concurrently.
+func (a *GibsonHarnessAdapter) CallToolsParallel(ctx context.Context, calls []agent.ToolCall, maxConcurrency int) ([]agent.ToolResult, error) {
+	// Not yet implemented - requires parallel execution support
+	return nil, ErrNotImplemented
+}
+
+// CompleteStructured performs a completion with provider-native structured output.
+func (a *GibsonHarnessAdapter) CompleteStructured(ctx context.Context, slot string, messages []llm.Message, schema any) (any, error) {
+	// Not yet implemented - requires structured output support
+	return nil, ErrNotImplemented
+}
+
+// CompleteStructuredAny is an alias for CompleteStructured for compatibility.
+func (a *GibsonHarnessAdapter) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schema any) (any, error) {
+	return a.CompleteStructured(ctx, slot, messages, schema)
+}
+
+// ============================================================================
+// Mission Management Methods (Not Implemented in Eval Adapter)
+// ============================================================================
+
+// CreateMission creates a new mission from a workflow definition.
+func (a *GibsonHarnessAdapter) CreateMission(ctx context.Context, workflow any, targetID string, opts *mission.CreateMissionOpts) (*mission.MissionInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+// RunMission queues a mission for execution.
+func (a *GibsonHarnessAdapter) RunMission(ctx context.Context, missionID string, opts *mission.RunMissionOpts) error {
+	return ErrNotImplemented
+}
+
+// GetMissionStatus returns the current state of a mission.
+func (a *GibsonHarnessAdapter) GetMissionStatus(ctx context.Context, missionID string) (*mission.MissionStatusInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+// WaitForMission blocks until a mission completes or the timeout expires.
+func (a *GibsonHarnessAdapter) WaitForMission(ctx context.Context, missionID string, timeout time.Duration) (*mission.MissionResult, error) {
+	return nil, ErrNotImplemented
+}
+
+// ListMissions returns missions matching the provided filter criteria.
+func (a *GibsonHarnessAdapter) ListMissions(ctx context.Context, filter *mission.MissionFilter) ([]*mission.MissionInfo, error) {
+	return nil, ErrNotImplemented
+}
+
+// CancelMission requests cancellation of a running mission.
+func (a *GibsonHarnessAdapter) CancelMission(ctx context.Context, missionID string) error {
+	return ErrNotImplemented
+}
+
+// GetMissionResults returns the final results of a completed mission.
+func (a *GibsonHarnessAdapter) GetMissionResults(ctx context.Context, missionID string) (*mission.MissionResult, error) {
+	return nil, ErrNotImplemented
+}
+
+// ============================================================================
+// Credential Operations (Not Implemented in Eval Adapter)
+// ============================================================================
+
+// GetCredential retrieves a credential by name from the credential store.
+func (a *GibsonHarnessAdapter) GetCredential(ctx context.Context, name string) (*types.Credential, error) {
 	return nil, ErrNotImplemented
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"google.golang.org/grpc"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/component"
@@ -206,6 +207,13 @@ func (c *GRPCAgentClient) Execute(ctx context.Context, task agent.Task, harness 
 		TimeoutMs: timeoutMs,
 	}
 
+	// Extract trace context from the current span and add to request
+	spanCtx := trace.SpanContextFromContext(ctx)
+	if spanCtx.IsValid() {
+		req.TraceId = spanCtx.TraceID().String()
+		req.ParentSpanId = spanCtx.SpanID().String()
+	}
+
 	resp, err := c.client.Execute(ctx, req)
 	if err != nil {
 		result := agent.NewResult(task.ID)
@@ -263,6 +271,13 @@ func (c *GRPCAgentClient) ExecuteWithCallback(ctx context.Context, task agent.Ta
 	req := &proto.AgentExecuteRequest{
 		TaskJson:  string(taskJSON),
 		TimeoutMs: timeoutMs,
+	}
+
+	// Extract trace context from the current span and add to request
+	spanCtx := trace.SpanContextFromContext(ctx)
+	if spanCtx.IsValid() {
+		req.TraceId = spanCtx.TraceID().String()
+		req.ParentSpanId = spanCtx.SpanID().String()
 	}
 
 	// Populate callback fields if callback info is provided

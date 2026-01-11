@@ -6,11 +6,14 @@ import (
 	"os"
 
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/graphrag"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
+	"github.com/zero-day-ai/gibson/internal/graphrag/provider"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/memory/embedder"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/plan"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -45,6 +48,9 @@ type Infrastructure struct {
 
 	// tracerProvider for distributed tracing (Langfuse or OTLP)
 	tracerProvider *sdktrace.TracerProvider
+
+	// spanProcessors for distributed tracing (used by callback service)
+	spanProcessors []sdktrace.SpanProcessor
 
 	// graphRAGClient for Neo4j knowledge graph operations
 	graphRAGClient *graph.Neo4jClient
@@ -114,19 +120,25 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		} else {
 			d.logger.Info("initialized Neo4j GraphRAG",
 				"uri", d.config.GraphRAG.Neo4j.URI)
-			// Create bridge adapters
-			// TODO: Complete GraphRAG store setup with provider and embedder
-			// For now, log that bridges need full store implementation
-			d.logger.Info("Neo4j client initialized, bridge setup requires GraphRAGStore implementation")
+
+			// Create the full GraphRAG stack: Provider -> Store -> BridgeAdapter
+			graphRAGBridge, graphRAGQueryBridge, err = d.initGraphRAGBridges(ctx, graphRAGClient)
+			if err != nil {
+				d.logger.Warn("failed to initialize GraphRAG bridges, continuing without knowledge graph",
+					"error", err)
+			} else {
+				d.logger.Info("initialized GraphRAG bridges with full store support")
+			}
 		}
 	}
 
 	// Initialize Langfuse tracing if enabled
 	// Pass Neo4j client to enable dual export (Langfuse + Neo4j graph recording)
 	var tracerProvider *sdktrace.TracerProvider
+	var spanProcessors []sdktrace.SpanProcessor
 	if d.config != nil && d.config.Langfuse.Enabled {
 		var err error
-		tracerProvider, err = d.initLangfuseTracing(ctx, graphRAGClient)
+		tracerProvider, spanProcessors, err = d.initLangfuseTracing(ctx, graphRAGClient)
 		if err != nil {
 			d.logger.Warn("failed to initialize Langfuse tracing, continuing without tracing",
 				"error", err)
@@ -154,6 +166,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		slotManager:          slotManager,
 		memoryManagerFactory: memoryFactory,
 		tracerProvider:       tracerProvider,
+		spanProcessors:       spanProcessors,
 		graphRAGClient:       graphRAGClient,
 		graphRAGBridge:       graphRAGBridge,
 		graphRAGQueryBridge:  graphRAGQueryBridge,
@@ -276,4 +289,70 @@ func (d *daemonImpl) checkInfrastructureHealth(ctx context.Context, infra *Infra
 	}
 
 	return health
+}
+
+// initGraphRAGBridges creates the full GraphRAG stack and returns bridge interfaces.
+//
+// This method creates:
+//  1. An embedder for vector operations (mock for now, can be configured for OpenAI)
+//  2. A GraphRAG provider using the Neo4j client
+//  3. A GraphRAG store that orchestrates the provider and embedder
+//  4. A bridge adapter that provides both GraphRAGBridge and GraphRAGQueryBridge interfaces
+//
+// Returns the bridge and query bridge interfaces, or an error if initialization fails.
+func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph.Neo4jClient) (harness.GraphRAGBridge, harness.GraphRAGQueryBridge, error) {
+	// Create embedder - use mock for now since it doesn't require API keys
+	// In production, this would use OpenAI or another embedding provider
+	emb := embedder.NewMockEmbedder()
+	d.logger.Info("created mock embedder for GraphRAG",
+		"dimensions", emb.Dimensions(),
+		"model", emb.Model())
+
+	// Convert daemon config.GraphRAGConfig to graphrag.GraphRAGConfig
+	// Provider specifies the graph database type (neo4j, neptune, memgraph)
+	// The factory maps these to the appropriate provider implementation
+	graphRAGConfig := graphrag.GraphRAGConfig{
+		Enabled:  d.config.GraphRAG.Enabled,
+		Provider: "neo4j", // Graph database type
+		Neo4j: graphrag.Neo4jConfig{
+			URI:      d.config.GraphRAG.Neo4j.URI,
+			Username: d.config.GraphRAG.Neo4j.Username,
+			Password: d.config.GraphRAG.Neo4j.Password,
+			Database: "neo4j", // Default database
+			PoolSize: d.config.GraphRAG.Neo4j.MaxConnections,
+		},
+	}
+	graphRAGConfig.ApplyDefaults()
+
+	// Create GraphRAG provider from config
+	prov, err := provider.NewProvider(graphRAGConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create GraphRAG provider: %w", err)
+	}
+	d.logger.Info("created GraphRAG provider",
+		"type", graphRAGConfig.Provider)
+
+	// Initialize the provider
+	if err := prov.Initialize(ctx); err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
+	}
+
+	// Create GraphRAG store with the provider and embedder
+	store, err := graphrag.NewGraphRAGStoreWithProvider(graphRAGConfig, emb, prov)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create GraphRAG store: %w", err)
+	}
+	d.logger.Info("created GraphRAG store")
+
+	// Create bridge adapter with the store
+	adapter, err := NewGraphRAGBridgeAdapter(GraphRAGBridgeConfig{
+		Neo4jClient:   neo4jClient,
+		GraphRAGStore: store,
+		Logger:        d.logger.With("component", "graphrag-bridge"),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create GraphRAG bridge adapter: %w", err)
+	}
+
+	return adapter.Bridge(), adapter.QueryBridge(), nil
 }

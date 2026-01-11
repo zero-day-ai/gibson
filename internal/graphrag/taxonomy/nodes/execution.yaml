@@ -1,0 +1,251 @@
+# Execution Context Node Types
+# These node types represent mission execution, agent runs, tool invocations, and LLM calls.
+# They enable audit trails, provenance tracking, and execution graph visualization.
+
+node_types:
+  # Mission represents a top-level security assessment mission
+  - id: node.execution.mission
+    name: Mission
+    type: mission
+    category: execution
+    description: "Top-level security assessment or penetration testing mission"
+    id_template: "mission:{name}"
+    properties:
+      - name: name
+        type: string
+        required: true
+        description: "Unique mission name (e.g., 'acme-pentest-2024-01')"
+      - name: target
+        type: string
+        required: false
+        description: "Primary target domain or IP range"
+      - name: started_at
+        type: string
+        required: false
+        description: "Mission start timestamp (ISO 8601)"
+      - name: ended_at
+        type: string
+        required: false
+        description: "Mission end timestamp (ISO 8601)"
+      - name: status
+        type: string
+        required: false
+        description: "Mission status"
+        enum: ["planning", "running", "paused", "completed", "failed", "cancelled"]
+      - name: config
+        type: "map[string]any"
+        required: false
+        description: "Mission configuration parameters"
+      - name: objectives
+        type: "[]string"
+        required: false
+        description: "Mission objectives"
+      - name: scope
+        type: "[]string"
+        required: false
+        description: "In-scope targets (domains, IPs, URLs)"
+      - name: out_of_scope
+        type: "[]string"
+        required: false
+        description: "Out-of-scope targets to exclude"
+    examples:
+      - name: "acme-pentest-2024-01"
+        target: "example.com"
+        started_at: "2024-01-10T10:00:00Z"
+        status: "running"
+        objectives: ["Identify web vulnerabilities", "Test API security"]
+        scope: ["example.com", "*.example.com", "192.0.2.0/24"]
+        out_of_scope: ["example.com/admin"]
+
+  # AgentRun represents a single execution run of an agent within a mission
+  - id: node.execution.agent_run
+    name: AgentRun
+    type: agent_run
+    category: execution
+    description: "Single execution run of an agent within a mission"
+    id_template: "agent_run:{mission_id}:{agent_name}:{run_number}"
+    properties:
+      - name: agent_name
+        type: string
+        required: true
+        description: "Name of the agent (e.g., 'bishop', 'whistler', 'carl')"
+      - name: run_number
+        type: int
+        required: true
+        description: "Sequential run number within the mission"
+      - name: mission_id
+        type: string
+        required: true
+        description: "ID of the parent mission"
+      - name: started_at
+        type: string
+        required: false
+        description: "Agent run start timestamp (ISO 8601)"
+      - name: ended_at
+        type: string
+        required: false
+        description: "Agent run end timestamp (ISO 8601)"
+      - name: status
+        type: string
+        required: false
+        description: "Agent run status"
+        enum: ["initializing", "running", "completed", "failed", "timeout"]
+      - name: exit_code
+        type: int
+        required: false
+        description: "Agent exit code (0 for success)"
+      - name: error_message
+        type: string
+        required: false
+        description: "Error message if agent failed"
+      - name: nodes_created
+        type: int
+        required: false
+        description: "Number of graph nodes created by this run"
+      - name: relationships_created
+        type: int
+        required: false
+        description: "Number of graph relationships created by this run"
+    examples:
+      - agent_name: "bishop"
+        run_number: 1
+        mission_id: "mission:acme-pentest-2024-01"
+        started_at: "2024-01-10T10:05:00Z"
+        ended_at: "2024-01-10T10:15:00Z"
+        status: "completed"
+        exit_code: 0
+        nodes_created: 45
+        relationships_created: 78
+
+  # ToolExecution represents a single execution of a security tool
+  - id: node.execution.tool_execution
+    name: ToolExecution
+    type: tool_execution
+    category: execution
+    description: "Execution of a security tool (nmap, nuclei, sqlmap, etc.)"
+    id_template: "tool_execution:{agent_run_id}:{tool_name}:{timestamp}"
+    properties:
+      - name: tool_name
+        type: string
+        required: true
+        description: "Name of the tool (e.g., 'nmap', 'nuclei', 'sqlmap')"
+      - name: agent_run_id
+        type: string
+        required: true
+        description: "ID of the agent run that executed this tool"
+      - name: command
+        type: string
+        required: false
+        description: "Full command line executed"
+      - name: started_at
+        type: string
+        required: false
+        description: "Tool execution start timestamp (ISO 8601)"
+      - name: duration_ms
+        type: int
+        required: false
+        description: "Execution duration in milliseconds"
+      - name: exit_code
+        type: int
+        required: false
+        description: "Tool exit code"
+      - name: stdout
+        type: string
+        required: false
+        description: "Standard output from tool"
+      - name: stderr
+        type: string
+        required: false
+        description: "Standard error from tool"
+      - name: output_file
+        type: string
+        required: false
+        description: "Path to output file if results were written to disk"
+      - name: targets
+        type: "[]string"
+        required: false
+        description: "Target hosts, domains, or URLs scanned"
+      - name: findings_count
+        type: int
+        required: false
+        description: "Number of findings produced by this tool execution"
+    examples:
+      - tool_name: "nmap"
+        agent_run_id: "agent_run:mission:acme-pentest-2024-01:bishop:1"
+        command: "nmap -sV -p- 192.0.2.1"
+        started_at: "2024-01-10T10:06:00Z"
+        duration_ms: 45000
+        exit_code: 0
+        targets: ["192.0.2.1"]
+        findings_count: 5
+
+  # LLMCall represents a call to a large language model
+  - id: node.execution.llm_call
+    name: LLMCall
+    type: llm_call
+    category: execution
+    description: "Call to a large language model for analysis, planning, or decision-making"
+    id_template: "llm_call:{agent_run_id}:{timestamp}"
+    properties:
+      - name: model
+        type: string
+        required: true
+        description: "Model identifier (e.g., 'gpt-4', 'claude-3-opus')"
+      - name: agent_run_id
+        type: string
+        required: true
+        description: "ID of the agent run that made this LLM call"
+      - name: purpose
+        type: string
+        required: false
+        description: "Purpose of the LLM call (e.g., 'analyze_output', 'plan_next_step')"
+      - name: prompt_tokens
+        type: int
+        required: false
+        description: "Number of tokens in the prompt"
+      - name: completion_tokens
+        type: int
+        required: false
+        description: "Number of tokens in the completion"
+      - name: total_tokens
+        type: int
+        required: false
+        description: "Total tokens used (prompt + completion)"
+      - name: latency_ms
+        type: int
+        required: false
+        description: "API call latency in milliseconds"
+      - name: timestamp
+        type: string
+        required: false
+        description: "When the LLM call was made (ISO 8601)"
+      - name: cost_usd
+        type: float64
+        required: false
+        description: "Estimated cost of the API call in USD"
+      - name: system_prompt
+        type: string
+        required: false
+        description: "System prompt used"
+      - name: user_prompt
+        type: string
+        required: false
+        description: "User prompt sent to the model"
+      - name: response
+        type: string
+        required: false
+        description: "Model response"
+      - name: error
+        type: string
+        required: false
+        description: "Error message if call failed"
+    examples:
+      - model: "gpt-4"
+        agent_run_id: "agent_run:mission:acme-pentest-2024-01:bishop:1"
+        purpose: "analyze_output"
+        prompt_tokens: 1500
+        completion_tokens: 500
+        total_tokens: 2000
+        latency_ms: 3500
+        timestamp: "2024-01-10T10:07:00Z"
+        cost_usd: 0.04

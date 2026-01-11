@@ -9,15 +9,26 @@ import (
 
 // NodeType represents the type of node in the graph.
 // Different node types represent different entities in the security knowledge graph.
+//
+// Deprecated: These hand-written constants are deprecated. Use the taxonomy-generated
+// constants from github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go instead.
+// These constants are maintained for backwards compatibility but will be removed in a future version.
+// The taxonomy system provides a comprehensive, YAML-driven approach to managing graph types.
 type NodeType string
 
 const (
-	NodeTypeFinding       NodeType = "Finding"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	NodeTypeFinding NodeType = "Finding"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
 	NodeTypeAttackPattern NodeType = "AttackPattern"
-	NodeTypeTechnique     NodeType = "Technique"
-	NodeTypeTarget        NodeType = "Target"
-	NodeTypeMitigation    NodeType = "Mitigation"
-	NodeTypeEntity        NodeType = "Entity"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	NodeTypeTechnique NodeType = "Technique"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	NodeTypeTarget NodeType = "Target"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	NodeTypeMitigation NodeType = "Mitigation"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	NodeTypeEntity NodeType = "Entity"
 )
 
 // String returns the string representation of NodeType.
@@ -38,18 +49,32 @@ func (nt NodeType) IsValid() bool {
 
 // RelationType represents the type of relationship between nodes.
 // Relationships capture semantic connections in the security knowledge graph.
+//
+// Deprecated: These hand-written constants are deprecated. Use the taxonomy-generated
+// constants from github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go instead.
+// These constants are maintained for backwards compatibility but will be removed in a future version.
+// The taxonomy system provides a comprehensive, YAML-driven approach to managing graph types.
 type RelationType string
 
 const (
-	RelationExploits      RelationType = "EXPLOITS"
-	RelationDiscoveredOn  RelationType = "DISCOVERED_ON"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationExploits RelationType = "EXPLOITS"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationDiscoveredOn RelationType = "DISCOVERED_ON"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
 	RelationUsesTechnique RelationType = "USES_TECHNIQUE"
-	RelationSimilarTo     RelationType = "SIMILAR_TO"
-	RelationMitigatedBy   RelationType = "MITIGATED_BY"
-	RelationTargets       RelationType = "TARGETS"
-	RelationRelatedTo     RelationType = "RELATED_TO"
-	RelationDerivedFrom   RelationType = "DERIVED_FROM"
-	RelationPartOf        RelationType = "PART_OF"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationSimilarTo RelationType = "SIMILAR_TO"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationMitigatedBy RelationType = "MITIGATED_BY"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationTargets RelationType = "TARGETS"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationRelatedTo RelationType = "RELATED_TO"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationDerivedFrom RelationType = "DERIVED_FROM"
+	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
+	RelationPartOf RelationType = "PART_OF"
 )
 
 // String returns the string representation of RelationType.

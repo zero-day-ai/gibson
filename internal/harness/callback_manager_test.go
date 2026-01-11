@@ -222,8 +222,8 @@ func TestCallbackManager_RegisterUnregister(t *testing.T) {
 	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
 
-	// We pass nil as the harness since CallbackManager doesn't validate it
-	var harness AgentHarness = nil
+	// Create a mock harness for testing
+	harness := new(mockAgentHarness)
 
 	tests := []struct {
 		name             string
@@ -301,7 +301,8 @@ func TestCallbackManager_RegisterUnregister_BeforeStart(t *testing.T) {
 	config := createTestConfig(t)
 	manager := NewCallbackManager(config, logger)
 
-	var harness AgentHarness = nil
+	// Create a mock harness for testing
+	harness := new(mockAgentHarness)
 	taskID := "task-early"
 
 	// Try to register before starting (should handle gracefully)
@@ -391,7 +392,8 @@ func TestCallbackManager_ConcurrentRegistrations(t *testing.T) {
 	// Give server time to start
 	time.Sleep(100 * time.Millisecond)
 
-	var harness AgentHarness = nil
+	// Create a mock harness for testing
+	harness := new(mockAgentHarness)
 
 	// Launch multiple goroutines that register and unregister harnesses
 	const numGoroutines = 10

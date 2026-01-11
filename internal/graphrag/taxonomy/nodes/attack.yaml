@@ -1,0 +1,120 @@
+# Attack Node Types
+# These node types represent attack techniques and tactics from multiple taxonomies
+# (MITRE ATT&CK, Arcanum PI) that can be linked to findings.
+
+node_types:
+  # Technique represents an attack technique from any taxonomy
+  - id: node.attack.technique
+    name: Technique
+    type: technique
+    category: attack
+    description: "Attack technique from MITRE ATT&CK, Arcanum PI, or custom taxonomy"
+    id_template: "technique:{technique_id}"
+    properties:
+      - name: technique_id
+        type: string
+        required: true
+        description: "Technique identifier (e.g., 'T1190' for MITRE, 'ARC-T001' for Arcanum)"
+      - name: name
+        type: string
+        required: true
+        description: "Technique name"
+      - name: taxonomy
+        type: string
+        required: true
+        description: "Source taxonomy"
+        enum: ["mitre", "arcanum", "custom"]
+      - name: tactic
+        type: string
+        required: false
+        description: "Primary tactic (for MITRE: 'Initial Access', 'Execution', etc.)"
+      - name: description
+        type: string
+        required: false
+        description: "Detailed description of the technique"
+      - name: platforms
+        type: "[]string"
+        required: false
+        description: "Applicable platforms (e.g., ['Windows', 'Linux', 'macOS'])"
+      - name: examples
+        type: "[]string"
+        required: false
+        description: "Example applications of the technique"
+      - name: mitre_mapping
+        type: "[]string"
+        required: false
+        description: "Cross-reference to MITRE technique IDs (for Arcanum techniques)"
+      - name: detection_strategies
+        type: "[]string"
+        required: false
+        description: "Strategies for detecting this technique"
+      - name: mitigations
+        type: "[]string"
+        required: false
+        description: "Mitigation approaches"
+      - name: url
+        type: string
+        required: false
+        description: "URL to technique documentation"
+    examples:
+      - technique_id: "T1190"
+        name: "Exploit Public-Facing Application"
+        taxonomy: "mitre"
+        tactic: "Initial Access"
+        description: "Adversaries may attempt to exploit weaknesses in an Internet-facing host or system"
+        platforms: ["Windows", "Linux", "macOS", "Network"]
+        detection_strategies: ["Monitor application logs for exploit attempts", "Web application firewalls"]
+        url: "https://attack.mitre.org/techniques/T1190/"
+      - technique_id: "ARC-T001"
+        name: "Framing"
+        taxonomy: "arcanum"
+        description: "Using specific context framing to manipulate model behavior"
+        examples: ["Scenario-based approaches", "Role-play contexts", "False authority frames"]
+        mitre_mapping: []
+
+  # Tactic represents an attack tactic (high-level goal)
+  - id: node.attack.tactic
+    name: Tactic
+    type: tactic
+    category: attack
+    description: "Attack tactic representing a high-level adversary goal"
+    id_template: "tactic:{tactic_id}"
+    properties:
+      - name: tactic_id
+        type: string
+        required: true
+        description: "Tactic identifier (e.g., 'TA0001' for MITRE Initial Access)"
+      - name: name
+        type: string
+        required: true
+        description: "Tactic name (e.g., 'Initial Access', 'Execution')"
+      - name: taxonomy
+        type: string
+        required: true
+        description: "Source taxonomy"
+        enum: ["mitre", "arcanum", "custom"]
+      - name: description
+        type: string
+        required: false
+        description: "Description of the tactic"
+      - name: techniques
+        type: "[]string"
+        required: false
+        description: "List of technique IDs that implement this tactic"
+      - name: url
+        type: string
+        required: false
+        description: "URL to tactic documentation"
+    examples:
+      - tactic_id: "TA0001"
+        name: "Initial Access"
+        taxonomy: "mitre"
+        description: "The adversary is trying to get into your network"
+        techniques: ["T1190", "T1566", "T1189"]
+        url: "https://attack.mitre.org/tactics/TA0001/"
+      - tactic_id: "TA0002"
+        name: "Execution"
+        taxonomy: "mitre"
+        description: "The adversary is trying to run malicious code"
+        techniques: ["T1059", "T1203", "T1106"]
+        url: "https://attack.mitre.org/tactics/TA0002/"

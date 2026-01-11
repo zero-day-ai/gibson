@@ -34,6 +34,11 @@ func newMockProvider(name string, healthy bool) *mockProvider {
 				ContextWindow: 16384,
 				Features:      []string{"tool_use", "vision", "streaming"},
 			},
+			{
+				Name:          fmt.Sprintf("%s-model-3", name),
+				ContextWindow: 16384,
+				Features:      []string{"tool_use", "streaming", "json_mode"},
+			},
 		},
 	}
 }

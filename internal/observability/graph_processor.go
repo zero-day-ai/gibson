@@ -48,6 +48,19 @@ func (p *GraphSpanProcessor) OnStart(parent context.Context, s sdktrace.ReadWrit
 // the span name. Writes are performed in a goroutine with a timeout to
 // avoid blocking the tracing pipeline.
 func (p *GraphSpanProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
+	// Guard against nil spans from proxy conversion
+	if s == nil {
+		return
+	}
+
+	// Recover from panics when calling interface methods on invalid spans
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Warn("recovered from panic in GraphSpanProcessor.OnEnd",
+				"panic", r)
+		}
+	}()
+
 	spanName := s.Name()
 
 	// Extract trace/span IDs for correlation

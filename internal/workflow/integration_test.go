@@ -15,6 +15,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 	"gopkg.in/yaml.v3"
@@ -290,6 +291,10 @@ func (m *mockHarness) Stream(ctx context.Context, slot string, messages []llm.Me
 	return nil, errors.New("not implemented in mock")
 }
 
+func (m *mockHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (any, error) {
+	return nil, errors.New("not implemented in mock")
+}
+
 func (m *mockHarness) SubmitFinding(ctx context.Context, finding agent.Finding) error {
 	return nil
 }
@@ -322,6 +327,10 @@ func (m *mockHarness) Mission() harness.MissionContext {
 	return harness.MissionContext{}
 }
 
+func (m *mockHarness) MissionID() types.ID {
+	return types.NewID()
+}
+
 func (m *mockHarness) Target() harness.TargetInfo {
 	return harness.TargetInfo{}
 }
@@ -332,6 +341,22 @@ func (m *mockHarness) Metrics() harness.MetricsRecorder {
 
 func (m *mockHarness) TokenUsage() *llm.TokenTracker {
 	return nil
+}
+
+func (m *mockHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
+}
+
+func (m *mockHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return []harness.MissionRunSummarySDK{}, nil
+}
+
+func (m *mockHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return []agent.Finding{}, nil
+}
+
+func (m *mockHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return []agent.Finding{}, nil
 }
 
 // ============================================================================

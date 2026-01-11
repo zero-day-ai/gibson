@@ -1,0 +1,128 @@
+# Finding Relationships
+# These relationships link findings to assets, techniques, evidence, and other findings.
+# They enable attack chain construction and finding correlation analysis.
+
+relationship_types:
+  # AFFECTS: finding -> endpoint|service|host|technology
+  - id: rel.finding.affects
+    name: AFFECTS
+    type: AFFECTS
+    category: finding
+    description: "Finding affects a specific asset (endpoint, service, host, or technology)"
+    from_types: [finding]
+    to_types: [endpoint, service, host, technology, port, domain, subdomain]
+    bidirectional: false
+    properties:
+      - name: impact_level
+        type: string
+        required: false
+        description: "Level of impact"
+        enum: ["critical", "high", "medium", "low"]
+
+  # USES_TECHNIQUE: finding -> technique
+  - id: rel.finding.uses_technique
+    name: USES_TECHNIQUE
+    type: USES_TECHNIQUE
+    category: finding
+    description: "Finding demonstrates the use of a specific attack technique"
+    from_types: [finding]
+    to_types: [technique]
+    bidirectional: false
+    properties:
+      - name: confidence
+        type: float64
+        required: false
+        description: "Confidence in technique mapping (0.0-1.0)"
+
+  # HAS_EVIDENCE: finding -> evidence
+  - id: rel.finding.has_evidence
+    name: HAS_EVIDENCE
+    type: HAS_EVIDENCE
+    category: finding
+    description: "Finding is supported by evidence (request, response, screenshot, etc.)"
+    from_types: [finding]
+    to_types: [evidence]
+    bidirectional: false
+    properties:
+      - name: evidence_weight
+        type: float64
+        required: false
+        description: "Weight of this evidence (0.0-1.0)"
+
+  # LEADS_TO: finding -> finding
+  - id: rel.finding.leads_to
+    name: LEADS_TO
+    type: LEADS_TO
+    category: finding
+    description: "Finding leads to another finding in an attack chain"
+    from_types: [finding]
+    to_types: [finding]
+    bidirectional: false
+    properties:
+      - name: sequence
+        type: int
+        required: true
+        description: "Sequence number in the attack chain (1-indexed)"
+      - name: likelihood
+        type: float64
+        required: false
+        description: "Likelihood of this chain progression (0.0-1.0)"
+      - name: description
+        type: string
+        required: false
+        description: "Description of how first finding leads to second"
+
+  # MITIGATES: mitigation -> finding
+  - id: rel.finding.mitigates
+    name: MITIGATES
+    type: MITIGATES
+    category: finding
+    description: "Mitigation addresses a specific finding"
+    from_types: [mitigation]
+    to_types: [finding]
+    bidirectional: false
+    properties:
+      - name: effectiveness
+        type: string
+        required: false
+        description: "Effectiveness of the mitigation"
+        enum: ["complete", "partial", "workaround", "preventive"]
+
+  # SIMILAR_TO: finding <-> finding
+  - id: rel.finding.similar_to
+    name: SIMILAR_TO
+    type: SIMILAR_TO
+    category: finding
+    description: "Finding is similar to another finding (bidirectional)"
+    from_types: [finding]
+    to_types: [finding]
+    bidirectional: true
+    properties:
+      - name: similarity_score
+        type: float64
+        required: true
+        description: "Similarity score (0.0-1.0)"
+      - name: similarity_basis
+        type: string
+        required: false
+        description: "Basis for similarity (e.g., 'same_cve', 'same_asset', 'embedding_distance')"
+
+  # EXPLOITS: finding -> technology|service
+  - id: rel.finding.exploits
+    name: EXPLOITS
+    type: EXPLOITS
+    category: finding
+    description: "Finding exploits a vulnerability in a specific technology or service"
+    from_types: [finding]
+    to_types: [technology, service]
+    bidirectional: false
+    properties:
+      - name: exploit_type
+        type: string
+        required: false
+        description: "Type of exploitation"
+      - name: exploitability
+        type: string
+        required: false
+        description: "Ease of exploitation"
+        enum: ["trivial", "easy", "moderate", "difficult"]
