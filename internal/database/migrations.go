@@ -126,6 +126,12 @@ func getMigrations() []migration {
 			up:      getTargetConnectionSchema(),
 			down:    getDownMigration13(),
 		},
+		{
+			version: 13,
+			name:    "mission_lineage",
+			up:      getMissionLineageSchema(),
+			down:    getDownMigration14(),
+		},
 		// Future migrations will be added here
 	}
 
@@ -1705,5 +1711,45 @@ func getDownMigration13() string {
 -- Rollback Migration 12: Target Connection Column
 -- Note: SQLite doesn't support DROP COLUMN directly
 -- The connection column will remain in place during rollback
+`
+}
+
+// getMissionLineageSchema returns the schema for adding parent mission tracking
+func getMissionLineageSchema() string {
+	return `
+-- Migration 13: Mission Lineage Tracking
+-- Adds parent_mission_id and depth columns to support mission hierarchy
+
+-- Add parent_mission_id column (nullable FK to missions table)
+ALTER TABLE missions ADD COLUMN parent_mission_id TEXT;
+
+-- Add depth column to track how deep in the hierarchy this mission is
+ALTER TABLE missions ADD COLUMN depth INTEGER DEFAULT 0;
+
+-- Create index on parent_mission_id for efficient child mission queries
+CREATE INDEX IF NOT EXISTS idx_missions_parent ON missions(parent_mission_id);
+
+-- Create composite index for parent + status queries
+CREATE INDEX IF NOT EXISTS idx_missions_parent_status ON missions(parent_mission_id, status);
+`
+}
+
+// getDownMigration14 returns the rollback SQL for migration 13
+func getDownMigration14() string {
+	return `
+-- Rollback Migration 13: Mission Lineage Tracking
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_missions_parent_status;
+DROP INDEX IF EXISTS idx_missions_parent;
+
+-- Note: SQLite doesn't support DROP COLUMN directly
+-- The parent_mission_id and depth columns will remain in place during rollback
+-- In production, you would need to:
+-- 1. Create a new table without the lineage columns
+-- 2. Copy data from old table to new table
+-- 3. Drop old table
+-- 4. Rename new table
+-- For simplicity, we're leaving the columns in place during rollback
 `
 }

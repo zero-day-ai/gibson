@@ -183,14 +183,22 @@ func (s *DBMissionStore) Save(ctx context.Context, mission *Mission) error {
 		previousRunIDStr = &s
 	}
 
+	// Convert ParentMissionID to string pointer for SQL (handle null parent gracefully)
+	var parentMissionIDStr *string
+	if mission.ParentMissionID != nil {
+		s := mission.ParentMissionID.String()
+		parentMissionIDStr = &s
+	}
+
 	query := `
 		INSERT INTO missions (
 			id, name, description, status, target_id, workflow_id, workflow_json,
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	_, err = s.db.ExecContext(ctx, query,
@@ -212,6 +220,8 @@ func (s *DBMissionStore) Save(ctx context.Context, mission *Mission) error {
 		mission.RunNumber,
 		previousRunIDStr,
 		timePtr(mission.CheckpointAt),
+		parentMissionIDStr,
+		mission.Depth,
 		mission.CreatedAt,
 		timePtr(mission.StartedAt),
 		timePtr(mission.CompletedAt),
@@ -233,6 +243,7 @@ func (s *DBMissionStore) Get(ctx context.Context, id types.ID) (*Mission, error)
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE id = ?
@@ -258,6 +269,7 @@ func (s *DBMissionStore) GetByName(ctx context.Context, name string) (*Mission, 
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE name = ?
@@ -328,6 +340,7 @@ func (s *DBMissionStore) List(ctx context.Context, filter *MissionFilter) ([]*Mi
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 	`
@@ -342,6 +355,32 @@ func (s *DBMissionStore) List(ctx context.Context, filter *MissionFilter) ([]*Mi
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list missions: %w", err)
+	}
+	defer rows.Close()
+
+	return s.scanMissions(rows)
+}
+
+// ListByParent retrieves all child missions for a given parent mission ID.
+// This enables querying the mission hierarchy and tracking mission lineage.
+// Returns an empty slice if no child missions exist.
+func (s *DBMissionStore) ListByParent(ctx context.Context, parentID types.ID) ([]*Mission, error) {
+	query := `
+		SELECT
+			id, name, description, status, target_id, workflow_id, workflow_json,
+			constraints, metrics, checkpoint, error,
+			progress, findings_count, agent_assignments, metadata,
+			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
+			created_at, started_at, completed_at, updated_at
+		FROM missions
+		WHERE parent_mission_id = ?
+		ORDER BY created_at ASC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, parentID.String())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list child missions: %w", err)
 	}
 	defer rows.Close()
 
@@ -387,6 +426,13 @@ func (s *DBMissionStore) Update(ctx context.Context, mission *Mission) error {
 		return fmt.Errorf("failed to marshal metadata: %w", err)
 	}
 
+	// Convert ParentMissionID to string pointer for SQL (handle null parent gracefully)
+	var parentMissionIDStr *string
+	if mission.ParentMissionID != nil {
+		s := mission.ParentMissionID.String()
+		parentMissionIDStr = &s
+	}
+
 	query := `
 		UPDATE missions SET
 			name = ?,
@@ -403,6 +449,8 @@ func (s *DBMissionStore) Update(ctx context.Context, mission *Mission) error {
 			findings_count = ?,
 			agent_assignments = ?,
 			metadata = ?,
+			parent_mission_id = ?,
+			depth = ?,
 			started_at = ?,
 			completed_at = ?,
 			updated_at = ?
@@ -424,6 +472,8 @@ func (s *DBMissionStore) Update(ctx context.Context, mission *Mission) error {
 		mission.FindingsCount,
 		agentAssignmentsJSON,
 		metadataJSON,
+		parentMissionIDStr,
+		mission.Depth,
 		timePtr(mission.StartedAt),
 		timePtr(mission.CompletedAt),
 		mission.UpdatedAt,
@@ -537,6 +587,7 @@ func (s *DBMissionStore) GetActive(ctx context.Context) ([]*Mission, error) {
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE status IN (?, ?)
@@ -653,6 +704,8 @@ func (s *DBMissionStore) scanMission(scanner interface {
 		runNumber           sql.NullInt64
 		previousRunIDStr    sql.NullString
 		checkpointAt        sql.NullTime
+		parentMissionIDStr  sql.NullString
+		depth               int
 		startedAt           sql.NullTime
 		completedAt         sql.NullTime
 	)
@@ -676,6 +729,8 @@ func (s *DBMissionStore) scanMission(scanner interface {
 		&runNumber,
 		&previousRunIDStr,
 		&checkpointAt,
+		&parentMissionIDStr,
+		&depth,
 		&m.CreatedAt,
 		&startedAt,
 		&completedAt,
@@ -738,6 +793,18 @@ func (s *DBMissionStore) scanMission(scanner interface {
 		}
 		m.PreviousRunID = &prevID
 	}
+
+	// Parse parent mission ID - handle null gracefully for root missions
+	if parentMissionIDStr.Valid && parentMissionIDStr.String != "" {
+		parentID, err := types.ParseID(parentMissionIDStr.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse parent mission ID: %w", err)
+		}
+		m.ParentMissionID = &parentID
+	}
+
+	// Set depth
+	m.Depth = depth
 
 	// Unmarshal JSON fields
 	if constraintsStr.Valid && constraintsStr.String != "" {
@@ -868,6 +935,7 @@ func (s *DBMissionStore) GetByNameAndStatus(ctx context.Context, name string, st
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE name = ? AND status = ?
@@ -899,6 +967,7 @@ func (s *DBMissionStore) ListByName(ctx context.Context, name string, limit int)
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE name = ?
@@ -923,6 +992,7 @@ func (s *DBMissionStore) GetLatestByName(ctx context.Context, name string) (*Mis
 			constraints, metrics, checkpoint, error,
 			progress, findings_count, agent_assignments, metadata,
 			run_number, previous_run_id, checkpoint_at,
+			parent_mission_id, depth,
 			created_at, started_at, completed_at, updated_at
 		FROM missions
 		WHERE name = ?

@@ -80,6 +80,10 @@ type DefaultAgentHarness struct {
 	planningOrchestrator PlanningOrchestrator
 	planContext          *PlanningContext
 	stepBudget           int
+
+	// Mission management (optional, nil = mission methods return error)
+	missionClient MissionOperator
+	spawnLimits   SpawnLimits
 }
 
 // Ensure DefaultAgentHarness implements AgentHarness
@@ -983,6 +987,11 @@ func (h *DefaultAgentHarness) Target() TargetInfo {
 	return h.targetInfo
 }
 
+// MissionID returns the mission ID for the current execution context.
+func (h *DefaultAgentHarness) MissionID() types.ID {
+	return h.missionCtx.ID
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Observability Methods
 // ────────────────────────────────────────────────────────────────────────────
@@ -1333,7 +1342,7 @@ func (h *DefaultAgentHarness) GraphRAGHealth(ctx context.Context) types.HealthSt
 	// Check if GraphRAG is enabled
 	if h.graphRAGQueryBridge == nil {
 		h.logger.Debug("graphrag query bridge not enabled")
-		return types.Unhealthy("graphrag query bridge not configured")
+		return types.Healthy("graphrag disabled")
 	}
 
 	// Delegate to query bridge

@@ -4,8 +4,10 @@ import (
 	"context"
 	"log/slog"
 
+	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
+	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 )
 
 // HarnessFactory is a function type for creating child harnesses.
@@ -169,11 +171,40 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		tokenUsage:          tokenTracker,
 		graphRAGBridge:      f.config.GraphRAGBridge,
 		graphRAGQueryBridge: f.config.GraphRAGQueryBridge,
+		missionClient:       f.config.MissionClient,
+		spawnLimits:         f.config.SpawnLimits,
 	}
 
 	// Apply middleware if configured
 	if f.config.Middleware != nil {
 		harness = NewMiddlewareHarness(harness, f.config.Middleware)
+	}
+
+	// Log mission management status
+	if f.config.MissionClient != nil {
+		logger.Debug("mission management enabled for harness",
+			slog.Int("max_child_missions", f.config.SpawnLimits.MaxChildMissions),
+			slog.Int("max_concurrent_missions", f.config.SpawnLimits.MaxConcurrentMissions),
+			slog.Int("max_mission_depth", f.config.SpawnLimits.MaxMissionDepth),
+		)
+	} else {
+		logger.Debug("mission management disabled for harness (no mission client configured)")
+	}
+
+	// Inject taxonomy into SDK (one-time global setup)
+	// This bridges Gibson's taxonomy system to the SDK for agent use
+	if sdkgraphrag.Taxonomy() == nil {
+		registry := taxonomyinit.GetTaxonomyRegistry()
+		if registry != nil {
+			sdkgraphrag.SetTaxonomy(registry)
+			logger.Debug("injected taxonomy into SDK",
+				slog.String("version", registry.Version()),
+				slog.Int("node_types", len(registry.NodeTypes())),
+				slog.Int("relationship_types", len(registry.RelationshipTypes())),
+			)
+		} else {
+			logger.Warn("taxonomy registry not initialized, SDK will have no taxonomy validation")
+		}
 	}
 
 	return harness, nil

@@ -152,6 +152,17 @@ type Mission struct {
 	// - shared: Mission shares a common memory pool with other runs
 	MemoryContinuity string `json:"memory_continuity,omitempty"`
 
+	// ParentMissionID references the parent mission if this is a child mission.
+	// This enables mission lineage tracking where agents can spawn sub-missions.
+	// A nil value indicates this is a root mission with no parent.
+	ParentMissionID *types.ID `json:"parent_mission_id,omitempty"`
+
+	// Depth represents the depth in the mission hierarchy (0 = root mission).
+	// Root missions have depth 0, their direct children have depth 1, etc.
+	// This field is used to enforce maximum depth constraints and prevent
+	// runaway mission spawning.
+	Depth int `json:"depth"`
+
 	// CheckpointAt is the timestamp of the last checkpoint save.
 	CheckpointAt *time.Time `json:"checkpoint_at,omitempty"`
 
@@ -393,4 +404,27 @@ func (m *Mission) GetMemoryContinuity() string {
 func (m *Mission) WithMemoryContinuity(mode string) *Mission {
 	m.MemoryContinuity = mode
 	return m
+}
+
+// WithParent sets the parent mission ID and depth for a child mission.
+// The depth is automatically set to parent's depth + 1.
+// This method returns the mission for method chaining.
+func (m *Mission) WithParent(parentID types.ID, parentDepth int) *Mission {
+	m.ParentMissionID = &parentID
+	m.Depth = parentDepth + 1
+	return m
+}
+
+// IsRootMission returns true if this mission has no parent (is a root mission).
+func (m *Mission) IsRootMission() bool {
+	return m.ParentMissionID == nil
+}
+
+// GetParentMissionID returns the parent mission ID if this is a child mission,
+// or an empty ID if this is a root mission.
+func (m *Mission) GetParentMissionID() types.ID {
+	if m.ParentMissionID == nil {
+		return types.ID("")
+	}
+	return *m.ParentMissionID
 }

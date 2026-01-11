@@ -126,6 +126,18 @@ type HarnessConfig struct {
 	// If nil, no wrapping is performed and the memory manager is used as-is.
 	// Optional: defaults to nil (no wrapping).
 	MemoryWrapper func(memory.MemoryManager) memory.MemoryManager
+
+	// MissionClient provides mission lifecycle operations for agent-driven mission creation.
+	// When set, agents can create, run, and monitor child missions through the harness.
+	// When nil, mission management methods will return an error.
+	// Optional: defaults to nil (mission management disabled).
+	MissionClient MissionOperator
+
+	// SpawnLimits configures mission spawning constraints to prevent runaway mission creation.
+	// These limits are checked before allowing agents to create child missions.
+	// If not set, DefaultSpawnLimits() will be used when MissionClient is configured.
+	// Optional: defaults will be applied if MissionClient is set.
+	SpawnLimits SpawnLimits
 }
 
 // Validate checks that required fields are set and returns an error if validation fails.
@@ -206,6 +218,18 @@ func (c *HarnessConfig) ApplyDefaults() {
 		c.GraphRAGQueryBridge = &NoopGraphRAGQueryBridge{}
 	}
 
+	// Apply default spawn limits if MissionClient is configured but limits are not set
+	// SpawnLimits are only defaulted when MissionClient is present
+	if c.MissionClient != nil {
+		// Check if spawn limits are at zero values (not configured)
+		if c.SpawnLimits.MaxChildMissions == 0 &&
+			c.SpawnLimits.MaxConcurrentMissions == 0 &&
+			c.SpawnLimits.MaxMissionDepth == 0 {
+			c.SpawnLimits = DefaultSpawnLimits()
+		}
+	}
+
 	// Note: MemoryManager is not defaulted - it requires mission-specific configuration
 	// and database dependencies that cannot be reasonably defaulted.
+	// Note: MissionClient is not defaulted - mission management is opt-in functionality.
 }
