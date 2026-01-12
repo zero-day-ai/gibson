@@ -313,7 +313,7 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 
 		// Load target entity to get connection details
 		var targetInfo harness.TargetInfo
-		if mission.TargetID == "discovery-mission" {
+		if mission.TargetID == "00000000-0000-0000-0000-d15c0very000" {
 			// Synthetic target for discovery/orchestration missions - no actual target to load
 			targetInfo = harness.NewTargetInfo(mission.TargetID, "discovery-mission", "", "discovery")
 		} else if o.targetStore != nil {
@@ -888,7 +888,7 @@ func (o *DefaultMissionOrchestrator) ExecuteFromCheckpoint(ctx context.Context, 
 
 		// Load target entity to get connection details
 		var targetInfo harness.TargetInfo
-		if mission.TargetID == "discovery-mission" {
+		if mission.TargetID == "00000000-0000-0000-0000-d15c0very000" {
 			// Synthetic target for discovery/orchestration missions - no actual target to load
 			targetInfo = harness.NewTargetInfo(mission.TargetID, "discovery-mission", "", "discovery")
 		} else if o.targetStore != nil {

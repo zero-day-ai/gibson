@@ -148,7 +148,8 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	} else {
 		// No target specified - use a synthetic "discovery" target ID
 		// This allows orchestration/discovery missions that don't target a specific system
-		targetID = types.ID("discovery-mission")
+		// Use a well-known UUID that signals this is a discovery mission
+		targetID = types.ID("00000000-0000-0000-0000-d15c0very000")
 		m.logger.Debug("no target specified, using discovery target", "target_id", targetID)
 	}
 
