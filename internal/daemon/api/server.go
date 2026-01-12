@@ -543,6 +543,64 @@ func (s *DaemonServer) GetAgentStatus(ctx context.Context, req *GetAgentStatusRe
 	}, nil
 }
 
+// ListTools returns all registered tools from the etcd registry.
+func (s *DaemonServer) ListTools(ctx context.Context, req *ListToolsRequest) (*ListToolsResponse, error) {
+	s.logger.Debug("tool list request received")
+
+	tools, err := s.daemon.ListTools(ctx)
+	if err != nil {
+		s.logger.Error("failed to list tools", "error", err)
+		return nil, status_grpc.Errorf(codes.Internal, "failed to list tools: %v", err)
+	}
+
+	// Convert to proto messages
+	protoTools := make([]*ToolInfo, len(tools))
+	for i, t := range tools {
+		protoTools[i] = &ToolInfo{
+			Id:          t.ID,
+			Name:        t.Name,
+			Version:     t.Version,
+			Endpoint:    t.Endpoint,
+			Description: t.Description,
+			Health:      t.Health,
+			LastSeen:    t.LastSeen.Unix(),
+		}
+	}
+
+	return &ListToolsResponse{
+		Tools: protoTools,
+	}, nil
+}
+
+// ListPlugins returns all registered plugins from the etcd registry.
+func (s *DaemonServer) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*ListPluginsResponse, error) {
+	s.logger.Debug("plugin list request received")
+
+	plugins, err := s.daemon.ListPlugins(ctx)
+	if err != nil {
+		s.logger.Error("failed to list plugins", "error", err)
+		return nil, status_grpc.Errorf(codes.Internal, "failed to list plugins: %v", err)
+	}
+
+	// Convert to proto messages
+	protoPlugins := make([]*PluginInfo, len(plugins))
+	for i, p := range plugins {
+		protoPlugins[i] = &PluginInfo{
+			Id:          p.ID,
+			Name:        p.Name,
+			Version:     p.Version,
+			Endpoint:    p.Endpoint,
+			Description: p.Description,
+			Health:      p.Health,
+			LastSeen:    p.LastSeen.Unix(),
+		}
+	}
+
+	return &ListPluginsResponse{
+		Plugins: protoPlugins,
+	}, nil
+}
+
 // RunAttack executes an attack and streams progress events.
 func (s *DaemonServer) RunAttack(req *RunAttackRequest, stream grpc.ServerStreamingServer[AttackEvent]) error {
 	s.logger.Info("attack run request received",
