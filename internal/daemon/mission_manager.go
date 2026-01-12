@@ -145,6 +145,11 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 		}
 		targetID = target.ID
 		m.logger.Debug("resolved target", "target_ref", wf.TargetRef, "target_id", targetID)
+	} else {
+		// No target specified - use a synthetic "discovery" target ID
+		// This allows orchestration/discovery missions that don't target a specific system
+		targetID = types.ID("discovery-mission")
+		m.logger.Debug("no target specified, using discovery target", "target_id", targetID)
 	}
 
 	// Serialize workflow to JSON for orchestrator
