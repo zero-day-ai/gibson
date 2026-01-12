@@ -708,30 +708,52 @@ func (h *DefaultAgentHarness) CompleteStructuredAny(
 	ctx, span := h.tracer.Start(ctx, "harness.CompleteStructuredAny")
 	defer span.End()
 
-	// Use reflection to get the type of the schema
-	t := reflect.TypeOf(schemaType)
-	if t == nil {
-		return nil, fmt.Errorf("schema type cannot be nil")
+	var sdkSchema *types.JSONSchema
+	var typeName string
+	var localType reflect.Type // Only set for local Go struct types, nil for remote/map schemas
+
+	// Check if schemaType is already a map (JSON schema passed directly from callback/remote agent)
+	if schemaMap, ok := schemaType.(map[string]any); ok {
+		// Schema was passed as JSON from remote agent - convert directly to SDK schema
+		// In this case, we return map[string]any since we don't have the original Go type
+		typeName = "RemoteSchema"
+		if name, ok := schemaMap["name"].(string); ok && name != "" {
+			typeName = name
+		}
+		sdkSchema = mapToJSONSchema(schemaMap)
+		// localType remains nil - we'll return map[string]any
+
+		h.logger.Debug("using pre-built schema from remote agent",
+			"type", typeName,
+			"slot", slot)
+	} else {
+		// Use reflection to get the type of the schema (local Go struct)
+		t := reflect.TypeOf(schemaType)
+		if t == nil {
+			return nil, fmt.Errorf("schema type cannot be nil")
+		}
+
+		// If it's a pointer, get the element type
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+
+		localType = t // Save for unmarshaling later
+
+		// Generate schema from the type
+		jsonSchema := schemaFromReflectType(t)
+		typeName = t.Name()
+		if typeName == "" {
+			typeName = "AnonymousType"
+		}
+
+		h.logger.Debug("generating structured output schema from type",
+			"type", typeName,
+			"slot", slot)
+
+		// Convert internal schema to SDK schema format
+		sdkSchema = convertToSDKSchema(jsonSchema)
 	}
-
-	// If it's a pointer, get the element type
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-
-	// Generate schema from the type
-	jsonSchema := schemaFromReflectType(t)
-	typeName := t.Name()
-	if typeName == "" {
-		typeName = "AnonymousType"
-	}
-
-	h.logger.Debug("generating structured output schema from type",
-		"type", typeName,
-		"slot", slot)
-
-	// Convert internal schema to SDK schema format
-	sdkSchema := convertToSDKSchema(jsonSchema)
 
 	// Build ResponseFormat with strict validation
 	format := &types.ResponseFormat{
@@ -869,30 +891,63 @@ func (h *DefaultAgentHarness) CompleteStructuredAny(
 	// Record validation success
 	span.SetAttributes(attribute.Bool(genAIValidated, true))
 
-	// Create a new instance of the type and unmarshal into it
-	resultPtr := reflect.New(t)
-	if err := json.Unmarshal([]byte(resp.RawJSON), resultPtr.Interface()); err != nil {
-		h.logger.Error("failed to unmarshal structured response",
-			"slot", slot,
-			"provider", provider.Name(),
-			"model", modelInfo.Name,
-			"type", typeName,
-			"error", err)
+	// Unmarshal the response based on whether we have a local Go type or remote schema
+	var result any
+	if localType != nil {
+		// Local Go struct - unmarshal to the specific type
+		resultPtr := reflect.New(localType)
+		if err := json.Unmarshal([]byte(resp.RawJSON), resultPtr.Interface()); err != nil {
+			h.logger.Error("failed to unmarshal structured response",
+				"slot", slot,
+				"provider", provider.Name(),
+				"model", modelInfo.Name,
+				"type", typeName,
+				"error", err)
 
-		span.SetAttributes(
-			attribute.Bool(genAIValidated, false),
-			attribute.String(genAIValidationError, err.Error()),
-			attribute.String(genAIRawJSON, resp.RawJSON),
-		)
+			span.SetAttributes(
+				attribute.Bool(genAIValidated, false),
+				attribute.String(genAIValidationError, err.Error()),
+				attribute.String(genAIRawJSON, resp.RawJSON),
+			)
 
-		h.metrics.RecordCounter("llm.structured_completions", 1, map[string]string{
-			"slot":     slot,
-			"provider": provider.Name(),
-			"model":    modelInfo.Name,
-			"type":     typeName,
-			"status":   "parse_failed",
-		})
-		return nil, llm.NewUnmarshalError(provider.Name(), resp.RawJSON, typeName, err)
+			h.metrics.RecordCounter("llm.structured_completions", 1, map[string]string{
+				"slot":     slot,
+				"provider": provider.Name(),
+				"model":    modelInfo.Name,
+				"type":     typeName,
+				"status":   "parse_failed",
+			})
+			return nil, llm.NewUnmarshalError(provider.Name(), resp.RawJSON, typeName, err)
+		}
+		result = resultPtr.Interface()
+	} else {
+		// Remote schema (map[string]any) - return the JSON as map[string]any
+		// The agent will unmarshal to its local Go type on its side
+		var mapResult map[string]any
+		if err := json.Unmarshal([]byte(resp.RawJSON), &mapResult); err != nil {
+			h.logger.Error("failed to parse structured response as map",
+				"slot", slot,
+				"provider", provider.Name(),
+				"model", modelInfo.Name,
+				"type", typeName,
+				"error", err)
+
+			span.SetAttributes(
+				attribute.Bool(genAIValidated, false),
+				attribute.String(genAIValidationError, err.Error()),
+				attribute.String(genAIRawJSON, resp.RawJSON),
+			)
+
+			h.metrics.RecordCounter("llm.structured_completions", 1, map[string]string{
+				"slot":     slot,
+				"provider": provider.Name(),
+				"model":    modelInfo.Name,
+				"type":     typeName,
+				"status":   "parse_failed",
+			})
+			return nil, llm.NewParseError(provider.Name(), resp.RawJSON, 0, err)
+		}
+		result = mapResult
 	}
 
 	// Track token usage
@@ -936,7 +991,7 @@ func (h *DefaultAgentHarness) CompleteStructuredAny(
 		attribute.Int("gen_ai.usage.output_tokens", resp.Usage.CompletionTokens),
 	)
 
-	return resultPtr.Interface(), nil
+	return result, nil
 }
 
 // CompleteStructured is an alias for CompleteStructuredAny for SDK interface compatibility.
@@ -965,5 +1020,81 @@ func formatMessagesForPrompt(messages []llm.Message) string {
 		}
 		result += fmt.Sprintf("[%s]: %s", msg.Role, msg.Content)
 	}
+	return result
+}
+
+// mapToJSONSchema converts a map[string]any (from JSON) to *types.JSONSchema.
+// This is used when a remote agent passes a schema as JSON instead of a Go struct.
+func mapToJSONSchema(m map[string]any) *types.JSONSchema {
+	if m == nil {
+		return nil
+	}
+
+	result := &types.JSONSchema{}
+
+	if t, ok := m["type"].(string); ok {
+		result.Type = t
+	}
+	if desc, ok := m["description"].(string); ok {
+		result.Description = desc
+	}
+	if format, ok := m["format"].(string); ok {
+		result.Format = format
+	}
+	if pattern, ok := m["pattern"].(string); ok {
+		result.Pattern = pattern
+	}
+
+	// Handle required array
+	if req, ok := m["required"].([]any); ok {
+		result.Required = make([]string, 0, len(req))
+		for _, r := range req {
+			if s, ok := r.(string); ok {
+				result.Required = append(result.Required, s)
+			}
+		}
+	}
+
+	// Handle enum array
+	if enum, ok := m["enum"].([]any); ok {
+		result.Enum = enum
+	}
+
+	// Handle properties (nested schemas)
+	if props, ok := m["properties"].(map[string]any); ok {
+		result.Properties = make(map[string]*types.JSONSchema)
+		for name, prop := range props {
+			if propMap, ok := prop.(map[string]any); ok {
+				result.Properties[name] = mapToJSONSchema(propMap)
+			}
+		}
+	}
+
+	// Handle items (for array types)
+	if items, ok := m["items"].(map[string]any); ok {
+		result.Items = mapToJSONSchema(items)
+	}
+
+	// Handle additionalProperties
+	if addProps, ok := m["additionalProperties"].(bool); ok {
+		result.AdditionalProperties = &addProps
+	}
+
+	// Handle numeric constraints
+	if min, ok := m["minimum"].(float64); ok {
+		result.Minimum = &min
+	}
+	if max, ok := m["maximum"].(float64); ok {
+		result.Maximum = &max
+	}
+	if minLen, ok := m["minLength"].(float64); ok {
+		intVal := int(minLen)
+		result.MinLength = &intVal
+	}
+	if maxLen, ok := m["maxLength"].(float64); ok {
+		intVal := int(maxLen)
+		result.MaxLength = &intVal
+	}
+
 	return result
 }
