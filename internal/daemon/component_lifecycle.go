@@ -35,12 +35,14 @@ const (
 //  4. Returns the PID, port, and log path
 //
 // If the component fails to register within the timeout, the process is killed.
+// The pluginConfig parameter allows passing plugin-specific configuration as environment variables.
 func startComponentProcess(
 	ctx context.Context,
 	comp *component.Component,
 	reg sdkregistry.Registry,
 	registryEndpoint string,
 	homeDir string,
+	pluginConfig map[string]string,
 ) (port int, pid int, logPath string, error error) {
 	// Validate component has required fields
 	if comp.Manifest == nil {
@@ -72,6 +74,14 @@ func startComponentProcess(
 	env := os.Environ()
 	for k, v := range comp.Manifest.Runtime.GetEnv() {
 		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// Add plugin-specific config as environment variables
+	// Convert config keys to uppercase with GIBSON_PLUGIN_ prefix
+	// e.g., "hackerone_api_key" -> "GIBSON_PLUGIN_HACKERONE_API_KEY"
+	for k, v := range pluginConfig {
+		envKey := "GIBSON_PLUGIN_" + strings.ToUpper(k)
+		env = append(env, fmt.Sprintf("%s=%s", envKey, v))
 	}
 
 	// Add registry endpoints to environment

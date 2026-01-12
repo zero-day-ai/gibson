@@ -670,8 +670,14 @@ func (d *daemonImpl) StartComponent(ctx context.Context, kind string, name strin
 	// Get home directory from config
 	homeDir := d.config.Core.HomeDir
 
+	// Get plugin-specific config if this is a plugin
+	var pluginConfig map[string]string
+	if kind == "plugin" && d.config.Plugins != nil {
+		pluginConfig = d.config.Plugins[name]
+	}
+
 	// Start component process
-	port, pid, logPath, err := startComponentProcess(ctx, comp, reg, registryEndpoint, homeDir)
+	port, pid, logPath, err := startComponentProcess(ctx, comp, reg, registryEndpoint, homeDir, pluginConfig)
 	if err != nil {
 		d.logger.Error("failed to start component process", "error", err, "kind", kind, "name", name)
 		return api.StartComponentResult{}, fmt.Errorf("failed to start component: %w", err)

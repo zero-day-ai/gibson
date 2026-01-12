@@ -24,7 +24,13 @@ type Config struct {
 	Daemon       DaemonConfig        `mapstructure:"daemon" yaml:"daemon,omitempty"`
 	Langfuse     LangfuseConfig      `mapstructure:"langfuse" yaml:"langfuse"`
 	GraphRAG     GraphRAGConfig      `mapstructure:"graphrag" yaml:"graphrag"`
+	Plugins      PluginsConfig       `mapstructure:"plugins" yaml:"plugins,omitempty"`
 }
+
+// PluginsConfig contains configuration for all plugins.
+// Keys are plugin names, values are plugin-specific configuration maps.
+// Environment variables can be interpolated using ${VAR_NAME} syntax.
+type PluginsConfig map[string]map[string]string
 
 // CoreConfig contains core application settings.
 type CoreConfig struct {
