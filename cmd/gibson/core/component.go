@@ -67,6 +67,7 @@ func ComponentInstall(cc *CommandContext, kind component.ComponentKind, source s
 		Force:        opts.Force,
 		SkipBuild:    opts.SkipBuild,
 		SkipRegister: opts.SkipRegister,
+		Verbose:      opts.Verbose,
 	}
 
 	// Install the component
@@ -91,6 +92,7 @@ func ComponentInstallAll(cc *CommandContext, kind component.ComponentKind, sourc
 		Force:        opts.Force,
 		SkipBuild:    opts.SkipBuild,
 		SkipRegister: opts.SkipRegister,
+		Verbose:      opts.Verbose,
 	}
 
 	// Install all components

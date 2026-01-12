@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,8 @@ type BuildConfig struct {
 	OutputPath string
 	// Env contains additional environment variables for the build
 	Env map[string]string
+	// Verbose enables real-time streaming of build output to stdout/stderr
+	Verbose bool
 }
 
 // BuildResult contains the result of a build operation.
@@ -124,10 +127,16 @@ func (e *DefaultBuildExecutor) Build(ctx context.Context, config BuildConfig, co
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", key, value))
 	}
 
-	// Capture stdout and stderr
+	// Capture stdout and stderr, optionally streaming to console
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	if config.Verbose {
+		// Stream to console while also capturing
+		cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
+		cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
+	} else {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	}
 
 	// Execute build command
 	err := cmd.Run()

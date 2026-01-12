@@ -52,6 +52,9 @@ type InstallOptions struct {
 	// This is useful for mono-repos that contain multiple components.
 	// Can also be specified in the repoURL using the fragment syntax: repo.git#path/to/component
 	Subdir string
+
+	// Verbose enables real-time streaming of build output to stdout/stderr
+	Verbose bool
 }
 
 // ParsedRepoURL contains the parsed components of a repository URL
@@ -117,6 +120,9 @@ type UpdateOptions struct {
 
 	// Timeout specifies the maximum time for the update
 	Timeout time.Duration
+
+	// Verbose enables real-time streaming of build output to stdout/stderr
+	Verbose bool
 }
 
 // InstallResult contains the result of an installation operation
@@ -459,7 +465,7 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 		}
 
 		buildStart := time.Now()
-		buildResult, err := i.buildComponent(ctx, componentSourceDir, manifest)
+		buildResult, err := i.buildComponent(ctx, componentSourceDir, manifest, opts.Verbose)
 		buildDuration := time.Since(buildStart)
 
 		if err != nil {
@@ -700,7 +706,7 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 	var buildOutput string
 	if !opts.SkipBuild && manifest.Build != nil {
 		buildStart := time.Now()
-		buildResult, err := i.buildAtPath(ctx, repoDir, manifest.Build)
+		buildResult, err := i.buildAtPath(ctx, repoDir, manifest.Build, opts.Verbose)
 		buildDuration := time.Since(buildStart)
 
 		if err != nil {
@@ -832,7 +838,7 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 		var componentBuildOutput string
 		if !opts.SkipBuild && compManifest.Build != nil {
 			buildStart := time.Now()
-			buildResult, err := i.buildAtPath(ctx, componentDir, compManifest.Build)
+			buildResult, err := i.buildAtPath(ctx, componentDir, compManifest.Build, opts.Verbose)
 			buildDuration := time.Since(buildStart)
 
 			if err != nil {
@@ -1024,7 +1030,7 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 	var buildOutput string
 	if !opts.SkipBuild && manifest.Build != nil {
 		buildStart := time.Now()
-		buildResult, err := i.buildComponent(ctx, repoDir, manifest)
+		buildResult, err := i.buildComponent(ctx, repoDir, manifest, opts.Verbose)
 		buildDuration := time.Since(buildStart)
 
 		if err != nil {
@@ -1365,7 +1371,7 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 	var buildOutput string
 	var binPath string
 	if !opts.SkipBuild && manifest.Build != nil {
-		buildResult, err := i.buildComponent(ctx, componentDir, manifest)
+		buildResult, err := i.buildComponent(ctx, componentDir, manifest, opts.Verbose)
 		if err != nil {
 			return result, err
 		}
@@ -1713,7 +1719,7 @@ func (i *DefaultInstaller) checkComponentDependency(dep string) error {
 }
 
 // buildComponent builds a component using its build configuration
-func (i *DefaultInstaller) buildComponent(ctx context.Context, componentDir string, manifest *Manifest) (*build.BuildResult, error) {
+func (i *DefaultInstaller) buildComponent(ctx context.Context, componentDir string, manifest *Manifest, verbose bool) (*build.BuildResult, error) {
 	if manifest.Build == nil {
 		return nil, fmt.Errorf("no build configuration in manifest")
 	}
@@ -1727,6 +1733,7 @@ func (i *DefaultInstaller) buildComponent(ctx context.Context, componentDir stri
 		Args:       []string{"build"},
 		OutputPath: "", // Will be determined from build artifacts
 		Env:        buildCfg.GetEnv(),
+		Verbose:    verbose,
 	}
 
 	// Override with manifest build command if specified
@@ -2094,7 +2101,7 @@ func extractRepoName(repoURL string) string {
 // This is similar to buildComponent but operates on an explicit directory path rather than
 // deriving it from the manifest. It uses the build configuration from the manifest, defaulting
 // to "make build" if no command is specified.
-func (i *DefaultInstaller) buildAtPath(ctx context.Context, dir string, buildCfg *BuildConfig) (*build.BuildResult, error) {
+func (i *DefaultInstaller) buildAtPath(ctx context.Context, dir string, buildCfg *BuildConfig, verbose bool) (*build.BuildResult, error) {
 	// Prepare build configuration with defaults
 	buildConfig := build.BuildConfig{
 		WorkDir:    dir,
@@ -2102,6 +2109,7 @@ func (i *DefaultInstaller) buildAtPath(ctx context.Context, dir string, buildCfg
 		Args:       []string{"build"},
 		OutputPath: "", // Will be determined from build artifacts
 		Env:        nil,
+		Verbose:    verbose,
 	}
 
 	// If build config is provided, use its settings
