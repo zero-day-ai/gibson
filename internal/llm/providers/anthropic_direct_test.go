@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 func TestAnthropicDirectClient_CompleteWithForcedTool(t *testing.T) {
@@ -100,12 +100,12 @@ func TestAnthropicProvider_CompleteStructured(t *testing.T) {
 			llm.NewUserMessage("Analyze this IP: 192.168.1.1"),
 		},
 		MaxTokens: 1024,
-		ResponseFormat: &sdktypes.ResponseFormat{
-			Type: sdktypes.ResponseFormatJSONSchema,
+		ResponseFormat: &types.ResponseFormat{
+			Type: types.ResponseFormatJSONSchema,
 			Name: "ip_analysis",
-			Schema: &sdktypes.JSONSchema{
+			Schema: &types.JSONSchema{
 				Type: "object",
-				Properties: map[string]*sdktypes.JSONSchema{
+				Properties: map[string]*types.JSONSchema{
 					"ip_address": {
 						Type:        "string",
 						Description: "The IP address analyzed",

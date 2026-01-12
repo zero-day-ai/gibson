@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/zero-day-ai/gibson/internal/llm"
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
+	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // TestOpenAIStructuredOutputInterface verifies OpenAI provider implements StructuredOutputProvider
@@ -32,13 +32,13 @@ func TestOpenAIStructuredOutputInterface(t *testing.T) {
 
 	// Test format support
 	tests := []struct {
-		format   sdktypes.ResponseFormatType
+		format   types.ResponseFormatType
 		expected bool
 		name     string
 	}{
-		{sdktypes.ResponseFormatJSONObject, true, "json_object"},
-		{sdktypes.ResponseFormatJSONSchema, true, "json_schema"},
-		{sdktypes.ResponseFormatText, false, "text"},
+		{types.ResponseFormatJSONObject, true, "json_object"},
+		{types.ResponseFormatJSONSchema, true, "json_schema"},
+		{types.ResponseFormatText, false, "text"},
 	}
 
 	for _, tt := range tests {
@@ -86,8 +86,8 @@ func TestOpenAICompleteStructuredValidation(t *testing.T) {
 			Messages: []llm.Message{
 				llm.NewUserMessage("test"),
 			},
-			ResponseFormat: &sdktypes.ResponseFormat{
-				Type: sdktypes.ResponseFormatText,
+			ResponseFormat: &types.ResponseFormat{
+				Type: types.ResponseFormatText,
 			},
 		}
 
@@ -98,9 +98,9 @@ func TestOpenAICompleteStructuredValidation(t *testing.T) {
 	})
 
 	t.Run("JSONSchemaWithoutName", func(t *testing.T) {
-		schema := &sdktypes.JSONSchema{
+		schema := &types.JSONSchema{
 			Type: "object",
-			Properties: map[string]*sdktypes.JSONSchema{
+			Properties: map[string]*types.JSONSchema{
 				"name": {Type: "string"},
 			},
 		}
@@ -110,8 +110,8 @@ func TestOpenAICompleteStructuredValidation(t *testing.T) {
 			Messages: []llm.Message{
 				llm.NewUserMessage("test"),
 			},
-			ResponseFormat: &sdktypes.ResponseFormat{
-				Type:   sdktypes.ResponseFormatJSONSchema,
+			ResponseFormat: &types.ResponseFormat{
+				Type:   types.ResponseFormatJSONSchema,
 				Schema: schema,
 				Name:   "", // Missing name
 			},
@@ -134,9 +134,9 @@ func TestOpenAIJSONSchemaConversion(t *testing.T) {
 	})
 
 	t.Run("ValidSchema", func(t *testing.T) {
-		schema := &sdktypes.JSONSchema{
+		schema := &types.JSONSchema{
 			Type: "object",
-			Properties: map[string]*sdktypes.JSONSchema{
+			Properties: map[string]*types.JSONSchema{
 				"name": {
 					Type:        "string",
 					Description: "The name field",

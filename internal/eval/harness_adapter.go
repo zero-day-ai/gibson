@@ -149,15 +149,11 @@ func (a *GibsonHarnessAdapter) ListAgents(ctx context.Context) ([]agent.Descript
 	gibsonAgents := a.inner.ListAgents()
 	sdkAgents := make([]agent.Descriptor, len(gibsonAgents))
 	for i, agentDesc := range gibsonAgents {
-		capabilities := make([]agent.Capability, len(agentDesc.Capabilities))
-		for j, cap := range agentDesc.Capabilities {
-			capabilities[j] = agent.Capability(cap)
-		}
 		sdkAgents[i] = agent.Descriptor{
 			Name:         agentDesc.Name,
 			Version:      agentDesc.Version,
 			Description:  agentDesc.Description,
-			Capabilities: capabilities,
+			Capabilities: agentDesc.Capabilities, // Already []string
 		}
 	}
 	return sdkAgents, nil

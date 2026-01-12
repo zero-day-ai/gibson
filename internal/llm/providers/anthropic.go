@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/tmc/langchaingo/llms/anthropic"
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
@@ -164,8 +163,8 @@ func (p *AnthropicProvider) Health(ctx context.Context) types.HealthStatus {
 
 // SupportsStructuredOutput returns true for json_schema format.
 // Anthropic uses the tool_use pattern which effectively supports json_schema.
-func (p *AnthropicProvider) SupportsStructuredOutput(format sdktypes.ResponseFormatType) bool {
-	return format == sdktypes.ResponseFormatJSONSchema
+func (p *AnthropicProvider) SupportsStructuredOutput(format types.ResponseFormatType) bool {
+	return format == types.ResponseFormatJSONSchema
 }
 
 // CompleteStructured performs a completion using tool_use pattern for structured output.

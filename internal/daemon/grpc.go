@@ -256,6 +256,28 @@ func (d *daemonImpl) ListPlugins(ctx context.Context) ([]api.PluginInfoInternal,
 	return result, nil
 }
 
+// QueryPlugin executes a method on a plugin via the registry adapter.
+func (d *daemonImpl) QueryPlugin(ctx context.Context, name, method string, params map[string]any) (any, error) {
+	d.logger.Debug("QueryPlugin called", "plugin", name, "method", method)
+
+	// Discover and connect to plugin via registry adapter
+	pluginClient, err := d.registryAdapter.DiscoverPlugin(ctx, name)
+	if err != nil {
+		d.logger.Error("failed to discover plugin", "plugin", name, "error", err)
+		return nil, fmt.Errorf("failed to discover plugin %s: %w", name, err)
+	}
+
+	// Execute query via gRPC
+	result, err := pluginClient.Query(ctx, method, params)
+	if err != nil {
+		d.logger.Error("plugin query failed", "plugin", name, "method", method, "error", err)
+		return nil, fmt.Errorf("plugin query failed: %w", err)
+	}
+
+	d.logger.Debug("plugin query completed", "plugin", name, "method", method)
+	return result, nil
+}
+
 // RunMission starts a mission and returns an event channel.
 func (d *daemonImpl) RunMission(ctx context.Context, workflowPath string, missionID string, variables map[string]string, memoryContinuity string) (<-chan api.MissionEventData, error) {
 	return d.RunMissionWithManager(ctx, workflowPath, missionID, variables, memoryContinuity)

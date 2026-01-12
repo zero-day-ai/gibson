@@ -28,7 +28,6 @@ func (r ResponseFormatType) IsValid() bool {
 }
 
 // JSONSchema represents a JSON Schema for structured output validation.
-// This is a self-contained SDK type that doesn't depend on internal packages.
 type JSONSchema struct {
 	// Type specifies the JSON type (object, array, string, number, boolean, null)
 	Type string `json:"type,omitempty"`
@@ -136,7 +135,7 @@ func NewJSONSchemaFormat(name string, schema *JSONSchema, strict bool) ResponseF
 // Validate checks if the ResponseFormat is valid
 func (r ResponseFormat) Validate() error {
 	if !r.Type.IsValid() {
-		return &ValidationError{
+		return &StructuredOutputValidationError{
 			Field:   "type",
 			Message: "invalid response format type",
 			Value:   string(r.Type),
@@ -145,13 +144,13 @@ func (r ResponseFormat) Validate() error {
 
 	if r.Type == ResponseFormatJSONSchema {
 		if r.Schema == nil {
-			return &ValidationError{
+			return &StructuredOutputValidationError{
 				Field:   "schema",
 				Message: "schema is required for json_schema format",
 			}
 		}
 		if r.Name == "" {
-			return &ValidationError{
+			return &StructuredOutputValidationError{
 				Field:   "name",
 				Message: "name is required for json_schema format",
 			}
@@ -161,23 +160,23 @@ func (r ResponseFormat) Validate() error {
 	return nil
 }
 
-// ValidationError represents a structured output validation error
-type ValidationError struct {
+// StructuredOutputValidationError represents a structured output validation error
+type StructuredOutputValidationError struct {
 	Field   string
 	Message string
 	Value   any
 }
 
 // Error implements the error interface
-func (e *ValidationError) Error() string {
+func (e *StructuredOutputValidationError) Error() string {
 	if e.Value != nil {
 		return "validation error: " + e.Field + ": " + e.Message + " (value: " + anyToString(e.Value) + ")"
 	}
 	return "validation error: " + e.Field + ": " + e.Message
 }
 
-// UnmarshalError represents an error that occurred during JSON unmarshaling of structured output
-type UnmarshalError struct {
+// StructuredOutputUnmarshalError represents an error that occurred during JSON unmarshaling of structured output
+type StructuredOutputUnmarshalError struct {
 	// RawJSON contains the raw JSON that failed to unmarshal
 	RawJSON string
 
@@ -189,12 +188,12 @@ type UnmarshalError struct {
 }
 
 // Error implements the error interface
-func (e *UnmarshalError) Error() string {
+func (e *StructuredOutputUnmarshalError) Error() string {
 	return "failed to unmarshal structured output: " + e.UnderlyingError.Error()
 }
 
 // Unwrap returns the underlying error for error chain inspection
-func (e *UnmarshalError) Unwrap() error {
+func (e *StructuredOutputUnmarshalError) Unwrap() error {
 	return e.UnderlyingError
 }
 

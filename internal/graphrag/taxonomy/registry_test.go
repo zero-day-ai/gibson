@@ -694,3 +694,702 @@ func BenchmarkTaxonomyRegistry_GenerateNodeID(b *testing.B) {
 		registry.GenerateNodeID("domain", props)
 	}
 }
+
+// TestTaxonomyRegistry_GetTargetType tests retrieving target types from registry.
+func TestTaxonomyRegistry_GetTargetType(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test target types
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.web.http_api",
+		Type:     "http_api",
+		Name:     "HTTP API",
+		Category: "web",
+	})
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.ai.llm",
+		Type:     "llm",
+		Name:     "Large Language Model",
+		Category: "ai",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		typeName string
+		wantOk   bool
+	}{
+		{
+			name:     "existing target type",
+			typeName: "http_api",
+			wantOk:   true,
+		},
+		{
+			name:     "non-existent target type",
+			typeName: "nonexistent",
+			wantOk:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetDef, ok := registry.GetTargetType(tt.typeName)
+
+			if ok != tt.wantOk {
+				t.Errorf("GetTargetType() ok = %v, want %v", ok, tt.wantOk)
+			}
+
+			if tt.wantOk {
+				if targetDef == nil {
+					t.Error("GetTargetType() returned nil for existing type")
+				} else if targetDef.Type != tt.typeName {
+					t.Errorf("GetTargetType() type = %v, want %v", targetDef.Type, tt.typeName)
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ListTargetTypes tests listing all target types.
+func TestTaxonomyRegistry_ListTargetTypes(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test target types
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.web.http_api",
+		Type:     "http_api",
+		Name:     "HTTP API",
+		Category: "web",
+	})
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.ai.llm",
+		Type:     "llm",
+		Name:     "LLM",
+		Category: "ai",
+	})
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.web.graphql",
+		Type:     "graphql",
+		Name:     "GraphQL",
+		Category: "web",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	targetTypes := registry.ListTargetTypes()
+
+	if len(targetTypes) != 3 {
+		t.Errorf("ListTargetTypes() returned %d types, want 3", len(targetTypes))
+	}
+
+	// Check that returned types match what we added
+	typeMap := make(map[string]bool)
+	for _, tt := range targetTypes {
+		typeMap[tt.Type] = true
+	}
+
+	if !typeMap["http_api"] {
+		t.Error("ListTargetTypes() missing 'http_api' type")
+	}
+	if !typeMap["llm"] {
+		t.Error("ListTargetTypes() missing 'llm' type")
+	}
+	if !typeMap["graphql"] {
+		t.Error("ListTargetTypes() missing 'graphql' type")
+	}
+}
+
+// TestTaxonomyRegistry_ListTargetTypesByCategory tests filtering target types by category.
+func TestTaxonomyRegistry_ListTargetTypesByCategory(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test target types
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.web.http_api",
+		Type:     "http_api",
+		Name:     "HTTP API",
+		Category: "web",
+	})
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.ai.llm",
+		Type:     "llm",
+		Name:     "LLM",
+		Category: "ai",
+	})
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.web.graphql",
+		Type:     "graphql",
+		Name:     "GraphQL",
+		Category: "web",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		category  string
+		wantCount int
+	}{
+		{
+			name:      "web category",
+			category:  "web",
+			wantCount: 2,
+		},
+		{
+			name:      "ai category",
+			category:  "ai",
+			wantCount: 1,
+		},
+		{
+			name:      "non-existent category",
+			category:  "nonexistent",
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetTypes := registry.ListTargetTypesByCategory(tt.category)
+
+			if len(targetTypes) != tt.wantCount {
+				t.Errorf("ListTargetTypesByCategory(%q) returned %d types, want %d", tt.category, len(targetTypes), tt.wantCount)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ValidateTargetType tests target type validation.
+func TestTaxonomyRegistry_ValidateTargetType(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	_ = taxonomy.AddTargetType(&TargetTypeDefinition{
+		ID:       "target.web.http_api",
+		Type:     "http_api",
+		Name:     "HTTP API",
+		Category: "web",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		typeName string
+		want     bool
+	}{
+		{
+			name:     "existing type",
+			typeName: "http_api",
+			want:     true,
+		},
+		{
+			name:     "non-existent type",
+			typeName: "nonexistent",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := registry.ValidateTargetType(tt.typeName); got != tt.want {
+				t.Errorf("ValidateTargetType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_GetTechniqueType tests retrieving technique types from registry.
+func TestTaxonomyRegistry_GetTechniqueType(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test technique types
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.ssrf",
+		Type:     "ssrf",
+		Name:     "SSRF",
+		Category: "initial_access",
+	})
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.sqli",
+		Type:     "sqli",
+		Name:     "SQL Injection",
+		Category: "initial_access",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		typeName string
+		wantOk   bool
+	}{
+		{
+			name:     "existing technique type",
+			typeName: "ssrf",
+			wantOk:   true,
+		},
+		{
+			name:     "non-existent technique type",
+			typeName: "nonexistent",
+			wantOk:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			techniqueDef, ok := registry.GetTechniqueType(tt.typeName)
+
+			if ok != tt.wantOk {
+				t.Errorf("GetTechniqueType() ok = %v, want %v", ok, tt.wantOk)
+			}
+
+			if tt.wantOk {
+				if techniqueDef == nil {
+					t.Error("GetTechniqueType() returned nil for existing type")
+				} else if techniqueDef.Type != tt.typeName {
+					t.Errorf("GetTechniqueType() type = %v, want %v", techniqueDef.Type, tt.typeName)
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ListTechniqueTypes tests listing all technique types.
+func TestTaxonomyRegistry_ListTechniqueTypes(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test technique types
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.ssrf",
+		Type:     "ssrf",
+		Name:     "SSRF",
+		Category: "initial_access",
+	})
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.sqli",
+		Type:     "sqli",
+		Name:     "SQL Injection",
+		Category: "initial_access",
+	})
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.execution.code_injection",
+		Type:     "code_injection",
+		Name:     "Code Injection",
+		Category: "execution",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	techniqueTypes := registry.ListTechniqueTypes()
+
+	if len(techniqueTypes) != 3 {
+		t.Errorf("ListTechniqueTypes() returned %d types, want 3", len(techniqueTypes))
+	}
+
+	// Check that returned types match what we added
+	typeMap := make(map[string]bool)
+	for _, tt := range techniqueTypes {
+		typeMap[tt.Type] = true
+	}
+
+	if !typeMap["ssrf"] {
+		t.Error("ListTechniqueTypes() missing 'ssrf' type")
+	}
+	if !typeMap["sqli"] {
+		t.Error("ListTechniqueTypes() missing 'sqli' type")
+	}
+	if !typeMap["code_injection"] {
+		t.Error("ListTechniqueTypes() missing 'code_injection' type")
+	}
+}
+
+// TestTaxonomyRegistry_ListTechniqueTypesByCategory tests filtering technique types by category.
+func TestTaxonomyRegistry_ListTechniqueTypesByCategory(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test technique types
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.ssrf",
+		Type:     "ssrf",
+		Name:     "SSRF",
+		Category: "initial_access",
+	})
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.sqli",
+		Type:     "sqli",
+		Name:     "SQL Injection",
+		Category: "initial_access",
+	})
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.execution.code_injection",
+		Type:     "code_injection",
+		Name:     "Code Injection",
+		Category: "execution",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		category  string
+		wantCount int
+	}{
+		{
+			name:      "initial_access category",
+			category:  "initial_access",
+			wantCount: 2,
+		},
+		{
+			name:      "execution category",
+			category:  "execution",
+			wantCount: 1,
+		},
+		{
+			name:      "non-existent category",
+			category:  "nonexistent",
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			techniqueTypes := registry.ListTechniqueTypesByCategory(tt.category)
+
+			if len(techniqueTypes) != tt.wantCount {
+				t.Errorf("ListTechniqueTypesByCategory(%q) returned %d types, want %d", tt.category, len(techniqueTypes), tt.wantCount)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ValidateTechniqueType tests technique type validation.
+func TestTaxonomyRegistry_ValidateTechniqueType(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.ssrf",
+		Type:     "ssrf",
+		Name:     "SSRF",
+		Category: "initial_access",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		typeName string
+		want     bool
+	}{
+		{
+			name:     "existing type",
+			typeName: "ssrf",
+			want:     true,
+		},
+		{
+			name:     "non-existent type",
+			typeName: "nonexistent",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := registry.ValidateTechniqueType(tt.typeName); got != tt.want {
+				t.Errorf("ValidateTechniqueType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_GetTechniqueTypesByMITRE tests retrieving technique types by MITRE ID.
+func TestTaxonomyRegistry_GetTechniqueTypesByMITRE(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test technique types with MITRE IDs
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.ssrf",
+		Type:     "ssrf",
+		Name:     "SSRF",
+		Category: "initial_access",
+		MITREIDs: []string{"T1190"},
+	})
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.initial_access.sqli",
+		Type:     "sqli",
+		Name:     "SQL Injection",
+		Category: "initial_access",
+		MITREIDs: []string{"T1190", "T1059"},
+	})
+	_ = taxonomy.AddTechniqueType(&TechniqueTypeDefinition{
+		ID:       "technique.execution.code_injection",
+		Type:     "code_injection",
+		Name:     "Code Injection",
+		Category: "execution",
+		MITREIDs: []string{"T1059"},
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		mitreID   string
+		wantCount int
+	}{
+		{
+			name:      "T1190 - found in 2 technique types",
+			mitreID:   "T1190",
+			wantCount: 2,
+		},
+		{
+			name:      "T1059 - found in 2 technique types",
+			mitreID:   "T1059",
+			wantCount: 2,
+		},
+		{
+			name:      "non-existent MITRE ID",
+			mitreID:   "T9999",
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			techniqueTypes := registry.GetTechniqueTypesByMITRE(tt.mitreID)
+
+			if len(techniqueTypes) != tt.wantCount {
+				t.Errorf("GetTechniqueTypesByMITRE(%q) returned %d types, want %d", tt.mitreID, len(techniqueTypes), tt.wantCount)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_GetCapability tests retrieving capabilities from registry.
+func TestTaxonomyRegistry_GetCapability(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test capabilities
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:             "capability.web_vulnerability_scanning",
+		Name:           "Web Vulnerability Scanning",
+		Description:    "Comprehensive web scanning",
+		TechniqueTypes: []string{"ssrf", "sqli"},
+	})
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:          "capability.api_security_testing",
+		Name:        "API Security Testing",
+		Description: "API testing",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		id     string
+		wantOk bool
+	}{
+		{
+			name:   "existing capability",
+			id:     "capability.web_vulnerability_scanning",
+			wantOk: true,
+		},
+		{
+			name:   "non-existent capability",
+			id:     "capability.nonexistent",
+			wantOk: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			capDef, ok := registry.GetCapability(tt.id)
+
+			if ok != tt.wantOk {
+				t.Errorf("GetCapability() ok = %v, want %v", ok, tt.wantOk)
+			}
+
+			if tt.wantOk {
+				if capDef == nil {
+					t.Error("GetCapability() returned nil for existing capability")
+				} else if capDef.ID != tt.id {
+					t.Errorf("GetCapability() ID = %v, want %v", capDef.ID, tt.id)
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ListCapabilities tests listing all capabilities.
+func TestTaxonomyRegistry_ListCapabilities(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test capabilities
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:          "capability.web_vulnerability_scanning",
+		Name:        "Web Vulnerability Scanning",
+		Description: "Web scanning",
+	})
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:          "capability.api_security_testing",
+		Name:        "API Security Testing",
+		Description: "API testing",
+	})
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:          "capability.cloud_security_testing",
+		Name:        "Cloud Security Testing",
+		Description: "Cloud testing",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	capabilities := registry.ListCapabilities()
+
+	if len(capabilities) != 3 {
+		t.Errorf("ListCapabilities() returned %d capabilities, want 3", len(capabilities))
+	}
+
+	// Check that returned capabilities match what we added
+	capMap := make(map[string]bool)
+	for _, cap := range capabilities {
+		capMap[cap.ID] = true
+	}
+
+	if !capMap["capability.web_vulnerability_scanning"] {
+		t.Error("ListCapabilities() missing 'web_vulnerability_scanning' capability")
+	}
+	if !capMap["capability.api_security_testing"] {
+		t.Error("ListCapabilities() missing 'api_security_testing' capability")
+	}
+	if !capMap["capability.cloud_security_testing"] {
+		t.Error("ListCapabilities() missing 'cloud_security_testing' capability")
+	}
+}
+
+// TestTaxonomyRegistry_GetTechniqueTypesForCapability tests retrieving technique types for a capability.
+func TestTaxonomyRegistry_GetTechniqueTypesForCapability(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test capabilities
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:             "capability.web_vulnerability_scanning",
+		Name:           "Web Vulnerability Scanning",
+		Description:    "Web scanning",
+		TechniqueTypes: []string{"ssrf", "sqli", "xss"},
+	})
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:             "capability.api_security_testing",
+		Name:           "API Security Testing",
+		Description:    "API testing",
+		TechniqueTypes: []string{"api_abuse"},
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		capability string
+		wantCount  int
+	}{
+		{
+			name:       "web scanning capability",
+			capability: "capability.web_vulnerability_scanning",
+			wantCount:  3,
+		},
+		{
+			name:       "api testing capability",
+			capability: "capability.api_security_testing",
+			wantCount:  1,
+		},
+		{
+			name:       "non-existent capability",
+			capability: "capability.nonexistent",
+			wantCount:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			techniqueTypes := registry.GetTechniqueTypesForCapability(tt.capability)
+
+			if len(techniqueTypes) != tt.wantCount {
+				t.Errorf("GetTechniqueTypesForCapability(%q) returned %d types, want %d", tt.capability, len(techniqueTypes), tt.wantCount)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ValidateCapability tests capability validation.
+func TestTaxonomyRegistry_ValidateCapability(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	_ = taxonomy.AddCapability(&CapabilityDefinition{
+		ID:          "capability.web_vulnerability_scanning",
+		Name:        "Web Vulnerability Scanning",
+		Description: "Web scanning",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		id   string
+		want bool
+	}{
+		{
+			name: "existing capability",
+			id:   "capability.web_vulnerability_scanning",
+			want: true,
+		},
+		{
+			name: "non-existent capability",
+			id:   "capability.nonexistent",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := registry.ValidateCapability(tt.id); got != tt.want {
+				t.Errorf("ValidateCapability() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

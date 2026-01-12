@@ -11,7 +11,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/schema"
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -292,7 +292,7 @@ func (m *MockStructuredProvider) Name() string {
 	return "mock-provider"
 }
 
-func (m *MockStructuredProvider) SupportsStructuredOutput(format sdktypes.ResponseFormatType) bool {
+func (m *MockStructuredProvider) SupportsStructuredOutput(format types.ResponseFormatType) bool {
 	return m.supportsFormat
 }
 
@@ -352,7 +352,7 @@ func TestCompleteStructured_ProviderNotSupported(t *testing.T) {
 	}
 
 	// Verify it doesn't support structured output
-	assert.False(t, mockProvider.SupportsStructuredOutput(sdktypes.ResponseFormatJSONSchema))
+	assert.False(t, mockProvider.SupportsStructuredOutput(types.ResponseFormatJSONSchema))
 
 	// Create structured output error
 	err := llm.NewStructuredOutputError(
@@ -647,16 +647,16 @@ func TestCompleteWithSchema_HappyPath_Integration(t *testing.T) {
 	}
 
 	// Create dynamic schema
-	format := &sdktypes.ResponseFormat{
-		Type: sdktypes.ResponseFormatJSONSchema,
+	format := &types.ResponseFormat{
+		Type: types.ResponseFormatJSONSchema,
 		Name: "analysis_result",
-		Schema: &sdktypes.JSONSchema{
+		Schema: &types.JSONSchema{
 			Type: "object",
-			Properties: map[string]*sdktypes.JSONSchema{
+			Properties: map[string]*types.JSONSchema{
 				"severity": {Type: "string"},
 				"findings": {
 					Type:  "array",
-					Items: &sdktypes.JSONSchema{Type: "string"},
+					Items: &types.JSONSchema{Type: "string"},
 				},
 			},
 			Required: []string{"severity", "findings"},
@@ -736,12 +736,12 @@ func TestCompleteWithSchema_ParseError_Integration(t *testing.T) {
 		llm.NewUserMessage("Generate data"),
 	}
 
-	format := &sdktypes.ResponseFormat{
-		Type: sdktypes.ResponseFormatJSONSchema,
+	format := &types.ResponseFormat{
+		Type: types.ResponseFormatJSONSchema,
 		Name: "test_result",
-		Schema: &sdktypes.JSONSchema{
+		Schema: &types.JSONSchema{
 			Type: "object",
-			Properties: map[string]*sdktypes.JSONSchema{
+			Properties: map[string]*types.JSONSchema{
 				"value": {Type: "string"},
 			},
 			Required: []string{"value"},

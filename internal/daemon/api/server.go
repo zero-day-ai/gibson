@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -50,6 +51,9 @@ type DaemonInterface interface {
 
 	// ListPlugins returns all registered plugins
 	ListPlugins(ctx context.Context) ([]PluginInfoInternal, error)
+
+	// QueryPlugin executes a method on a plugin
+	QueryPlugin(ctx context.Context, name, method string, params map[string]any) (any, error)
 
 	// RunMission starts a mission and returns an event channel
 	RunMission(ctx context.Context, workflowPath string, missionID string, variables map[string]string, memoryContinuity string) (<-chan MissionEventData, error)
@@ -598,6 +602,53 @@ func (s *DaemonServer) ListPlugins(ctx context.Context, req *ListPluginsRequest)
 
 	return &ListPluginsResponse{
 		Plugins: protoPlugins,
+	}, nil
+}
+
+// QueryPlugin executes a method on a plugin and returns the result.
+func (s *DaemonServer) QueryPlugin(ctx context.Context, req *QueryPluginRequest) (*QueryPluginResponse, error) {
+	s.logger.Debug("plugin query request received", "plugin", req.Name, "method", req.Method)
+
+	// Parse JSON params
+	var params map[string]any
+	if req.ParamsJson != "" {
+		if err := json.Unmarshal([]byte(req.ParamsJson), &params); err != nil {
+			s.logger.Error("failed to parse plugin query params", "error", err)
+			return &QueryPluginResponse{
+				Error: fmt.Sprintf("invalid params JSON: %v", err),
+			}, nil
+		}
+	} else {
+		params = make(map[string]any)
+	}
+
+	// Execute query
+	startTime := time.Now()
+	result, err := s.daemon.QueryPlugin(ctx, req.Name, req.Method, params)
+	duration := time.Since(startTime)
+
+	if err != nil {
+		s.logger.Error("plugin query failed", "plugin", req.Name, "method", req.Method, "error", err)
+		return &QueryPluginResponse{
+			Error:      err.Error(),
+			DurationMs: duration.Milliseconds(),
+		}, nil
+	}
+
+	// Marshal result to JSON
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		s.logger.Error("failed to marshal plugin query result", "error", err)
+		return &QueryPluginResponse{
+			Error:      fmt.Sprintf("failed to marshal result: %v", err),
+			DurationMs: duration.Milliseconds(),
+		}, nil
+	}
+
+	s.logger.Debug("plugin query completed", "plugin", req.Name, "method", req.Method, "duration_ms", duration.Milliseconds())
+	return &QueryPluginResponse{
+		ResultJson: string(resultJSON),
+		DurationMs: duration.Milliseconds(),
 	}, nil
 }
 

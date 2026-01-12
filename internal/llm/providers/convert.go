@@ -5,9 +5,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/llms"
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // toSchemaMessages converts Gibson messages to langchaingo MessageContent
@@ -221,7 +221,7 @@ func buildCallOptionsWithToolChoice(req llm.CompletionRequest, tool llm.ToolDef)
 
 // convertResponseFormatToTool converts a ResponseFormat to a ToolDef for Anthropic's tool_use pattern.
 // This enables structured output by having the model call a "tool" that represents the response schema.
-func convertResponseFormatToTool(format *sdktypes.ResponseFormat) llm.ToolDef {
+func convertResponseFormatToTool(format *types.ResponseFormat) llm.ToolDef {
 	// Convert SDK JSONSchema to internal schema.JSONSchema
 	params := convertSDKSchemaToInternal(format.Schema)
 
@@ -232,9 +232,9 @@ func convertResponseFormatToTool(format *sdktypes.ResponseFormat) llm.ToolDef {
 	}
 }
 
-// convertSDKSchemaToInternal converts sdk/types.JSONSchema to internal/schema.JSONSchema.
-// This bridges the SDK boundary for internal provider use.
-func convertSDKSchemaToInternal(sdkSchema *sdktypes.JSONSchema) schema.JSONSchema {
+// convertSDKSchemaToInternal converts types.JSONSchema to internal/schema.JSONSchema.
+// This bridges the type boundary for internal provider use.
+func convertSDKSchemaToInternal(sdkSchema *types.JSONSchema) schema.JSONSchema {
 	if sdkSchema == nil {
 		return schema.JSONSchema{Type: "object"}
 	}
@@ -267,9 +267,9 @@ func convertSDKSchemaToInternal(sdkSchema *sdktypes.JSONSchema) schema.JSONSchem
 	return internalSchema
 }
 
-// convertSDKSchemaFieldToInternal converts sdk/types.JSONSchema to internal/schema.SchemaField.
+// convertSDKSchemaFieldToInternal converts types.JSONSchema to internal/schema.SchemaField.
 // This is used recursively when converting nested schemas.
-func convertSDKSchemaFieldToInternal(sdkField *sdktypes.JSONSchema) schema.SchemaField {
+func convertSDKSchemaFieldToInternal(sdkField *types.JSONSchema) schema.SchemaField {
 	if sdkField == nil {
 		return schema.SchemaField{Type: "object"}
 	}

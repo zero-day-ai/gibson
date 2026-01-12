@@ -780,3 +780,422 @@ func TestTaxonomyValidator_validateIDTemplate(t *testing.T) {
 		})
 	}
 }
+
+// TestTaxonomyValidator_validateTargetType tests validation of target types.
+func TestTaxonomyValidator_validateTargetType(t *testing.T) {
+	validator := &taxonomyValidator{}
+
+	tests := []struct {
+		name    string
+		target  *TargetTypeDefinition
+		wantErr bool
+		errType ErrorType
+	}{
+		{
+			name: "valid target type",
+			target: &TargetTypeDefinition{
+				ID:          "target.web.http_api",
+				Type:        "http_api",
+				Name:        "HTTP API",
+				Category:    "web",
+				Description: "HTTP-based REST API",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing ID",
+			target: &TargetTypeDefinition{
+				Type:     "http_api",
+				Name:     "HTTP API",
+				Category: "web",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "missing Type",
+			target: &TargetTypeDefinition{
+				ID:       "target.web.http_api",
+				Name:     "HTTP API",
+				Category: "web",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "missing Name",
+			target: &TargetTypeDefinition{
+				ID:       "target.web.http_api",
+				Type:     "http_api",
+				Category: "web",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "missing Category",
+			target: &TargetTypeDefinition{
+				ID:   "target.web.http_api",
+				Type: "http_api",
+				Name: "HTTP API",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "invalid category",
+			target: &TargetTypeDefinition{
+				ID:       "target.web.http_api",
+				Type:     "http_api",
+				Name:     "HTTP API",
+				Category: "invalid_category",
+			},
+			wantErr: true,
+			errType: ErrorTypeInvalidFormat,
+		},
+		{
+			name: "valid web category",
+			target: &TargetTypeDefinition{
+				ID:       "target.web.http_api",
+				Type:     "http_api",
+				Name:     "HTTP API",
+				Category: "web",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid ai category",
+			target: &TargetTypeDefinition{
+				ID:       "target.ai.llm",
+				Type:     "llm",
+				Name:     "LLM",
+				Category: "ai",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid infrastructure category",
+			target: &TargetTypeDefinition{
+				ID:       "target.infrastructure.server",
+				Type:     "server",
+				Name:     "Server",
+				Category: "infrastructure",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid cloud category",
+			target: &TargetTypeDefinition{
+				ID:       "target.cloud.aws",
+				Type:     "aws",
+				Name:     "AWS",
+				Category: "cloud",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid blockchain category",
+			target: &TargetTypeDefinition{
+				ID:       "target.blockchain.ethereum",
+				Type:     "ethereum",
+				Name:     "Ethereum",
+				Category: "blockchain",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.validateTargetType(tt.target)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateTargetType() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				taxErr, ok := err.(*TaxonomyError)
+				if !ok {
+					t.Errorf("validateTargetType() error type = %T, want *TaxonomyError", err)
+					return
+				}
+				if taxErr.Type != tt.errType {
+					t.Errorf("validateTargetType() error type = %v, want %v", taxErr.Type, tt.errType)
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyValidator_validateTechniqueType tests validation of technique types.
+func TestTaxonomyValidator_validateTechniqueType(t *testing.T) {
+	validator := &taxonomyValidator{}
+
+	tests := []struct {
+		name      string
+		technique *TechniqueTypeDefinition
+		wantErr   bool
+		errType   ErrorType
+	}{
+		{
+			name: "valid technique type",
+			technique: &TechniqueTypeDefinition{
+				ID:              "technique.initial_access.ssrf",
+				Type:            "ssrf",
+				Name:            "SSRF",
+				Category:        "initial_access",
+				MITREIDs:        []string{"T1190"},
+				DefaultSeverity: "high",
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing ID",
+			technique: &TechniqueTypeDefinition{
+				Type:     "ssrf",
+				Name:     "SSRF",
+				Category: "initial_access",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "missing Type",
+			technique: &TechniqueTypeDefinition{
+				ID:       "technique.initial_access.ssrf",
+				Name:     "SSRF",
+				Category: "initial_access",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "missing Name",
+			technique: &TechniqueTypeDefinition{
+				ID:       "technique.initial_access.ssrf",
+				Type:     "ssrf",
+				Category: "initial_access",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "missing Category",
+			technique: &TechniqueTypeDefinition{
+				ID:   "technique.initial_access.ssrf",
+				Type: "ssrf",
+				Name: "SSRF",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "invalid category",
+			technique: &TechniqueTypeDefinition{
+				ID:       "technique.initial_access.ssrf",
+				Type:     "ssrf",
+				Name:     "SSRF",
+				Category: "invalid_tactic",
+			},
+			wantErr: true,
+			errType: ErrorTypeInvalidFormat,
+		},
+		{
+			name: "invalid severity",
+			technique: &TechniqueTypeDefinition{
+				ID:              "technique.initial_access.ssrf",
+				Type:            "ssrf",
+				Name:            "SSRF",
+				Category:        "initial_access",
+				DefaultSeverity: "super_critical",
+			},
+			wantErr: true,
+			errType: ErrorTypeInvalidFormat,
+		},
+		{
+			name: "valid critical severity",
+			technique: &TechniqueTypeDefinition{
+				ID:              "technique.initial_access.ssrf",
+				Type:            "ssrf",
+				Name:            "SSRF",
+				Category:        "initial_access",
+				DefaultSeverity: "critical",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid high severity",
+			technique: &TechniqueTypeDefinition{
+				ID:              "technique.initial_access.ssrf",
+				Type:            "ssrf",
+				Name:            "SSRF",
+				Category:        "initial_access",
+				DefaultSeverity: "high",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid medium severity",
+			technique: &TechniqueTypeDefinition{
+				ID:              "technique.initial_access.ssrf",
+				Type:            "ssrf",
+				Name:            "SSRF",
+				Category:        "initial_access",
+				DefaultSeverity: "medium",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid low severity",
+			technique: &TechniqueTypeDefinition{
+				ID:              "technique.initial_access.ssrf",
+				Type:            "ssrf",
+				Name:            "SSRF",
+				Category:        "initial_access",
+				DefaultSeverity: "low",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid info severity",
+			technique: &TechniqueTypeDefinition{
+				ID:              "technique.initial_access.ssrf",
+				Type:            "ssrf",
+				Name:            "SSRF",
+				Category:        "initial_access",
+				DefaultSeverity: "info",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid execution category",
+			technique: &TechniqueTypeDefinition{
+				ID:       "technique.execution.code_injection",
+				Type:     "code_injection",
+				Name:     "Code Injection",
+				Category: "execution",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid privilege_escalation category",
+			technique: &TechniqueTypeDefinition{
+				ID:       "technique.privilege_escalation.sudo_abuse",
+				Type:     "sudo_abuse",
+				Name:     "Sudo Abuse",
+				Category: "privilege_escalation",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.validateTechniqueType(tt.technique)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateTechniqueType() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				taxErr, ok := err.(*TaxonomyError)
+				if !ok {
+					t.Errorf("validateTechniqueType() error type = %T, want *TaxonomyError", err)
+					return
+				}
+				if taxErr.Type != tt.errType {
+					t.Errorf("validateTechniqueType() error type = %v, want %v", taxErr.Type, tt.errType)
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyValidator_validateCapability tests validation of capabilities.
+func TestTaxonomyValidator_validateCapability(t *testing.T) {
+	validator := &taxonomyValidator{}
+
+	// Create technique types for reference validation
+	techniqueTypes := map[string]*TechniqueTypeDefinition{
+		"ssrf": {
+			ID:   "technique.initial_access.ssrf",
+			Type: "ssrf",
+			Name: "SSRF",
+		},
+		"sqli": {
+			ID:   "technique.initial_access.sqli",
+			Type: "sqli",
+			Name: "SQL Injection",
+		},
+	}
+
+	tests := []struct {
+		name       string
+		capability *CapabilityDefinition
+		wantErr    bool
+		errType    ErrorType
+	}{
+		{
+			name: "valid capability",
+			capability: &CapabilityDefinition{
+				ID:             "capability.web_vulnerability_scanning",
+				Name:           "Web Vulnerability Scanning",
+				Description:    "Comprehensive web scanning",
+				TechniqueTypes: []string{"ssrf", "sqli"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "missing ID",
+			capability: &CapabilityDefinition{
+				Name:        "Web Scanning",
+				Description: "Web scanning",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "missing Name",
+			capability: &CapabilityDefinition{
+				ID:          "capability.web_vulnerability_scanning",
+				Description: "Web scanning",
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "valid with non-existent technique types (warns but passes)",
+			capability: &CapabilityDefinition{
+				ID:             "capability.web_vulnerability_scanning",
+				Name:           "Web Scanning",
+				Description:    "Web scanning",
+				TechniqueTypes: []string{"ssrf", "nonexistent"},
+			},
+			wantErr: false, // Should warn but not fail
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.validateCapability(tt.capability, techniqueTypes)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateCapability() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				taxErr, ok := err.(*TaxonomyError)
+				if !ok {
+					t.Errorf("validateCapability() error type = %T, want *TaxonomyError", err)
+					return
+				}
+				if taxErr.Type != tt.errType {
+					t.Errorf("validateCapability() error type = %v, want %v", taxErr.Type, tt.errType)
+				}
+			}
+		})
+	}
+}

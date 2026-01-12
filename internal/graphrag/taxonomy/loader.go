@@ -136,6 +136,12 @@ func (l *taxonomyLoader) parseAndMerge(taxonomy *Taxonomy, data []byte, path str
 		return l.parseRelationshipTypes(taxonomy, data, path, source)
 	} else if strings.Contains(path, "techniques/") || strings.HasSuffix(path, "techniques.yaml") {
 		return l.parseTechniques(taxonomy, data, path, source)
+	} else if strings.Contains(path, "targets/") || strings.HasSuffix(path, "targets.yaml") {
+		return l.parseTargetTypes(taxonomy, data, path, source)
+	} else if strings.Contains(path, "technique-types/") || strings.HasSuffix(path, "technique-types.yaml") {
+		return l.parseTechniqueTypes(taxonomy, data, path, source)
+	} else if strings.Contains(path, "capabilities/") || strings.HasSuffix(path, "capabilities.yaml") {
+		return l.parseCapabilities(taxonomy, data, path, source)
 	}
 
 	return fmt.Errorf("unknown file type for path: %s", path)
@@ -204,6 +210,75 @@ func (l *taxonomyLoader) parseTechniques(taxonomy *Taxonomy, data []byte, path s
 				}
 			}
 			return fmt.Errorf("failed to add technique %s from %s: %w", techDef.TechniqueID, path, err)
+		}
+	}
+
+	return nil
+}
+
+// parseTargetTypes parses target type definitions from YAML.
+func (l *taxonomyLoader) parseTargetTypes(taxonomy *Taxonomy, data []byte, path string, source string) error {
+	var targetFile TargetTypeFile
+	if err := yaml.Unmarshal(data, &targetFile); err != nil {
+		return fmt.Errorf("failed to parse target types YAML: %w", err)
+	}
+
+	for i := range targetFile.TargetTypes {
+		targetDef := &targetFile.TargetTypes[i]
+		if err := taxonomy.AddTargetType(targetDef); err != nil {
+			// If this is a custom taxonomy and the error is a duplicate, provide clear message
+			if source == "custom" {
+				if taxErr, ok := err.(*TaxonomyError); ok && taxErr.Type == ErrorTypeDuplicateDefinition {
+					return fmt.Errorf("custom target type %s (ID: %s) conflicts with bundled taxonomy - custom types cannot override bundled types", targetDef.Type, targetDef.ID)
+				}
+			}
+			return fmt.Errorf("failed to add target type %s from %s: %w", targetDef.Type, path, err)
+		}
+	}
+
+	return nil
+}
+
+// parseTechniqueTypes parses technique type definitions from YAML.
+func (l *taxonomyLoader) parseTechniqueTypes(taxonomy *Taxonomy, data []byte, path string, source string) error {
+	var techTypeFile TechniqueTypeFile
+	if err := yaml.Unmarshal(data, &techTypeFile); err != nil {
+		return fmt.Errorf("failed to parse technique types YAML: %w", err)
+	}
+
+	for i := range techTypeFile.TechniqueTypes {
+		techTypeDef := &techTypeFile.TechniqueTypes[i]
+		if err := taxonomy.AddTechniqueType(techTypeDef); err != nil {
+			// If this is a custom taxonomy and the error is a duplicate, provide clear message
+			if source == "custom" {
+				if taxErr, ok := err.(*TaxonomyError); ok && taxErr.Type == ErrorTypeDuplicateDefinition {
+					return fmt.Errorf("custom technique type %s (ID: %s) conflicts with bundled taxonomy - custom types cannot override bundled types", techTypeDef.Type, techTypeDef.ID)
+				}
+			}
+			return fmt.Errorf("failed to add technique type %s from %s: %w", techTypeDef.Type, path, err)
+		}
+	}
+
+	return nil
+}
+
+// parseCapabilities parses capability definitions from YAML.
+func (l *taxonomyLoader) parseCapabilities(taxonomy *Taxonomy, data []byte, path string, source string) error {
+	var capFile CapabilityFile
+	if err := yaml.Unmarshal(data, &capFile); err != nil {
+		return fmt.Errorf("failed to parse capabilities YAML: %w", err)
+	}
+
+	for i := range capFile.Capabilities {
+		capDef := &capFile.Capabilities[i]
+		if err := taxonomy.AddCapability(capDef); err != nil {
+			// If this is a custom taxonomy and the error is a duplicate, provide clear message
+			if source == "custom" {
+				if taxErr, ok := err.(*TaxonomyError); ok && taxErr.Type == ErrorTypeDuplicateDefinition {
+					return fmt.Errorf("custom capability %s conflicts with bundled taxonomy - custom capabilities cannot override bundled capabilities", capDef.ID)
+				}
+			}
+			return fmt.Errorf("failed to add capability %s from %s: %w", capDef.ID, path, err)
 		}
 	}
 

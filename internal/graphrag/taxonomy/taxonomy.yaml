@@ -29,3 +29,12 @@ includes:
   # Attack technique definitions
   - "techniques/mitre_enterprise.yaml"
   - "techniques/arcanum_pi.yaml"
+
+  # Target type definitions
+  - "targets/targets.yaml"
+
+  # Technique type definitions
+  - "technique-types/technique-types.yaml"
+
+  # Capability definitions
+  - "capabilities/capabilities.yaml"

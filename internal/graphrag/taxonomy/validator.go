@@ -2,6 +2,7 @@ package taxonomy
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 )
@@ -52,6 +53,27 @@ func (v *taxonomyValidator) Validate(t *Taxonomy) error {
 	for _, techDef := range t.Techniques {
 		if err := v.validateTechnique(techDef); err != nil {
 			return fmt.Errorf("invalid technique %s: %w", techDef.TechniqueID, err)
+		}
+	}
+
+	// Validate target types
+	for _, targetDef := range t.TargetTypes {
+		if err := v.validateTargetType(targetDef); err != nil {
+			return fmt.Errorf("invalid target type %s: %w", targetDef.Type, err)
+		}
+	}
+
+	// Validate technique types
+	for _, techniqueDef := range t.TechniqueTypes {
+		if err := v.validateTechniqueType(techniqueDef); err != nil {
+			return fmt.Errorf("invalid technique type %s: %w", techniqueDef.Type, err)
+		}
+	}
+
+	// Validate capabilities
+	for _, capDef := range t.Capabilities {
+		if err := v.validateCapability(capDef, t.TechniqueTypes); err != nil {
+			return fmt.Errorf("invalid capability %s: %w", capDef.ID, err)
 		}
 	}
 
@@ -308,6 +330,171 @@ func (v *taxonomyValidator) validateIDTemplate(template string, properties []Pro
 				Field:   "id_template",
 				Value:   placeholder,
 			}
+		}
+	}
+
+	return nil
+}
+
+// validateTargetType validates a target type definition.
+func (v *taxonomyValidator) validateTargetType(t *TargetTypeDefinition) error {
+	// Check required fields
+	if t.ID == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "target type ID is required",
+			Field:   "id",
+		}
+	}
+
+	if t.Type == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "target type 'type' field is required",
+			Field:   "type",
+		}
+	}
+
+	if t.Name == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "target type name is required",
+			Field:   "name",
+		}
+	}
+
+	if t.Category == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "target type category is required",
+			Field:   "category",
+		}
+	}
+
+	// Validate category is one of the allowed values
+	validCategories := map[string]bool{
+		"web":         true,
+		"ai":          true,
+		"infrastructure": true,
+		"cloud":       true,
+		"blockchain":  true,
+	}
+	if !validCategories[t.Category] {
+		return &TaxonomyError{
+			Type:    ErrorTypeInvalidFormat,
+			Message: "target type category must be one of: web, ai, infrastructure, cloud, blockchain",
+			Field:   "category",
+			Value:   t.Category,
+		}
+	}
+
+	return nil
+}
+
+// validateTechniqueType validates a technique type definition.
+func (v *taxonomyValidator) validateTechniqueType(t *TechniqueTypeDefinition) error {
+	// Check required fields
+	if t.ID == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "technique type ID is required",
+			Field:   "id",
+		}
+	}
+
+	if t.Type == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "technique type 'type' field is required",
+			Field:   "type",
+		}
+	}
+
+	if t.Name == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "technique type name is required",
+			Field:   "name",
+		}
+	}
+
+	if t.Category == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "technique type category is required",
+			Field:   "category",
+		}
+	}
+
+	// Validate category is a valid MITRE tactic
+	validCategories := map[string]bool{
+		"initial_access":     true,
+		"execution":          true,
+		"persistence":        true,
+		"privilege_escalation": true,
+		"defense_evasion":    true,
+		"credential_access":  true,
+		"discovery":          true,
+		"lateral_movement":   true,
+		"collection":         true,
+		"exfiltration":       true,
+		"impact":             true,
+	}
+	if !validCategories[t.Category] {
+		return &TaxonomyError{
+			Type:    ErrorTypeInvalidFormat,
+			Message: "technique type category must be a valid MITRE tactic (initial_access, execution, persistence, privilege_escalation, defense_evasion, credential_access, discovery, lateral_movement, collection, exfiltration, impact)",
+			Field:   "category",
+			Value:   t.Category,
+		}
+	}
+
+	// Validate default severity if present
+	if t.DefaultSeverity != "" {
+		validSeverities := map[string]bool{
+			"critical": true,
+			"high":     true,
+			"medium":   true,
+			"low":      true,
+			"info":     true,
+		}
+		if !validSeverities[t.DefaultSeverity] {
+			return &TaxonomyError{
+				Type:    ErrorTypeInvalidFormat,
+				Message: "technique type default_severity must be one of: critical, high, medium, low, info",
+				Field:   "default_severity",
+				Value:   t.DefaultSeverity,
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateCapability validates a capability definition.
+func (v *taxonomyValidator) validateCapability(c *CapabilityDefinition, techniqueTypes map[string]*TechniqueTypeDefinition) error {
+	// Check required fields
+	if c.ID == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "capability ID is required",
+			Field:   "id",
+		}
+	}
+
+	if c.Name == "" {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "capability name is required",
+			Field:   "name",
+		}
+	}
+
+	// Validate technique_types references - warn if technique doesn't exist
+	for _, techType := range c.TechniqueTypes {
+		if _, exists := techniqueTypes[techType]; !exists {
+			// Log warning but don't fail validation
+			log.Printf("WARNING: Capability '%s' references non-existent technique type '%s'", c.ID, techType)
 		}
 	}
 

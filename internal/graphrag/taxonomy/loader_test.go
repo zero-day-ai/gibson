@@ -66,6 +66,21 @@ func TestTaxonomyLoader_Load(t *testing.T) {
 				if len(taxonomy.Techniques) == 0 {
 					t.Error("TaxonomyLoader.Load() returned taxonomy with no techniques")
 				}
+
+				// Check target types were loaded
+				if len(taxonomy.TargetTypes) == 0 {
+					t.Error("TaxonomyLoader.Load() returned taxonomy with no target types")
+				}
+
+				// Check technique types were loaded
+				if len(taxonomy.TechniqueTypes) == 0 {
+					t.Error("TaxonomyLoader.Load() returned taxonomy with no technique types")
+				}
+
+				// Check capabilities were loaded
+				if len(taxonomy.Capabilities) == 0 {
+					t.Error("TaxonomyLoader.Load() returned taxonomy with no capabilities")
+				}
 			}
 		})
 	}
@@ -436,6 +451,157 @@ func TestTaxonomyLoader_parseTechniques(t *testing.T) {
 			if !tt.wantErr {
 				if len(taxonomy.Techniques) == 0 {
 					t.Error("parseTechniques() did not add techniques to taxonomy")
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyLoader_parseTargetTypes tests parsing target types from YAML.
+func TestTaxonomyLoader_parseTargetTypes(t *testing.T) {
+	loader := &taxonomyLoader{
+		embeddedFS: GetEmbeddedFS(),
+	}
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{
+			name: "valid target types",
+			yaml: `target_types:
+  - id: target.web.http_api
+    type: http_api
+    name: HTTP API
+    category: web
+    description: HTTP-based REST API
+`,
+			wantErr: false,
+		},
+		{
+			name: "invalid YAML",
+			yaml: `target_types:
+  - id: [broken
+    type: "invalid
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taxonomy := NewTaxonomy("test")
+			err := loader.parseTargetTypes(taxonomy, []byte(tt.yaml), "test.yaml", "test")
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseTargetTypes() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr {
+				if len(taxonomy.TargetTypes) == 0 {
+					t.Error("parseTargetTypes() did not add target types to taxonomy")
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyLoader_parseTechniqueTypes tests parsing technique types from YAML.
+func TestTaxonomyLoader_parseTechniqueTypes(t *testing.T) {
+	loader := &taxonomyLoader{
+		embeddedFS: GetEmbeddedFS(),
+	}
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{
+			name: "valid technique types",
+			yaml: `technique_types:
+  - id: technique.initial_access.ssrf
+    type: ssrf
+    name: Server-Side Request Forgery
+    category: initial_access
+    mitre_ids: [T1190]
+    description: SSRF vulnerability
+    default_severity: high
+`,
+			wantErr: false,
+		},
+		{
+			name: "invalid YAML",
+			yaml: `technique_types:
+  - id: [broken
+    type: "invalid
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taxonomy := NewTaxonomy("test")
+			err := loader.parseTechniqueTypes(taxonomy, []byte(tt.yaml), "test.yaml", "test")
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseTechniqueTypes() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr {
+				if len(taxonomy.TechniqueTypes) == 0 {
+					t.Error("parseTechniqueTypes() did not add technique types to taxonomy")
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyLoader_parseCapabilities tests parsing capabilities from YAML.
+func TestTaxonomyLoader_parseCapabilities(t *testing.T) {
+	loader := &taxonomyLoader{
+		embeddedFS: GetEmbeddedFS(),
+	}
+
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr bool
+	}{
+		{
+			name: "valid capabilities",
+			yaml: `capabilities:
+  - id: capability.web_vulnerability_scanning
+    name: Web Vulnerability Scanning
+    description: Comprehensive web vulnerability scanning
+    technique_types: [ssrf, sqli, xss]
+`,
+			wantErr: false,
+		},
+		{
+			name: "invalid YAML",
+			yaml: `capabilities:
+  - id: [broken
+    name: "invalid
+`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taxonomy := NewTaxonomy("test")
+			err := loader.parseCapabilities(taxonomy, []byte(tt.yaml), "test.yaml", "test")
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseCapabilities() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr {
+				if len(taxonomy.Capabilities) == 0 {
+					t.Error("parseCapabilities() did not add capabilities to taxonomy")
 				}
 			}
 		})

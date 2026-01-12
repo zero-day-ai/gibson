@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
+	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // Role represents the role of a message in a conversation
@@ -166,7 +166,7 @@ type CompletionRequest struct {
 
 	// ResponseFormat specifies structured output requirements
 	// nil = standard text completion (backward compatible)
-	ResponseFormat *sdktypes.ResponseFormat `json:"response_format,omitempty"`
+	ResponseFormat *types.ResponseFormat `json:"response_format,omitempty"`
 }
 
 // Validate checks if the completion request is valid

@@ -66,6 +66,45 @@ type TechniqueDefinition struct {
 	DetectionStrategies []string `yaml:"detection_strategies,omitempty"` // How to detect this technique
 }
 
+// ConnectionSchema defines the schema for target connection configurations.
+// It specifies which configuration fields are required vs optional for connecting to a target.
+type ConnectionSchema struct {
+	Required []string `yaml:"required"` // Required connection fields (e.g., ["url", "api_key"])
+	Optional []string `yaml:"optional"` // Optional connection fields (e.g., ["timeout", "headers"])
+}
+
+// TargetTypeDefinition defines a target type in the taxonomy.
+// Target types represent systems, services, or applications that can be tested.
+type TargetTypeDefinition struct {
+	ID               string            `yaml:"id"`          // Unique identifier (e.g., "target.web.http_api")
+	Type             string            `yaml:"type"`        // Target type string (e.g., "http_api")
+	Name             string            `yaml:"name"`        // Human-readable name (e.g., "HTTP API")
+	Category         string            `yaml:"category"`    // Grouping category (e.g., "web", "ai", "cloud")
+	Description      string            `yaml:"description"` // Purpose and usage description
+	ConnectionSchema *ConnectionSchema `yaml:"connection_schema,omitempty"` // Connection configuration schema
+}
+
+// TechniqueTypeDefinition defines a technique type in the taxonomy.
+// Technique types represent categories of security testing techniques (e.g., SSRF, SQLi).
+type TechniqueTypeDefinition struct {
+	ID              string   `yaml:"id"`               // Unique identifier (e.g., "technique.initial_access.ssrf")
+	Type            string   `yaml:"type"`             // Technique type string (e.g., "ssrf")
+	Name            string   `yaml:"name"`             // Human-readable name (e.g., "Server-Side Request Forgery")
+	Category        string   `yaml:"category"`         // MITRE ATT&CK tactic (e.g., "initial_access")
+	MITREIDs        []string `yaml:"mitre_ids"`        // Related MITRE ATT&CK IDs (e.g., ["T1190"])
+	Description     string   `yaml:"description"`      // Purpose and usage description
+	DefaultSeverity string   `yaml:"default_severity"` // Default severity level (e.g., "high")
+}
+
+// CapabilityDefinition defines a capability in the taxonomy.
+// Capabilities represent high-level testing capabilities that bundle technique types.
+type CapabilityDefinition struct {
+	ID             string   `yaml:"id"`              // Unique identifier (e.g., "capability.web_vulnerability_scanning")
+	Name           string   `yaml:"name"`            // Human-readable name (e.g., "Web Vulnerability Scanning")
+	Description    string   `yaml:"description"`     // Purpose and usage description
+	TechniqueTypes []string `yaml:"technique_types"` // Related technique type IDs
+}
+
 // Taxonomy represents the complete loaded taxonomy with all node types,
 // relationship types, and techniques. This is the in-memory representation
 // that gets built from the embedded YAML files.
@@ -75,13 +114,19 @@ type Taxonomy struct {
 	Includes []string         `yaml:"includes,omitempty"` // List of included YAML files (from root)
 
 	// Primary collections - keyed by Type field for fast lookup
-	NodeTypes     map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by Type field
-	Relationships map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by Type field
-	Techniques    map[string]*TechniqueDefinition        `yaml:"-"` // Keyed by TechniqueID
+	NodeTypes       map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by Type field
+	Relationships   map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by Type field
+	Techniques      map[string]*TechniqueDefinition        `yaml:"-"` // Keyed by TechniqueID
+	TargetTypes     map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by Type field
+	TechniqueTypes  map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by Type field
+	Capabilities    map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
 
 	// Secondary indices for alternative lookups - built at load time
-	nodeTypesByID     map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by ID field
-	relationshipsByID map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by ID field
+	nodeTypesByID       map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by ID field
+	relationshipsByID   map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by ID field
+	targetTypesByID     map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by ID field
+	techniqueTypesByID  map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by ID field
+	capabilitiesByID    map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
 
 	// Extension tracking
 	isCustomLoaded bool `yaml:"-"` // Whether custom taxonomy has been merged
@@ -105,16 +150,40 @@ type TechniqueFile struct {
 	Techniques []TechniqueDefinition `yaml:"techniques"`
 }
 
+// TargetTypeFile represents the structure of a target types YAML file.
+// Multiple target type files can be loaded and merged into the taxonomy.
+type TargetTypeFile struct {
+	TargetTypes []TargetTypeDefinition `yaml:"target_types"`
+}
+
+// TechniqueTypeFile represents the structure of a technique types YAML file.
+// Multiple technique type files can be loaded and merged into the taxonomy.
+type TechniqueTypeFile struct {
+	TechniqueTypes []TechniqueTypeDefinition `yaml:"technique_types"`
+}
+
+// CapabilityFile represents the structure of a capabilities YAML file.
+// Multiple capability files can be loaded and merged into the taxonomy.
+type CapabilityFile struct {
+	Capabilities []CapabilityDefinition `yaml:"capabilities"`
+}
+
 // NewTaxonomy creates a new Taxonomy with initialized maps.
 func NewTaxonomy(version string) *Taxonomy {
 	return &Taxonomy{
-		Version:           version,
-		NodeTypes:         make(map[string]*NodeTypeDefinition),
-		Relationships:     make(map[string]*RelationshipTypeDefinition),
-		Techniques:        make(map[string]*TechniqueDefinition),
-		nodeTypesByID:     make(map[string]*NodeTypeDefinition),
-		relationshipsByID: make(map[string]*RelationshipTypeDefinition),
-		isCustomLoaded:    false,
+		Version:            version,
+		NodeTypes:          make(map[string]*NodeTypeDefinition),
+		Relationships:      make(map[string]*RelationshipTypeDefinition),
+		Techniques:         make(map[string]*TechniqueDefinition),
+		TargetTypes:        make(map[string]*TargetTypeDefinition),
+		TechniqueTypes:     make(map[string]*TechniqueTypeDefinition),
+		Capabilities:       make(map[string]*CapabilityDefinition),
+		nodeTypesByID:      make(map[string]*NodeTypeDefinition),
+		relationshipsByID:  make(map[string]*RelationshipTypeDefinition),
+		targetTypesByID:    make(map[string]*TargetTypeDefinition),
+		techniqueTypesByID: make(map[string]*TechniqueTypeDefinition),
+		capabilitiesByID:   make(map[string]*CapabilityDefinition),
+		isCustomLoaded:     false,
 	}
 }
 
@@ -218,6 +287,117 @@ func (t *Taxonomy) GetRelationshipByID(id string) (*RelationshipTypeDefinition, 
 // GetTechnique retrieves a technique by its TechniqueID.
 func (t *Taxonomy) GetTechnique(techniqueID string) (*TechniqueDefinition, bool) {
 	def, ok := t.Techniques[techniqueID]
+	return def, ok
+}
+
+// AddTargetType adds a target type definition to the taxonomy.
+// Returns an error if a target type with the same ID or Type already exists.
+func (t *Taxonomy) AddTargetType(def *TargetTypeDefinition) error {
+	// Check for ID collision
+	if _, exists := t.targetTypesByID[def.ID]; exists {
+		return &TaxonomyError{
+			Type:    ErrorTypeDuplicateDefinition,
+			Message: "target type with ID already exists",
+			Field:   "id",
+			Value:   def.ID,
+		}
+	}
+
+	// Check for Type collision
+	if _, exists := t.TargetTypes[def.Type]; exists {
+		return &TaxonomyError{
+			Type:    ErrorTypeDuplicateDefinition,
+			Message: "target type with Type already exists",
+			Field:   "type",
+			Value:   def.Type,
+		}
+	}
+
+	t.TargetTypes[def.Type] = def
+	t.targetTypesByID[def.ID] = def
+	return nil
+}
+
+// GetTargetType retrieves a target type by its Type field.
+func (t *Taxonomy) GetTargetType(typeName string) (*TargetTypeDefinition, bool) {
+	def, ok := t.TargetTypes[typeName]
+	return def, ok
+}
+
+// GetTargetTypeByID retrieves a target type by its ID field.
+func (t *Taxonomy) GetTargetTypeByID(id string) (*TargetTypeDefinition, bool) {
+	def, ok := t.targetTypesByID[id]
+	return def, ok
+}
+
+// AddTechniqueType adds a technique type definition to the taxonomy.
+// Returns an error if a technique type with the same ID or Type already exists.
+func (t *Taxonomy) AddTechniqueType(def *TechniqueTypeDefinition) error {
+	// Check for ID collision
+	if _, exists := t.techniqueTypesByID[def.ID]; exists {
+		return &TaxonomyError{
+			Type:    ErrorTypeDuplicateDefinition,
+			Message: "technique type with ID already exists",
+			Field:   "id",
+			Value:   def.ID,
+		}
+	}
+
+	// Check for Type collision
+	if _, exists := t.TechniqueTypes[def.Type]; exists {
+		return &TaxonomyError{
+			Type:    ErrorTypeDuplicateDefinition,
+			Message: "technique type with Type already exists",
+			Field:   "type",
+			Value:   def.Type,
+		}
+	}
+
+	t.TechniqueTypes[def.Type] = def
+	t.techniqueTypesByID[def.ID] = def
+	return nil
+}
+
+// GetTechniqueType retrieves a technique type by its Type field.
+func (t *Taxonomy) GetTechniqueType(typeName string) (*TechniqueTypeDefinition, bool) {
+	def, ok := t.TechniqueTypes[typeName]
+	return def, ok
+}
+
+// GetTechniqueTypeByID retrieves a technique type by its ID field.
+func (t *Taxonomy) GetTechniqueTypeByID(id string) (*TechniqueTypeDefinition, bool) {
+	def, ok := t.techniqueTypesByID[id]
+	return def, ok
+}
+
+// AddCapability adds a capability definition to the taxonomy.
+// Returns an error if a capability with the same ID already exists.
+func (t *Taxonomy) AddCapability(def *CapabilityDefinition) error {
+	// Check for ID collision
+	if _, exists := t.capabilitiesByID[def.ID]; exists {
+		return &TaxonomyError{
+			Type:    ErrorTypeDuplicateDefinition,
+			Message: "capability with ID already exists",
+			Field:   "id",
+			Value:   def.ID,
+		}
+	}
+
+	// Also store in both maps (ID is used for both primary and secondary)
+	t.Capabilities[def.ID] = def
+	t.capabilitiesByID[def.ID] = def
+	return nil
+}
+
+// GetCapability retrieves a capability by its ID.
+func (t *Taxonomy) GetCapability(id string) (*CapabilityDefinition, bool) {
+	def, ok := t.Capabilities[id]
+	return def, ok
+}
+
+// GetCapabilityByID is an alias for GetCapability for consistency.
+func (t *Taxonomy) GetCapabilityByID(id string) (*CapabilityDefinition, bool) {
+	def, ok := t.capabilitiesByID[id]
 	return def, ok
 }
 

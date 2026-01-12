@@ -3,8 +3,8 @@ package providers
 import (
 	"testing"
 
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
 	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 func TestAnthropicProvider_SupportsStructuredOutput(t *testing.T) {
@@ -12,22 +12,22 @@ func TestAnthropicProvider_SupportsStructuredOutput(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		format   sdktypes.ResponseFormatType
+		format   types.ResponseFormatType
 		expected bool
 	}{
 		{
 			name:     "json_schema supported",
-			format:   sdktypes.ResponseFormatJSONSchema,
+			format:   types.ResponseFormatJSONSchema,
 			expected: true,
 		},
 		{
 			name:     "json_object not supported",
-			format:   sdktypes.ResponseFormatJSONObject,
+			format:   types.ResponseFormatJSONObject,
 			expected: false,
 		},
 		{
 			name:     "text not supported",
-			format:   sdktypes.ResponseFormatText,
+			format:   types.ResponseFormatText,
 			expected: false,
 		},
 	}
@@ -43,13 +43,13 @@ func TestAnthropicProvider_SupportsStructuredOutput(t *testing.T) {
 }
 
 func TestConvertResponseFormatToTool(t *testing.T) {
-	format := &sdktypes.ResponseFormat{
-		Type: sdktypes.ResponseFormatJSONSchema,
+	format := &types.ResponseFormat{
+		Type: types.ResponseFormatJSONSchema,
 		Name: "test_response",
-		Schema: &sdktypes.JSONSchema{
+		Schema: &types.JSONSchema{
 			Type:        "object",
 			Description: "Test schema",
-			Properties: map[string]*sdktypes.JSONSchema{
+			Properties: map[string]*types.JSONSchema{
 				"name": {
 					Type:        "string",
 					Description: "A name field",
@@ -87,10 +87,10 @@ func TestConvertResponseFormatToTool(t *testing.T) {
 }
 
 func TestConvertSDKSchemaToInternal(t *testing.T) {
-	sdkSchema := &sdktypes.JSONSchema{
+	sdkSchema := &types.JSONSchema{
 		Type:        "object",
 		Description: "Test schema",
-		Properties: map[string]*sdktypes.JSONSchema{
+		Properties: map[string]*types.JSONSchema{
 			"name": {
 				Type:        "string",
 				Description: "Name field",
@@ -99,7 +99,7 @@ func TestConvertSDKSchemaToInternal(t *testing.T) {
 			},
 			"tags": {
 				Type: "array",
-				Items: &sdktypes.JSONSchema{
+				Items: &types.JSONSchema{
 					Type: "string",
 				},
 			},
@@ -157,7 +157,7 @@ func TestConvertSDKSchemaToInternal(t *testing.T) {
 }
 
 func TestConvertSDKSchemaFieldToInternal(t *testing.T) {
-	sdkField := &sdktypes.JSONSchema{
+	sdkField := &types.JSONSchema{
 		Type:        "string",
 		Description: "Test field",
 		Pattern:     "^[a-z]+$",
@@ -205,12 +205,12 @@ func TestConvertSDKSchemaFieldToInternal_NilField(t *testing.T) {
 }
 
 func TestConvertSDKSchemaToInternal_NestedProperties(t *testing.T) {
-	sdkSchema := &sdktypes.JSONSchema{
+	sdkSchema := &types.JSONSchema{
 		Type: "object",
-		Properties: map[string]*sdktypes.JSONSchema{
+		Properties: map[string]*types.JSONSchema{
 			"person": {
 				Type: "object",
-				Properties: map[string]*sdktypes.JSONSchema{
+				Properties: map[string]*types.JSONSchema{
 					"name": {
 						Type: "string",
 					},

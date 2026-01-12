@@ -1,0 +1,64 @@
+# Capability Definitions
+# Defines high-level testing capabilities that bundle technique types
+
+capabilities:
+  - id: "capability.web_vulnerability_scanning"
+    name: "Web Vulnerability Scanning"
+    description: "Comprehensive web application vulnerability scanning including common web vulnerabilities"
+    technique_types:
+      - "sqli"
+      - "xss"
+      - "xxe"
+      - "lfi"
+      - "rfi"
+      - "csrf"
+      - "idor"
+      - "ssti"
+      - "deserialization"
+      - "auth_bypass"
+
+  - id: "capability.api_security_testing"
+    name: "API Security Testing"
+    description: "API-focused security testing including injection, authentication, and business logic flaws"
+    technique_types:
+      - "ssrf"
+      - "sqli"
+      - "xxe"
+      - "rce"
+      - "auth_bypass"
+      - "idor"
+      - "deserialization"
+
+  - id: "capability.llm_security_testing"
+    name: "LLM Security Testing"
+    description: "Large Language Model security testing including prompt injection, jailbreaks, and data extraction"
+    technique_types:
+      - "prompt_injection"
+      - "jailbreak"
+      - "data_extraction"
+      - "data_exfiltration"
+      - "ssrf"
+
+  - id: "capability.infrastructure_testing"
+    name: "Infrastructure Testing"
+    description: "Infrastructure security testing including privilege escalation, lateral movement, and container security"
+    technique_types:
+      - "privesc"
+      - "container_escape"
+      - "lateral_movement"
+      - "credential_theft"
+
+  - id: "capability.cloud_security_testing"
+    name: "Cloud Security Testing"
+    description: "Cloud-specific security testing including metadata access and cloud service vulnerabilities"
+    technique_types:
+      - "cloud_metadata"
+      - "ssrf"
+      - "credential_theft"
+      - "lateral_movement"
+
+  - id: "capability.dos_testing"
+    name: "Denial of Service Testing"
+    description: "Denial of service and resource exhaustion testing"
+    technique_types:
+      - "dos"

@@ -12,7 +12,6 @@ import (
 	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
 )
 
 // OpenAIProvider implements LLMProvider for OpenAI's GPT models
@@ -173,8 +172,8 @@ func (p *OpenAIProvider) Health(ctx context.Context) types.HealthStatus {
 
 // SupportsStructuredOutput returns true for json_object and json_schema formats.
 // OpenAI supports both natively via the response_format parameter.
-func (p *OpenAIProvider) SupportsStructuredOutput(format sdktypes.ResponseFormatType) bool {
-	return format == sdktypes.ResponseFormatJSONObject || format == sdktypes.ResponseFormatJSONSchema
+func (p *OpenAIProvider) SupportsStructuredOutput(format types.ResponseFormatType) bool {
+	return format == types.ResponseFormatJSONObject || format == types.ResponseFormatJSONSchema
 }
 
 // CompleteStructured performs a completion with response_format for structured output.
@@ -275,11 +274,11 @@ func (p *OpenAIProvider) completeStructuredDirect(ctx context.Context, req llm.C
 	// Build response_format parameter
 	var responseFormat *openAIResponseFormat
 	switch req.ResponseFormat.Type {
-	case sdktypes.ResponseFormatJSONObject:
+	case types.ResponseFormatJSONObject:
 		responseFormat = &openAIResponseFormat{
 			Type: "json_object",
 		}
-	case sdktypes.ResponseFormatJSONSchema:
+	case types.ResponseFormatJSONSchema:
 		// Convert JSONSchema to map[string]interface{}
 		schemaMap, err := jsonSchemaToMap(req.ResponseFormat.Schema)
 		if err != nil {
@@ -395,7 +394,7 @@ func (p *OpenAIProvider) completeStructuredDirect(ctx context.Context, req llm.C
 }
 
 // jsonSchemaToMap converts JSONSchema to map[string]interface{} for OpenAI API
-func jsonSchemaToMap(schema *sdktypes.JSONSchema) (map[string]interface{}, error) {
+func jsonSchemaToMap(schema *types.JSONSchema) (map[string]interface{}, error) {
 	if schema == nil {
 		return nil, fmt.Errorf("schema is nil")
 	}

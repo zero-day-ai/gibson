@@ -223,15 +223,15 @@ func TestResponseFormat_MarshalJSON(t *testing.T) {
 	}
 }
 
-func TestValidationError_Error(t *testing.T) {
+func TestStructuredOutputValidationError_Error(t *testing.T) {
 	tests := []struct {
 		name    string
-		err     ValidationError
+		err     StructuredOutputValidationError
 		wantMsg string
 	}{
 		{
 			name: "error with value",
-			err: ValidationError{
+			err: StructuredOutputValidationError{
 				Field:   "type",
 				Message: "invalid type",
 				Value:   "invalid_type",
@@ -240,7 +240,7 @@ func TestValidationError_Error(t *testing.T) {
 		},
 		{
 			name: "error without value",
-			err: ValidationError{
+			err: StructuredOutputValidationError{
 				Field:   "schema",
 				Message: "schema is required",
 			},
@@ -251,34 +251,34 @@ func TestValidationError_Error(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := tt.err.Error(); got != tt.wantMsg {
-				t.Errorf("ValidationError.Error() = %v, want %v", got, tt.wantMsg)
+				t.Errorf("StructuredOutputValidationError.Error() = %v, want %v", got, tt.wantMsg)
 			}
 		})
 	}
 }
 
-func TestUnmarshalError_Error(t *testing.T) {
+func TestStructuredOutputUnmarshalError_Error(t *testing.T) {
 	underlyingErr := json.Unmarshal([]byte("invalid"), &struct{}{})
-	err := &UnmarshalError{
+	err := &StructuredOutputUnmarshalError{
 		RawJSON:         `{"invalid": "json"}`,
 		UnderlyingError: underlyingErr,
 	}
 
 	errMsg := err.Error()
 	if errMsg == "" {
-		t.Error("UnmarshalError.Error() returned empty string")
+		t.Error("StructuredOutputUnmarshalError.Error() returned empty string")
 	}
 }
 
-func TestUnmarshalError_Unwrap(t *testing.T) {
+func TestStructuredOutputUnmarshalError_Unwrap(t *testing.T) {
 	underlyingErr := json.Unmarshal([]byte("invalid"), &struct{}{})
-	err := &UnmarshalError{
+	err := &StructuredOutputUnmarshalError{
 		RawJSON:         `{"invalid": "json"}`,
 		UnderlyingError: underlyingErr,
 	}
 
 	if err.Unwrap() != underlyingErr {
-		t.Error("UnmarshalError.Unwrap() didn't return underlying error")
+		t.Error("StructuredOutputUnmarshalError.Unwrap() didn't return underlying error")
 	}
 }
 

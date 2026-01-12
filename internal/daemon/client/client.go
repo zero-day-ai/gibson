@@ -440,6 +440,82 @@ func (c *Client) ListPlugins(ctx context.Context) ([]PluginInfo, error) {
 	return plugins, nil
 }
 
+// PluginQueryResult represents the result of a plugin query.
+type PluginQueryResult struct {
+	// Result is the unmarshaled result from the plugin method
+	Result any
+	// DurationMs is how long the query took in milliseconds
+	DurationMs int64
+}
+
+// QueryPlugin executes a method on a plugin and returns the result.
+//
+// This method discovers the plugin via the etcd registry and executes
+// the specified method with the given parameters via gRPC.
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - name: Plugin name (e.g., "scope-ingestion")
+//   - method: Method name to execute (e.g., "list_programs")
+//   - params: Parameters for the method (will be JSON-encoded)
+//
+// Returns:
+//   - *PluginQueryResult: Query result including duration
+//   - error: Non-nil if RPC fails or plugin returns an error
+//
+// Example:
+//
+//	result, err := client.QueryPlugin(ctx, "scope-ingestion", "list_programs", map[string]any{"platform": "hackerone"})
+//	if err != nil {
+//	    return err
+//	}
+//	fmt.Printf("Result: %v (took %dms)\n", result.Result, result.DurationMs)
+func (c *Client) QueryPlugin(ctx context.Context, name, method string, params map[string]any) (*PluginQueryResult, error) {
+	// Marshal params to JSON
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal params: %w", err)
+	}
+
+	resp, err := c.daemon.QueryPlugin(ctx, &api.QueryPluginRequest{
+		Name:       name,
+		Method:     method,
+		ParamsJson: string(paramsJSON),
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.DeadlineExceeded:
+				return nil, fmt.Errorf("daemon request timeout while querying plugin")
+			default:
+				return nil, fmt.Errorf("failed to query plugin: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to query plugin: %w", err)
+	}
+
+	// Check for error in response
+	if resp.Error != "" {
+		return nil, fmt.Errorf("plugin error: %s", resp.Error)
+	}
+
+	// Unmarshal result
+	var result any
+	if resp.ResultJson != "" {
+		if err := json.Unmarshal([]byte(resp.ResultJson), &result); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal plugin result: %w", err)
+		}
+	}
+
+	return &PluginQueryResult{
+		Result:     result,
+		DurationMs: resp.DurationMs,
+	}, nil
+}
+
 // MissionEvent represents an event from a running mission.
 type MissionEvent struct {
 	Type      string

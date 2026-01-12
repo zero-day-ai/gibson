@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.0
 // - protoc             v4.25.1
-// source: internal/daemon/api/daemon.proto
+// source: daemon.proto
 
 package api
 
@@ -29,6 +29,7 @@ const (
 	DaemonService_GetAgentStatus_FullMethodName        = "/gibson.daemon.v1.DaemonService/GetAgentStatus"
 	DaemonService_ListTools_FullMethodName             = "/gibson.daemon.v1.DaemonService/ListTools"
 	DaemonService_ListPlugins_FullMethodName           = "/gibson.daemon.v1.DaemonService/ListPlugins"
+	DaemonService_QueryPlugin_FullMethodName           = "/gibson.daemon.v1.DaemonService/QueryPlugin"
 	DaemonService_RunAttack_FullMethodName             = "/gibson.daemon.v1.DaemonService/RunAttack"
 	DaemonService_Subscribe_FullMethodName             = "/gibson.daemon.v1.DaemonService/Subscribe"
 	DaemonService_StartComponent_FullMethodName        = "/gibson.daemon.v1.DaemonService/StartComponent"
@@ -74,6 +75,9 @@ type DaemonServiceClient interface {
 	ListTools(ctx context.Context, in *ListToolsRequest, opts ...grpc.CallOption) (*ListToolsResponse, error)
 	// ListPlugins returns all registered plugins from the etcd registry.
 	ListPlugins(ctx context.Context, in *ListPluginsRequest, opts ...grpc.CallOption) (*ListPluginsResponse, error)
+	// QueryPlugin executes a method on a plugin and returns the result.
+	// The plugin must be registered in the etcd registry.
+	QueryPlugin(ctx context.Context, in *QueryPluginRequest, opts ...grpc.CallOption) (*QueryPluginResponse, error)
 	// RunAttack executes an attack and streams progress events.
 	// The stream remains open until the attack completes or is stopped.
 	RunAttack(ctx context.Context, in *RunAttackRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[AttackEvent], error)
@@ -219,6 +223,16 @@ func (c *daemonServiceClient) ListPlugins(ctx context.Context, in *ListPluginsRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListPluginsResponse)
 	err := c.cc.Invoke(ctx, DaemonService_ListPlugins_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) QueryPlugin(ctx context.Context, in *QueryPluginRequest, opts ...grpc.CallOption) (*QueryPluginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(QueryPluginResponse)
+	err := c.cc.Invoke(ctx, DaemonService_QueryPlugin_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -385,6 +399,9 @@ type DaemonServiceServer interface {
 	ListTools(context.Context, *ListToolsRequest) (*ListToolsResponse, error)
 	// ListPlugins returns all registered plugins from the etcd registry.
 	ListPlugins(context.Context, *ListPluginsRequest) (*ListPluginsResponse, error)
+	// QueryPlugin executes a method on a plugin and returns the result.
+	// The plugin must be registered in the etcd registry.
+	QueryPlugin(context.Context, *QueryPluginRequest) (*QueryPluginResponse, error)
 	// RunAttack executes an attack and streams progress events.
 	// The stream remains open until the attack completes or is stopped.
 	RunAttack(*RunAttackRequest, grpc.ServerStreamingServer[AttackEvent]) error
@@ -456,6 +473,9 @@ func (UnimplementedDaemonServiceServer) ListTools(context.Context, *ListToolsReq
 }
 func (UnimplementedDaemonServiceServer) ListPlugins(context.Context, *ListPluginsRequest) (*ListPluginsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPlugins not implemented")
+}
+func (UnimplementedDaemonServiceServer) QueryPlugin(context.Context, *QueryPluginRequest) (*QueryPluginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryPlugin not implemented")
 }
 func (UnimplementedDaemonServiceServer) RunAttack(*RunAttackRequest, grpc.ServerStreamingServer[AttackEvent]) error {
 	return status.Error(codes.Unimplemented, "method RunAttack not implemented")
@@ -681,6 +701,24 @@ func _DaemonService_ListPlugins_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DaemonService_QueryPlugin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPluginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).QueryPlugin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_QueryPlugin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).QueryPlugin(ctx, req.(*QueryPluginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DaemonService_RunAttack_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(RunAttackRequest)
 	if err := stream.RecvMsg(m); err != nil {
@@ -884,6 +922,10 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _DaemonService_ListPlugins_Handler,
 		},
 		{
+			MethodName: "QueryPlugin",
+			Handler:    _DaemonService_QueryPlugin_Handler,
+		},
+		{
 			MethodName: "StartComponent",
 			Handler:    _DaemonService_StartComponent_Handler,
 		},
@@ -934,5 +976,5 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 		},
 	},
-	Metadata: "internal/daemon/api/daemon.proto",
+	Metadata: "daemon.proto",
 }

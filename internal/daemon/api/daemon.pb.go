@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v4.25.1
-// source: internal/daemon/api/daemon.proto
+// source: daemon.proto
 
 package api
 
@@ -34,7 +34,7 @@ type ConnectRequest struct {
 
 func (x *ConnectRequest) Reset() {
 	*x = ConnectRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[0]
+	mi := &file_daemon_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -46,7 +46,7 @@ func (x *ConnectRequest) String() string {
 func (*ConnectRequest) ProtoMessage() {}
 
 func (x *ConnectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[0]
+	mi := &file_daemon_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -59,7 +59,7 @@ func (x *ConnectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectRequest.ProtoReflect.Descriptor instead.
 func (*ConnectRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{0}
+	return file_daemon_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *ConnectRequest) GetClientVersion() string {
@@ -91,7 +91,7 @@ type ConnectResponse struct {
 
 func (x *ConnectResponse) Reset() {
 	*x = ConnectResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[1]
+	mi := &file_daemon_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -103,7 +103,7 @@ func (x *ConnectResponse) String() string {
 func (*ConnectResponse) ProtoMessage() {}
 
 func (x *ConnectResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[1]
+	mi := &file_daemon_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -116,7 +116,7 @@ func (x *ConnectResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectResponse.ProtoReflect.Descriptor instead.
 func (*ConnectResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{1}
+	return file_daemon_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *ConnectResponse) GetDaemonVersion() string {
@@ -149,7 +149,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[2]
+	mi := &file_daemon_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -161,7 +161,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[2]
+	mi := &file_daemon_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -174,7 +174,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{2}
+	return file_daemon_proto_rawDescGZIP(), []int{2}
 }
 
 // PingResponse confirms the daemon is responsive.
@@ -188,7 +188,7 @@ type PingResponse struct {
 
 func (x *PingResponse) Reset() {
 	*x = PingResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[3]
+	mi := &file_daemon_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -200,7 +200,7 @@ func (x *PingResponse) String() string {
 func (*PingResponse) ProtoMessage() {}
 
 func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[3]
+	mi := &file_daemon_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -213,7 +213,7 @@ func (x *PingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
 func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{3}
+	return file_daemon_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *PingResponse) GetTimestamp() int64 {
@@ -232,7 +232,7 @@ type StatusRequest struct {
 
 func (x *StatusRequest) Reset() {
 	*x = StatusRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[4]
+	mi := &file_daemon_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -244,7 +244,7 @@ func (x *StatusRequest) String() string {
 func (*StatusRequest) ProtoMessage() {}
 
 func (x *StatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[4]
+	mi := &file_daemon_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -257,7 +257,7 @@ func (x *StatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusRequest.ProtoReflect.Descriptor instead.
 func (*StatusRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{4}
+	return file_daemon_proto_rawDescGZIP(), []int{4}
 }
 
 // StatusResponse returns complete daemon status information.
@@ -291,7 +291,7 @@ type StatusResponse struct {
 
 func (x *StatusResponse) Reset() {
 	*x = StatusResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[5]
+	mi := &file_daemon_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -303,7 +303,7 @@ func (x *StatusResponse) String() string {
 func (*StatusResponse) ProtoMessage() {}
 
 func (x *StatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[5]
+	mi := &file_daemon_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -316,7 +316,7 @@ func (x *StatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusResponse.ProtoReflect.Descriptor instead.
 func (*StatusResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{5}
+	return file_daemon_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StatusResponse) GetRunning() bool {
@@ -414,7 +414,7 @@ type RunMissionRequest struct {
 
 func (x *RunMissionRequest) Reset() {
 	*x = RunMissionRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[6]
+	mi := &file_daemon_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -426,7 +426,7 @@ func (x *RunMissionRequest) String() string {
 func (*RunMissionRequest) ProtoMessage() {}
 
 func (x *RunMissionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[6]
+	mi := &file_daemon_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -439,7 +439,7 @@ func (x *RunMissionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunMissionRequest.ProtoReflect.Descriptor instead.
 func (*RunMissionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{6}
+	return file_daemon_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RunMissionRequest) GetWorkflowPath() string {
@@ -495,7 +495,7 @@ type MissionEvent struct {
 
 func (x *MissionEvent) Reset() {
 	*x = MissionEvent{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[7]
+	mi := &file_daemon_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +507,7 @@ func (x *MissionEvent) String() string {
 func (*MissionEvent) ProtoMessage() {}
 
 func (x *MissionEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[7]
+	mi := &file_daemon_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +520,7 @@ func (x *MissionEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MissionEvent.ProtoReflect.Descriptor instead.
 func (*MissionEvent) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{7}
+	return file_daemon_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MissionEvent) GetEventType() string {
@@ -592,7 +592,7 @@ type StopMissionRequest struct {
 
 func (x *StopMissionRequest) Reset() {
 	*x = StopMissionRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[8]
+	mi := &file_daemon_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -604,7 +604,7 @@ func (x *StopMissionRequest) String() string {
 func (*StopMissionRequest) ProtoMessage() {}
 
 func (x *StopMissionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[8]
+	mi := &file_daemon_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -617,7 +617,7 @@ func (x *StopMissionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopMissionRequest.ProtoReflect.Descriptor instead.
 func (*StopMissionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{8}
+	return file_daemon_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StopMissionRequest) GetMissionId() string {
@@ -647,7 +647,7 @@ type StopMissionResponse struct {
 
 func (x *StopMissionResponse) Reset() {
 	*x = StopMissionResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[9]
+	mi := &file_daemon_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -659,7 +659,7 @@ func (x *StopMissionResponse) String() string {
 func (*StopMissionResponse) ProtoMessage() {}
 
 func (x *StopMissionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[9]
+	mi := &file_daemon_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -672,7 +672,7 @@ func (x *StopMissionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopMissionResponse.ProtoReflect.Descriptor instead.
 func (*StopMissionResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{9}
+	return file_daemon_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StopMissionResponse) GetSuccess() bool {
@@ -708,7 +708,7 @@ type ListMissionsRequest struct {
 
 func (x *ListMissionsRequest) Reset() {
 	*x = ListMissionsRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[10]
+	mi := &file_daemon_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -720,7 +720,7 @@ func (x *ListMissionsRequest) String() string {
 func (*ListMissionsRequest) ProtoMessage() {}
 
 func (x *ListMissionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[10]
+	mi := &file_daemon_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -733,7 +733,7 @@ func (x *ListMissionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMissionsRequest.ProtoReflect.Descriptor instead.
 func (*ListMissionsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{10}
+	return file_daemon_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ListMissionsRequest) GetActiveOnly() bool {
@@ -784,7 +784,7 @@ type ListMissionsResponse struct {
 
 func (x *ListMissionsResponse) Reset() {
 	*x = ListMissionsResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[11]
+	mi := &file_daemon_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -796,7 +796,7 @@ func (x *ListMissionsResponse) String() string {
 func (*ListMissionsResponse) ProtoMessage() {}
 
 func (x *ListMissionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[11]
+	mi := &file_daemon_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -809,7 +809,7 @@ func (x *ListMissionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMissionsResponse.ProtoReflect.Descriptor instead.
 func (*ListMissionsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{11}
+	return file_daemon_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListMissionsResponse) GetMissions() []*MissionInfo {
@@ -847,7 +847,7 @@ type MissionInfo struct {
 
 func (x *MissionInfo) Reset() {
 	*x = MissionInfo{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[12]
+	mi := &file_daemon_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -859,7 +859,7 @@ func (x *MissionInfo) String() string {
 func (*MissionInfo) ProtoMessage() {}
 
 func (x *MissionInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[12]
+	mi := &file_daemon_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -872,7 +872,7 @@ func (x *MissionInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MissionInfo.ProtoReflect.Descriptor instead.
 func (*MissionInfo) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{12}
+	return file_daemon_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *MissionInfo) GetId() string {
@@ -928,7 +928,7 @@ type ListAgentsRequest struct {
 
 func (x *ListAgentsRequest) Reset() {
 	*x = ListAgentsRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[13]
+	mi := &file_daemon_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -940,7 +940,7 @@ func (x *ListAgentsRequest) String() string {
 func (*ListAgentsRequest) ProtoMessage() {}
 
 func (x *ListAgentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[13]
+	mi := &file_daemon_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -953,7 +953,7 @@ func (x *ListAgentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAgentsRequest.ProtoReflect.Descriptor instead.
 func (*ListAgentsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{13}
+	return file_daemon_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListAgentsRequest) GetKind() string {
@@ -974,7 +974,7 @@ type ListAgentsResponse struct {
 
 func (x *ListAgentsResponse) Reset() {
 	*x = ListAgentsResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[14]
+	mi := &file_daemon_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -986,7 +986,7 @@ func (x *ListAgentsResponse) String() string {
 func (*ListAgentsResponse) ProtoMessage() {}
 
 func (x *ListAgentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[14]
+	mi := &file_daemon_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -999,7 +999,7 @@ func (x *ListAgentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAgentsResponse.ProtoReflect.Descriptor instead.
 func (*ListAgentsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{14}
+	return file_daemon_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ListAgentsResponse) GetAgents() []*AgentInfo {
@@ -1034,7 +1034,7 @@ type AgentInfo struct {
 
 func (x *AgentInfo) Reset() {
 	*x = AgentInfo{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[15]
+	mi := &file_daemon_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1046,7 +1046,7 @@ func (x *AgentInfo) String() string {
 func (*AgentInfo) ProtoMessage() {}
 
 func (x *AgentInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[15]
+	mi := &file_daemon_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1059,7 +1059,7 @@ func (x *AgentInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentInfo.ProtoReflect.Descriptor instead.
 func (*AgentInfo) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{15}
+	return file_daemon_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AgentInfo) GetId() string {
@@ -1129,7 +1129,7 @@ type GetAgentStatusRequest struct {
 
 func (x *GetAgentStatusRequest) Reset() {
 	*x = GetAgentStatusRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[16]
+	mi := &file_daemon_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1141,7 +1141,7 @@ func (x *GetAgentStatusRequest) String() string {
 func (*GetAgentStatusRequest) ProtoMessage() {}
 
 func (x *GetAgentStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[16]
+	mi := &file_daemon_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1154,7 +1154,7 @@ func (x *GetAgentStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAgentStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetAgentStatusRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{16}
+	return file_daemon_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetAgentStatusRequest) GetAgentId() string {
@@ -1181,7 +1181,7 @@ type AgentStatusResponse struct {
 
 func (x *AgentStatusResponse) Reset() {
 	*x = AgentStatusResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[17]
+	mi := &file_daemon_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1193,7 +1193,7 @@ func (x *AgentStatusResponse) String() string {
 func (*AgentStatusResponse) ProtoMessage() {}
 
 func (x *AgentStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[17]
+	mi := &file_daemon_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1206,7 +1206,7 @@ func (x *AgentStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentStatusResponse.ProtoReflect.Descriptor instead.
 func (*AgentStatusResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{17}
+	return file_daemon_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AgentStatusResponse) GetAgent() *AgentInfo {
@@ -1246,7 +1246,7 @@ type ListToolsRequest struct {
 
 func (x *ListToolsRequest) Reset() {
 	*x = ListToolsRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[18]
+	mi := &file_daemon_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1258,7 +1258,7 @@ func (x *ListToolsRequest) String() string {
 func (*ListToolsRequest) ProtoMessage() {}
 
 func (x *ListToolsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[18]
+	mi := &file_daemon_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1271,7 +1271,7 @@ func (x *ListToolsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListToolsRequest.ProtoReflect.Descriptor instead.
 func (*ListToolsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{18}
+	return file_daemon_proto_rawDescGZIP(), []int{18}
 }
 
 // ListToolsResponse returns registered tools.
@@ -1285,7 +1285,7 @@ type ListToolsResponse struct {
 
 func (x *ListToolsResponse) Reset() {
 	*x = ListToolsResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[19]
+	mi := &file_daemon_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1297,7 +1297,7 @@ func (x *ListToolsResponse) String() string {
 func (*ListToolsResponse) ProtoMessage() {}
 
 func (x *ListToolsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[19]
+	mi := &file_daemon_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1310,7 +1310,7 @@ func (x *ListToolsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListToolsResponse.ProtoReflect.Descriptor instead.
 func (*ListToolsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{19}
+	return file_daemon_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListToolsResponse) GetTools() []*ToolInfo {
@@ -1343,7 +1343,7 @@ type ToolInfo struct {
 
 func (x *ToolInfo) Reset() {
 	*x = ToolInfo{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[20]
+	mi := &file_daemon_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1355,7 +1355,7 @@ func (x *ToolInfo) String() string {
 func (*ToolInfo) ProtoMessage() {}
 
 func (x *ToolInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[20]
+	mi := &file_daemon_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1368,7 +1368,7 @@ func (x *ToolInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolInfo.ProtoReflect.Descriptor instead.
 func (*ToolInfo) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{20}
+	return file_daemon_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ToolInfo) GetId() string {
@@ -1429,7 +1429,7 @@ type ListPluginsRequest struct {
 
 func (x *ListPluginsRequest) Reset() {
 	*x = ListPluginsRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[21]
+	mi := &file_daemon_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1441,7 +1441,7 @@ func (x *ListPluginsRequest) String() string {
 func (*ListPluginsRequest) ProtoMessage() {}
 
 func (x *ListPluginsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[21]
+	mi := &file_daemon_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1454,7 +1454,7 @@ func (x *ListPluginsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPluginsRequest.ProtoReflect.Descriptor instead.
 func (*ListPluginsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{21}
+	return file_daemon_proto_rawDescGZIP(), []int{21}
 }
 
 // ListPluginsResponse returns registered plugins.
@@ -1468,7 +1468,7 @@ type ListPluginsResponse struct {
 
 func (x *ListPluginsResponse) Reset() {
 	*x = ListPluginsResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[22]
+	mi := &file_daemon_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1480,7 +1480,7 @@ func (x *ListPluginsResponse) String() string {
 func (*ListPluginsResponse) ProtoMessage() {}
 
 func (x *ListPluginsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[22]
+	mi := &file_daemon_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1493,7 +1493,7 @@ func (x *ListPluginsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPluginsResponse.ProtoReflect.Descriptor instead.
 func (*ListPluginsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{22}
+	return file_daemon_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ListPluginsResponse) GetPlugins() []*PluginInfo {
@@ -1526,7 +1526,7 @@ type PluginInfo struct {
 
 func (x *PluginInfo) Reset() {
 	*x = PluginInfo{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[23]
+	mi := &file_daemon_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1538,7 +1538,7 @@ func (x *PluginInfo) String() string {
 func (*PluginInfo) ProtoMessage() {}
 
 func (x *PluginInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[23]
+	mi := &file_daemon_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1551,7 +1551,7 @@ func (x *PluginInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PluginInfo.ProtoReflect.Descriptor instead.
 func (*PluginInfo) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{23}
+	return file_daemon_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *PluginInfo) GetId() string {
@@ -1603,6 +1603,143 @@ func (x *PluginInfo) GetLastSeen() int64 {
 	return 0
 }
 
+// QueryPluginRequest executes a method on a plugin.
+type QueryPluginRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the plugin name to query
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// method is the method name to execute
+	Method string `protobuf:"bytes,2,opt,name=method,proto3" json:"method,omitempty"`
+	// params_json is the JSON-encoded parameters for the method
+	ParamsJson string `protobuf:"bytes,3,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
+	// timeout_ms is the optional timeout in milliseconds (0 = default)
+	TimeoutMs     int64 `protobuf:"varint,4,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QueryPluginRequest) Reset() {
+	*x = QueryPluginRequest{}
+	mi := &file_daemon_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryPluginRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryPluginRequest) ProtoMessage() {}
+
+func (x *QueryPluginRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryPluginRequest.ProtoReflect.Descriptor instead.
+func (*QueryPluginRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *QueryPluginRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *QueryPluginRequest) GetMethod() string {
+	if x != nil {
+		return x.Method
+	}
+	return ""
+}
+
+func (x *QueryPluginRequest) GetParamsJson() string {
+	if x != nil {
+		return x.ParamsJson
+	}
+	return ""
+}
+
+func (x *QueryPluginRequest) GetTimeoutMs() int64 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+// QueryPluginResponse returns the result of a plugin query.
+type QueryPluginResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// result_json is the JSON-encoded result from the plugin method
+	ResultJson string `protobuf:"bytes,1,opt,name=result_json,json=resultJson,proto3" json:"result_json,omitempty"`
+	// error is set if the query failed
+	Error string `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// duration_ms is how long the query took in milliseconds
+	DurationMs    int64 `protobuf:"varint,3,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QueryPluginResponse) Reset() {
+	*x = QueryPluginResponse{}
+	mi := &file_daemon_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryPluginResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryPluginResponse) ProtoMessage() {}
+
+func (x *QueryPluginResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryPluginResponse.ProtoReflect.Descriptor instead.
+func (*QueryPluginResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *QueryPluginResponse) GetResultJson() string {
+	if x != nil {
+		return x.ResultJson
+	}
+	return ""
+}
+
+func (x *QueryPluginResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *QueryPluginResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
 // RunAttackRequest executes an attack.
 type RunAttackRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1626,7 +1763,7 @@ type RunAttackRequest struct {
 
 func (x *RunAttackRequest) Reset() {
 	*x = RunAttackRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[24]
+	mi := &file_daemon_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1638,7 +1775,7 @@ func (x *RunAttackRequest) String() string {
 func (*RunAttackRequest) ProtoMessage() {}
 
 func (x *RunAttackRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[24]
+	mi := &file_daemon_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1651,7 +1788,7 @@ func (x *RunAttackRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunAttackRequest.ProtoReflect.Descriptor instead.
 func (*RunAttackRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{24}
+	return file_daemon_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *RunAttackRequest) GetTarget() string {
@@ -1728,7 +1865,7 @@ type AttackEvent struct {
 
 func (x *AttackEvent) Reset() {
 	*x = AttackEvent{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[25]
+	mi := &file_daemon_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1740,7 +1877,7 @@ func (x *AttackEvent) String() string {
 func (*AttackEvent) ProtoMessage() {}
 
 func (x *AttackEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[25]
+	mi := &file_daemon_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1753,7 +1890,7 @@ func (x *AttackEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttackEvent.ProtoReflect.Descriptor instead.
 func (*AttackEvent) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{25}
+	return file_daemon_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *AttackEvent) GetEventType() string {
@@ -1837,7 +1974,7 @@ type FindingInfo struct {
 
 func (x *FindingInfo) Reset() {
 	*x = FindingInfo{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[26]
+	mi := &file_daemon_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1849,7 +1986,7 @@ func (x *FindingInfo) String() string {
 func (*FindingInfo) ProtoMessage() {}
 
 func (x *FindingInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[26]
+	mi := &file_daemon_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1862,7 +1999,7 @@ func (x *FindingInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FindingInfo.ProtoReflect.Descriptor instead.
 func (*FindingInfo) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{26}
+	return file_daemon_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *FindingInfo) GetId() string {
@@ -1934,7 +2071,7 @@ type SubscribeRequest struct {
 
 func (x *SubscribeRequest) Reset() {
 	*x = SubscribeRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[27]
+	mi := &file_daemon_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1946,7 +2083,7 @@ func (x *SubscribeRequest) String() string {
 func (*SubscribeRequest) ProtoMessage() {}
 
 func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[27]
+	mi := &file_daemon_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1959,7 +2096,7 @@ func (x *SubscribeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{27}
+	return file_daemon_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *SubscribeRequest) GetEventTypes() []string {
@@ -2002,7 +2139,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[28]
+	mi := &file_daemon_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2014,7 +2151,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[28]
+	mi := &file_daemon_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2027,7 +2164,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{28}
+	return file_daemon_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *Event) GetEventType() string {
@@ -2150,7 +2287,7 @@ type AgentEvent struct {
 
 func (x *AgentEvent) Reset() {
 	*x = AgentEvent{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[29]
+	mi := &file_daemon_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2162,7 +2299,7 @@ func (x *AgentEvent) String() string {
 func (*AgentEvent) ProtoMessage() {}
 
 func (x *AgentEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[29]
+	mi := &file_daemon_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2175,7 +2312,7 @@ func (x *AgentEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentEvent.ProtoReflect.Descriptor instead.
 func (*AgentEvent) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{29}
+	return file_daemon_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *AgentEvent) GetEventType() string {
@@ -2237,7 +2374,7 @@ type FindingEvent struct {
 
 func (x *FindingEvent) Reset() {
 	*x = FindingEvent{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[30]
+	mi := &file_daemon_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2249,7 +2386,7 @@ func (x *FindingEvent) String() string {
 func (*FindingEvent) ProtoMessage() {}
 
 func (x *FindingEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[30]
+	mi := &file_daemon_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2262,7 +2399,7 @@ func (x *FindingEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FindingEvent.ProtoReflect.Descriptor instead.
 func (*FindingEvent) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{30}
+	return file_daemon_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *FindingEvent) GetEventType() string {
@@ -2306,7 +2443,7 @@ type StartComponentRequest struct {
 
 func (x *StartComponentRequest) Reset() {
 	*x = StartComponentRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[31]
+	mi := &file_daemon_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2318,7 +2455,7 @@ func (x *StartComponentRequest) String() string {
 func (*StartComponentRequest) ProtoMessage() {}
 
 func (x *StartComponentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[31]
+	mi := &file_daemon_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2331,7 +2468,7 @@ func (x *StartComponentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartComponentRequest.ProtoReflect.Descriptor instead.
 func (*StartComponentRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{31}
+	return file_daemon_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *StartComponentRequest) GetKind() string {
@@ -2367,7 +2504,7 @@ type StartComponentResponse struct {
 
 func (x *StartComponentResponse) Reset() {
 	*x = StartComponentResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[32]
+	mi := &file_daemon_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2379,7 +2516,7 @@ func (x *StartComponentResponse) String() string {
 func (*StartComponentResponse) ProtoMessage() {}
 
 func (x *StartComponentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[32]
+	mi := &file_daemon_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2392,7 +2529,7 @@ func (x *StartComponentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartComponentResponse.ProtoReflect.Descriptor instead.
 func (*StartComponentResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{32}
+	return file_daemon_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *StartComponentResponse) GetSuccess() bool {
@@ -2445,7 +2582,7 @@ type StopComponentRequest struct {
 
 func (x *StopComponentRequest) Reset() {
 	*x = StopComponentRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[33]
+	mi := &file_daemon_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2457,7 +2594,7 @@ func (x *StopComponentRequest) String() string {
 func (*StopComponentRequest) ProtoMessage() {}
 
 func (x *StopComponentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[33]
+	mi := &file_daemon_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2470,7 +2607,7 @@ func (x *StopComponentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopComponentRequest.ProtoReflect.Descriptor instead.
 func (*StopComponentRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{33}
+	return file_daemon_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *StopComponentRequest) GetKind() string {
@@ -2511,7 +2648,7 @@ type StopComponentResponse struct {
 
 func (x *StopComponentResponse) Reset() {
 	*x = StopComponentResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[34]
+	mi := &file_daemon_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2523,7 +2660,7 @@ func (x *StopComponentResponse) String() string {
 func (*StopComponentResponse) ProtoMessage() {}
 
 func (x *StopComponentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[34]
+	mi := &file_daemon_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2536,7 +2673,7 @@ func (x *StopComponentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopComponentResponse.ProtoReflect.Descriptor instead.
 func (*StopComponentResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{34}
+	return file_daemon_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *StopComponentResponse) GetSuccess() bool {
@@ -2607,7 +2744,7 @@ type OperationResult struct {
 
 func (x *OperationResult) Reset() {
 	*x = OperationResult{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[35]
+	mi := &file_daemon_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2619,7 +2756,7 @@ func (x *OperationResult) String() string {
 func (*OperationResult) ProtoMessage() {}
 
 func (x *OperationResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[35]
+	mi := &file_daemon_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2632,7 +2769,7 @@ func (x *OperationResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationResult.ProtoReflect.Descriptor instead.
 func (*OperationResult) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{35}
+	return file_daemon_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *OperationResult) GetStatus() string {
@@ -2754,7 +2891,7 @@ type PauseMissionRequest struct {
 
 func (x *PauseMissionRequest) Reset() {
 	*x = PauseMissionRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[36]
+	mi := &file_daemon_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2766,7 +2903,7 @@ func (x *PauseMissionRequest) String() string {
 func (*PauseMissionRequest) ProtoMessage() {}
 
 func (x *PauseMissionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[36]
+	mi := &file_daemon_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2779,7 +2916,7 @@ func (x *PauseMissionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseMissionRequest.ProtoReflect.Descriptor instead.
 func (*PauseMissionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{36}
+	return file_daemon_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *PauseMissionRequest) GetMissionId() string {
@@ -2811,7 +2948,7 @@ type PauseMissionResponse struct {
 
 func (x *PauseMissionResponse) Reset() {
 	*x = PauseMissionResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[37]
+	mi := &file_daemon_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2823,7 +2960,7 @@ func (x *PauseMissionResponse) String() string {
 func (*PauseMissionResponse) ProtoMessage() {}
 
 func (x *PauseMissionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[37]
+	mi := &file_daemon_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2836,7 +2973,7 @@ func (x *PauseMissionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PauseMissionResponse.ProtoReflect.Descriptor instead.
 func (*PauseMissionResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{37}
+	return file_daemon_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *PauseMissionResponse) GetSuccess() bool {
@@ -2874,7 +3011,7 @@ type ResumeMissionRequest struct {
 
 func (x *ResumeMissionRequest) Reset() {
 	*x = ResumeMissionRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[38]
+	mi := &file_daemon_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2886,7 +3023,7 @@ func (x *ResumeMissionRequest) String() string {
 func (*ResumeMissionRequest) ProtoMessage() {}
 
 func (x *ResumeMissionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[38]
+	mi := &file_daemon_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2899,7 +3036,7 @@ func (x *ResumeMissionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResumeMissionRequest.ProtoReflect.Descriptor instead.
 func (*ResumeMissionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{38}
+	return file_daemon_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ResumeMissionRequest) GetMissionId() string {
@@ -2931,7 +3068,7 @@ type GetMissionHistoryRequest struct {
 
 func (x *GetMissionHistoryRequest) Reset() {
 	*x = GetMissionHistoryRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[39]
+	mi := &file_daemon_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2943,7 +3080,7 @@ func (x *GetMissionHistoryRequest) String() string {
 func (*GetMissionHistoryRequest) ProtoMessage() {}
 
 func (x *GetMissionHistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[39]
+	mi := &file_daemon_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2956,7 +3093,7 @@ func (x *GetMissionHistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMissionHistoryRequest.ProtoReflect.Descriptor instead.
 func (*GetMissionHistoryRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{39}
+	return file_daemon_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *GetMissionHistoryRequest) GetName() string {
@@ -2993,7 +3130,7 @@ type GetMissionHistoryResponse struct {
 
 func (x *GetMissionHistoryResponse) Reset() {
 	*x = GetMissionHistoryResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[40]
+	mi := &file_daemon_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3005,7 +3142,7 @@ func (x *GetMissionHistoryResponse) String() string {
 func (*GetMissionHistoryResponse) ProtoMessage() {}
 
 func (x *GetMissionHistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[40]
+	mi := &file_daemon_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3018,7 +3155,7 @@ func (x *GetMissionHistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMissionHistoryResponse.ProtoReflect.Descriptor instead.
 func (*GetMissionHistoryResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{40}
+	return file_daemon_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *GetMissionHistoryResponse) GetRuns() []*MissionRun {
@@ -3058,7 +3195,7 @@ type MissionRun struct {
 
 func (x *MissionRun) Reset() {
 	*x = MissionRun{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[41]
+	mi := &file_daemon_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3070,7 +3207,7 @@ func (x *MissionRun) String() string {
 func (*MissionRun) ProtoMessage() {}
 
 func (x *MissionRun) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[41]
+	mi := &file_daemon_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3083,7 +3220,7 @@ func (x *MissionRun) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MissionRun.ProtoReflect.Descriptor instead.
 func (*MissionRun) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{41}
+	return file_daemon_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *MissionRun) GetMissionId() string {
@@ -3146,7 +3283,7 @@ type GetMissionCheckpointsRequest struct {
 
 func (x *GetMissionCheckpointsRequest) Reset() {
 	*x = GetMissionCheckpointsRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[42]
+	mi := &file_daemon_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3158,7 +3295,7 @@ func (x *GetMissionCheckpointsRequest) String() string {
 func (*GetMissionCheckpointsRequest) ProtoMessage() {}
 
 func (x *GetMissionCheckpointsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[42]
+	mi := &file_daemon_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3171,7 +3308,7 @@ func (x *GetMissionCheckpointsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMissionCheckpointsRequest.ProtoReflect.Descriptor instead.
 func (*GetMissionCheckpointsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{42}
+	return file_daemon_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *GetMissionCheckpointsRequest) GetMissionId() string {
@@ -3192,7 +3329,7 @@ type GetMissionCheckpointsResponse struct {
 
 func (x *GetMissionCheckpointsResponse) Reset() {
 	*x = GetMissionCheckpointsResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[43]
+	mi := &file_daemon_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3204,7 +3341,7 @@ func (x *GetMissionCheckpointsResponse) String() string {
 func (*GetMissionCheckpointsResponse) ProtoMessage() {}
 
 func (x *GetMissionCheckpointsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[43]
+	mi := &file_daemon_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3217,7 +3354,7 @@ func (x *GetMissionCheckpointsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMissionCheckpointsResponse.ProtoReflect.Descriptor instead.
 func (*GetMissionCheckpointsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{43}
+	return file_daemon_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetMissionCheckpointsResponse) GetCheckpoints() []*CheckpointInfo {
@@ -3248,7 +3385,7 @@ type CheckpointInfo struct {
 
 func (x *CheckpointInfo) Reset() {
 	*x = CheckpointInfo{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[44]
+	mi := &file_daemon_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3260,7 +3397,7 @@ func (x *CheckpointInfo) String() string {
 func (*CheckpointInfo) ProtoMessage() {}
 
 func (x *CheckpointInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[44]
+	mi := &file_daemon_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3273,7 +3410,7 @@ func (x *CheckpointInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckpointInfo.ProtoReflect.Descriptor instead.
 func (*CheckpointInfo) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{44}
+	return file_daemon_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *CheckpointInfo) GetCheckpointId() string {
@@ -3333,7 +3470,7 @@ type ExecuteToolRequest struct {
 
 func (x *ExecuteToolRequest) Reset() {
 	*x = ExecuteToolRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[45]
+	mi := &file_daemon_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3345,7 +3482,7 @@ func (x *ExecuteToolRequest) String() string {
 func (*ExecuteToolRequest) ProtoMessage() {}
 
 func (x *ExecuteToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[45]
+	mi := &file_daemon_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3358,7 +3495,7 @@ func (x *ExecuteToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteToolRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteToolRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{45}
+	return file_daemon_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ExecuteToolRequest) GetName() string {
@@ -3399,7 +3536,7 @@ type ExecuteToolResponse struct {
 
 func (x *ExecuteToolResponse) Reset() {
 	*x = ExecuteToolResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[46]
+	mi := &file_daemon_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3411,7 +3548,7 @@ func (x *ExecuteToolResponse) String() string {
 func (*ExecuteToolResponse) ProtoMessage() {}
 
 func (x *ExecuteToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[46]
+	mi := &file_daemon_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3424,7 +3561,7 @@ func (x *ExecuteToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteToolResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteToolResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{46}
+	return file_daemon_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ExecuteToolResponse) GetSuccess() bool {
@@ -3464,7 +3601,7 @@ type GetAvailableToolsRequest struct {
 
 func (x *GetAvailableToolsRequest) Reset() {
 	*x = GetAvailableToolsRequest{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[47]
+	mi := &file_daemon_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3476,7 +3613,7 @@ func (x *GetAvailableToolsRequest) String() string {
 func (*GetAvailableToolsRequest) ProtoMessage() {}
 
 func (x *GetAvailableToolsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[47]
+	mi := &file_daemon_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3489,7 +3626,7 @@ func (x *GetAvailableToolsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAvailableToolsRequest.ProtoReflect.Descriptor instead.
 func (*GetAvailableToolsRequest) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{47}
+	return file_daemon_proto_rawDescGZIP(), []int{49}
 }
 
 // GetAvailableToolsResponse returns all available tools with their capabilities.
@@ -3503,7 +3640,7 @@ type GetAvailableToolsResponse struct {
 
 func (x *GetAvailableToolsResponse) Reset() {
 	*x = GetAvailableToolsResponse{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[48]
+	mi := &file_daemon_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3515,7 +3652,7 @@ func (x *GetAvailableToolsResponse) String() string {
 func (*GetAvailableToolsResponse) ProtoMessage() {}
 
 func (x *GetAvailableToolsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[48]
+	mi := &file_daemon_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3528,7 +3665,7 @@ func (x *GetAvailableToolsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAvailableToolsResponse.ProtoReflect.Descriptor instead.
 func (*GetAvailableToolsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{48}
+	return file_daemon_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *GetAvailableToolsResponse) GetTools() []*AvailableToolInfo {
@@ -3566,7 +3703,7 @@ type AvailableToolInfo struct {
 
 func (x *AvailableToolInfo) Reset() {
 	*x = AvailableToolInfo{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[49]
+	mi := &file_daemon_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3578,7 +3715,7 @@ func (x *AvailableToolInfo) String() string {
 func (*AvailableToolInfo) ProtoMessage() {}
 
 func (x *AvailableToolInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[49]
+	mi := &file_daemon_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3591,7 +3728,7 @@ func (x *AvailableToolInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AvailableToolInfo.ProtoReflect.Descriptor instead.
 func (*AvailableToolInfo) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{49}
+	return file_daemon_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *AvailableToolInfo) GetName() string {
@@ -3676,7 +3813,7 @@ type ToolExecutionMetrics struct {
 
 func (x *ToolExecutionMetrics) Reset() {
 	*x = ToolExecutionMetrics{}
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[50]
+	mi := &file_daemon_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3688,7 +3825,7 @@ func (x *ToolExecutionMetrics) String() string {
 func (*ToolExecutionMetrics) ProtoMessage() {}
 
 func (x *ToolExecutionMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_daemon_api_daemon_proto_msgTypes[50]
+	mi := &file_daemon_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3701,7 +3838,7 @@ func (x *ToolExecutionMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolExecutionMetrics.ProtoReflect.Descriptor instead.
 func (*ToolExecutionMetrics) Descriptor() ([]byte, []int) {
-	return file_internal_daemon_api_daemon_proto_rawDescGZIP(), []int{50}
+	return file_daemon_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *ToolExecutionMetrics) GetTotalCalls() int64 {
@@ -3739,11 +3876,11 @@ func (x *ToolExecutionMetrics) GetLastExecutedAt() int64 {
 	return 0
 }
 
-var File_internal_daemon_api_daemon_proto protoreflect.FileDescriptor
+var File_daemon_proto protoreflect.FileDescriptor
 
-const file_internal_daemon_api_daemon_proto_rawDesc = "" +
+const file_daemon_proto_rawDesc = "" +
 	"\n" +
-	" internal/daemon/api/daemon.proto\x12\x10gibson.daemon.v1\"T\n" +
+	"\fdaemon.proto\x12\x10gibson.daemon.v1\"T\n" +
 	"\x0eConnectRequest\x12%\n" +
 	"\x0eclient_version\x18\x01 \x01(\tR\rclientVersion\x12\x1b\n" +
 	"\tclient_id\x18\x02 \x01(\tR\bclientId\"z\n" +
@@ -3858,7 +3995,20 @@ const file_internal_daemon_api_daemon_proto_rawDesc = "" +
 	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12 \n" +
 	"\vdescription\x18\x05 \x01(\tR\vdescription\x12\x16\n" +
 	"\x06health\x18\x06 \x01(\tR\x06health\x12\x1b\n" +
-	"\tlast_seen\x18\a \x01(\x03R\blastSeen\"\xc9\x02\n" +
+	"\tlast_seen\x18\a \x01(\x03R\blastSeen\"\x80\x01\n" +
+	"\x12QueryPluginRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
+	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
+	"\vparams_json\x18\x03 \x01(\tR\n" +
+	"paramsJson\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x04 \x01(\x03R\ttimeoutMs\"m\n" +
+	"\x13QueryPluginResponse\x12\x1f\n" +
+	"\vresult_json\x18\x01 \x01(\tR\n" +
+	"resultJson\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1f\n" +
+	"\vduration_ms\x18\x03 \x01(\x03R\n" +
+	"durationMs\"\xc9\x02\n" +
 	"\x10RunAttackRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x1f\n" +
 	"\vattack_type\x18\x02 \x01(\tR\n" +
@@ -4044,7 +4194,7 @@ const file_internal_daemon_api_daemon_proto_rawDesc = "" +
 	"\rsuccess_calls\x18\x02 \x01(\x03R\fsuccessCalls\x12!\n" +
 	"\ffailed_calls\x18\x03 \x01(\x03R\vfailedCalls\x12&\n" +
 	"\x0favg_duration_ms\x18\x04 \x01(\x03R\ravgDurationMs\x12(\n" +
-	"\x10last_executed_at\x18\x05 \x01(\x03R\x0elastExecutedAt2\xc1\x0e\n" +
+	"\x10last_executed_at\x18\x05 \x01(\x03R\x0elastExecutedAt2\x9d\x0f\n" +
 	"\rDaemonService\x12N\n" +
 	"\aConnect\x12 .gibson.daemon.v1.ConnectRequest\x1a!.gibson.daemon.v1.ConnectResponse\x12E\n" +
 	"\x04Ping\x12\x1d.gibson.daemon.v1.PingRequest\x1a\x1e.gibson.daemon.v1.PingResponse\x12K\n" +
@@ -4057,7 +4207,8 @@ const file_internal_daemon_api_daemon_proto_rawDesc = "" +
 	"ListAgents\x12#.gibson.daemon.v1.ListAgentsRequest\x1a$.gibson.daemon.v1.ListAgentsResponse\x12`\n" +
 	"\x0eGetAgentStatus\x12'.gibson.daemon.v1.GetAgentStatusRequest\x1a%.gibson.daemon.v1.AgentStatusResponse\x12T\n" +
 	"\tListTools\x12\".gibson.daemon.v1.ListToolsRequest\x1a#.gibson.daemon.v1.ListToolsResponse\x12Z\n" +
-	"\vListPlugins\x12$.gibson.daemon.v1.ListPluginsRequest\x1a%.gibson.daemon.v1.ListPluginsResponse\x12P\n" +
+	"\vListPlugins\x12$.gibson.daemon.v1.ListPluginsRequest\x1a%.gibson.daemon.v1.ListPluginsResponse\x12Z\n" +
+	"\vQueryPlugin\x12$.gibson.daemon.v1.QueryPluginRequest\x1a%.gibson.daemon.v1.QueryPluginResponse\x12P\n" +
 	"\tRunAttack\x12\".gibson.daemon.v1.RunAttackRequest\x1a\x1d.gibson.daemon.v1.AttackEvent0\x01\x12J\n" +
 	"\tSubscribe\x12\".gibson.daemon.v1.SubscribeRequest\x1a\x17.gibson.daemon.v1.Event0\x01\x12c\n" +
 	"\x0eStartComponent\x12'.gibson.daemon.v1.StartComponentRequest\x1a(.gibson.daemon.v1.StartComponentResponse\x12`\n" +
@@ -4070,19 +4221,19 @@ const file_internal_daemon_api_daemon_proto_rawDesc = "" +
 	"\x11GetAvailableTools\x12*.gibson.daemon.v1.GetAvailableToolsRequest\x1a+.gibson.daemon.v1.GetAvailableToolsResponseB7Z5github.com/zero-day-ai/gibson/internal/daemon/api;apib\x06proto3"
 
 var (
-	file_internal_daemon_api_daemon_proto_rawDescOnce sync.Once
-	file_internal_daemon_api_daemon_proto_rawDescData []byte
+	file_daemon_proto_rawDescOnce sync.Once
+	file_daemon_proto_rawDescData []byte
 )
 
-func file_internal_daemon_api_daemon_proto_rawDescGZIP() []byte {
-	file_internal_daemon_api_daemon_proto_rawDescOnce.Do(func() {
-		file_internal_daemon_api_daemon_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_internal_daemon_api_daemon_proto_rawDesc), len(file_internal_daemon_api_daemon_proto_rawDesc)))
+func file_daemon_proto_rawDescGZIP() []byte {
+	file_daemon_proto_rawDescOnce.Do(func() {
+		file_daemon_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_daemon_proto_rawDesc), len(file_daemon_proto_rawDesc)))
 	})
-	return file_internal_daemon_api_daemon_proto_rawDescData
+	return file_daemon_proto_rawDescData
 }
 
-var file_internal_daemon_api_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
-var file_internal_daemon_api_daemon_proto_goTypes = []any{
+var file_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
+var file_daemon_proto_goTypes = []any{
 	(*ConnectRequest)(nil),                // 0: gibson.daemon.v1.ConnectRequest
 	(*ConnectResponse)(nil),               // 1: gibson.daemon.v1.ConnectResponse
 	(*PingRequest)(nil),                   // 2: gibson.daemon.v1.PingRequest
@@ -4107,56 +4258,58 @@ var file_internal_daemon_api_daemon_proto_goTypes = []any{
 	(*ListPluginsRequest)(nil),            // 21: gibson.daemon.v1.ListPluginsRequest
 	(*ListPluginsResponse)(nil),           // 22: gibson.daemon.v1.ListPluginsResponse
 	(*PluginInfo)(nil),                    // 23: gibson.daemon.v1.PluginInfo
-	(*RunAttackRequest)(nil),              // 24: gibson.daemon.v1.RunAttackRequest
-	(*AttackEvent)(nil),                   // 25: gibson.daemon.v1.AttackEvent
-	(*FindingInfo)(nil),                   // 26: gibson.daemon.v1.FindingInfo
-	(*SubscribeRequest)(nil),              // 27: gibson.daemon.v1.SubscribeRequest
-	(*Event)(nil),                         // 28: gibson.daemon.v1.Event
-	(*AgentEvent)(nil),                    // 29: gibson.daemon.v1.AgentEvent
-	(*FindingEvent)(nil),                  // 30: gibson.daemon.v1.FindingEvent
-	(*StartComponentRequest)(nil),         // 31: gibson.daemon.v1.StartComponentRequest
-	(*StartComponentResponse)(nil),        // 32: gibson.daemon.v1.StartComponentResponse
-	(*StopComponentRequest)(nil),          // 33: gibson.daemon.v1.StopComponentRequest
-	(*StopComponentResponse)(nil),         // 34: gibson.daemon.v1.StopComponentResponse
-	(*OperationResult)(nil),               // 35: gibson.daemon.v1.OperationResult
-	(*PauseMissionRequest)(nil),           // 36: gibson.daemon.v1.PauseMissionRequest
-	(*PauseMissionResponse)(nil),          // 37: gibson.daemon.v1.PauseMissionResponse
-	(*ResumeMissionRequest)(nil),          // 38: gibson.daemon.v1.ResumeMissionRequest
-	(*GetMissionHistoryRequest)(nil),      // 39: gibson.daemon.v1.GetMissionHistoryRequest
-	(*GetMissionHistoryResponse)(nil),     // 40: gibson.daemon.v1.GetMissionHistoryResponse
-	(*MissionRun)(nil),                    // 41: gibson.daemon.v1.MissionRun
-	(*GetMissionCheckpointsRequest)(nil),  // 42: gibson.daemon.v1.GetMissionCheckpointsRequest
-	(*GetMissionCheckpointsResponse)(nil), // 43: gibson.daemon.v1.GetMissionCheckpointsResponse
-	(*CheckpointInfo)(nil),                // 44: gibson.daemon.v1.CheckpointInfo
-	(*ExecuteToolRequest)(nil),            // 45: gibson.daemon.v1.ExecuteToolRequest
-	(*ExecuteToolResponse)(nil),           // 46: gibson.daemon.v1.ExecuteToolResponse
-	(*GetAvailableToolsRequest)(nil),      // 47: gibson.daemon.v1.GetAvailableToolsRequest
-	(*GetAvailableToolsResponse)(nil),     // 48: gibson.daemon.v1.GetAvailableToolsResponse
-	(*AvailableToolInfo)(nil),             // 49: gibson.daemon.v1.AvailableToolInfo
-	(*ToolExecutionMetrics)(nil),          // 50: gibson.daemon.v1.ToolExecutionMetrics
-	nil,                                   // 51: gibson.daemon.v1.RunMissionRequest.VariablesEntry
-	nil,                                   // 52: gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	(*QueryPluginRequest)(nil),            // 24: gibson.daemon.v1.QueryPluginRequest
+	(*QueryPluginResponse)(nil),           // 25: gibson.daemon.v1.QueryPluginResponse
+	(*RunAttackRequest)(nil),              // 26: gibson.daemon.v1.RunAttackRequest
+	(*AttackEvent)(nil),                   // 27: gibson.daemon.v1.AttackEvent
+	(*FindingInfo)(nil),                   // 28: gibson.daemon.v1.FindingInfo
+	(*SubscribeRequest)(nil),              // 29: gibson.daemon.v1.SubscribeRequest
+	(*Event)(nil),                         // 30: gibson.daemon.v1.Event
+	(*AgentEvent)(nil),                    // 31: gibson.daemon.v1.AgentEvent
+	(*FindingEvent)(nil),                  // 32: gibson.daemon.v1.FindingEvent
+	(*StartComponentRequest)(nil),         // 33: gibson.daemon.v1.StartComponentRequest
+	(*StartComponentResponse)(nil),        // 34: gibson.daemon.v1.StartComponentResponse
+	(*StopComponentRequest)(nil),          // 35: gibson.daemon.v1.StopComponentRequest
+	(*StopComponentResponse)(nil),         // 36: gibson.daemon.v1.StopComponentResponse
+	(*OperationResult)(nil),               // 37: gibson.daemon.v1.OperationResult
+	(*PauseMissionRequest)(nil),           // 38: gibson.daemon.v1.PauseMissionRequest
+	(*PauseMissionResponse)(nil),          // 39: gibson.daemon.v1.PauseMissionResponse
+	(*ResumeMissionRequest)(nil),          // 40: gibson.daemon.v1.ResumeMissionRequest
+	(*GetMissionHistoryRequest)(nil),      // 41: gibson.daemon.v1.GetMissionHistoryRequest
+	(*GetMissionHistoryResponse)(nil),     // 42: gibson.daemon.v1.GetMissionHistoryResponse
+	(*MissionRun)(nil),                    // 43: gibson.daemon.v1.MissionRun
+	(*GetMissionCheckpointsRequest)(nil),  // 44: gibson.daemon.v1.GetMissionCheckpointsRequest
+	(*GetMissionCheckpointsResponse)(nil), // 45: gibson.daemon.v1.GetMissionCheckpointsResponse
+	(*CheckpointInfo)(nil),                // 46: gibson.daemon.v1.CheckpointInfo
+	(*ExecuteToolRequest)(nil),            // 47: gibson.daemon.v1.ExecuteToolRequest
+	(*ExecuteToolResponse)(nil),           // 48: gibson.daemon.v1.ExecuteToolResponse
+	(*GetAvailableToolsRequest)(nil),      // 49: gibson.daemon.v1.GetAvailableToolsRequest
+	(*GetAvailableToolsResponse)(nil),     // 50: gibson.daemon.v1.GetAvailableToolsResponse
+	(*AvailableToolInfo)(nil),             // 51: gibson.daemon.v1.AvailableToolInfo
+	(*ToolExecutionMetrics)(nil),          // 52: gibson.daemon.v1.ToolExecutionMetrics
+	nil,                                   // 53: gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	nil,                                   // 54: gibson.daemon.v1.RunAttackRequest.OptionsEntry
 }
-var file_internal_daemon_api_daemon_proto_depIdxs = []int32{
-	51, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
-	35, // 1: gibson.daemon.v1.MissionEvent.result:type_name -> gibson.daemon.v1.OperationResult
+var file_daemon_proto_depIdxs = []int32{
+	53, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	37, // 1: gibson.daemon.v1.MissionEvent.result:type_name -> gibson.daemon.v1.OperationResult
 	12, // 2: gibson.daemon.v1.ListMissionsResponse.missions:type_name -> gibson.daemon.v1.MissionInfo
 	15, // 3: gibson.daemon.v1.ListAgentsResponse.agents:type_name -> gibson.daemon.v1.AgentInfo
 	15, // 4: gibson.daemon.v1.AgentStatusResponse.agent:type_name -> gibson.daemon.v1.AgentInfo
 	20, // 5: gibson.daemon.v1.ListToolsResponse.tools:type_name -> gibson.daemon.v1.ToolInfo
 	23, // 6: gibson.daemon.v1.ListPluginsResponse.plugins:type_name -> gibson.daemon.v1.PluginInfo
-	52, // 7: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
-	26, // 8: gibson.daemon.v1.AttackEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
-	35, // 9: gibson.daemon.v1.AttackEvent.result:type_name -> gibson.daemon.v1.OperationResult
+	54, // 7: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	28, // 8: gibson.daemon.v1.AttackEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
+	37, // 9: gibson.daemon.v1.AttackEvent.result:type_name -> gibson.daemon.v1.OperationResult
 	7,  // 10: gibson.daemon.v1.Event.mission_event:type_name -> gibson.daemon.v1.MissionEvent
-	25, // 11: gibson.daemon.v1.Event.attack_event:type_name -> gibson.daemon.v1.AttackEvent
-	29, // 12: gibson.daemon.v1.Event.agent_event:type_name -> gibson.daemon.v1.AgentEvent
-	30, // 13: gibson.daemon.v1.Event.finding_event:type_name -> gibson.daemon.v1.FindingEvent
-	26, // 14: gibson.daemon.v1.FindingEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
-	41, // 15: gibson.daemon.v1.GetMissionHistoryResponse.runs:type_name -> gibson.daemon.v1.MissionRun
-	44, // 16: gibson.daemon.v1.GetMissionCheckpointsResponse.checkpoints:type_name -> gibson.daemon.v1.CheckpointInfo
-	49, // 17: gibson.daemon.v1.GetAvailableToolsResponse.tools:type_name -> gibson.daemon.v1.AvailableToolInfo
-	50, // 18: gibson.daemon.v1.AvailableToolInfo.metrics:type_name -> gibson.daemon.v1.ToolExecutionMetrics
+	27, // 11: gibson.daemon.v1.Event.attack_event:type_name -> gibson.daemon.v1.AttackEvent
+	31, // 12: gibson.daemon.v1.Event.agent_event:type_name -> gibson.daemon.v1.AgentEvent
+	32, // 13: gibson.daemon.v1.Event.finding_event:type_name -> gibson.daemon.v1.FindingEvent
+	28, // 14: gibson.daemon.v1.FindingEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
+	43, // 15: gibson.daemon.v1.GetMissionHistoryResponse.runs:type_name -> gibson.daemon.v1.MissionRun
+	46, // 16: gibson.daemon.v1.GetMissionCheckpointsResponse.checkpoints:type_name -> gibson.daemon.v1.CheckpointInfo
+	51, // 17: gibson.daemon.v1.GetAvailableToolsResponse.tools:type_name -> gibson.daemon.v1.AvailableToolInfo
+	52, // 18: gibson.daemon.v1.AvailableToolInfo.metrics:type_name -> gibson.daemon.v1.ToolExecutionMetrics
 	0,  // 19: gibson.daemon.v1.DaemonService.Connect:input_type -> gibson.daemon.v1.ConnectRequest
 	2,  // 20: gibson.daemon.v1.DaemonService.Ping:input_type -> gibson.daemon.v1.PingRequest
 	4,  // 21: gibson.daemon.v1.DaemonService.Status:input_type -> gibson.daemon.v1.StatusRequest
@@ -4167,49 +4320,51 @@ var file_internal_daemon_api_daemon_proto_depIdxs = []int32{
 	16, // 26: gibson.daemon.v1.DaemonService.GetAgentStatus:input_type -> gibson.daemon.v1.GetAgentStatusRequest
 	18, // 27: gibson.daemon.v1.DaemonService.ListTools:input_type -> gibson.daemon.v1.ListToolsRequest
 	21, // 28: gibson.daemon.v1.DaemonService.ListPlugins:input_type -> gibson.daemon.v1.ListPluginsRequest
-	24, // 29: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
-	27, // 30: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
-	31, // 31: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
-	33, // 32: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
-	36, // 33: gibson.daemon.v1.DaemonService.PauseMission:input_type -> gibson.daemon.v1.PauseMissionRequest
-	38, // 34: gibson.daemon.v1.DaemonService.ResumeMission:input_type -> gibson.daemon.v1.ResumeMissionRequest
-	39, // 35: gibson.daemon.v1.DaemonService.GetMissionHistory:input_type -> gibson.daemon.v1.GetMissionHistoryRequest
-	42, // 36: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:input_type -> gibson.daemon.v1.GetMissionCheckpointsRequest
-	45, // 37: gibson.daemon.v1.DaemonService.ExecuteTool:input_type -> gibson.daemon.v1.ExecuteToolRequest
-	47, // 38: gibson.daemon.v1.DaemonService.GetAvailableTools:input_type -> gibson.daemon.v1.GetAvailableToolsRequest
-	1,  // 39: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
-	3,  // 40: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
-	5,  // 41: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
-	7,  // 42: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
-	9,  // 43: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
-	11, // 44: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
-	14, // 45: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
-	17, // 46: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
-	19, // 47: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
-	22, // 48: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
-	25, // 49: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
-	28, // 50: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
-	32, // 51: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
-	34, // 52: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
-	37, // 53: gibson.daemon.v1.DaemonService.PauseMission:output_type -> gibson.daemon.v1.PauseMissionResponse
-	7,  // 54: gibson.daemon.v1.DaemonService.ResumeMission:output_type -> gibson.daemon.v1.MissionEvent
-	40, // 55: gibson.daemon.v1.DaemonService.GetMissionHistory:output_type -> gibson.daemon.v1.GetMissionHistoryResponse
-	43, // 56: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:output_type -> gibson.daemon.v1.GetMissionCheckpointsResponse
-	46, // 57: gibson.daemon.v1.DaemonService.ExecuteTool:output_type -> gibson.daemon.v1.ExecuteToolResponse
-	48, // 58: gibson.daemon.v1.DaemonService.GetAvailableTools:output_type -> gibson.daemon.v1.GetAvailableToolsResponse
-	39, // [39:59] is the sub-list for method output_type
-	19, // [19:39] is the sub-list for method input_type
+	24, // 29: gibson.daemon.v1.DaemonService.QueryPlugin:input_type -> gibson.daemon.v1.QueryPluginRequest
+	26, // 30: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
+	29, // 31: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
+	33, // 32: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
+	35, // 33: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
+	38, // 34: gibson.daemon.v1.DaemonService.PauseMission:input_type -> gibson.daemon.v1.PauseMissionRequest
+	40, // 35: gibson.daemon.v1.DaemonService.ResumeMission:input_type -> gibson.daemon.v1.ResumeMissionRequest
+	41, // 36: gibson.daemon.v1.DaemonService.GetMissionHistory:input_type -> gibson.daemon.v1.GetMissionHistoryRequest
+	44, // 37: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:input_type -> gibson.daemon.v1.GetMissionCheckpointsRequest
+	47, // 38: gibson.daemon.v1.DaemonService.ExecuteTool:input_type -> gibson.daemon.v1.ExecuteToolRequest
+	49, // 39: gibson.daemon.v1.DaemonService.GetAvailableTools:input_type -> gibson.daemon.v1.GetAvailableToolsRequest
+	1,  // 40: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
+	3,  // 41: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
+	5,  // 42: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
+	7,  // 43: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
+	9,  // 44: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
+	11, // 45: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
+	14, // 46: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
+	17, // 47: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
+	19, // 48: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
+	22, // 49: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
+	25, // 50: gibson.daemon.v1.DaemonService.QueryPlugin:output_type -> gibson.daemon.v1.QueryPluginResponse
+	27, // 51: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
+	30, // 52: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
+	34, // 53: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
+	36, // 54: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
+	39, // 55: gibson.daemon.v1.DaemonService.PauseMission:output_type -> gibson.daemon.v1.PauseMissionResponse
+	7,  // 56: gibson.daemon.v1.DaemonService.ResumeMission:output_type -> gibson.daemon.v1.MissionEvent
+	42, // 57: gibson.daemon.v1.DaemonService.GetMissionHistory:output_type -> gibson.daemon.v1.GetMissionHistoryResponse
+	45, // 58: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:output_type -> gibson.daemon.v1.GetMissionCheckpointsResponse
+	48, // 59: gibson.daemon.v1.DaemonService.ExecuteTool:output_type -> gibson.daemon.v1.ExecuteToolResponse
+	50, // 60: gibson.daemon.v1.DaemonService.GetAvailableTools:output_type -> gibson.daemon.v1.GetAvailableToolsResponse
+	40, // [40:61] is the sub-list for method output_type
+	19, // [19:40] is the sub-list for method input_type
 	19, // [19:19] is the sub-list for extension type_name
 	19, // [19:19] is the sub-list for extension extendee
 	0,  // [0:19] is the sub-list for field type_name
 }
 
-func init() { file_internal_daemon_api_daemon_proto_init() }
-func file_internal_daemon_api_daemon_proto_init() {
-	if File_internal_daemon_api_daemon_proto != nil {
+func init() { file_daemon_proto_init() }
+func file_daemon_proto_init() {
+	if File_daemon_proto != nil {
 		return
 	}
-	file_internal_daemon_api_daemon_proto_msgTypes[28].OneofWrappers = []any{
+	file_daemon_proto_msgTypes[30].OneofWrappers = []any{
 		(*Event_MissionEvent)(nil),
 		(*Event_AttackEvent)(nil),
 		(*Event_AgentEvent)(nil),
@@ -4219,17 +4374,17 @@ func file_internal_daemon_api_daemon_proto_init() {
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_daemon_api_daemon_proto_rawDesc), len(file_internal_daemon_api_daemon_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_daemon_proto_rawDesc), len(file_daemon_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   53,
+			NumMessages:   55,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_internal_daemon_api_daemon_proto_goTypes,
-		DependencyIndexes: file_internal_daemon_api_daemon_proto_depIdxs,
-		MessageInfos:      file_internal_daemon_api_daemon_proto_msgTypes,
+		GoTypes:           file_daemon_proto_goTypes,
+		DependencyIndexes: file_daemon_proto_depIdxs,
+		MessageInfos:      file_daemon_proto_msgTypes,
 	}.Build()
-	File_internal_daemon_api_daemon_proto = out.File
-	file_internal_daemon_api_daemon_proto_goTypes = nil
-	file_internal_daemon_api_daemon_proto_depIdxs = nil
+	File_daemon_proto = out.File
+	file_daemon_proto_goTypes = nil
+	file_daemon_proto_depIdxs = nil
 }

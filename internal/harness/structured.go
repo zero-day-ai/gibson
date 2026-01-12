@@ -10,7 +10,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/schema"
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -100,8 +100,8 @@ func CompleteStructured[T any](
 	sdkSchema := convertToSDKSchema(jsonSchema)
 
 	// Build ResponseFormat with strict validation
-	format := &sdktypes.ResponseFormat{
-		Type:   sdktypes.ResponseFormatJSONSchema,
+	format := &types.ResponseFormat{
+		Type:   types.ResponseFormatJSONSchema,
 		Name:   typeName,
 		Schema: sdkSchema,
 		Strict: true,
@@ -353,14 +353,14 @@ type StructuredResponse struct {
 //
 // Example:
 //
-//	schema := &sdktypes.ResponseFormat{
-//	    Type:   sdktypes.ResponseFormatJSONSchema,
+//	schema := &types.ResponseFormat{
+//	    Type:   types.ResponseFormatJSONSchema,
 //	    Name:   "analysis_result",
-//	    Schema: &sdktypes.JSONSchema{
+//	    Schema: &types.JSONSchema{
 //	        Type: "object",
-//	        Properties: map[string]*sdktypes.JSONSchema{
+//	        Properties: map[string]*types.JSONSchema{
 //	            "severity": {Type: "string"},
-//	            "findings": {Type: "array", Items: &sdktypes.JSONSchema{Type: "string"}},
+//	            "findings": {Type: "array", Items: &types.JSONSchema{Type: "string"}},
 //	        },
 //	        Required: []string{"severity", "findings"},
 //	    },
@@ -382,7 +382,7 @@ func (h *DefaultAgentHarness) CompleteWithSchema(
 	ctx context.Context,
 	slot string,
 	messages []llm.Message,
-	format *sdktypes.ResponseFormat,
+	format *types.ResponseFormat,
 	opts ...CompletionOption,
 ) (*StructuredResponse, error) {
 	// Create span for distributed tracing
@@ -610,12 +610,12 @@ func (h *DefaultAgentHarness) CompleteWithSchema(
 // convertToSDKSchema converts internal schema.JSONSchema to sdk/types.JSONSchema.
 // This handles the translation between the internal schema representation used
 // for generation and the SDK type used in the public API.
-func convertToSDKSchema(s schema.JSONSchema) *sdktypes.JSONSchema {
+func convertToSDKSchema(s schema.JSONSchema) *types.JSONSchema {
 	if s.Type == "" {
 		return nil
 	}
 
-	result := &sdktypes.JSONSchema{
+	result := &types.JSONSchema{
 		Type:        s.Type,
 		Description: s.Description,
 		Required:    s.Required,
@@ -623,7 +623,7 @@ func convertToSDKSchema(s schema.JSONSchema) *sdktypes.JSONSchema {
 
 	// Convert properties
 	if len(s.Properties) > 0 {
-		result.Properties = make(map[string]*sdktypes.JSONSchema)
+		result.Properties = make(map[string]*types.JSONSchema)
 		for name, field := range s.Properties {
 			result.Properties[name] = convertSchemaFieldToSDK(field)
 		}
@@ -644,8 +644,8 @@ func convertToSDKSchema(s schema.JSONSchema) *sdktypes.JSONSchema {
 
 // convertSchemaFieldToSDK converts internal schema.SchemaField to sdk/types.JSONSchema.
 // This recursive function handles nested schemas and all field types.
-func convertSchemaFieldToSDK(f schema.SchemaField) *sdktypes.JSONSchema {
-	result := &sdktypes.JSONSchema{
+func convertSchemaFieldToSDK(f schema.SchemaField) *types.JSONSchema {
+	result := &types.JSONSchema{
 		Type:        f.Type,
 		Description: f.Description,
 		Format:      f.Format,
@@ -667,7 +667,7 @@ func convertSchemaFieldToSDK(f schema.SchemaField) *sdktypes.JSONSchema {
 
 	// Convert nested properties
 	if len(f.Properties) > 0 {
-		result.Properties = make(map[string]*sdktypes.JSONSchema)
+		result.Properties = make(map[string]*types.JSONSchema)
 		for name, nestedField := range f.Properties {
 			result.Properties[name] = convertSchemaFieldToSDK(nestedField)
 		}
@@ -734,8 +734,8 @@ func (h *DefaultAgentHarness) CompleteStructuredAny(
 	sdkSchema := convertToSDKSchema(jsonSchema)
 
 	// Build ResponseFormat with strict validation
-	format := &sdktypes.ResponseFormat{
-		Type:   sdktypes.ResponseFormatJSONSchema,
+	format := &types.ResponseFormat{
+		Type:   types.ResponseFormatJSONSchema,
 		Name:   typeName,
 		Schema: sdkSchema,
 		Strict: true,

@@ -43,6 +43,10 @@ service DaemonService {
   // ListPlugins returns all registered plugins from the etcd registry.
   rpc ListPlugins(ListPluginsRequest) returns (ListPluginsResponse);
 
+  // QueryPlugin executes a method on a plugin and returns the result.
+  // The plugin must be registered in the etcd registry.
+  rpc QueryPlugin(QueryPluginRequest) returns (QueryPluginResponse);
+
   // RunAttack executes an attack and streams progress events.
   // The stream remains open until the attack completes or is stopped.
   rpc RunAttack(RunAttackRequest) returns (stream AttackEvent);
@@ -388,6 +392,33 @@ message PluginInfo {
 
   // last_seen is when the plugin was last seen (Unix timestamp)
   int64 last_seen = 7;
+}
+
+// QueryPluginRequest executes a method on a plugin.
+message QueryPluginRequest {
+  // name is the plugin name to query
+  string name = 1;
+
+  // method is the method name to execute
+  string method = 2;
+
+  // params_json is the JSON-encoded parameters for the method
+  string params_json = 3;
+
+  // timeout_ms is the optional timeout in milliseconds (0 = default)
+  int64 timeout_ms = 4;
+}
+
+// QueryPluginResponse returns the result of a plugin query.
+message QueryPluginResponse {
+  // result_json is the JSON-encoded result from the plugin method
+  string result_json = 1;
+
+  // error is set if the query failed
+  string error = 2;
+
+  // duration_ms is how long the query took in milliseconds
+  int64 duration_ms = 3;
 }
 
 // RunAttackRequest executes an attack.

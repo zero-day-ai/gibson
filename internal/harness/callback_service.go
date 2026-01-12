@@ -2118,7 +2118,7 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 	if req.Context == nil {
 		return &pb.GetCredentialResponse{
 			Error: &pb.HarnessError{
-				Code:    string(codes.InvalidArgument),
+				Code:    codes.InvalidArgument.String(),
 				Message: "missing context info in request",
 			},
 		}, nil
@@ -2136,7 +2136,7 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 		s.logger.Warn("GetCredential called but credential store not configured")
 		return &pb.GetCredentialResponse{
 			Error: &pb.HarnessError{
-				Code:    string(codes.Unavailable),
+				Code:    codes.Unavailable.String(),
 				Message: "credential store not available",
 			},
 		}, nil
@@ -2148,7 +2148,7 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 		s.logger.Warn("GetCredential failed", "name", req.Name, "error", err)
 		return &pb.GetCredentialResponse{
 			Error: &pb.HarnessError{
-				Code:    string(codes.NotFound),
+				Code:    codes.NotFound.String(),
 				Message: fmt.Sprintf("credential %q not found: %v", req.Name, err),
 			},
 		}, nil

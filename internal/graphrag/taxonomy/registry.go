@@ -54,6 +54,45 @@ type TaxonomyRegistry interface {
 	// GenerateNodeID generates a deterministic ID from a node type's ID template.
 	// Properties map should contain values for all template placeholders.
 	GenerateNodeID(typeName string, properties map[string]any) (string, error)
+
+	// GetTargetType returns a target type definition by its Type field.
+	GetTargetType(typeName string) (*TargetTypeDefinition, bool)
+
+	// ListTargetTypes returns all target type definitions.
+	ListTargetTypes() []*TargetTypeDefinition
+
+	// ListTargetTypesByCategory returns target types filtered by category.
+	ListTargetTypesByCategory(category string) []*TargetTypeDefinition
+
+	// ValidateTargetType checks if a target type string exists.
+	ValidateTargetType(typeName string) bool
+
+	// GetTechniqueType returns a technique type definition by its Type field.
+	GetTechniqueType(typeName string) (*TechniqueTypeDefinition, bool)
+
+	// ListTechniqueTypes returns all technique type definitions.
+	ListTechniqueTypes() []*TechniqueTypeDefinition
+
+	// ListTechniqueTypesByCategory returns technique types filtered by category (MITRE tactic).
+	ListTechniqueTypesByCategory(category string) []*TechniqueTypeDefinition
+
+	// ValidateTechniqueType checks if a technique type string exists.
+	ValidateTechniqueType(typeName string) bool
+
+	// GetTechniqueTypesByMITRE returns technique types that reference a specific MITRE ATT&CK ID.
+	GetTechniqueTypesByMITRE(mitreID string) []*TechniqueTypeDefinition
+
+	// GetCapability returns a capability definition by its ID.
+	GetCapability(id string) (*CapabilityDefinition, bool)
+
+	// ListCapabilities returns all capability definitions.
+	ListCapabilities() []*CapabilityDefinition
+
+	// GetTechniqueTypesForCapability returns the technique types associated with a capability.
+	GetTechniqueTypesForCapability(capability string) []string
+
+	// ValidateCapability checks if a capability ID exists.
+	ValidateCapability(id string) bool
 }
 
 // taxonomyRegistry is the default implementation of TaxonomyRegistry.
@@ -327,4 +366,177 @@ func LoadAndValidateTaxonomyWithCustom(customPath string) (TaxonomyRegistry, err
 	}
 
 	return registry, nil
+}
+
+// GetTargetType returns a target type definition by its Type field.
+func (r *taxonomyRegistry) GetTargetType(typeName string) (*TargetTypeDefinition, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	def, ok := r.taxonomy.TargetTypes[typeName]
+	if !ok {
+		return nil, false
+	}
+	// Return a copy to prevent external modification
+	defCopy := *def
+	return &defCopy, true
+}
+
+// ListTargetTypes returns all target type definitions.
+func (r *taxonomyRegistry) ListTargetTypes() []*TargetTypeDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	types := make([]*TargetTypeDefinition, 0, len(r.taxonomy.TargetTypes))
+	for _, targetDef := range r.taxonomy.TargetTypes {
+		defCopy := *targetDef
+		types = append(types, &defCopy)
+	}
+	return types
+}
+
+// ListTargetTypesByCategory returns target types filtered by category.
+func (r *taxonomyRegistry) ListTargetTypesByCategory(category string) []*TargetTypeDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	types := make([]*TargetTypeDefinition, 0)
+	for _, targetDef := range r.taxonomy.TargetTypes {
+		if targetDef.Category == category {
+			defCopy := *targetDef
+			types = append(types, &defCopy)
+		}
+	}
+	return types
+}
+
+// ValidateTargetType checks if a target type string exists.
+func (r *taxonomyRegistry) ValidateTargetType(typeName string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, ok := r.taxonomy.TargetTypes[typeName]
+	return ok
+}
+
+// GetTechniqueType returns a technique type definition by its Type field.
+func (r *taxonomyRegistry) GetTechniqueType(typeName string) (*TechniqueTypeDefinition, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	def, ok := r.taxonomy.TechniqueTypes[typeName]
+	if !ok {
+		return nil, false
+	}
+	// Return a copy to prevent external modification
+	defCopy := *def
+	return &defCopy, true
+}
+
+// ListTechniqueTypes returns all technique type definitions.
+func (r *taxonomyRegistry) ListTechniqueTypes() []*TechniqueTypeDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	types := make([]*TechniqueTypeDefinition, 0, len(r.taxonomy.TechniqueTypes))
+	for _, techniqueDef := range r.taxonomy.TechniqueTypes {
+		defCopy := *techniqueDef
+		types = append(types, &defCopy)
+	}
+	return types
+}
+
+// ListTechniqueTypesByCategory returns technique types filtered by category (MITRE tactic).
+func (r *taxonomyRegistry) ListTechniqueTypesByCategory(category string) []*TechniqueTypeDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	types := make([]*TechniqueTypeDefinition, 0)
+	for _, techniqueDef := range r.taxonomy.TechniqueTypes {
+		if techniqueDef.Category == category {
+			defCopy := *techniqueDef
+			types = append(types, &defCopy)
+		}
+	}
+	return types
+}
+
+// ValidateTechniqueType checks if a technique type string exists.
+func (r *taxonomyRegistry) ValidateTechniqueType(typeName string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, ok := r.taxonomy.TechniqueTypes[typeName]
+	return ok
+}
+
+// GetTechniqueTypesByMITRE returns technique types that reference a specific MITRE ATT&CK ID.
+func (r *taxonomyRegistry) GetTechniqueTypesByMITRE(mitreID string) []*TechniqueTypeDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	types := make([]*TechniqueTypeDefinition, 0)
+	for _, techniqueDef := range r.taxonomy.TechniqueTypes {
+		// Check if mitreID is in the mitre_ids slice
+		for _, id := range techniqueDef.MITREIDs {
+			if id == mitreID {
+				defCopy := *techniqueDef
+				types = append(types, &defCopy)
+				break
+			}
+		}
+	}
+	return types
+}
+
+// GetCapability returns a capability definition by its ID.
+func (r *taxonomyRegistry) GetCapability(id string) (*CapabilityDefinition, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	def, ok := r.taxonomy.Capabilities[id]
+	if !ok {
+		return nil, false
+	}
+	// Return a copy to prevent external modification
+	defCopy := *def
+	return &defCopy, true
+}
+
+// ListCapabilities returns all capability definitions.
+func (r *taxonomyRegistry) ListCapabilities() []*CapabilityDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	capabilities := make([]*CapabilityDefinition, 0, len(r.taxonomy.Capabilities))
+	for _, capDef := range r.taxonomy.Capabilities {
+		defCopy := *capDef
+		capabilities = append(capabilities, &defCopy)
+	}
+	return capabilities
+}
+
+// GetTechniqueTypesForCapability returns the technique types associated with a capability.
+func (r *taxonomyRegistry) GetTechniqueTypesForCapability(capability string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	cap, ok := r.taxonomy.Capabilities[capability]
+	if !ok {
+		return []string{}
+	}
+
+	// Return a copy of the slice to prevent external modification
+	techniqueTypes := make([]string, len(cap.TechniqueTypes))
+	copy(techniqueTypes, cap.TechniqueTypes)
+	return techniqueTypes
+}
+
+// ValidateCapability checks if a capability ID exists.
+func (r *taxonomyRegistry) ValidateCapability(id string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, ok := r.taxonomy.Capabilities[id]
+	return ok
 }

@@ -6,10 +6,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	internalcomp "github.com/zero-day-ai/gibson/internal/component"
-	"github.com/zero-day-ai/gibson/internal/plugin"
-
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
+	internalcomp "github.com/zero-day-ai/gibson/internal/component"
+	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 )
 
 var pluginCmd = &cobra.Command{
@@ -64,60 +63,23 @@ func runPluginQuery(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid JSON parameters: %w", err)
 	}
 
-	// Get component DAO to verify plugin exists and is running
-	dao, db, err := getComponentDAO()
-	if err != nil {
-		return fmt.Errorf("failed to get component DAO: %w", err)
-	}
-	defer db.Close()
-
-	pluginComp, err := dao.GetByName(ctx, internalcomp.ComponentKindPlugin, pluginName)
-	if err != nil {
-		return fmt.Errorf("failed to get plugin: %w", err)
-	}
-	if pluginComp == nil {
-		return fmt.Errorf("plugin '%s' not found", pluginName)
+	// Get daemon client from context (set by root.go in Client mode)
+	client := component.GetDaemonClient(ctx)
+	if client == nil {
+		return fmt.Errorf("daemon not connected (ensure daemon is running)")
 	}
 
-	if !pluginComp.IsRunning() {
-		return fmt.Errorf("plugin '%s' is not running. Start it first with: gibson plugin start %s", pluginName, pluginName)
+	// Type assert to daemon client
+	dc, ok := client.(*daemonclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
 	}
 
 	cmd.Printf("Querying plugin '%s' method '%s'...\n", pluginName, pluginQueryMethod)
 
-	// Get plugin registry
-	pluginRegistry := getPluginRegistry()
-
-	// Verify method exists
-	methods, err := pluginRegistry.Methods(pluginName)
-	if err != nil {
-		return fmt.Errorf("failed to get plugin methods: %w", err)
-	}
-
-	methodExists := false
-	for _, m := range methods {
-		if m.Name == pluginQueryMethod {
-			methodExists = true
-			break
-		}
-	}
-
-	if !methodExists {
-		cmd.Printf("Error: Method '%s' not found in plugin '%s'\n\n", pluginQueryMethod, pluginName)
-		cmd.Printf("Available methods:\n")
-		for _, m := range methods {
-			cmd.Printf("  - %s", m.Name)
-			if m.Description != "" {
-				cmd.Printf(": %s", m.Description)
-			}
-			cmd.Println()
-		}
-		return fmt.Errorf("method '%s' not found", pluginQueryMethod)
-	}
-
-	// Execute query
+	// Execute query via daemon
 	start := time.Now()
-	result, err := pluginRegistry.Query(ctx, pluginName, pluginQueryMethod, params)
+	result, err := dc.QueryPlugin(ctx, pluginName, pluginQueryMethod, params)
 	if err != nil {
 		return fmt.Errorf("query failed: %w", err)
 	}
@@ -128,7 +90,7 @@ func runPluginQuery(cmd *cobra.Command, args []string) error {
 
 	// Display result as formatted JSON
 	cmd.Printf("\nResult:\n")
-	resultJSON, err := json.MarshalIndent(result, "", "  ")
+	resultJSON, err := json.MarshalIndent(result.Result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to format result: %w", err)
 	}
@@ -136,11 +98,4 @@ func runPluginQuery(cmd *cobra.Command, args []string) error {
 	cmd.Printf("%s\n", string(resultJSON))
 
 	return nil
-}
-
-// getPluginRegistry creates or retrieves the plugin registry
-func getPluginRegistry() plugin.PluginRegistry {
-	// In a real implementation, this would be a singleton or retrieved from a global context
-	// For now, create a new one
-	return plugin.NewPluginRegistry()
 }

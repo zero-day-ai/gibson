@@ -3,8 +3,6 @@ package llm
 import (
 	"context"
 
-	sdktypes "github.com/zero-day-ai/gibson/sdk/types"
-
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -109,7 +107,7 @@ type StructuredOutputProvider interface {
 	// Returns:
 	//   - true if the provider can handle completions with this format type
 	//   - false otherwise
-	SupportsStructuredOutput(format sdktypes.ResponseFormatType) bool
+	SupportsStructuredOutput(format types.ResponseFormatType) bool
 
 	// CompleteStructured performs a completion with structured output enforcement.
 	// This method guarantees that the response will contain valid JSON conforming to
