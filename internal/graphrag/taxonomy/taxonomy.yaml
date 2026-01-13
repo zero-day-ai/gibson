@@ -38,3 +38,9 @@ includes:
 
   # Capability definitions
   - "capabilities/capabilities.yaml"
+
+  # Execution event definitions
+  - "execution_events.yaml"
+
+  # Tool output schema definitions
+  - "tool_outputs.yaml"

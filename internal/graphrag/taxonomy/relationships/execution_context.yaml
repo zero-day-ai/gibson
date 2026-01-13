@@ -39,14 +39,14 @@ relationship_types:
     to_types: [agent_run]
     bidirectional: false
 
-  # DISCOVERED: agent_run -> (any asset node)
+  # DISCOVERED: agent_run -> (any asset node or finding)
   - id: rel.execution.discovered
     name: DISCOVERED
     type: DISCOVERED
     category: execution
-    description: "Agent run discovered an asset"
+    description: "Agent run discovered an asset or finding"
     from_types: [agent_run]
-    to_types: [domain, subdomain, host, port, service, endpoint, api, technology, cloud_asset, certificate]
+    to_types: [domain, subdomain, host, port, service, endpoint, api, technology, cloud_asset, certificate, finding]
     bidirectional: false
     properties:
       - name: discovery_timestamp
@@ -72,3 +72,26 @@ relationship_types:
         type: float64
         required: false
         description: "Confidence in the finding (0.0-1.0)"
+      - name: discovered_at
+        type: string
+        required: false
+        description: "When the finding was discovered (ISO 8601)"
+
+  # DELEGATED_TO: agent_run -> agent_run
+  - id: rel.execution.delegated_to
+    name: DELEGATED_TO
+    type: DELEGATED_TO
+    category: execution
+    description: "Agent run delegated a task to another agent run"
+    from_types: [agent_run]
+    to_types: [agent_run]
+    bidirectional: false
+    properties:
+      - name: task_description
+        type: string
+        required: false
+        description: "Description of the delegated task"
+      - name: delegated_at
+        type: string
+        required: false
+        description: "When the delegation occurred (ISO 8601)"

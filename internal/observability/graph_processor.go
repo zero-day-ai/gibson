@@ -6,33 +6,33 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/graphrag"
+	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // GraphSpanProcessor implements sdktrace.SpanProcessor to write completed spans
-// to the ExecutionGraphStore for observability and cross-mission correlation.
+// to the TaxonomyGraphEngine for observability and cross-mission correlation.
 //
-// The processor maps span names to appropriate store.Record* methods:
-//   - "gen_ai.chat" / "gen_ai.chat.stream" → RecordLLMCall
-//   - "gen_ai.tool" → RecordToolCall
-//   - "gibson.agent.delegate" → RecordDelegation
-//   - "gibson.mission.execute" → RecordMissionStart/Complete
-//   - Spans starting with "gibson.agent." → RecordAgentStart/Complete
+// The processor maps span names to taxonomy event types:
+//   - "gen_ai.chat" / "gen_ai.chat.stream" → "llm.call"
+//   - "gen_ai.tool" → "tool.call"
+//   - "gibson.agent.delegate" → "agent.delegate"
+//   - "gibson.mission.execute" → "mission.start" and "mission.end"
+//   - Spans starting with "gibson.agent." → "agent.start" and "agent.end"
 //
 // Thread-safety: All methods are safe for concurrent access.
 type GraphSpanProcessor struct {
-	store  graphrag.ExecutionGraphStore
+	engine engine.TaxonomyGraphEngine
 	logger *slog.Logger
 }
 
 // NewGraphSpanProcessor creates a new GraphSpanProcessor that writes spans
-// to the provided ExecutionGraphStore.
-func NewGraphSpanProcessor(store graphrag.ExecutionGraphStore, logger *slog.Logger) *GraphSpanProcessor {
+// to the provided TaxonomyGraphEngine.
+func NewGraphSpanProcessor(taxonomyEngine engine.TaxonomyGraphEngine, logger *slog.Logger) *GraphSpanProcessor {
 	return &GraphSpanProcessor{
-		store:  store,
+		engine: taxonomyEngine,
 		logger: logger,
 	}
 }
@@ -77,168 +77,143 @@ func (p *GraphSpanProcessor) processSpan(spanName, traceID, spanID string, s sdk
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var err error
+	// Map span name to event type(s) and extract data
+	eventTypes := p.mapSpanToEventTypes(spanName)
+	if len(eventTypes) == 0 {
+		// Unknown span type - log debug and skip
+		p.logger.Debug("unknown span type, skipping",
+			"span_name", spanName,
+			"trace_id", traceID)
+		return
+	}
 
-	// Route span to appropriate handler based on span name
+	// Extract span data into a map for taxonomy processing
+	data := p.extractSpanData(s, traceID, spanID)
+
+	// Process each event type
+	for _, eventType := range eventTypes {
+		// For end events, modify the data to include completion status
+		if strings.HasSuffix(eventType, ".end") || strings.HasSuffix(eventType, ".complete") {
+			data["status"] = p.getSpanStatus(s)
+			data["duration_ms"] = s.EndTime().Sub(s.StartTime()).Milliseconds()
+			data["completed_at"] = s.EndTime()
+		}
+
+		// Get agent run ID for context
+		agentRunID := getStringAttribute(s, "gibson.agent.run_id")
+		if agentRunID == "" {
+			// Fallback to span_id if no agent run ID
+			agentRunID = spanID
+		}
+
+		// Add agent_run_id to the data map if not already present
+		if _, ok := data["agent_run_id"]; !ok {
+			data["agent_run_id"] = agentRunID
+		}
+
+		// Handle the event via the taxonomy engine
+		if err := p.engine.HandleEvent(ctx, eventType, data); err != nil {
+			p.logger.Error("failed to handle execution event",
+				"event_type", eventType,
+				"span_name", spanName,
+				"trace_id", traceID,
+				"span_id", spanID,
+				"error", err)
+		}
+	}
+}
+
+// mapSpanToEventTypes maps OpenTelemetry span names to taxonomy event types.
+// Returns a slice of event types because some spans (like mission.execute) map to multiple events.
+func (p *GraphSpanProcessor) mapSpanToEventTypes(spanName string) []string {
 	switch {
 	case spanName == SpanGenAIChat || spanName == SpanGenAIChatStream:
-		err = p.recordLLMCall(ctx, traceID, spanID, s)
+		return []string{"llm.call"}
 
 	case spanName == SpanGenAITool:
-		err = p.recordToolCall(ctx, traceID, spanID, s)
+		return []string{"tool.call"}
 
 	case spanName == SpanAgentDelegate:
-		err = p.recordDelegation(ctx, traceID, spanID, s)
+		return []string{"agent.delegate"}
 
 	case spanName == "gibson.mission.execute":
-		// Mission execution span completed - record both start and completion
-		if err = p.recordMissionStart(ctx, traceID, spanID, s); err != nil {
-			break
-		}
-		err = p.recordMissionComplete(ctx, traceID, spanID, s)
+		// Mission spans represent both start and end
+		return []string{"mission.start", "mission.end"}
 
 	case strings.HasPrefix(spanName, "gibson.agent."):
-		// Agent execution span completed - record both start and completion
-		if err = p.recordAgentStart(ctx, traceID, spanID, s); err != nil {
-			break
+		// Agent spans represent both start and end
+		return []string{"agent.start", "agent.end"}
+
+	default:
+		// Unknown span type
+		return []string{}
+	}
+}
+
+// extractSpanData extracts all relevant data from a span into a map.
+// This data will be used by the taxonomy engine to create nodes and relationships.
+func (p *GraphSpanProcessor) extractSpanData(s sdktrace.ReadOnlySpan, traceID, spanID string) map[string]any {
+	data := make(map[string]any)
+
+	// Add trace/span identifiers
+	data["trace_id"] = traceID
+	data["span_id"] = spanID
+
+	// Add timing information
+	data["timestamp"] = s.StartTime()
+	data["started_at"] = s.StartTime()
+	data["ended_at"] = s.EndTime()
+	data["duration_ms"] = s.EndTime().Sub(s.StartTime()).Milliseconds()
+
+	// Extract all span attributes
+	for _, attr := range s.Attributes() {
+		key := string(attr.Key)
+		value := attr.Value.AsInterface()
+
+		// Map common Gibson attributes to expected field names
+		switch key {
+		case GibsonMissionID:
+			// Parse mission ID as types.ID if possible
+			if midStr, ok := value.(string); ok {
+				if mid, err := types.ParseID(midStr); err == nil {
+					data["mission_id"] = mid
+				} else {
+					data["mission_id"] = midStr
+				}
+			}
+		case GibsonAgentName:
+			data["agent_name"] = value
+		case GibsonToolName:
+			data["tool_name"] = value
+		case GenAIResponseModel:
+			data["model"] = value
+		case GenAISystem:
+			data["provider"] = value
+		case GenAIUsageInputTokens:
+			data["tokens_in"] = value
+		case GenAIUsageOutputTokens:
+			data["tokens_out"] = value
+		case GibsonLLMCost:
+			data["cost_usd"] = value
+		default:
+			// Store all other attributes with their original names
+			data[key] = value
 		}
-		err = p.recordAgentComplete(ctx, traceID, spanID, s)
 	}
 
-	// Log errors but don't fail - observability should not break the main flow
-	if err != nil {
-		p.logger.Error("failed to record span to graph store",
-			slog.String("span_name", spanName),
-			slog.String("trace_id", traceID),
-			slog.String("span_id", spanID),
-			slog.String("error", err.Error()),
-		)
-	}
+	return data
 }
 
-// recordLLMCall extracts LLM call attributes and writes to the store.
-func (p *GraphSpanProcessor) recordLLMCall(ctx context.Context, traceID, spanID string, s sdktrace.ReadOnlySpan) error {
-	event := graphrag.LLMCallEvent{
-		AgentName: getStringAttribute(s, GibsonAgentName),
-		MissionID: types.ID(getStringAttribute(s, GibsonMissionID)),
-		Model:     getStringAttribute(s, GenAIResponseModel),
-		Provider:  getStringAttribute(s, GenAISystem),
-		Slot:      getStringAttribute(s, "gibson.llm.slot"),
-		TokensIn:  int(getIntAttribute(s, GenAIUsageInputTokens)),
-		TokensOut: int(getIntAttribute(s, GenAIUsageOutputTokens)),
-		CostUSD:   getFloatAttribute(s, GibsonLLMCost),
-		LatencyMs: s.EndTime().Sub(s.StartTime()).Milliseconds(),
-		TraceID:   traceID,
-		SpanID:    spanID,
-		Timestamp: s.EndTime(),
+// getSpanStatus determines the status string from a span's status code.
+func (p *GraphSpanProcessor) getSpanStatus(s sdktrace.ReadOnlySpan) string {
+	switch s.Status().Code {
+	case codes.Ok:
+		return "success"
+	case codes.Error:
+		return "error"
+	default:
+		return "unknown"
 	}
-
-	return p.store.RecordLLMCall(ctx, event)
-}
-
-// recordToolCall extracts tool call attributes and writes to the store.
-func (p *GraphSpanProcessor) recordToolCall(ctx context.Context, traceID, spanID string, s sdktrace.ReadOnlySpan) error {
-	success := s.Status().Code != codes.Error
-	errorMsg := ""
-	if !success {
-		errorMsg = s.Status().Description
-	}
-
-	event := graphrag.ToolCallEvent{
-		AgentName:  getStringAttribute(s, GibsonAgentName),
-		MissionID:  types.ID(getStringAttribute(s, GibsonMissionID)),
-		ToolName:   getStringAttribute(s, GibsonToolName),
-		DurationMs: s.EndTime().Sub(s.StartTime()).Milliseconds(),
-		Success:    success,
-		Error:      errorMsg,
-		TraceID:    traceID,
-		SpanID:     spanID,
-		Timestamp:  s.EndTime(),
-	}
-
-	return p.store.RecordToolCall(ctx, event)
-}
-
-// recordDelegation extracts delegation attributes and writes to the store.
-func (p *GraphSpanProcessor) recordDelegation(ctx context.Context, traceID, spanID string, s sdktrace.ReadOnlySpan) error {
-	event := graphrag.DelegationEvent{
-		FromAgent: getStringAttribute(s, GibsonAgentName),
-		ToAgent:   getStringAttribute(s, GibsonDelegationTarget),
-		TaskID:    getStringAttribute(s, GibsonDelegationTaskID),
-		MissionID: types.ID(getStringAttribute(s, GibsonMissionID)),
-		TraceID:   traceID,
-		SpanID:    spanID,
-		Timestamp: s.StartTime(),
-	}
-
-	return p.store.RecordDelegation(ctx, event)
-}
-
-// recordAgentStart extracts agent start attributes and writes to the store.
-func (p *GraphSpanProcessor) recordAgentStart(ctx context.Context, traceID, spanID string, s sdktrace.ReadOnlySpan) error {
-	event := graphrag.AgentStartEvent{
-		AgentName: getStringAttribute(s, GibsonAgentName),
-		TaskID:    getStringAttribute(s, "gibson.task.id"),
-		MissionID: types.ID(getStringAttribute(s, GibsonMissionID)),
-		TraceID:   traceID,
-		SpanID:    spanID,
-		StartedAt: s.StartTime(),
-	}
-
-	return p.store.RecordAgentStart(ctx, event)
-}
-
-// recordAgentComplete extracts agent completion attributes and writes to the store.
-func (p *GraphSpanProcessor) recordAgentComplete(ctx context.Context, traceID, spanID string, s sdktrace.ReadOnlySpan) error {
-	status := "success"
-	if s.Status().Code == codes.Error {
-		status = "failure"
-	}
-
-	event := graphrag.AgentCompleteEvent{
-		AgentName:     getStringAttribute(s, GibsonAgentName),
-		TaskID:        getStringAttribute(s, "gibson.task.id"),
-		MissionID:     types.ID(getStringAttribute(s, GibsonMissionID)),
-		Status:        status,
-		FindingsCount: int(getIntAttribute(s, "gibson.metrics.findings_count")),
-		TraceID:       traceID,
-		SpanID:        spanID,
-		CompletedAt:   s.EndTime(),
-		DurationMs:    s.EndTime().Sub(s.StartTime()).Milliseconds(),
-	}
-
-	return p.store.RecordAgentComplete(ctx, event)
-}
-
-// recordMissionStart extracts mission start attributes and writes to the store.
-func (p *GraphSpanProcessor) recordMissionStart(ctx context.Context, traceID, spanID string, s sdktrace.ReadOnlySpan) error {
-	event := graphrag.MissionStartEvent{
-		MissionID:   types.ID(getStringAttribute(s, GibsonMissionID)),
-		MissionName: getStringAttribute(s, GibsonMissionName),
-		TraceID:     traceID,
-		StartedAt:   s.StartTime(),
-	}
-
-	return p.store.RecordMissionStart(ctx, event)
-}
-
-// recordMissionComplete extracts mission completion attributes and writes to the store.
-func (p *GraphSpanProcessor) recordMissionComplete(ctx context.Context, traceID, spanID string, s sdktrace.ReadOnlySpan) error {
-	status := "success"
-	if s.Status().Code == codes.Error {
-		status = "failure"
-	}
-
-	event := graphrag.MissionCompleteEvent{
-		MissionID:     types.ID(getStringAttribute(s, GibsonMissionID)),
-		Status:        status,
-		FindingsCount: int(getIntAttribute(s, "gibson.metrics.findings_count")),
-		TraceID:       traceID,
-		CompletedAt:   s.EndTime(),
-		DurationMs:    s.EndTime().Sub(s.StartTime()).Milliseconds(),
-	}
-
-	return p.store.RecordMissionComplete(ctx, event)
 }
 
 // Shutdown is called when the tracer provider is shut down.

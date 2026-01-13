@@ -142,6 +142,10 @@ func (l *taxonomyLoader) parseAndMerge(taxonomy *Taxonomy, data []byte, path str
 		return l.parseTechniqueTypes(taxonomy, data, path, source)
 	} else if strings.Contains(path, "capabilities/") || strings.HasSuffix(path, "capabilities.yaml") {
 		return l.parseCapabilities(taxonomy, data, path, source)
+	} else if strings.HasSuffix(path, "execution_events.yaml") {
+		return l.parseExecutionEvents(taxonomy, data, path, source)
+	} else if strings.HasSuffix(path, "tool_outputs.yaml") {
+		return l.parseToolOutputs(taxonomy, data, path, source)
 	}
 
 	return fmt.Errorf("unknown file type for path: %s", path)
@@ -296,4 +300,143 @@ func LoadTaxonomy() (*Taxonomy, error) {
 func LoadTaxonomyWithCustom(customPath string) (*Taxonomy, error) {
 	loader := NewTaxonomyLoader()
 	return loader.LoadWithCustom(customPath)
+}
+
+// parseExecutionEvents parses execution event definitions from YAML.
+func (l *taxonomyLoader) parseExecutionEvents(taxonomy *Taxonomy, data []byte, path string, source string) error {
+	var eventFile ExecutionEventFile
+	if err := yaml.Unmarshal(data, &eventFile); err != nil {
+		return fmt.Errorf("failed to parse execution events YAML: %w", err)
+	}
+
+	for i := range eventFile.ExecutionEvents {
+		eventDef := &eventFile.ExecutionEvents[i]
+
+		// Validate the execution event definition
+		if err := eventDef.Validate(); err != nil {
+			return fmt.Errorf("invalid execution event %s in %s: %w", eventDef.EventType, path, err)
+		}
+
+		// Validate against taxonomy (check that referenced node types and relationships exist)
+		if err := l.validateEventAgainstTaxonomy(taxonomy, eventDef); err != nil {
+			return fmt.Errorf("execution event %s in %s references undefined taxonomy types: %w", eventDef.EventType, path, err)
+		}
+
+		if err := taxonomy.AddExecutionEvent(eventDef); err != nil {
+			// If this is a custom taxonomy and the error is a duplicate, provide clear message
+			if source == "custom" {
+				if taxErr, ok := err.(*TaxonomyError); ok && taxErr.Type == ErrorTypeDuplicateDefinition {
+					return fmt.Errorf("custom execution event %s conflicts with bundled taxonomy - custom types cannot override bundled types", eventDef.EventType)
+				}
+			}
+			return fmt.Errorf("failed to add execution event %s from %s: %w", eventDef.EventType, path, err)
+		}
+	}
+
+	return nil
+}
+
+// parseToolOutputs parses tool output schema definitions from YAML.
+func (l *taxonomyLoader) parseToolOutputs(taxonomy *Taxonomy, data []byte, path string, source string) error {
+	var schemaFile ToolOutputFile
+	if err := yaml.Unmarshal(data, &schemaFile); err != nil {
+		return fmt.Errorf("failed to parse tool outputs YAML: %w", err)
+	}
+
+	for i := range schemaFile.ToolOutputs {
+		schemaDef := &schemaFile.ToolOutputs[i]
+
+		// Validate the tool output schema
+		if err := schemaDef.Validate(); err != nil {
+			return fmt.Errorf("invalid tool output schema for %s in %s: %w", schemaDef.Tool, path, err)
+		}
+
+		// Validate against taxonomy (check that referenced node types and relationships exist)
+		if err := l.validateToolSchemaAgainstTaxonomy(taxonomy, schemaDef); err != nil {
+			return fmt.Errorf("tool output schema %s in %s references undefined taxonomy types: %w", schemaDef.Tool, path, err)
+		}
+
+		if err := taxonomy.AddToolOutputSchema(schemaDef); err != nil {
+			// If this is a custom taxonomy and the error is a duplicate, provide clear message
+			if source == "custom" {
+				if taxErr, ok := err.(*TaxonomyError); ok && taxErr.Type == ErrorTypeDuplicateDefinition {
+					return fmt.Errorf("custom tool output schema %s conflicts with bundled taxonomy - custom types cannot override bundled types", schemaDef.Tool)
+				}
+			}
+			return fmt.Errorf("failed to add tool output schema %s from %s: %w", schemaDef.Tool, path, err)
+		}
+	}
+
+	return nil
+}
+
+// validateEventAgainstTaxonomy validates that an execution event references only defined node and relationship types.
+func (l *taxonomyLoader) validateEventAgainstTaxonomy(taxonomy *Taxonomy, event *ExecutionEventDefinition) error {
+	// Validate node type if creates_node is specified
+	if event.CreatesNode != nil {
+		if _, exists := taxonomy.NodeTypes[event.CreatesNode.Type]; !exists {
+			return &TaxonomyError{
+				Type:    ErrorTypeInvalidReference,
+				Message: "execution event references undefined node type",
+				Field:   "creates_node.type",
+				Value:   event.CreatesNode.Type,
+			}
+		}
+	}
+
+	// Validate node type if updates_node is specified
+	if event.UpdatesNode != nil {
+		if _, exists := taxonomy.NodeTypes[event.UpdatesNode.Type]; !exists {
+			return &TaxonomyError{
+				Type:    ErrorTypeInvalidReference,
+				Message: "execution event references undefined node type",
+				Field:   "updates_node.type",
+				Value:   event.UpdatesNode.Type,
+			}
+		}
+	}
+
+	// Validate relationship types
+	for _, rel := range event.CreatesRelationships {
+		if _, exists := taxonomy.Relationships[rel.Type]; !exists {
+			return &TaxonomyError{
+				Type:    ErrorTypeInvalidReference,
+				Message: "execution event references undefined relationship type",
+				Field:   "creates_relationships.type",
+				Value:   rel.Type,
+			}
+		}
+	}
+
+	return nil
+}
+
+// validateToolSchemaAgainstTaxonomy validates that a tool output schema references only defined node and relationship types.
+func (l *taxonomyLoader) validateToolSchemaAgainstTaxonomy(taxonomy *Taxonomy, schema *ToolOutputSchema) error {
+	// Validate each extract spec
+	for _, extract := range schema.Extracts {
+		// Check that the node type exists in taxonomy
+		if _, exists := taxonomy.NodeTypes[extract.NodeType]; !exists {
+			return &TaxonomyError{
+				Type:    ErrorTypeInvalidReference,
+				Message: "tool output schema references undefined node type",
+				Field:   "extracts.node_type",
+				Value:   extract.NodeType,
+			}
+		}
+
+		// Validate relationship types
+		for _, rel := range extract.Relationships {
+			if _, exists := taxonomy.Relationships[rel.Type]; !exists {
+				return &TaxonomyError{
+					Type:    ErrorTypeInvalidReference,
+					Message: "tool output schema references undefined relationship type",
+					Field:   "extracts.relationships.type",
+					Value:   rel.Type,
+				}
+			}
+		}
+	}
+
+	return nil
 }

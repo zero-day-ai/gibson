@@ -15,6 +15,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/mitchellh/mapstructure v1.5.0
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
+	github.com/ohler55/ojg v1.27.0
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
@@ -40,7 +41,7 @@ require (
 	golang.org/x/sync v0.19.0
 	golang.org/x/term v0.38.0
 	golang.org/x/text v0.32.0
-	golang.org/x/time v0.9.0
+	golang.org/x/time v0.14.0
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -124,7 +125,7 @@ require (
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
-	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
@@ -183,7 +184,5 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
-	sigs.k8s.io/yaml v1.4.0 // indirect
+	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/zero-day-ai/sdk => ../sdk

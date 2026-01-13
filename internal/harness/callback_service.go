@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -31,6 +32,11 @@ type CredentialStore interface {
 	// Returns the credential with its secret value populated.
 	GetCredential(ctx context.Context, name string) (*types.Credential, string, error)
 }
+
+// TaxonomyGraphEngine processes tool outputs and execution events to automatically
+// create graph nodes and relationships based on taxonomy schemas.
+// This is an alias to the engine.TaxonomyGraphEngine interface.
+type TaxonomyGraphEngine = engine.TaxonomyGraphEngine
 
 // HarnessCallbackService implements the gRPC HarnessCallbackService server.
 // It receives harness operation requests from remote agents via gRPC and
@@ -65,6 +71,9 @@ type HarnessCallbackService struct {
 
 	// credentialStore provides access to stored credentials
 	credentialStore CredentialStore
+
+	// taxonomyEngine processes tool outputs and graphs them based on taxonomy schemas
+	taxonomyEngine TaxonomyGraphEngine
 
 	// spanProcessors receives spans exported from remote agents for tracing integration
 	spanProcessors []sdktrace.SpanProcessor
@@ -103,6 +112,14 @@ func WithTracerProvider(tp *sdktrace.TracerProvider) CallbackServiceOption {
 func WithCredentialStore(store CredentialStore) CallbackServiceOption {
 	return func(s *HarnessCallbackService) {
 		s.credentialStore = store
+	}
+}
+
+// WithTaxonomyEngine sets the taxonomy graph engine for automatic tool output graphing.
+// When set, tool outputs are automatically parsed and graphed based on taxonomy schemas.
+func WithTaxonomyEngine(engine TaxonomyGraphEngine) CallbackServiceOption {
+	return func(s *HarnessCallbackService) {
+		s.taxonomyEngine = engine
 	}
 }
 
@@ -488,6 +505,28 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 				Message: fmt.Sprintf("failed to serialize output: %v", err),
 			},
 		}, nil
+	}
+
+	// Graph tool output automatically (if engine is configured)
+	if s.taxonomyEngine != nil && output != nil {
+		// Get agent run ID from context - try multiple sources
+		agentRunID := s.extractAgentRunID(ctx, req.Context)
+
+		// Process tool output in background to avoid blocking the tool response
+		// Graphing errors are non-fatal and shouldn't fail the tool execution
+		go func() {
+			// Use background context with timeout for graphing
+			graphCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			if err := s.taxonomyEngine.HandleToolOutput(graphCtx, req.Name, output, agentRunID); err != nil {
+				// Log error but don't fail - graphing is best-effort
+				s.logger.Warn("failed to graph tool output",
+					"tool", req.Name,
+					"agent_run_id", agentRunID,
+					"error", err)
+			}
+		}()
 	}
 
 	return &pb.CallToolResponse{
@@ -2194,4 +2233,30 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 			MetadataJson: metadataJSON,
 		},
 	}, nil
+}
+
+// ============================================================================
+// Helper Methods for Taxonomy Engine Integration
+// ============================================================================
+
+// extractAgentRunID extracts the agent run ID from context.
+// Tries multiple sources: trace span ID, mission ID, task ID, or generates a fallback.
+func (s *HarnessCallbackService) extractAgentRunID(ctx context.Context, contextInfo *pb.ContextInfo) string {
+	// Priority 1: Use trace span ID if available (most specific)
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		return span.SpanContext().SpanID().String()
+	}
+
+	// Priority 2: Use task ID if available (unique per execution)
+	if contextInfo != nil && contextInfo.TaskId != "" {
+		return contextInfo.TaskId
+	}
+
+	// Priority 3: Use mission ID (less specific but still useful)
+	if contextInfo != nil && contextInfo.MissionId != "" {
+		return contextInfo.MissionId
+	}
+
+	// Fallback: Generate a unique ID
+	return uuid.New().String()
 }

@@ -720,6 +720,14 @@ func (h *DefaultAgentHarness) CompleteStructuredAny(
 		if name, ok := schemaMap["name"].(string); ok && name != "" {
 			typeName = name
 		}
+
+		// Debug: log the received schema
+		schemaJSON, _ := json.Marshal(schemaMap)
+		h.logger.Info("received schema from remote agent",
+			"schema_json", string(schemaJSON),
+			"has_type", schemaMap["type"] != nil,
+			"type_value", schemaMap["type"])
+
 		sdkSchema = mapToJSONSchema(schemaMap)
 		// localType remains nil - we'll return map[string]any
 

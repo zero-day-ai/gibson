@@ -1,0 +1,531 @@
+# Execution Events Schema
+# This file defines how Gibson execution events map to GraphRAG node and relationship creation.
+# Each event type specifies which nodes to create, which relationships to establish,
+# and how to map event data to node/relationship properties.
+#
+# Event Processing Flow:
+# 1. Event arrives from EventBus (e.g., mission.started, agent.started)
+# 2. Graph processor matches event type to this schema
+# 3. Nodes are created using the node type from taxonomy (nodes/execution.yaml)
+# 4. Relationships are created using types from taxonomy (relationships/execution_context.yaml)
+# 5. Property mappings extract data from event payload/attrs and set on nodes/relationships
+
+execution_events:
+  # Mission Start Event
+  # Creates a Mission node when a mission begins execution.
+  # Event type: mission.started
+  - event_type: mission.started
+    creates_node:
+      type: mission                              # References node.execution.mission
+      id_template: "mission:{mission_id}"
+      properties:
+        - source: mission_id
+          target: name
+        - source: trace_id
+          target: trace_id
+        - source: timestamp
+          target: started_at
+        - value: "running"
+          target: status
+        - source: workflow_name
+          target: workflow_name
+          optional: true
+        - source: target_id
+          target: target
+          optional: true
+        - source: node_count
+          target: node_count
+          optional: true
+    creates_relationships: []
+
+  # Mission Completion Event
+  # Updates Mission node status when mission completes successfully.
+  # Event type: mission.completed
+  - event_type: mission.completed
+    updates_node:
+      type: mission
+      id_template: "mission:{mission_id}"
+      properties:
+        - source: timestamp
+          target: ended_at
+        - value: "completed"
+          target: status
+        - source: duration
+          target: duration_ms
+          optional: true
+        - source: finding_count
+          target: finding_count
+          optional: true
+        - source: nodes_executed
+          target: nodes_executed
+          optional: true
+    creates_relationships: []
+
+  # Mission Failed Event
+  # Updates Mission node status when mission fails.
+  # Event type: mission.failed
+  - event_type: mission.failed
+    updates_node:
+      type: mission
+      id_template: "mission:{mission_id}"
+      properties:
+        - source: timestamp
+          target: ended_at
+        - value: "failed"
+          target: status
+        - source: error
+          target: error_message
+          optional: true
+        - source: duration
+          target: duration_ms
+          optional: true
+        - source: finding_count
+          target: finding_count
+          optional: true
+        - source: nodes_executed
+          target: nodes_executed
+          optional: true
+    creates_relationships: []
+
+  # Agent Start Event
+  # Creates an AgentRun node and links it to the parent Mission.
+  # Event type: agent.started
+  - event_type: agent.started
+    creates_node:
+      type: agent_run                            # References node.execution.agent_run
+      id_template: "agent_run:{trace_id}:{span_id}"
+      properties:
+        - source: agent_name
+          target: agent_name
+        - source: mission_id
+          target: mission_id
+        - source: trace_id
+          target: trace_id
+        - source: span_id
+          target: span_id
+        - source: timestamp
+          target: started_at
+        - value: "running"
+          target: status
+        - source: task_description
+          target: task_description
+          optional: true
+        - source: target_id
+          target: target_id
+          optional: true
+    creates_relationships:
+      - type: PART_OF                            # References rel.execution.part_of
+        from_template: "agent_run:{trace_id}:{span_id}"
+        to_template: "mission:{mission_id}"
+        properties: []
+
+  # Agent Completion Event
+  # Updates AgentRun node status when agent completes successfully.
+  # Event type: agent.completed
+  - event_type: agent.completed
+    updates_node:
+      type: agent_run
+      id_template: "agent_run:{trace_id}:{span_id}"
+      properties:
+        - source: timestamp
+          target: ended_at
+        - value: "completed"
+          target: status
+        - value: 0
+          target: exit_code
+        - source: duration
+          target: duration_ms
+          optional: true
+        - source: finding_count
+          target: finding_count
+          optional: true
+        - source: success
+          target: success
+          optional: true
+    creates_relationships: []
+
+  # Agent Failed Event
+  # Updates AgentRun node status when agent fails.
+  # Event type: agent.failed
+  - event_type: agent.failed
+    updates_node:
+      type: agent_run
+      id_template: "agent_run:{trace_id}:{span_id}"
+      properties:
+        - source: timestamp
+          target: ended_at
+        - value: "failed"
+          target: status
+        - value: 1
+          target: exit_code
+        - source: error
+          target: error_message
+          optional: true
+        - source: duration
+          target: duration_ms
+          optional: true
+        - source: finding_count
+          target: finding_count
+          optional: true
+    creates_relationships: []
+
+  # Agent Delegation Event
+  # Creates a DELEGATED_TO relationship between two AgentRun nodes.
+  # Event type: agent.delegated
+  - event_type: agent.delegated
+    creates_relationships:
+      - type: DELEGATED_TO                       # References rel.execution.delegated_to
+        from_template: "agent_run:{from_trace_id}:{from_span_id}"
+        to_template: "agent_run:{to_trace_id}:{to_span_id}"
+        properties:
+          - source: task_description
+            target: task_description
+            optional: true
+          - source: timestamp
+            target: delegated_at
+            optional: true
+
+  # LLM Request Started Event
+  # Creates an LLMCall node and links it to the parent AgentRun.
+  # Event type: llm.request.started
+  - event_type: llm.request.started
+    creates_node:
+      type: llm_call                             # References node.execution.llm_call
+      id_template: "llm_call:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: model
+          target: model
+        - source: trace_id
+          target: trace_id
+        - source: span_id
+          target: span_id
+        - source: timestamp
+          target: timestamp
+        - source: slot_name
+          target: purpose
+          optional: true
+        - source: provider
+          target: provider
+          optional: true
+        - source: message_count
+          target: message_count
+          optional: true
+        - source: max_tokens
+          target: max_tokens
+          optional: true
+        - source: temperature
+          target: temperature
+          optional: true
+        - source: stream
+          target: stream
+          optional: true
+        - source: prompt_preview
+          target: prompt_preview
+          optional: true
+        - source: tool_count
+          target: tool_count
+          optional: true
+    creates_relationships:
+      - type: MADE_CALL                          # References rel.execution.made_call
+        from_template: "llm_call:{trace_id}:{span_id}:{timestamp}"
+        to_template: "agent_run:{trace_id}:{parent_span_id}"
+        properties: []
+
+  # LLM Request Completed Event
+  # Updates LLMCall node with completion metrics (tokens, cost, latency).
+  # Event type: llm.request.completed
+  - event_type: llm.request.completed
+    updates_node:
+      type: llm_call
+      id_template: "llm_call:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: duration
+          target: latency_ms
+          optional: true
+        - source: input_tokens
+          target: prompt_tokens
+          optional: true
+        - source: output_tokens
+          target: completion_tokens
+          optional: true
+        - source: stop_reason
+          target: stop_reason
+          optional: true
+        - source: response_preview
+          target: response_preview
+          optional: true
+        - source: cost_usd
+          target: cost_usd
+          optional: true
+    creates_relationships: []
+
+  # LLM Request Failed Event
+  # Updates LLMCall node with error information.
+  # Event type: llm.request.failed
+  - event_type: llm.request.failed
+    updates_node:
+      type: llm_call
+      id_template: "llm_call:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: error
+          target: error
+          optional: true
+        - source: duration
+          target: latency_ms
+          optional: true
+        - source: error_details
+          target: error_details
+          optional: true
+        - source: retryable
+          target: retryable
+          optional: true
+        - source: retry_attempt
+          target: retry_attempt
+          optional: true
+    creates_relationships: []
+
+  # LLM Stream Started Event
+  # Creates an LLMCall node for streaming requests.
+  # Event type: llm.stream.started
+  - event_type: llm.stream.started
+    creates_node:
+      type: llm_call
+      id_template: "llm_call:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: model
+          target: model
+        - source: trace_id
+          target: trace_id
+        - source: span_id
+          target: span_id
+        - source: timestamp
+          target: timestamp
+        - source: slot_name
+          target: purpose
+          optional: true
+        - source: provider
+          target: provider
+          optional: true
+        - source: message_count
+          target: message_count
+          optional: true
+        - value: true
+          target: stream
+    creates_relationships:
+      - type: MADE_CALL
+        from_template: "llm_call:{trace_id}:{span_id}:{timestamp}"
+        to_template: "agent_run:{trace_id}:{parent_span_id}"
+        properties: []
+
+  # LLM Stream Completed Event
+  # Updates streaming LLMCall node with final metrics.
+  # Event type: llm.stream.completed
+  - event_type: llm.stream.completed
+    updates_node:
+      type: llm_call
+      id_template: "llm_call:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: duration
+          target: latency_ms
+          optional: true
+        - source: input_tokens
+          target: prompt_tokens
+          optional: true
+        - source: output_tokens
+          target: completion_tokens
+          optional: true
+        - source: total_chunks
+          target: total_chunks
+          optional: true
+        - source: final_content_length
+          target: response_length
+          optional: true
+    creates_relationships: []
+
+  # Tool Call Started Event
+  # Creates a ToolExecution node and links it to the parent AgentRun.
+  # Event type: tool.call.started
+  - event_type: tool.call.started
+    creates_node:
+      type: tool_execution                       # References node.execution.tool_execution
+      id_template: "tool_execution:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: tool_name
+          target: tool_name
+        - source: trace_id
+          target: trace_id
+        - source: span_id
+          target: span_id
+        - source: timestamp
+          target: started_at
+        - source: parameters
+          target: command
+          optional: true
+        - source: parameter_size
+          target: parameter_size
+          optional: true
+    creates_relationships:
+      - type: EXECUTED_BY                        # References rel.execution.executed_by
+        from_template: "tool_execution:{trace_id}:{span_id}:{timestamp}"
+        to_template: "agent_run:{trace_id}:{parent_span_id}"
+        properties: []
+
+  # Tool Call Completed Event
+  # Updates ToolExecution node with completion metrics.
+  # Event type: tool.call.completed
+  - event_type: tool.call.completed
+    updates_node:
+      type: tool_execution
+      id_template: "tool_execution:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: duration
+          target: duration_ms
+          optional: true
+        - source: result_size
+          target: output_size
+          optional: true
+        - source: success
+          target: success
+          optional: true
+        - value: 0
+          target: exit_code
+    creates_relationships: []
+
+  # Tool Call Failed Event
+  # Updates ToolExecution node with error information.
+  # Event type: tool.call.failed
+  - event_type: tool.call.failed
+    updates_node:
+      type: tool_execution
+      id_template: "tool_execution:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: error
+          target: stderr
+          optional: true
+        - source: duration
+          target: duration_ms
+          optional: true
+        - value: 1
+          target: exit_code
+    creates_relationships: []
+
+  # Plugin Query Started Event
+  # Creates a PluginQuery node (similar to tool execution).
+  # Event type: plugin.query.started
+  - event_type: plugin.query.started
+    creates_node:
+      type: tool_execution                       # Reuse tool_execution node type for plugins
+      id_template: "plugin_query:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: plugin_name
+          target: tool_name
+        - source: method
+          target: method
+          optional: true
+        - source: trace_id
+          target: trace_id
+        - source: span_id
+          target: span_id
+        - source: timestamp
+          target: started_at
+        - source: parameters
+          target: command
+          optional: true
+        - source: parameter_count
+          target: parameter_count
+          optional: true
+    creates_relationships:
+      - type: EXECUTED_BY
+        from_template: "plugin_query:{trace_id}:{span_id}:{timestamp}"
+        to_template: "agent_run:{trace_id}:{parent_span_id}"
+        properties: []
+
+  # Plugin Query Completed Event
+  # Updates PluginQuery node with completion status.
+  # Event type: plugin.query.completed
+  - event_type: plugin.query.completed
+    updates_node:
+      type: tool_execution
+      id_template: "plugin_query:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: duration
+          target: duration_ms
+          optional: true
+        - source: success
+          target: success
+          optional: true
+        - value: 0
+          target: exit_code
+    creates_relationships: []
+
+  # Plugin Query Failed Event
+  # Updates PluginQuery node with error information.
+  # Event type: plugin.query.failed
+  - event_type: plugin.query.failed
+    updates_node:
+      type: tool_execution
+      id_template: "plugin_query:{trace_id}:{span_id}:{timestamp}"
+      properties:
+        - source: error
+          target: stderr
+          optional: true
+        - source: duration
+          target: duration_ms
+          optional: true
+        - value: 1
+          target: exit_code
+    creates_relationships: []
+
+  # Finding Discovered Event
+  # Creates PRODUCED relationship between ToolExecution and Finding.
+  # Event type: finding.discovered
+  - event_type: finding.discovered
+    creates_relationships:
+      - type: PRODUCED                           # References rel.execution.produced
+        from_template: "tool_execution:{tool_trace_id}:{tool_span_id}:{tool_timestamp}"
+        to_template: "finding:{finding_id}"
+        properties:
+          - source: confidence
+            target: confidence
+            optional: true
+          - source: timestamp
+            target: discovered_at
+            optional: true
+
+  # Finding Submitted Event
+  # Creates DISCOVERED relationship between AgentRun and Finding.
+  # Event type: agent.finding_submitted
+  - event_type: agent.finding_submitted
+    creates_relationships:
+      - type: DISCOVERED                         # References rel.execution.discovered
+        from_template: "agent_run:{trace_id}:{span_id}"
+        to_template: "finding:{finding_id}"
+        properties:
+          - source: timestamp
+            target: discovery_timestamp
+            optional: true
+          - source: agent_name
+            target: discovery_method
+            optional: true
+
+# Property Mapping Rules:
+#
+# - source: Extract value from event payload/attrs with this key
+# - target: Set value on node/relationship property with this name
+# - value: Use this static value instead of extracting from event
+# - optional: If true, don't fail if source field is missing
+#
+# Template Variables:
+# Templates can reference any field from the event payload or attrs:
+# - {mission_id} - From payload.mission_id or attrs.mission_id
+# - {trace_id} - From event.trace_id
+# - {span_id} - From event.span_id
+# - {timestamp} - From event.timestamp
+# - {agent_name} - From payload.agent_name or event.agent_name
+# - {tool_name} - From payload.tool_name
+# - {finding_id} - From payload.finding_id
+#
+# Special Cases:
+# - parent_span_id: Extracted from OpenTelemetry span context (parent of current span)
+# - from_trace_id/to_trace_id: For delegation events, extracted from delegation context
+# - from_span_id/to_span_id: For delegation events, extracted from delegation context

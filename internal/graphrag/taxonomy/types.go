@@ -114,19 +114,21 @@ type Taxonomy struct {
 	Includes []string         `yaml:"includes,omitempty"` // List of included YAML files (from root)
 
 	// Primary collections - keyed by Type field for fast lookup
-	NodeTypes       map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by Type field
-	Relationships   map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by Type field
-	Techniques      map[string]*TechniqueDefinition        `yaml:"-"` // Keyed by TechniqueID
-	TargetTypes     map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by Type field
-	TechniqueTypes  map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by Type field
-	Capabilities    map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
+	NodeTypes         map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by Type field
+	Relationships     map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by Type field
+	Techniques        map[string]*TechniqueDefinition        `yaml:"-"` // Keyed by TechniqueID
+	TargetTypes       map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by Type field
+	TechniqueTypes    map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by Type field
+	Capabilities      map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
+	ExecutionEvents   map[string]*ExecutionEventDefinition   `yaml:"-"` // Keyed by EventType field
+	ToolOutputSchemas map[string]*ToolOutputSchema           `yaml:"-"` // Keyed by Tool field (tool name)
 
 	// Secondary indices for alternative lookups - built at load time
-	nodeTypesByID       map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by ID field
-	relationshipsByID   map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by ID field
-	targetTypesByID     map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by ID field
-	techniqueTypesByID  map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by ID field
-	capabilitiesByID    map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
+	nodeTypesByID         map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by ID field
+	relationshipsByID     map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by ID field
+	targetTypesByID       map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by ID field
+	techniqueTypesByID    map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by ID field
+	capabilitiesByID      map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
 
 	// Extension tracking
 	isCustomLoaded bool `yaml:"-"` // Whether custom taxonomy has been merged
@@ -178,6 +180,8 @@ func NewTaxonomy(version string) *Taxonomy {
 		TargetTypes:        make(map[string]*TargetTypeDefinition),
 		TechniqueTypes:     make(map[string]*TechniqueTypeDefinition),
 		Capabilities:       make(map[string]*CapabilityDefinition),
+		ExecutionEvents:    make(map[string]*ExecutionEventDefinition),
+		ToolOutputSchemas:  make(map[string]*ToolOutputSchema),
 		nodeTypesByID:      make(map[string]*NodeTypeDefinition),
 		relationshipsByID:  make(map[string]*RelationshipTypeDefinition),
 		targetTypesByID:    make(map[string]*TargetTypeDefinition),
@@ -398,6 +402,52 @@ func (t *Taxonomy) GetCapability(id string) (*CapabilityDefinition, bool) {
 // GetCapabilityByID is an alias for GetCapability for consistency.
 func (t *Taxonomy) GetCapabilityByID(id string) (*CapabilityDefinition, bool) {
 	def, ok := t.capabilitiesByID[id]
+	return def, ok
+}
+
+// AddExecutionEvent adds an execution event definition to the taxonomy.
+// Returns an error if an execution event with the same EventType already exists.
+func (t *Taxonomy) AddExecutionEvent(def *ExecutionEventDefinition) error {
+	// Check for EventType collision
+	if _, exists := t.ExecutionEvents[def.EventType]; exists {
+		return &TaxonomyError{
+			Type:    ErrorTypeDuplicateDefinition,
+			Message: "execution event with EventType already exists",
+			Field:   "event_type",
+			Value:   def.EventType,
+		}
+	}
+
+	t.ExecutionEvents[def.EventType] = def
+	return nil
+}
+
+// GetExecutionEvent retrieves an execution event by its EventType field.
+func (t *Taxonomy) GetExecutionEvent(eventType string) (*ExecutionEventDefinition, bool) {
+	def, ok := t.ExecutionEvents[eventType]
+	return def, ok
+}
+
+// AddToolOutputSchema adds a tool output schema definition to the taxonomy.
+// Returns an error if a tool output schema with the same Tool name already exists.
+func (t *Taxonomy) AddToolOutputSchema(def *ToolOutputSchema) error {
+	// Check for Tool collision
+	if _, exists := t.ToolOutputSchemas[def.Tool]; exists {
+		return &TaxonomyError{
+			Type:    ErrorTypeDuplicateDefinition,
+			Message: "tool output schema with Tool name already exists",
+			Field:   "tool",
+			Value:   def.Tool,
+		}
+	}
+
+	t.ToolOutputSchemas[def.Tool] = def
+	return nil
+}
+
+// GetToolOutputSchema retrieves a tool output schema by its Tool field.
+func (t *Taxonomy) GetToolOutputSchema(toolName string) (*ToolOutputSchema, bool) {
+	def, ok := t.ToolOutputSchemas[toolName]
 	return def, ok
 }
 

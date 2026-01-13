@@ -1393,3 +1393,358 @@ func TestTaxonomyRegistry_ValidateCapability(t *testing.T) {
 		})
 	}
 }
+
+// TestTaxonomyRegistry_GetExecutionEvent tests retrieving execution events from registry.
+func TestTaxonomyRegistry_GetExecutionEvent(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test execution events
+	_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
+		EventType:   "tool.call.started",
+		Description: "Tool execution started",
+	})
+	_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
+		EventType:   "tool.call.completed",
+		Description: "Tool execution completed",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		eventType string
+		wantNil   bool
+	}{
+		{
+			name:      "existing event",
+			eventType: "tool.call.started",
+			wantNil:   false,
+		},
+		{
+			name:      "non-existent event",
+			eventType: "nonexistent",
+			wantNil:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			eventDef := registry.GetExecutionEvent(tt.eventType)
+
+			if (eventDef == nil) != tt.wantNil {
+				t.Errorf("GetExecutionEvent() nil = %v, want %v", eventDef == nil, tt.wantNil)
+			}
+
+			if !tt.wantNil {
+				if eventDef.EventType != tt.eventType {
+					t.Errorf("GetExecutionEvent() event_type = %v, want %v", eventDef.EventType, tt.eventType)
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_GetToolOutputSchema tests retrieving tool output schemas from registry.
+func TestTaxonomyRegistry_GetToolOutputSchema(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test tool output schemas
+	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+		Tool:         "nmap",
+		Description:  "Nmap scan output schema",
+		OutputFormat: "json",
+	})
+	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+		Tool:         "sqlmap",
+		Description:  "SQLMap output schema",
+		OutputFormat: "json",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		toolName string
+		wantNil  bool
+	}{
+		{
+			name:     "existing schema",
+			toolName: "nmap",
+			wantNil:  false,
+		},
+		{
+			name:     "non-existent schema",
+			toolName: "nonexistent",
+			wantNil:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemaDef := registry.GetToolOutputSchema(tt.toolName)
+
+			if (schemaDef == nil) != tt.wantNil {
+				t.Errorf("GetToolOutputSchema() nil = %v, want %v", schemaDef == nil, tt.wantNil)
+			}
+
+			if !tt.wantNil {
+				if schemaDef.Tool != tt.toolName {
+					t.Errorf("GetToolOutputSchema() tool = %v, want %v", schemaDef.Tool, tt.toolName)
+				}
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ListExecutionEvents tests listing all execution events.
+func TestTaxonomyRegistry_ListExecutionEvents(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test execution events
+	_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
+		EventType:   "tool.call.started",
+		Description: "Tool Started",
+	})
+	_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
+		EventType:   "tool.call.completed",
+		Description: "Tool Completed",
+	})
+	_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
+		EventType:   "agent.iteration.started",
+		Description: "Agent Started",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	eventTypes := registry.ListExecutionEvents()
+
+	if len(eventTypes) != 3 {
+		t.Errorf("ListExecutionEvents() returned %d event types, want 3", len(eventTypes))
+	}
+
+	// Check that returned event types match what we added
+	eventMap := make(map[string]bool)
+	for _, et := range eventTypes {
+		eventMap[et] = true
+	}
+
+	if !eventMap["tool_started"] {
+		t.Error("ListExecutionEvents() missing 'tool_started' event type")
+	}
+	if !eventMap["tool_completed"] {
+		t.Error("ListExecutionEvents() missing 'tool_completed' event type")
+	}
+	if !eventMap["agent_started"] {
+		t.Error("ListExecutionEvents() missing 'agent_started' event type")
+	}
+}
+
+// TestTaxonomyRegistry_ListToolOutputSchemas tests listing all tool output schemas.
+func TestTaxonomyRegistry_ListToolOutputSchemas(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test tool output schemas
+	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+		ID:       "schema.tool.nmap",
+		ToolName: "nmap",
+		Name:     "Nmap Scan Results",
+	})
+	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+		ID:       "schema.tool.sqlmap",
+		ToolName: "sqlmap",
+		Name:     "SQLMap Results",
+	})
+	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+		ID:       "schema.tool.nuclei",
+		ToolName: "nuclei",
+		Name:     "Nuclei Results",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	toolNames := registry.ListToolOutputSchemas()
+
+	if len(toolNames) != 3 {
+		t.Errorf("ListToolOutputSchemas() returned %d tool names, want 3", len(toolNames))
+	}
+
+	// Check that returned tool names match what we added
+	toolMap := make(map[string]bool)
+	for _, tn := range toolNames {
+		toolMap[tn] = true
+	}
+
+	if !toolMap["nmap"] {
+		t.Error("ListToolOutputSchemas() missing 'nmap' tool name")
+	}
+	if !toolMap["sqlmap"] {
+		t.Error("ListToolOutputSchemas() missing 'sqlmap' tool name")
+	}
+	if !toolMap["nuclei"] {
+		t.Error("ListToolOutputSchemas() missing 'nuclei' tool name")
+	}
+}
+
+// TestTaxonomyRegistry_HasExecutionEvent tests checking if execution events exist.
+func TestTaxonomyRegistry_HasExecutionEvent(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
+		ID:        "event.tool.started",
+		EventType: "tool_started",
+		Name:      "Tool Started",
+		Category:  "tool",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		eventType string
+		want      bool
+	}{
+		{
+			name:      "existing event",
+			eventType: "tool_started",
+			want:      true,
+		},
+		{
+			name:      "non-existent event",
+			eventType: "nonexistent",
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := registry.HasExecutionEvent(tt.eventType); got != tt.want {
+				t.Errorf("HasExecutionEvent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_HasToolOutputSchema tests checking if tool output schemas exist.
+func TestTaxonomyRegistry_HasToolOutputSchema(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+		ID:       "schema.tool.nmap",
+		ToolName: "nmap",
+		Name:     "Nmap Scan Results",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		toolName string
+		want     bool
+	}{
+		{
+			name:     "existing schema",
+			toolName: "nmap",
+			want:     true,
+		},
+		{
+			name:     "non-existent schema",
+			toolName: "nonexistent",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := registry.HasToolOutputSchema(tt.toolName); got != tt.want {
+				t.Errorf("HasToolOutputSchema() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTaxonomyRegistry_ExecutionEventConcurrency tests thread-safe access to execution events.
+func TestTaxonomyRegistry_ExecutionEventConcurrency(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test execution events
+	for i := 0; i < 10; i++ {
+		_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
+			ID:        "event.tool.test_" + string(rune('0'+i)),
+			EventType: "test_event_" + string(rune('0'+i)),
+			Name:      "Test Event " + string(rune('0'+i)),
+			Category:  "test",
+		})
+	}
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	// Test concurrent access
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			eventType := "test_event_" + string(rune('0'+(idx%10)))
+			_ = registry.GetExecutionEvent(eventType)
+			_ = registry.HasExecutionEvent(eventType)
+			_ = registry.ListExecutionEvents()
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+// TestTaxonomyRegistry_ToolOutputSchemaConcurrency tests thread-safe access to tool output schemas.
+func TestTaxonomyRegistry_ToolOutputSchemaConcurrency(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add test tool output schemas
+	for i := 0; i < 10; i++ {
+		_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+			ID:       "schema.tool.test_" + string(rune('0'+i)),
+			ToolName: "test_tool_" + string(rune('0'+i)),
+			Name:     "Test Tool " + string(rune('0'+i)),
+		})
+	}
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	// Test concurrent access
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			toolName := "test_tool_" + string(rune('0'+(idx%10)))
+			_ = registry.GetToolOutputSchema(toolName)
+			_ = registry.HasToolOutputSchema(toolName)
+			_ = registry.ListToolOutputSchemas()
+		}(i)
+	}
+
+	wg.Wait()
+}

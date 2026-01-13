@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/graphrag"
+	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
+	"github.com/zero-day-ai/gibson/internal/graphrag/taxonomy"
 	"github.com/zero-day-ai/gibson/internal/observability"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -60,12 +61,23 @@ func (d *daemonImpl) initLangfuseTracing(ctx context.Context, neo4jClient *graph
 	if neo4jClient != nil {
 		d.logger.Info("registering GraphSpanProcessor for Neo4j span recording")
 
-		// Create the execution graph store backed by Neo4j
-		execStore := graphrag.NewNeo4jExecutionGraphStore(neo4jClient)
+		// Load the taxonomy registry
+		registry, err := d.getTaxonomyRegistry(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to load taxonomy registry: %w", err)
+		}
 
-		// Create the graph span processor with the store
+		// Create the taxonomy-driven graph engine using the engine package
+		// This version uses the graph.GraphClient directly instead of GraphRAGStore
+		taxonomyEngine := engine.NewTaxonomyGraphEngine(
+			registry,
+			neo4jClient,
+			d.logger.With("component", "taxonomy-graph-engine"),
+		)
+
+		// Create the graph span processor with the engine
 		graphProcessor := observability.NewGraphSpanProcessor(
-			execStore,
+			taxonomyEngine,
 			d.logger.With("component", "graph-span-processor"),
 		)
 
@@ -115,4 +127,17 @@ func (d *daemonImpl) initGraphRAG(ctx context.Context) (*graph.Neo4jClient, erro
 	}
 
 	return client, nil
+}
+
+// getTaxonomyRegistry loads and returns the taxonomy registry.
+// This is used by the TaxonomyGraphEngine to look up event definitions.
+func (d *daemonImpl) getTaxonomyRegistry(ctx context.Context) (taxonomy.TaxonomyRegistry, error) {
+	// Load default taxonomy (custom taxonomy path support can be added later if needed)
+	registry, err := taxonomy.LoadAndValidateTaxonomy()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load default taxonomy: %w", err)
+	}
+	d.logger.Info("loaded default taxonomy")
+
+	return registry, nil
 }

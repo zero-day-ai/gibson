@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/zero-day-ai/gibson/internal/graphrag"
+	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/harness"
 )
@@ -43,6 +44,10 @@ type GraphRAGBridgeConfig struct {
 	// This is typically a DefaultGraphRAGStore that wraps a provider.
 	// Required - this is the core GraphRAG storage layer.
 	GraphRAGStore graphrag.GraphRAGStore
+
+	// TaxonomyEngine processes tool outputs and execution events based on taxonomy.
+	// Required for event-driven graph operations.
+	TaxonomyEngine engine.TaxonomyGraphEngine
 
 	// Logger for diagnostic output.
 	// Optional - defaults to slog.Default() if nil.
@@ -84,6 +89,12 @@ func NewGraphRAGBridgeAdapter(config GraphRAGBridgeConfig) (*GraphRAGBridgeAdapt
 			Message: "cannot be nil",
 		}
 	}
+	if config.TaxonomyEngine == nil {
+		return nil, &ConfigValidationError{
+			Field:   "TaxonomyEngine",
+			Message: "cannot be nil",
+		}
+	}
 
 	// Default logger if not provided
 	logger := config.Logger
@@ -106,9 +117,9 @@ func NewGraphRAGBridgeAdapter(config GraphRAGBridgeConfig) (*GraphRAGBridgeAdapt
 		}
 	}
 
-	// Create the storage bridge (async writes)
+	// Create the storage bridge (async writes) using the taxonomy engine
 	bridge := harness.NewGraphRAGBridge(
-		config.GraphRAGStore,
+		config.TaxonomyEngine,
 		logger.With("bridge_type", "storage"),
 		bridgeConfig,
 	)

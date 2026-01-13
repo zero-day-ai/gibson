@@ -93,6 +93,24 @@ type TaxonomyRegistry interface {
 
 	// ValidateCapability checks if a capability ID exists.
 	ValidateCapability(id string) bool
+
+	// GetExecutionEvent returns the event definition for the given event type.
+	GetExecutionEvent(eventType string) *ExecutionEventDefinition
+
+	// GetToolOutputSchema returns the output schema for the given tool.
+	GetToolOutputSchema(toolName string) *ToolOutputSchema
+
+	// ListExecutionEvents returns all registered event types.
+	ListExecutionEvents() []string
+
+	// ListToolOutputSchemas returns all registered tool names with schemas.
+	ListToolOutputSchemas() []string
+
+	// HasExecutionEvent checks if an event type is defined.
+	HasExecutionEvent(eventType string) bool
+
+	// HasToolOutputSchema checks if a tool has an output schema.
+	HasToolOutputSchema(toolName string) bool
 }
 
 // taxonomyRegistry is the default implementation of TaxonomyRegistry.
@@ -538,5 +556,75 @@ func (r *taxonomyRegistry) ValidateCapability(id string) bool {
 	defer r.mu.RUnlock()
 
 	_, ok := r.taxonomy.Capabilities[id]
+	return ok
+}
+
+// GetExecutionEvent returns the event definition for the given event type.
+func (r *taxonomyRegistry) GetExecutionEvent(eventType string) *ExecutionEventDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	def, ok := r.taxonomy.ExecutionEvents[eventType]
+	if !ok {
+		return nil
+	}
+	// Return a copy to prevent external modification
+	defCopy := *def
+	return &defCopy
+}
+
+// GetToolOutputSchema returns the output schema for the given tool.
+func (r *taxonomyRegistry) GetToolOutputSchema(toolName string) *ToolOutputSchema {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	def, ok := r.taxonomy.ToolOutputSchemas[toolName]
+	if !ok {
+		return nil
+	}
+	// Return a copy to prevent external modification
+	defCopy := *def
+	return &defCopy
+}
+
+// ListExecutionEvents returns all registered event types.
+func (r *taxonomyRegistry) ListExecutionEvents() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	eventTypes := make([]string, 0, len(r.taxonomy.ExecutionEvents))
+	for eventType := range r.taxonomy.ExecutionEvents {
+		eventTypes = append(eventTypes, eventType)
+	}
+	return eventTypes
+}
+
+// ListToolOutputSchemas returns all registered tool names with schemas.
+func (r *taxonomyRegistry) ListToolOutputSchemas() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	toolNames := make([]string, 0, len(r.taxonomy.ToolOutputSchemas))
+	for toolName := range r.taxonomy.ToolOutputSchemas {
+		toolNames = append(toolNames, toolName)
+	}
+	return toolNames
+}
+
+// HasExecutionEvent checks if an event type is defined.
+func (r *taxonomyRegistry) HasExecutionEvent(eventType string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, ok := r.taxonomy.ExecutionEvents[eventType]
+	return ok
+}
+
+// HasToolOutputSchema checks if a tool has an output schema.
+func (r *taxonomyRegistry) HasToolOutputSchema(toolName string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	_, ok := r.taxonomy.ToolOutputSchemas[toolName]
 	return ok
 }

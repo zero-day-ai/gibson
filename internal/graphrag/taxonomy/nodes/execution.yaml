@@ -48,6 +48,34 @@ node_types:
         type: "[]string"
         required: false
         description: "Out-of-scope targets to exclude"
+      - name: trace_id
+        type: string
+        required: false
+        description: "OpenTelemetry trace ID for distributed tracing"
+      - name: workflow_name
+        type: string
+        required: false
+        description: "Name of the workflow executed for this mission"
+      - name: node_count
+        type: int
+        required: false
+        description: "Number of workflow nodes in this mission"
+      - name: duration_ms
+        type: int
+        required: false
+        description: "Mission duration in milliseconds"
+      - name: finding_count
+        type: int
+        required: false
+        description: "Number of findings discovered during this mission"
+      - name: nodes_executed
+        type: int
+        required: false
+        description: "Number of workflow nodes executed"
+      - name: error_message
+        type: string
+        required: false
+        description: "Error message if mission failed"
     examples:
       - name: "acme-pentest-2024-01"
         target: "example.com"
@@ -106,6 +134,34 @@ node_types:
         type: int
         required: false
         description: "Number of graph relationships created by this run"
+      - name: trace_id
+        type: string
+        required: false
+        description: "OpenTelemetry trace ID for distributed tracing"
+      - name: span_id
+        type: string
+        required: false
+        description: "OpenTelemetry span ID for this agent run"
+      - name: task_description
+        type: string
+        required: false
+        description: "Description of the task assigned to this agent run"
+      - name: target_id
+        type: string
+        required: false
+        description: "ID of the target being tested"
+      - name: duration_ms
+        type: int
+        required: false
+        description: "Agent run duration in milliseconds"
+      - name: finding_count
+        type: int
+        required: false
+        description: "Number of findings discovered by this agent run"
+      - name: success
+        type: bool
+        required: false
+        description: "Whether the agent run completed successfully"
     examples:
       - agent_name: "bishop"
         run_number: 1
@@ -169,6 +225,34 @@ node_types:
         type: int
         required: false
         description: "Number of findings produced by this tool execution"
+      - name: trace_id
+        type: string
+        required: false
+        description: "OpenTelemetry trace ID for distributed tracing"
+      - name: span_id
+        type: string
+        required: false
+        description: "OpenTelemetry span ID for this tool execution"
+      - name: parameter_size
+        type: int
+        required: false
+        description: "Size of input parameters in bytes"
+      - name: output_size
+        type: int
+        required: false
+        description: "Size of output result in bytes"
+      - name: success
+        type: bool
+        required: false
+        description: "Whether the tool execution completed successfully"
+      - name: method
+        type: string
+        required: false
+        description: "Method name for plugin queries"
+      - name: parameter_count
+        type: int
+        required: false
+        description: "Number of parameters passed to the tool or plugin"
     examples:
       - tool_name: "nmap"
         agent_run_id: "agent_run:mission:acme-pentest-2024-01:bishop:1"
@@ -239,6 +323,70 @@ node_types:
         type: string
         required: false
         description: "Error message if call failed"
+      - name: trace_id
+        type: string
+        required: false
+        description: "OpenTelemetry trace ID for distributed tracing"
+      - name: span_id
+        type: string
+        required: false
+        description: "OpenTelemetry span ID for this LLM call"
+      - name: provider
+        type: string
+        required: false
+        description: "LLM provider (e.g., 'anthropic', 'openai', 'bedrock')"
+      - name: message_count
+        type: int
+        required: false
+        description: "Number of messages in the conversation"
+      - name: max_tokens
+        type: int
+        required: false
+        description: "Maximum tokens requested for completion"
+      - name: temperature
+        type: float64
+        required: false
+        description: "Temperature setting for the LLM call"
+      - name: stream
+        type: bool
+        required: false
+        description: "Whether the call used streaming"
+      - name: prompt_preview
+        type: string
+        required: false
+        description: "Truncated preview of the prompt"
+      - name: tool_count
+        type: int
+        required: false
+        description: "Number of tools available to the LLM"
+      - name: stop_reason
+        type: string
+        required: false
+        description: "Reason the LLM stopped generating (e.g., 'end_turn', 'max_tokens')"
+      - name: response_preview
+        type: string
+        required: false
+        description: "Truncated preview of the response"
+      - name: error_details
+        type: string
+        required: false
+        description: "Detailed error information if call failed"
+      - name: retryable
+        type: bool
+        required: false
+        description: "Whether the failed call can be retried"
+      - name: retry_attempt
+        type: int
+        required: false
+        description: "Which retry attempt this was"
+      - name: total_chunks
+        type: int
+        required: false
+        description: "Total number of streaming chunks received"
+      - name: response_length
+        type: int
+        required: false
+        description: "Length of the final response in characters"
     examples:
       - model: "gpt-4"
         agent_run_id: "agent_run:mission:acme-pentest-2024-01:bishop:1"

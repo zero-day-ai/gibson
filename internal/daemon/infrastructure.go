@@ -7,6 +7,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/graphrag"
+	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/graphrag/provider"
 	"github.com/zero-day-ai/gibson/internal/harness"
@@ -344,11 +345,26 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	}
 	d.logger.Info("created GraphRAG store")
 
-	// Create bridge adapter with the store
+	// Load taxonomy registry for event-driven graph operations
+	registry, err := d.getTaxonomyRegistry(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load taxonomy registry: %w", err)
+	}
+
+	// Create taxonomy engine for event processing
+	taxonomyEngine := engine.NewTaxonomyGraphEngine(
+		registry,
+		neo4jClient,
+		d.logger.With("component", "taxonomy-engine"),
+	)
+	d.logger.Info("created taxonomy graph engine")
+
+	// Create bridge adapter with the store and engine
 	adapter, err := NewGraphRAGBridgeAdapter(GraphRAGBridgeConfig{
-		Neo4jClient:   neo4jClient,
-		GraphRAGStore: store,
-		Logger:        d.logger.With("component", "graphrag-bridge"),
+		Neo4jClient:    neo4jClient,
+		GraphRAGStore:  store,
+		TaxonomyEngine: taxonomyEngine,
+		Logger:         d.logger.With("component", "graphrag-bridge"),
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create GraphRAG bridge adapter: %w", err)

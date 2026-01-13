@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
-	"github.com/zero-day-ai/gibson/internal/graphrag"
+	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/types"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
@@ -129,7 +129,7 @@ func (e *ConfigError) Error() string {
 // It handles async storage of findings to the GraphRAG knowledge graph,
 // with bounded concurrency and graceful shutdown support.
 type DefaultGraphRAGBridge struct {
-	store     graphrag.GraphRAGStore
+	engine    engine.TaxonomyGraphEngine
 	logger    *slog.Logger
 	config    GraphRAGBridgeConfig
 	wg        sync.WaitGroup
@@ -143,12 +143,12 @@ type DefaultGraphRAGBridge struct {
 // with the global taxonomy registry from the init package.
 //
 // Parameters:
-//   - store: The GraphRAG store for persisting findings
+//   - engine: The TaxonomyGraphEngine for taxonomy-driven graph operations
 //   - logger: Logger for diagnostic output (if nil, uses default logger)
 //   - config: Configuration options (use DefaultGraphRAGBridgeConfig() for defaults)
 //
 // Returns a configured GraphRAGBridge ready for use.
-func NewGraphRAGBridge(store graphrag.GraphRAGStore, logger *slog.Logger, config GraphRAGBridgeConfig) *DefaultGraphRAGBridge {
+func NewGraphRAGBridge(engine engine.TaxonomyGraphEngine, logger *slog.Logger, config GraphRAGBridgeConfig) *DefaultGraphRAGBridge {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -158,7 +158,7 @@ func NewGraphRAGBridge(store graphrag.GraphRAGStore, logger *slog.Logger, config
 	initTaxonomy()
 
 	return &DefaultGraphRAGBridge{
-		store:     store,
+		engine:    engine,
 		logger:    logger.With("component", "graphrag_bridge"),
 		config:    config,
 		semaphore: make(chan struct{}, config.MaxConcurrent),
@@ -228,183 +228,49 @@ func (b *DefaultGraphRAGBridge) Shutdown(ctx context.Context) error {
 }
 
 // Health returns the health status of the GraphRAG bridge.
-// Delegates to the underlying GraphRAGStore's health check.
+// Delegates to the underlying TaxonomyGraphEngine's health check.
 func (b *DefaultGraphRAGBridge) Health(ctx context.Context) types.HealthStatus {
-	if b.store == nil {
-		return types.Unhealthy("graphrag store is nil")
+	if b.engine == nil {
+		return types.Unhealthy("graphrag engine is nil")
 	}
-	return b.store.Health(ctx)
+
+	engineHealth := b.engine.Health(ctx)
+	if !engineHealth.Healthy {
+		return types.Unhealthy(engineHealth.Message)
+	}
+
+	return types.Healthy("graphrag bridge operational")
 }
 
-// storeToGraphRAG performs the actual storage operation.
-// This is called in a goroutine and handles:
-// 1. Converting agent.Finding to graphrag.FindingNode
-// 2. Storing the finding node
-// 3. Creating DISCOVERED_ON relationship (if targetID provided)
-// 4. Creating USES_TECHNIQUE relationships (if CWE/MITRE data available)
+// storeToGraphRAG performs the actual storage operation using the TaxonomyGraphEngine.
+// This is called in a goroutine and delegates to engine.HandleFinding which:
+// 1. Creates Finding node with taxonomy-driven properties
+// 2. Creates AFFECTS relationship to target (if provided)
+// 3. Creates USES_TECHNIQUE relationships for CWEs
+// 4. Creates PART_OF relationship to mission
 //
 // All errors are logged at WARN level and do not propagate (fire-and-forget semantics).
 func (b *DefaultGraphRAGBridge) storeToGraphRAG(ctx context.Context, finding agent.Finding, missionID types.ID, targetID *types.ID) {
-	// Convert agent finding to graphrag finding node
-	findingNode := b.convertToFindingNode(finding, missionID)
-
-	// Store the finding
-	if err := b.store.StoreFinding(ctx, findingNode); err != nil {
+	// Use the TaxonomyGraphEngine to handle finding storage
+	// The engine handles all node creation and relationships based on taxonomy definitions
+	if err := b.engine.HandleFinding(ctx, finding, missionID.String()); err != nil {
 		b.logger.Warn("failed to store finding to graphrag",
 			"finding_id", finding.ID,
 			"mission_id", missionID,
 			"error", err,
-			"operation", "store_finding",
+			"operation", "handle_finding",
 		)
 		return
 	}
-
-	// Create DISCOVERED_ON relationship if target is specified
-	if targetID != nil {
-		rel := graphrag.NewRelationship(
-			types.ID(finding.ID),
-			*targetID,
-			graphrag.RelationDiscoveredOn,
-		).WithProperty("severity", string(finding.Severity)).
-			WithProperty("confidence", finding.Confidence)
-
-		// Store using the low-level Store method with a GraphRecord
-		record := graphrag.NewGraphRecord(*findingNode.ToGraphNode())
-		record.WithRelationship(*rel)
-		if err := b.store.Store(ctx, record); err != nil {
-			b.logger.Warn("failed to create DISCOVERED_ON relationship",
-				"finding_id", finding.ID,
-				"target_id", targetID,
-				"error", err,
-				"operation", "create_relationship",
-			)
-		}
-	}
-
-	// Create USES_TECHNIQUE relationships if CWE mappings exist
-	// CWE IDs can be mapped to MITRE techniques
-	for _, cwe := range finding.CWE {
-		// Create technique node reference (simplified - assumes technique exists)
-		techniqueID := types.NewID()
-		rel := graphrag.NewRelationship(
-			types.ID(finding.ID),
-			techniqueID,
-			graphrag.RelationUsesTechnique,
-		).WithProperty("cwe", cwe)
-
-		record := graphrag.NewGraphRecord(*findingNode.ToGraphNode())
-		record.WithRelationship(*rel)
-		if err := b.store.Store(ctx, record); err != nil {
-			b.logger.Warn("failed to create USES_TECHNIQUE relationship",
-				"finding_id", finding.ID,
-				"cwe", cwe,
-				"error", err,
-				"operation", "create_relationship",
-			)
-		}
-	}
-
-	// Detect and create SIMILAR_TO relationships
-	similarCount := b.detectAndLinkSimilarFindings(ctx, finding, missionID)
 
 	b.logger.Debug("successfully stored finding to graphrag",
 		"finding_id", finding.ID,
 		"mission_id", missionID,
 		"has_target", targetID != nil,
 		"cwe_count", len(finding.CWE),
-		"similar_findings_linked", similarCount,
 	)
 }
 
-// detectAndLinkSimilarFindings finds similar findings and creates SIMILAR_TO relationships.
-// Uses vector similarity search filtered by threshold and limited by MaxSimilarLinks.
-// Returns the number of SIMILAR_TO relationships created.
-//
-// Errors are logged but do not fail the operation (best-effort relationship creation).
-func (b *DefaultGraphRAGBridge) detectAndLinkSimilarFindings(ctx context.Context, finding agent.Finding, missionID types.ID) int {
-	// Skip if similarity detection is disabled
-	if b.config.MaxSimilarLinks <= 0 {
-		return 0
-	}
-
-	// Query for similar findings using the store's similarity search
-	// Request more than MaxSimilarLinks to account for filtering
-	similarFindings, err := b.store.FindSimilarFindings(ctx, finding.ID.String(), b.config.MaxSimilarLinks+1)
-	if err != nil {
-		b.logger.Warn("failed to find similar findings",
-			"finding_id", finding.ID,
-			"error", err,
-			"operation", "find_similar",
-		)
-		return 0
-	}
-
-	// Filter and create relationships
-	linkedCount := 0
-	for _, similar := range similarFindings {
-		// Skip the finding itself
-		if similar.ID == types.ID(finding.ID) {
-			continue
-		}
-
-		// Stop if we've reached max links
-		if linkedCount >= b.config.MaxSimilarLinks {
-			break
-		}
-
-		// Create SIMILAR_TO relationship (unidirectional from new finding to existing)
-		rel := graphrag.NewRelationship(
-			types.ID(finding.ID),
-			similar.ID,
-			graphrag.RelationSimilarTo,
-		).WithProperty("mission_id", missionID.String())
-
-		// Create a minimal record just for the relationship
-		findingNode := b.convertToFindingNode(finding, missionID)
-		record := graphrag.NewGraphRecord(*findingNode.ToGraphNode())
-		record.WithRelationship(*rel)
-
-		if err := b.store.Store(ctx, record); err != nil {
-			b.logger.Warn("failed to create SIMILAR_TO relationship",
-				"finding_id", finding.ID,
-				"similar_id", similar.ID,
-				"error", err,
-				"operation", "create_similar_relationship",
-			)
-			continue
-		}
-
-		linkedCount++
-	}
-
-	if linkedCount > 0 {
-		b.logger.Debug("created similar finding relationships",
-			"finding_id", finding.ID,
-			"linked_count", linkedCount,
-		)
-	}
-
-	return linkedCount
-}
-
-// convertToFindingNode converts an agent.Finding to a graphrag.FindingNode.
-// Maps all relevant fields from the agent finding to the graph node structure.
-func (b *DefaultGraphRAGBridge) convertToFindingNode(f agent.Finding, missionID types.ID) graphrag.FindingNode {
-	node := graphrag.FindingNode{
-		ID:          types.ID(f.ID),
-		Title:       f.Title,
-		Description: f.Description,
-		Severity:    string(f.Severity),
-		Category:    f.Category,
-		Confidence:  f.Confidence,
-		MissionID:   missionID,
-		TargetID:    f.TargetID,
-		CreatedAt:   f.CreatedAt,
-		UpdatedAt:   time.Now(),
-	}
-
-	return node
-}
 
 // Compile-time interface check for DefaultGraphRAGBridge
 var _ GraphRAGBridge = (*DefaultGraphRAGBridge)(nil)
