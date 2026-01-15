@@ -16,11 +16,11 @@ import (
 // to the TaxonomyGraphEngine for observability and cross-mission correlation.
 //
 // The processor maps span names to taxonomy event types:
-//   - "gen_ai.chat" / "gen_ai.chat.stream" → "llm.call"
-//   - "gen_ai.tool" → "tool.call"
-//   - "gibson.agent.delegate" → "agent.delegate"
-//   - "gibson.mission.execute" → "mission.start" and "mission.end"
-//   - Spans starting with "gibson.agent." → "agent.start" and "agent.end"
+//   - "gen_ai.chat" / "gen_ai.chat.stream" → "llm.request.started", "llm.request.completed"
+//   - "gen_ai.tool" → "tool.call.started", "tool.call.completed"
+//   - "gibson.agent.delegate" → "agent.delegated"
+//   - "gibson.mission.execute" → "mission.started" and "mission.completed"
+//   - Spans starting with "gibson.agent." → "agent.started" and "agent.completed"
 //
 // Thread-safety: All methods are safe for concurrent access.
 type GraphSpanProcessor struct {
@@ -128,21 +128,21 @@ func (p *GraphSpanProcessor) processSpan(spanName, traceID, spanID string, s sdk
 func (p *GraphSpanProcessor) mapSpanToEventTypes(spanName string) []string {
 	switch {
 	case spanName == SpanGenAIChat || spanName == SpanGenAIChatStream:
-		return []string{"llm.call"}
+		return []string{"llm.request.started", "llm.request.completed"}
 
 	case spanName == SpanGenAITool:
-		return []string{"tool.call"}
+		return []string{"tool.call.started", "tool.call.completed"}
 
 	case spanName == SpanAgentDelegate:
-		return []string{"agent.delegate"}
+		return []string{"agent.delegated"}
 
 	case spanName == "gibson.mission.execute":
 		// Mission spans represent both start and end
-		return []string{"mission.start", "mission.end"}
+		return []string{"mission.started", "mission.completed"}
 
 	case strings.HasPrefix(spanName, "gibson.agent."):
 		// Agent spans represent both start and end
-		return []string{"agent.start", "agent.end"}
+		return []string{"agent.started", "agent.completed"}
 
 	default:
 		// Unknown span type
@@ -159,10 +159,10 @@ func (p *GraphSpanProcessor) extractSpanData(s sdktrace.ReadOnlySpan, traceID, s
 	data["trace_id"] = traceID
 	data["span_id"] = spanID
 
-	// Add timing information
-	data["timestamp"] = s.StartTime()
-	data["started_at"] = s.StartTime()
-	data["ended_at"] = s.EndTime()
+	// Add timing information (convert to UTC to avoid Neo4j timezone issues)
+	data["timestamp"] = s.StartTime().UTC()
+	data["started_at"] = s.StartTime().UTC()
+	data["ended_at"] = s.EndTime().UTC()
 	data["duration_ms"] = s.EndTime().Sub(s.StartTime()).Milliseconds()
 
 	// Extract all span attributes

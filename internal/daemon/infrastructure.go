@@ -115,6 +115,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 	var graphRAGClient *graph.Neo4jClient
 	var graphRAGBridge harness.GraphRAGBridge
 	var graphRAGQueryBridge harness.GraphRAGQueryBridge
+	var taxonomyEngine engine.TaxonomyGraphEngine
 	if d.config != nil && d.config.GraphRAG.Enabled {
 		var err error
 		graphRAGClient, err = d.initGraphRAG(ctx)
@@ -126,7 +127,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 				"uri", d.config.GraphRAG.Neo4j.URI)
 
 			// Create the full GraphRAG stack: Provider -> Store -> BridgeAdapter
-			graphRAGBridge, graphRAGQueryBridge, err = d.initGraphRAGBridges(ctx, graphRAGClient)
+			graphRAGBridge, graphRAGQueryBridge, taxonomyEngine, err = d.initGraphRAGBridges(ctx, graphRAGClient)
 			if err != nil {
 				d.logger.Warn("failed to initialize GraphRAG bridges, continuing without knowledge graph",
 					"error", err)
@@ -174,6 +175,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		graphRAGClient:       graphRAGClient,
 		graphRAGBridge:       graphRAGBridge,
 		graphRAGQueryBridge:  graphRAGQueryBridge,
+		taxonomyEngine:       taxonomyEngine,
 	}
 	d.infrastructure = infra
 
@@ -303,8 +305,8 @@ func (d *daemonImpl) checkInfrastructureHealth(ctx context.Context, infra *Infra
 //  3. A GraphRAG store that orchestrates the provider and embedder
 //  4. A bridge adapter that provides both GraphRAGBridge and GraphRAGQueryBridge interfaces
 //
-// Returns the bridge and query bridge interfaces, or an error if initialization fails.
-func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph.Neo4jClient) (harness.GraphRAGBridge, harness.GraphRAGQueryBridge, error) {
+// Returns the bridge, query bridge, and taxonomy engine, or an error if initialization fails.
+func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph.Neo4jClient) (harness.GraphRAGBridge, harness.GraphRAGQueryBridge, engine.TaxonomyGraphEngine, error) {
 	// Create embedder - use mock for now since it doesn't require API keys
 	// In production, this would use OpenAI or another embedding provider
 	emb := embedder.NewMockEmbedder()
@@ -331,27 +333,27 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	// Create GraphRAG provider from config
 	prov, err := provider.NewProvider(graphRAGConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create GraphRAG provider: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create GraphRAG provider: %w", err)
 	}
 	d.logger.Info("created GraphRAG provider",
 		"type", graphRAGConfig.Provider)
 
 	// Initialize the provider
 	if err := prov.Initialize(ctx); err != nil {
-		return nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
 	}
 
 	// Create GraphRAG store with the provider and embedder
 	store, err := graphrag.NewGraphRAGStoreWithProvider(graphRAGConfig, emb, prov)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create GraphRAG store: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create GraphRAG store: %w", err)
 	}
 	d.logger.Info("created GraphRAG store")
 
 	// Load taxonomy registry for event-driven graph operations
 	registry, err := d.getTaxonomyRegistry(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to load taxonomy registry: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to load taxonomy registry: %w", err)
 	}
 
 	// Create taxonomy engine for event processing
@@ -362,9 +364,6 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	)
 	d.logger.Info("created taxonomy graph engine")
 
-	// Store taxonomy engine in infrastructure for graph event subscriber
-	d.infrastructure.taxonomyEngine = taxonomyEngine
-
 	// Create bridge adapter with the store and engine
 	adapter, err := NewGraphRAGBridgeAdapter(GraphRAGBridgeConfig{
 		Neo4jClient:    neo4jClient,
@@ -373,8 +372,8 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 		Logger:         d.logger.With("component", "graphrag-bridge"),
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create GraphRAG bridge adapter: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to create GraphRAG bridge adapter: %w", err)
 	}
 
-	return adapter.Bridge(), adapter.QueryBridge(), nil
+	return adapter.Bridge(), adapter.QueryBridge(), taxonomyEngine, nil
 }
