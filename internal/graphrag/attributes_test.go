@@ -126,7 +126,7 @@ func TestQueryAttributes(t *testing.T) {
 	t.Run("query with filters", func(t *testing.T) {
 		missionID := types.NewID()
 		query := NewGraphRAGQuery("test").
-			WithNodeTypes(NodeTypeFinding, NodeTypeAttackPattern).
+			WithNodeTypes(NodeType("finding"), NodeType("attack_pattern")).
 			WithMission(missionID)
 
 		attrs := QueryAttributes(*query)
@@ -138,8 +138,8 @@ func TestQueryAttributes(t *testing.T) {
 		nodeTypes, ok := attrMap["gibson.graphrag.node_types"].([]string)
 		require.True(t, ok)
 		assert.Len(t, nodeTypes, 2)
-		assert.Contains(t, nodeTypes, "Finding")
-		assert.Contains(t, nodeTypes, "AttackPattern")
+		assert.Contains(t, nodeTypes, "finding")
+		assert.Contains(t, nodeTypes, "attack_pattern")
 	})
 }
 
@@ -154,7 +154,7 @@ func TestResultAttributes(t *testing.T) {
 	})
 
 	t.Run("single result", func(t *testing.T) {
-		node := NewGraphNode(types.NewID(), NodeTypeFinding)
+		node := NewGraphNode(types.NewID(), NodeType("finding"))
 		result := NewGraphRAGResult(*node, 0.85, 0.75)
 		result.ComputeScore(0.6, 0.4)
 
@@ -169,11 +169,11 @@ func TestResultAttributes(t *testing.T) {
 	})
 
 	t.Run("multiple results with different node types", func(t *testing.T) {
-		node1 := NewGraphNode(types.NewID(), NodeTypeFinding)
+		node1 := NewGraphNode(types.NewID(), NodeType("finding"))
 		result1 := NewGraphRAGResult(*node1, 0.9, 0.8)
 		result1.ComputeScore(0.6, 0.4)
 
-		node2 := NewGraphNode(types.NewID(), NodeTypeAttackPattern)
+		node2 := NewGraphNode(types.NewID(), NodeType("attack_pattern"))
 		result2 := NewGraphRAGResult(*node2, 0.7, 0.6)
 		result2.ComputeScore(0.6, 0.4)
 		result2.WithPath([]types.ID{types.NewID(), types.NewID()}) // Distance of 1
@@ -186,8 +186,8 @@ func TestResultAttributes(t *testing.T) {
 		assert.Equal(t, int64(1), attrMap["gibson.graphrag.max_distance"])
 
 		// Check node type counts
-		assert.Equal(t, int64(1), attrMap["gibson.graphrag.result_types.Finding"])
-		assert.Equal(t, int64(1), attrMap["gibson.graphrag.result_types.AttackPattern"])
+		assert.Equal(t, int64(1), attrMap["gibson.graphrag.result_types.finding"])
+		assert.Equal(t, int64(1), attrMap["gibson.graphrag.result_types.attack_pattern"])
 	})
 }
 
@@ -197,10 +197,10 @@ func TestStoreAttributes(t *testing.T) {
 		nodeType NodeType
 		expected string
 	}{
-		{"finding", NodeTypeFinding, "Finding"},
-		{"attack_pattern", NodeTypeAttackPattern, "AttackPattern"},
-		{"technique", NodeTypeTechnique, "Technique"},
-		{"target", NodeTypeTarget, "Target"},
+		{"finding", NodeType("finding"), "finding"},
+		{"attack_pattern", NodeType("attack_pattern"), "attack_pattern"},
+		{"technique", NodeType("technique"), "technique"},
+		{"target", NodeType("target"), "target"},
 	}
 
 	for _, tt := range tests {
@@ -216,8 +216,8 @@ func TestStoreAttributes(t *testing.T) {
 func TestTraverseAttributes(t *testing.T) {
 	startID := types.NewID().String()
 	filters := TraversalFilters{
-		AllowedRelations: []RelationType{RelationExploits, RelationSimilarTo},
-		AllowedNodeTypes: []NodeType{NodeTypeFinding, NodeTypeAttackPattern},
+		AllowedRelations: []RelationType{RelationType("exploits"), RelationType("similar_to")},
+		AllowedNodeTypes: []NodeType{NodeType("finding"), NodeType("attack_pattern")},
 		MinWeight:        0.5,
 		MaxDepth:         5,
 	}
@@ -234,8 +234,8 @@ func TestTraverseAttributes(t *testing.T) {
 	allowedRels, ok := attrMap["gibson.graphrag.allowed_relations"].([]string)
 	require.True(t, ok)
 	assert.Len(t, allowedRels, 2)
-	assert.Contains(t, allowedRels, "EXPLOITS")
-	assert.Contains(t, allowedRels, "SIMILAR_TO")
+	assert.Contains(t, allowedRels, "exploits")
+	assert.Contains(t, allowedRels, "similar_to")
 
 	// Check allowed node types
 	allowedTypes, ok := attrMap["gibson.graphrag.allowed_node_types"].([]string)
@@ -258,13 +258,13 @@ func TestVectorSearchAttributes(t *testing.T) {
 func TestRelationshipAttributes(t *testing.T) {
 	fromID := types.NewID()
 	toID := types.NewID()
-	rel := NewRelationship(fromID, toID, RelationExploits).
+	rel := NewRelationship(fromID, toID, RelationType("exploits")).
 		WithWeight(0.85)
 
 	attrs := RelationshipAttributes(*rel)
 
 	attrMap := attributesToMap(attrs)
-	assert.Equal(t, "EXPLOITS", attrMap[AttrGraphRAGRelationType])
+	assert.Equal(t, "exploits", attrMap[AttrGraphRAGRelationType])
 	assert.Equal(t, 0.85, attrMap["gibson.graphrag.relationship_weight"])
 	assert.Equal(t, fromID.String(), attrMap["gibson.graphrag.from_id"])
 	assert.Equal(t, toID.String(), attrMap["gibson.graphrag.to_id"])
@@ -274,7 +274,7 @@ func TestNodeAttributes(t *testing.T) {
 	t.Run("node with embedding", func(t *testing.T) {
 		missionID := types.NewID()
 		embedding := make([]float64, 768)
-		node := NewGraphNode(types.NewID(), NodeTypeFinding, NodeTypeTarget).
+		node := NewGraphNode(types.NewID(), NodeType("finding"), NodeType("target")).
 			WithEmbedding(embedding).
 			WithMission(missionID).
 			WithProperty("title", "Test Finding").
@@ -283,7 +283,7 @@ func TestNodeAttributes(t *testing.T) {
 		attrs := NodeAttributes(*node)
 
 		attrMap := attributesToMap(attrs)
-		assert.Equal(t, "Finding", attrMap[AttrGraphRAGNodeType])
+		assert.Equal(t, "finding", attrMap[AttrGraphRAGNodeType])
 		assert.Equal(t, true, attrMap["gibson.graphrag.has_embedding"])
 		assert.Equal(t, int64(768), attrMap["gibson.graphrag.embedding_dim"])
 		assert.Equal(t, int64(2), attrMap["gibson.graphrag.property_count"])
@@ -293,12 +293,12 @@ func TestNodeAttributes(t *testing.T) {
 		labels, ok := attrMap["gibson.graphrag.labels"].([]string)
 		require.True(t, ok)
 		assert.Len(t, labels, 2)
-		assert.Contains(t, labels, "Finding")
-		assert.Contains(t, labels, "Target")
+		assert.Contains(t, labels, "finding")
+		assert.Contains(t, labels, "target")
 	})
 
 	t.Run("node without embedding", func(t *testing.T) {
-		node := NewGraphNode(types.NewID(), NodeTypeAttackPattern)
+		node := NewGraphNode(types.NewID(), NodeType("attack_pattern"))
 
 		attrs := NodeAttributes(*node)
 

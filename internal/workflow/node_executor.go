@@ -128,8 +128,10 @@ func (we *WorkflowExecutor) executeAgentNode(
 	defer agentSpan.End()
 
 	// Add task ID attribute if available
+	var taskID string
 	if node.AgentTask != nil {
-		agentSpan.SetAttributes(attribute.String("gibson.task.id", node.AgentTask.ID.String()))
+		taskID = node.AgentTask.ID.String()
+		agentSpan.SetAttributes(attribute.String("gibson.task.id", taskID))
 	}
 
 	startTime := time.Now()
@@ -153,9 +155,28 @@ func (we *WorkflowExecutor) executeAgentNode(
 		return nil, err
 	}
 
+	// Extract parent span ID for PART_OF relationship creation
+	// The parent span is the workflow execution span, not the agent span
+	parentSpanID := ""
+	if agentSpan.SpanContext().IsValid() {
+		// We want the parent of the current agent span, which is the workflow/node execution span
+		// OpenTelemetry doesn't expose parent span ID directly, but we can get it from the context
+		// The graph processor derives relationships from trace context automatically
+	}
+
+	// Emit agent.started event for graph processing
+	we.emitAgentStarted(ctx, node.AgentName, taskID, parentSpanID)
+
 	// Delegate to the agent
 	agentResult, err := harness.DelegateToAgent(ctx, node.AgentName, *node.AgentTask)
+
+	// Calculate duration
+	duration := time.Since(startTime)
+
 	if err != nil {
+		// Emit agent.failed event
+		we.emitAgentFailed(ctx, node.AgentName, duration, err.Error())
+
 		nodeErr := &NodeError{
 			Code:    "AGENT_EXECUTION_FAILED",
 			Message: fmt.Sprintf("failed to execute agent %s: %v", node.AgentName, err),
@@ -171,7 +192,7 @@ func (we *WorkflowExecutor) executeAgentNode(
 		Status:      NodeStatusCompleted,
 		Output:      agentResult.Output,
 		Findings:    agentResult.Findings,
-		Duration:    time.Since(startTime),
+		Duration:    duration,
 		StartedAt:   startTime,
 		CompletedAt: time.Now(),
 		Metadata: map[string]any{
@@ -183,18 +204,35 @@ func (we *WorkflowExecutor) executeAgentNode(
 	// Check if agent execution failed
 	if agentResult.Status == agent.ResultStatusFailed {
 		nodeResult.Status = NodeStatusFailed
+		errorMsg := "agent execution failed"
 		if agentResult.Error != nil {
 			nodeResult.Error = &NodeError{
 				Code:    agentResult.Error.Code,
 				Message: agentResult.Error.Message,
 				Details: agentResult.Error.Details,
 			}
+			errorMsg = nodeResult.Error.Message
 			agentSpan.SetStatus(codes.Error, nodeResult.Error.Error())
 		} else {
-			agentSpan.SetStatus(codes.Error, "agent execution failed")
+			agentSpan.SetStatus(codes.Error, errorMsg)
 		}
+
+		// Emit agent.failed event
+		we.emitAgentFailed(ctx, node.AgentName, duration, errorMsg)
 	} else {
 		agentSpan.SetStatus(codes.Ok, "agent executed successfully")
+
+		// Create output summary for completed event
+		outputSummary := fmt.Sprintf("Agent completed successfully with %d findings", len(agentResult.Findings))
+		if agentResult.Output != nil {
+			// Try to extract a meaningful summary from output
+			if summary, ok := agentResult.Output["summary"].(string); ok && summary != "" {
+				outputSummary = summary
+			}
+		}
+
+		// Emit agent.completed event
+		we.emitAgentCompleted(ctx, node.AgentName, duration, outputSummary)
 	}
 
 	return nodeResult, nil

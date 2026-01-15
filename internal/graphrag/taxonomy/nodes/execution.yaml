@@ -397,3 +397,75 @@ node_types:
         latency_ms: 3500
         timestamp: "2024-01-10T10:07:00Z"
         cost_usd: 0.04
+
+  # Intelligence represents LLM-generated analysis and insights from reconnaissance data
+  - id: node.execution.intelligence
+    name: Intelligence
+    type: intelligence
+    category: execution
+    description: "LLM-generated analysis and insights from reconnaissance data"
+    id_template: "intelligence:{mission_id}:{phase}:{timestamp}"
+    properties:
+      - name: mission_id
+        type: string
+        required: true
+        description: "ID of the parent mission this intelligence belongs to"
+      - name: phase
+        type: string
+        required: false
+        description: "Reconnaissance phase analyzed (e.g., 'discover', 'probe', 'scan', 'domain')"
+      - name: summary
+        type: string
+        required: true
+        description: "Executive summary of the intelligence analysis"
+      - name: risk_assessment
+        type: string
+        required: false
+        description: "Overall risk assessment and security posture evaluation"
+      - name: attack_paths
+        type: "map[string]any"
+        required: false
+        description: "Identified attack paths with steps, likelihood, and impact (JSON structure)"
+      - name: recommendations
+        type: "map[string]any"
+        required: false
+        description: "Security recommendations with priority and remediation steps (JSON structure)"
+      - name: confidence
+        type: float64
+        required: false
+        description: "Confidence score of the analysis (0.0-1.0)"
+      - name: source_node_count
+        type: int
+        required: false
+        description: "Number of source nodes (hosts, ports, findings, etc.) analyzed"
+      - name: source_llm_call_id
+        type: string
+        required: false
+        description: "ID of the LLM call that generated this intelligence"
+      - name: model
+        type: string
+        required: false
+        description: "LLM model used for analysis (e.g., 'gpt-4', 'claude-3-opus')"
+      - name: timestamp
+        type: string
+        required: true
+        description: "When the intelligence was generated (ISO 8601)"
+    examples:
+      - mission_id: "mission:acme-pentest-2024-01"
+        phase: "probe"
+        summary: "Analysis of HTTP service probing identified 12 web applications with mixed security posture. Critical finding: 3 applications expose debug endpoints without authentication."
+        risk_assessment: "Medium-High risk. Multiple attack vectors identified including exposed admin interfaces and outdated frameworks."
+        attack_paths:
+          - name: "Admin Interface Exploitation"
+            steps: ["Access exposed /admin endpoint", "Enumerate users via debug API", "Attempt default credentials"]
+            likelihood: "high"
+            impact: "critical"
+        recommendations:
+          - priority: "high"
+            title: "Disable debug endpoints in production"
+            description: "Remove or authenticate all /debug, /admin, and /api/v1/internal endpoints"
+        confidence: 0.87
+        source_node_count: 45
+        source_llm_call_id: "llm_call:agent_run:mission:acme-pentest-2024-01:bishop:1:1704887220"
+        model: "gpt-4"
+        timestamp: "2024-01-10T10:10:00Z"

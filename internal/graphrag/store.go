@@ -236,6 +236,8 @@ func (s *DefaultGraphRAGStore) Store(ctx context.Context, record GraphRecord) er
 
 // StoreBatch efficiently stores multiple graph records.
 // Generates embeddings in batch, then stores nodes and relationships.
+// IMPORTANT: Stores ALL nodes first, THEN all relationships to ensure
+// relationship target nodes exist before creating relationships.
 func (s *DefaultGraphRAGStore) StoreBatch(ctx context.Context, records []GraphRecord) error {
 	if len(records) == 0 {
 		return nil
@@ -264,10 +266,37 @@ func (s *DefaultGraphRAGStore) StoreBatch(ctx context.Context, records []GraphRe
 		}
 	}
 
-	// Store each record (provider may optimize this internally)
+	// Phase 1: Store ALL nodes first
 	for _, record := range records {
-		if err := s.Store(ctx, record); err != nil {
-			return err
+		// Generate embedding if not present
+		if len(record.Node.Embedding) == 0 && record.EmbedContent != "" {
+			embedding, err := s.embedder.Embed(ctx, record.EmbedContent)
+			if err != nil {
+				return NewEmbeddingError("failed to generate embedding for record", err, true)
+			}
+			record.Node.Embedding = embedding
+		}
+
+		// Validate node
+		if err := record.Node.Validate(); err != nil {
+			return NewInvalidQueryError(fmt.Sprintf("invalid graph node: %v", err))
+		}
+
+		// Store node
+		if err := s.provider.StoreNode(ctx, record.Node); err != nil {
+			return NewQueryError("failed to store node", err)
+		}
+	}
+
+	// Phase 2: Store ALL relationships after all nodes exist
+	for _, record := range records {
+		for _, rel := range record.Relationships {
+			if err := rel.Validate(); err != nil {
+				return NewInvalidQueryError(fmt.Sprintf("invalid relationship: %v", err))
+			}
+			if err := s.provider.StoreRelationship(ctx, rel); err != nil {
+				return NewRelationshipError("failed to store relationship", err)
+			}
 		}
 	}
 
@@ -309,7 +338,7 @@ func (s *DefaultGraphRAGStore) StoreAttackPattern(ctx context.Context, pattern A
 		rel := NewRelationship(
 			pattern.ID,
 			types.NewID(), // Placeholder - should be actual technique ID
-			RelationUsesTechnique,
+			RelationType("uses_technique"),
 		).WithProperty("tactic", tactic)
 
 		if err := s.provider.StoreRelationship(ctx, *rel); err != nil {
@@ -333,7 +362,7 @@ func (s *DefaultGraphRAGStore) FindSimilarAttacks(ctx context.Context, content s
 
 	// Execute vector search with AttackPattern filter
 	filters := map[string]any{
-		"node_type": NodeTypeAttackPattern.String(),
+		"node_type": NodeType("attack_pattern").String(),
 	}
 	vectorResults, err := s.provider.VectorSearch(ctx, embedding, topK, filters)
 	if err != nil {
@@ -345,7 +374,7 @@ func (s *DefaultGraphRAGStore) FindSimilarAttacks(ctx context.Context, content s
 	for _, vr := range vectorResults {
 		// Query for full node data
 		nodeQuery := NewNodeQuery().
-			WithNodeTypes(NodeTypeAttackPattern).
+			WithNodeTypes(NodeType("attack_pattern")).
 			WithProperty("id", vr.NodeID.String())
 
 		nodes, err := s.provider.QueryNodes(ctx, *nodeQuery)
@@ -372,7 +401,7 @@ func (s *DefaultGraphRAGStore) FindSimilarFindings(ctx context.Context, findingI
 
 	// Fetch the source finding
 	nodeQuery := NewNodeQuery().
-		WithNodeTypes(NodeTypeFinding).
+		WithNodeTypes(NodeType("finding")).
 		WithProperty("id", id.String())
 
 	nodes, err := s.provider.QueryNodes(ctx, *nodeQuery)
@@ -387,7 +416,7 @@ func (s *DefaultGraphRAGStore) FindSimilarFindings(ctx context.Context, findingI
 
 	// Execute vector search with Finding filter
 	filters := map[string]any{
-		"node_type": NodeTypeFinding.String(),
+		"node_type": NodeType("finding").String(),
 	}
 	vectorResults, err := s.provider.VectorSearch(ctx, sourceFinding.Embedding, topK+1, filters)
 	if err != nil {
@@ -404,7 +433,7 @@ func (s *DefaultGraphRAGStore) FindSimilarFindings(ctx context.Context, findingI
 
 		// Query for full node data
 		nodeQuery := NewNodeQuery().
-			WithNodeTypes(NodeTypeFinding).
+			WithNodeTypes(NodeType("finding")).
 			WithProperty("id", vr.NodeID.String())
 
 		nodes, err := s.provider.QueryNodes(ctx, *nodeQuery)
@@ -429,7 +458,7 @@ func (s *DefaultGraphRAGStore) FindSimilarFindings(ctx context.Context, findingI
 func (s *DefaultGraphRAGStore) GetAttackChains(ctx context.Context, techniqueID string, maxDepth int) ([]AttackChain, error) {
 	// Query for the starting technique node
 	nodeQuery := NewNodeQuery().
-		WithNodeTypes(NodeTypeTechnique).
+		WithNodeTypes(NodeType("technique")).
 		WithProperty("technique_id", techniqueID)
 
 	nodes, err := s.provider.QueryNodes(ctx, *nodeQuery)
@@ -441,8 +470,8 @@ func (s *DefaultGraphRAGStore) GetAttackChains(ctx context.Context, techniqueID 
 
 	// Traverse graph from this technique following USES_TECHNIQUE relationships
 	filters := TraversalFilters{
-		AllowedRelations: []RelationType{RelationUsesTechnique},
-		AllowedNodeTypes: []NodeType{NodeTypeTechnique, NodeTypeAttackPattern},
+		AllowedRelations: []RelationType{RelationType("uses_technique")},
+		AllowedNodeTypes: []NodeType{NodeType("technique"), NodeType("attack_pattern")},
 	}
 
 	traversedNodes, err := s.provider.TraverseGraph(ctx, startNode.ID.String(), maxDepth, filters)
@@ -481,7 +510,7 @@ func (s *DefaultGraphRAGStore) StoreFinding(ctx context.Context, finding Finding
 		rel := NewRelationship(
 			finding.ID,
 			*finding.TargetID,
-			RelationDiscoveredOn,
+			RelationType("discovered_on"),
 		).WithProperty("severity", finding.Severity)
 
 		if err := s.provider.StoreRelationship(ctx, *rel); err != nil {
@@ -505,7 +534,7 @@ func (s *DefaultGraphRAGStore) GetRelatedFindings(ctx context.Context, findingID
 	// Query for relationships from this finding
 	relQuery := NewRelQuery().
 		WithFromID(id).
-		WithTypes(RelationSimilarTo, RelationRelatedTo)
+		WithTypes(RelationType("similar_to"), RelationType("related_to"))
 
 	rels, err := s.provider.QueryRelationships(ctx, *relQuery)
 	if err != nil {
@@ -517,7 +546,7 @@ func (s *DefaultGraphRAGStore) GetRelatedFindings(ctx context.Context, findingID
 	for _, rel := range rels {
 		// Query for the target node
 		nodeQuery := NewNodeQuery().
-			WithNodeTypes(NodeTypeFinding).
+			WithNodeTypes(NodeType("finding")).
 			WithProperty("id", rel.ToID.String())
 
 		nodes, err := s.provider.QueryNodes(ctx, *nodeQuery)
@@ -741,7 +770,7 @@ func buildAttackChainsFromNodes(startNode GraphNode, traversedNodes []GraphNode,
 		if i >= maxDepth {
 			break
 		}
-		if node.HasLabel(NodeTypeTechnique) {
+		if node.HasLabel(NodeType("technique")) {
 			chain.AddStep(AttackStep{
 				TechniqueID: node.GetStringProperty("technique_id"),
 				NodeID:      node.ID,

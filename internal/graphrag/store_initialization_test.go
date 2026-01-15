@@ -149,11 +149,11 @@ func TestNoopProvider_BasicOperations(t *testing.T) {
 	err := provider.Initialize(ctx)
 	assert.NoError(t, err)
 
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	err = provider.StoreNode(ctx, *node)
 	assert.NoError(t, err)
 
-	rel := NewRelationship(types.NewID(), types.NewID(), RelationSimilarTo)
+	rel := NewRelationship(types.NewID(), types.NewID(), RelationType("similar_to"))
 	err = provider.StoreRelationship(ctx, *rel)
 	assert.NoError(t, err)
 

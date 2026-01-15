@@ -16,13 +16,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// PlanningOrchestrator is an interface to avoid import cycle with planning package.
-// The actual implementation is in internal/planning/orchestrator.go.
-type PlanningOrchestrator interface {
-	// Methods would be defined here if needed by harness
-	// For now, we just need to check if it's nil
-}
-
 // DefaultAgentHarness is the production implementation of the AgentHarness interface.
 // It provides agents with access to all framework capabilities including LLM operations,
 // tool execution, plugin queries, sub-agent delegation, finding management, memory storage,
@@ -75,11 +68,6 @@ type DefaultAgentHarness struct {
 	// Knowledge graph integration
 	graphRAGBridge      GraphRAGBridge
 	graphRAGQueryBridge GraphRAGQueryBridge
-
-	// Planning integration
-	planningOrchestrator PlanningOrchestrator
-	planContext          *PlanningContext
-	stepBudget           int
 
 	// Mission management (optional, nil = mission methods return error)
 	missionClient MissionOperator
@@ -1353,70 +1341,6 @@ func (h *DefaultAgentHarness) GraphRAGHealth(ctx context.Context) types.HealthSt
 		"message", status.Message)
 
 	return status
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Planning Methods (PlanningContextProvider interface)
-// ────────────────────────────────────────────────────────────────────────────
-
-// PlanContext returns the current planning context, or nil if planning is disabled.
-// This provides the agent with read-only access to its position in the execution plan,
-// remaining steps, and budget allocation.
-func (h *DefaultAgentHarness) PlanContext() *PlanningContext {
-	return h.planContext
-}
-
-// GetStepBudget returns the token budget allocated for this specific step,
-// or 0 if unlimited/no planning is active.
-func (h *DefaultAgentHarness) GetStepBudget() int {
-	return h.stepBudget
-}
-
-// SignalReplanRecommended signals to the planning orchestrator that replanning
-// may be needed due to unexpected conditions encountered during execution.
-//
-// This is a hint to the planning system - the orchestrator will evaluate whether
-// replanning is actually warranted based on the reason and current mission state.
-func (h *DefaultAgentHarness) SignalReplanRecommended(ctx context.Context, reason string) error {
-	// If planning is disabled (no orchestrator), this is a no-op
-	if h.planningOrchestrator == nil {
-		h.logger.Debug("replan signal ignored - planning not enabled")
-		return nil
-	}
-
-	h.logger.Info("agent recommends replanning",
-		"reason", reason,
-		"agent", h.missionCtx.CurrentAgent)
-
-	// Note: The actual RequestReplan would need to be called by the mission controller
-	// when it processes step results. For now, we just log the signal.
-	// A full implementation would queue this signal for the controller to act on.
-
-	return nil
-}
-
-// ReportStepHints provides feedback to the step scorer about the execution results.
-// Agents can use this to share their confidence, suggest next steps, or provide
-// key findings that help the planning system make better decisions.
-func (h *DefaultAgentHarness) ReportStepHints(ctx context.Context, hints *StepHints) error {
-	// If planning is disabled (no orchestrator), this is a no-op
-	if h.planningOrchestrator == nil {
-		h.logger.Debug("step hints ignored - planning not enabled")
-		return nil
-	}
-
-	h.logger.Debug("agent reporting step hints",
-		"confidence", hints.Confidence,
-		"suggested_next_count", len(hints.SuggestedNext),
-		"replan_reason", hints.ReplanReason,
-		"key_findings_count", len(hints.KeyFindings),
-		"agent", h.missionCtx.CurrentAgent)
-
-	// Note: The actual RecordStepHints would be called by the mission controller
-	// when processing step completion. For now, we store hints locally and log them.
-	// A full implementation would pass these to the orchestrator's OnStepComplete method.
-
-	return nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────

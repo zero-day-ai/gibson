@@ -11,11 +11,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
+	"github.com/zero-day-ai/gibson/internal/graphrag/taxonomy"
+	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/llm"
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
+	sdkfinding "github.com/zero-day-ai/sdk/finding"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
+	"github.com/zero-day-ai/sdk/schema"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -37,6 +40,13 @@ type CredentialStore interface {
 // create graph nodes and relationships based on taxonomy schemas.
 // This is an alias to the engine.TaxonomyGraphEngine interface.
 type TaxonomyGraphEngine = engine.TaxonomyGraphEngine
+
+// EventBusPublisher is an interface for publishing daemon-wide events.
+// This allows the callback service to publish tool and LLM events
+// to the daemon's event bus for graph processing.
+type EventBusPublisher interface {
+	Publish(ctx context.Context, event interface{}) error
+}
 
 // HarnessCallbackService implements the gRPC HarnessCallbackService server.
 // It receives harness operation requests from remote agents via gRPC and
@@ -74,6 +84,9 @@ type HarnessCallbackService struct {
 
 	// taxonomyEngine processes tool outputs and graphs them based on taxonomy schemas
 	taxonomyEngine TaxonomyGraphEngine
+
+	// eventBus publishes tool and LLM events for graph processing
+	eventBus EventBusPublisher
 
 	// spanProcessors receives spans exported from remote agents for tracing integration
 	spanProcessors []sdktrace.SpanProcessor
@@ -120,6 +133,15 @@ func WithCredentialStore(store CredentialStore) CallbackServiceOption {
 func WithTaxonomyEngine(engine TaxonomyGraphEngine) CallbackServiceOption {
 	return func(s *HarnessCallbackService) {
 		s.taxonomyEngine = engine
+	}
+}
+
+// WithEventBus sets the event bus for publishing tool and LLM events.
+// When set, the callback service publishes events for tool calls and LLM requests
+// that can be consumed by the execution graph engine.
+func WithEventBus(eventBus EventBusPublisher) CallbackServiceOption {
+	return func(s *HarnessCallbackService) {
+		s.eventBus = eventBus
 	}
 }
 
@@ -266,6 +288,15 @@ func (s *HarnessCallbackService) LLMComplete(ctx context.Context, req *pb.LLMCom
 		return nil, err
 	}
 
+	// Publish llm.request.started event
+	s.publishEvent(ctx, "llm.request.started", map[string]interface{}{
+		"slot":          req.Slot,
+		"mission_id":    req.Context.MissionId,
+		"agent_name":    req.Context.AgentName,
+		"task_id":       req.Context.TaskId,
+		"message_count": len(req.Messages),
+	})
+
 	// Convert proto messages to llm.Message
 	messages := s.protoToMessages(req.Messages)
 
@@ -288,6 +319,16 @@ func (s *HarnessCallbackService) LLMComplete(ctx context.Context, req *pb.LLMCom
 	resp, err := harness.Complete(ctx, req.Slot, messages, opts...)
 	if err != nil {
 		s.logger.Error("LLM completion failed", "error", err, "task_id", req.Context.TaskId)
+
+		// Publish llm.request.failed event
+		s.publishEvent(ctx, "llm.request.failed", map[string]interface{}{
+			"slot":       req.Slot,
+			"mission_id": req.Context.MissionId,
+			"agent_name": req.Context.AgentName,
+			"task_id":    req.Context.TaskId,
+			"error":      err.Error(),
+		})
+
 		return &pb.LLMCompleteResponse{
 			Error: &pb.HarnessError{
 				Code:    "INTERNAL",
@@ -295,6 +336,18 @@ func (s *HarnessCallbackService) LLMComplete(ctx context.Context, req *pb.LLMCom
 			},
 		}, nil
 	}
+
+	// Publish llm.request.completed event
+	s.publishEvent(ctx, "llm.request.completed", map[string]interface{}{
+		"slot":              req.Slot,
+		"mission_id":        req.Context.MissionId,
+		"agent_name":        req.Context.AgentName,
+		"task_id":           req.Context.TaskId,
+		"finish_reason":     string(resp.FinishReason),
+		"prompt_tokens":     resp.Usage.PromptTokens,
+		"completion_tokens": resp.Usage.CompletionTokens,
+		"total_tokens":      resp.Usage.PromptTokens + resp.Usage.CompletionTokens,
+	})
 
 	// Convert response
 	return &pb.LLMCompleteResponse{
@@ -473,9 +526,26 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 		return nil, err
 	}
 
+	// Publish tool.call.started event
+	s.publishEvent(ctx, "tool.call.started", map[string]interface{}{
+		"tool_name":  req.Name,
+		"mission_id": req.Context.MissionId,
+		"agent_name": req.Context.AgentName,
+		"task_id":    req.Context.TaskId,
+	})
+
 	// Deserialize input
 	var input map[string]any
 	if err := json.Unmarshal([]byte(req.InputJson), &input); err != nil {
+		// Publish tool.call.failed event for invalid input
+		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
+			"tool_name":  req.Name,
+			"mission_id": req.Context.MissionId,
+			"agent_name": req.Context.AgentName,
+			"task_id":    req.Context.TaskId,
+			"error":      fmt.Sprintf("invalid input JSON: %v", err),
+		})
+
 		return &pb.CallToolResponse{
 			Error: &pb.HarnessError{
 				Code:    "INVALID_ARGUMENT",
@@ -488,6 +558,16 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 	output, err := harness.CallTool(ctx, req.Name, input)
 	if err != nil {
 		s.logger.Error("tool execution failed", "error", err, "tool", req.Name)
+
+		// Publish tool.call.failed event
+		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
+			"tool_name":  req.Name,
+			"mission_id": req.Context.MissionId,
+			"agent_name": req.Context.AgentName,
+			"task_id":    req.Context.TaskId,
+			"error":      err.Error(),
+		})
+
 		return &pb.CallToolResponse{
 			Error: &pb.HarnessError{
 				Code:    "INTERNAL",
@@ -499,6 +579,15 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 	// Serialize output
 	outputJSON, err := json.Marshal(output)
 	if err != nil {
+		// Publish tool.call.failed event for serialization error
+		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
+			"tool_name":  req.Name,
+			"mission_id": req.Context.MissionId,
+			"agent_name": req.Context.AgentName,
+			"task_id":    req.Context.TaskId,
+			"error":      fmt.Sprintf("failed to serialize output: %v", err),
+		})
+
 		return &pb.CallToolResponse{
 			Error: &pb.HarnessError{
 				Code:    "INTERNAL",
@@ -506,6 +595,14 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 			},
 		}, nil
 	}
+
+	// Publish tool.call.completed event
+	s.publishEvent(ctx, "tool.call.completed", map[string]interface{}{
+		"tool_name":  req.Name,
+		"mission_id": req.Context.MissionId,
+		"agent_name": req.Context.AgentName,
+		"task_id":    req.Context.TaskId,
+	})
 
 	// Graph tool output automatically (if engine is configured)
 	if s.taxonomyEngine != nil && output != nil {
@@ -544,18 +641,28 @@ func (s *HarnessCallbackService) ListTools(ctx context.Context, req *pb.ListTool
 	// Get tool descriptors
 	tools := harness.ListTools()
 
-	// Convert to proto
+	// Convert to proto with structured schemas (including taxonomy)
 	protoTools := make([]*pb.HarnessToolDescriptor, len(tools))
 	for i, tool := range tools {
-		schemaJSON, err := json.Marshal(tool.InputSchema)
+		// Marshal legacy JSON schemas for backward compatibility
+		inputSchemaJSON, err := json.Marshal(tool.InputSchema)
 		if err != nil {
-			s.logger.Error("failed to marshal tool schema", "error", err, "tool", tool.Name)
-			schemaJSON = []byte("{}")
+			s.logger.Error("failed to marshal tool input schema", "error", err, "tool", tool.Name)
+			inputSchemaJSON = []byte("{}")
 		}
+		outputSchemaJSON, err := json.Marshal(tool.OutputSchema)
+		if err != nil {
+			s.logger.Error("failed to marshal tool output schema", "error", err, "tool", tool.Name)
+			outputSchemaJSON = []byte("{}")
+		}
+
 		protoTools[i] = &pb.HarnessToolDescriptor{
-			Name:        tool.Name,
-			Description: tool.Description,
-			SchemaJson:  string(schemaJSON),
+			Name:             tool.Name,
+			Description:      tool.Description,
+			SchemaJson:       string(inputSchemaJSON),                  // Legacy field for backward compatibility
+			OutputSchemaJson: string(outputSchemaJSON),                 // Legacy output schema
+			InputSchema:      SchemaToCallbackProto(tool.InputSchema),  // Structured schema with taxonomy
+			OutputSchema:     SchemaToCallbackProto(tool.OutputSchema), // Structured output schema with taxonomy
 		}
 	}
 
@@ -1899,7 +2006,7 @@ func (s *HarnessCallbackService) protoToToolDefs(protoTools []*pb.ToolDef) []llm
 	tools := make([]llm.ToolDef, len(protoTools))
 	for i, protoTool := range protoTools {
 		// Parameters are stored as JSON string in proto, unmarshal to JSONSchema
-		var params schema.JSONSchema
+		var params schema.JSON
 		if protoTool.ParametersJson != "" {
 			if err := json.Unmarshal([]byte(protoTool.ParametersJson), &params); err != nil {
 				s.logger.Error("failed to unmarshal tool parameters", "error", err, "tool", protoTool.Name)
@@ -2110,15 +2217,15 @@ func (s *HarnessCallbackService) protoEventsToOtel(protoEvents []*pb.SpanEvent) 
 // Since sdktrace.ReadOnlySpan has an unexported private() method that prevents
 // external implementation, we store the span data and export directly to Langfuse.
 type proxySpanData struct {
-	Name         string
-	SpanContext  trace.SpanContext
-	Parent       trace.SpanContext
-	SpanKind     trace.SpanKind
-	StartTime    time.Time
-	EndTime      time.Time
-	Attributes   []attribute.KeyValue
-	Events       []sdktrace.Event
-	Status       sdktrace.Status
+	Name        string
+	SpanContext trace.SpanContext
+	Parent      trace.SpanContext
+	SpanKind    trace.SpanKind
+	StartTime   time.Time
+	EndTime     time.Time
+	Attributes  []attribute.KeyValue
+	Events      []sdktrace.Event
+	Status      sdktrace.Status
 }
 
 // createProxySpanData creates a proxySpanData from the proto span data.
@@ -2259,4 +2366,501 @@ func (s *HarnessCallbackService) extractAgentRunID(ctx context.Context, contextI
 
 	// Fallback: Generate a unique ID
 	return uuid.New().String()
+}
+
+// publishEvent publishes an event to the event bus if configured.
+// This is a helper method that safely publishes events without blocking
+// callback responses. Events are published in a goroutine to avoid latency.
+func (s *HarnessCallbackService) publishEvent(ctx context.Context, eventType string, data map[string]interface{}) {
+	if s.eventBus == nil {
+		return // Event bus not configured, skip
+	}
+
+	// Extract trace context
+	var traceID, spanID string
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		spanCtx := span.SpanContext()
+		traceID = spanCtx.TraceID().String()
+		spanID = spanCtx.SpanID().String()
+	}
+
+	// Create event structure matching daemon.GraphEvent
+	event := struct {
+		Type         string
+		TraceID      string
+		SpanID       string
+		ParentSpanID string
+		Timestamp    time.Time
+		Data         map[string]interface{}
+	}{
+		Type:      eventType,
+		TraceID:   traceID,
+		SpanID:    spanID,
+		Timestamp: time.Now(),
+		Data:      data,
+	}
+
+	// Publish in background to avoid blocking the callback response
+	go func() {
+		if err := s.eventBus.Publish(context.Background(), event); err != nil {
+			s.logger.Warn("failed to publish event",
+				"event_type", eventType,
+				"error", err,
+			)
+		}
+	}()
+}
+
+// ============================================================================
+// Taxonomy Operations
+// ============================================================================
+
+// GetTaxonomySchema returns the full taxonomy schema to agents.
+// This enables standalone agents to access taxonomy for validation and introspection.
+func (s *HarnessCallbackService) GetTaxonomySchema(ctx context.Context, req *pb.GetTaxonomySchemaRequest) (*pb.GetTaxonomySchemaResponse, error) {
+	s.logger.Debug("GetTaxonomySchema called")
+
+	registry := taxonomyinit.GetTaxonomyRegistry()
+	if registry == nil {
+		return &pb.GetTaxonomySchemaResponse{
+			Error: &pb.HarnessError{
+				Code:    codes.FailedPrecondition.String(),
+				Message: "taxonomy registry not initialized",
+			},
+		}, nil
+	}
+
+	resp := &pb.GetTaxonomySchemaResponse{
+		Version: registry.Version(),
+	}
+
+	// Convert node types
+	for _, nt := range registry.NodeTypes() {
+		protoNT := &pb.TaxonomyNodeType{
+			Id:          nt.ID,
+			Name:        nt.Name,
+			Type:        nt.Type,
+			Category:    nt.Category,
+			Description: nt.Description,
+			IdTemplate:  nt.IDTemplate,
+		}
+		for _, p := range nt.Properties {
+			protoNT.Properties = append(protoNT.Properties, s.convertPropertyToProto(p))
+		}
+		resp.NodeTypes = append(resp.NodeTypes, protoNT)
+	}
+
+	// Convert relationship types
+	for _, rt := range registry.RelationshipTypes() {
+		protoRT := &pb.TaxonomyRelationshipType{
+			Id:            rt.ID,
+			Name:          rt.Name,
+			Type:          rt.Type,
+			Category:      rt.Category,
+			Description:   rt.Description,
+			FromTypes:     rt.FromTypes,
+			ToTypes:       rt.ToTypes,
+			Bidirectional: rt.Bidirectional,
+		}
+		for _, p := range rt.Properties {
+			protoRT.Properties = append(protoRT.Properties, s.convertPropertyToProto(p))
+		}
+		resp.RelationshipTypes = append(resp.RelationshipTypes, protoRT)
+	}
+
+	// Convert techniques (all sources)
+	for _, t := range registry.Techniques("") {
+		protoT := &pb.TaxonomyTechnique{
+			TechniqueId:  t.TechniqueID,
+			Name:         t.Name,
+			Taxonomy:     t.Taxonomy,
+			Category:     t.Category,
+			Description:  t.Description,
+			Tactic:       t.Tactic,
+			Platforms:    t.Platforms,
+			MitreMapping: t.MITREMapping,
+		}
+		resp.Techniques = append(resp.Techniques, protoT)
+	}
+
+	// Convert target types
+	for _, tt := range registry.ListTargetTypes() {
+		protoTT := &pb.TaxonomyTargetType{
+			Id:          tt.ID,
+			Type:        tt.Type,
+			Name:        tt.Name,
+			Category:    tt.Category,
+			Description: tt.Description,
+		}
+		if tt.ConnectionSchema != nil {
+			protoTT.RequiredFields = tt.ConnectionSchema.Required
+			protoTT.OptionalFields = tt.ConnectionSchema.Optional
+		}
+		resp.TargetTypes = append(resp.TargetTypes, protoTT)
+	}
+
+	// Convert technique types
+	for _, tt := range registry.ListTechniqueTypes() {
+		protoTT := &pb.TaxonomyTechniqueType{
+			Id:              tt.ID,
+			Type:            tt.Type,
+			Name:            tt.Name,
+			Category:        tt.Category,
+			Description:     tt.Description,
+			MitreIds:        tt.MITREIDs,
+			DefaultSeverity: tt.DefaultSeverity,
+		}
+		resp.TechniqueTypes = append(resp.TechniqueTypes, protoTT)
+	}
+
+	// Convert capabilities
+	for _, c := range registry.ListCapabilities() {
+		protoC := &pb.TaxonomyCapability{
+			Id:             c.ID,
+			Name:           c.Name,
+			Description:    c.Description,
+			TechniqueTypes: c.TechniqueTypes,
+		}
+		resp.Capabilities = append(resp.Capabilities, protoC)
+	}
+
+	s.logger.Debug("GetTaxonomySchema succeeded",
+		"version", resp.Version,
+		"node_types", len(resp.NodeTypes),
+		"relationship_types", len(resp.RelationshipTypes),
+		"techniques", len(resp.Techniques))
+
+	return resp, nil
+}
+
+// convertPropertyToProto converts a taxonomy PropertyDefinition to proto TaxonomyProperty.
+func (s *HarnessCallbackService) convertPropertyToProto(p taxonomy.PropertyDefinition) *pb.TaxonomyProperty {
+	prop := &pb.TaxonomyProperty{
+		Name:        p.Name,
+		Type:        p.Type,
+		Required:    p.Required,
+		Description: p.Description,
+	}
+
+	// Convert enum values to strings
+	for _, v := range p.Enum {
+		prop.EnumValues = append(prop.EnumValues, fmt.Sprintf("%v", v))
+	}
+
+	// Convert default value to JSON
+	if p.Default != nil {
+		if data, err := json.Marshal(p.Default); err == nil {
+			str := string(data)
+			prop.DefaultValue = str
+		}
+	}
+
+	return prop
+}
+
+// GenerateNodeID generates a deterministic node ID using taxonomy ID templates.
+func (s *HarnessCallbackService) GenerateNodeID(ctx context.Context, req *pb.GenerateNodeIDRequest) (*pb.GenerateNodeIDResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+
+	if req.NodeType == "" {
+		return nil, status.Error(codes.InvalidArgument, "node_type is required")
+	}
+
+	s.logger.Debug("GenerateNodeID called", "node_type", req.NodeType)
+
+	registry := taxonomyinit.GetTaxonomyRegistry()
+	if registry == nil {
+		return &pb.GenerateNodeIDResponse{
+			Error: &pb.HarnessError{
+				Code:    codes.FailedPrecondition.String(),
+				Message: "taxonomy registry not initialized",
+			},
+		}, nil
+	}
+
+	// Parse properties from JSON
+	var properties map[string]any
+	if req.PropertiesJson != "" {
+		if err := json.Unmarshal([]byte(req.PropertiesJson), &properties); err != nil {
+			return &pb.GenerateNodeIDResponse{
+				Error: &pb.HarnessError{
+					Code:    codes.InvalidArgument.String(),
+					Message: fmt.Sprintf("failed to parse properties JSON: %v", err),
+				},
+			}, nil
+		}
+	}
+
+	// Generate node ID using taxonomy template
+	nodeID, err := registry.GenerateNodeID(req.NodeType, properties)
+	if err != nil {
+		return &pb.GenerateNodeIDResponse{
+			Error: &pb.HarnessError{
+				Code:    codes.InvalidArgument.String(),
+				Message: fmt.Sprintf("failed to generate node ID: %v", err),
+			},
+		}, nil
+	}
+
+	s.logger.Debug("GenerateNodeID succeeded", "node_type", req.NodeType, "node_id", nodeID)
+
+	return &pb.GenerateNodeIDResponse{
+		NodeId: nodeID,
+	}, nil
+}
+
+// ValidateFinding validates a finding against the taxonomy schema.
+func (s *HarnessCallbackService) ValidateFinding(ctx context.Context, req *pb.ValidateFindingRequest) (*pb.ValidationResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+
+	s.logger.Debug("ValidateFinding called")
+
+	registry := taxonomyinit.GetTaxonomyRegistry()
+	if registry == nil {
+		return &pb.ValidationResponse{
+			Error: &pb.HarnessError{
+				Code:    codes.FailedPrecondition.String(),
+				Message: "taxonomy registry not initialized",
+			},
+		}, nil
+	}
+
+	// Parse finding from JSON
+	var finding sdkfinding.Finding
+	if err := json.Unmarshal([]byte(req.FindingJson), &finding); err != nil {
+		return &pb.ValidationResponse{
+			Error: &pb.HarnessError{
+				Code:    codes.InvalidArgument.String(),
+				Message: fmt.Sprintf("failed to parse finding JSON: %v", err),
+			},
+		}, nil
+	}
+
+	resp := &pb.ValidationResponse{Valid: true}
+
+	// Validate severity
+	validSeverities := []string{"critical", "high", "medium", "low", "informational"}
+	severityValid := false
+	for _, s := range validSeverities {
+		if string(finding.Severity) == s {
+			severityValid = true
+			break
+		}
+	}
+	if !severityValid && finding.Severity != "" {
+		resp.Valid = false
+		resp.Errors = append(resp.Errors, &pb.ValidationError{
+			Field:   "severity",
+			Message: fmt.Sprintf("invalid severity: %s", finding.Severity),
+			Code:    "INVALID_ENUM",
+		})
+	}
+
+	// Validate technique reference if present
+	if finding.Technique != "" {
+		if _, ok := registry.Technique(finding.Technique); !ok {
+			resp.Warnings = append(resp.Warnings,
+				fmt.Sprintf("technique '%s' not found in taxonomy", finding.Technique))
+		}
+	}
+
+	// Validate required fields
+	if finding.Title == "" {
+		resp.Valid = false
+		resp.Errors = append(resp.Errors, &pb.ValidationError{
+			Field:   "title",
+			Message: "title is required",
+			Code:    "MISSING_REQUIRED",
+		})
+	}
+
+	s.logger.Debug("ValidateFinding completed", "valid", resp.Valid, "errors", len(resp.Errors))
+
+	return resp, nil
+}
+
+// ValidateGraphNode validates a graph node against the taxonomy schema.
+func (s *HarnessCallbackService) ValidateGraphNode(ctx context.Context, req *pb.ValidateGraphNodeRequest) (*pb.ValidationResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+
+	s.logger.Debug("ValidateGraphNode called", "node_type", req.NodeType)
+
+	// Check for empty node type first
+	if req.NodeType == "" {
+		return &pb.ValidationResponse{
+			Valid: false,
+			Errors: []*pb.ValidationError{
+				{
+					Field:   "node_type",
+					Message: "node_type is required",
+					Code:    "REQUIRED_FIELD",
+				},
+			},
+		}, nil
+	}
+
+	registry := taxonomyinit.GetTaxonomyRegistry()
+	if registry == nil {
+		return &pb.ValidationResponse{
+			Error: &pb.HarnessError{
+				Code:    codes.FailedPrecondition.String(),
+				Message: "taxonomy registry not initialized",
+			},
+		}, nil
+	}
+
+	resp := &pb.ValidationResponse{Valid: true}
+
+	// Check if node type exists
+	nodeTypeDef, ok := registry.NodeType(req.NodeType)
+	if !ok {
+		resp.Valid = false
+		resp.Errors = append(resp.Errors, &pb.ValidationError{
+			Field:   "node_type",
+			Message: fmt.Sprintf("unknown node type: %s", req.NodeType),
+			Code:    "UNKNOWN_TYPE",
+		})
+		return resp, nil
+	}
+
+	// Parse properties from JSON
+	var properties map[string]any
+	if req.PropertiesJson != "" {
+		if err := json.Unmarshal([]byte(req.PropertiesJson), &properties); err != nil {
+			return &pb.ValidationResponse{
+				Error: &pb.HarnessError{
+					Code:    codes.InvalidArgument.String(),
+					Message: fmt.Sprintf("failed to parse properties JSON: %v", err),
+				},
+			}, nil
+		}
+	}
+
+	// Validate required properties
+	for _, propDef := range nodeTypeDef.Properties {
+		if propDef.Required {
+			if _, exists := properties[propDef.Name]; !exists {
+				resp.Valid = false
+				resp.Errors = append(resp.Errors, &pb.ValidationError{
+					Field:   propDef.Name,
+					Message: fmt.Sprintf("required property '%s' is missing", propDef.Name),
+					Code:    "MISSING_REQUIRED",
+				})
+			}
+		}
+	}
+
+	s.logger.Debug("ValidateGraphNode completed", "valid", resp.Valid, "errors", len(resp.Errors))
+
+	return resp, nil
+}
+
+// ValidateRelationship validates a relationship against the taxonomy schema.
+func (s *HarnessCallbackService) ValidateRelationship(ctx context.Context, req *pb.ValidateRelationshipRequest) (*pb.ValidationResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
+	}
+
+	s.logger.Debug("ValidateRelationship called",
+		"rel_type", req.RelationshipType,
+		"from_type", req.FromNodeType,
+		"to_type", req.ToNodeType)
+
+	// Check for required fields first
+	var validationErrors []*pb.ValidationError
+	if req.RelationshipType == "" {
+		validationErrors = append(validationErrors, &pb.ValidationError{
+			Field:   "relationship_type",
+			Message: "relationship_type is required",
+			Code:    "REQUIRED_FIELD",
+		})
+	}
+	if req.FromNodeType == "" {
+		validationErrors = append(validationErrors, &pb.ValidationError{
+			Field:   "from_node_type",
+			Message: "from_node_type is required",
+			Code:    "REQUIRED_FIELD",
+		})
+	}
+	if req.ToNodeType == "" {
+		validationErrors = append(validationErrors, &pb.ValidationError{
+			Field:   "to_node_type",
+			Message: "to_node_type is required",
+			Code:    "REQUIRED_FIELD",
+		})
+	}
+	if len(validationErrors) > 0 {
+		return &pb.ValidationResponse{
+			Valid:  false,
+			Errors: validationErrors,
+		}, nil
+	}
+
+	registry := taxonomyinit.GetTaxonomyRegistry()
+	if registry == nil {
+		return &pb.ValidationResponse{
+			Error: &pb.HarnessError{
+				Code:    codes.FailedPrecondition.String(),
+				Message: "taxonomy registry not initialized",
+			},
+		}, nil
+	}
+
+	resp := &pb.ValidationResponse{Valid: true}
+
+	// Check if relationship type exists
+	relTypeDef, ok := registry.RelationshipType(req.RelationshipType)
+	if !ok {
+		resp.Valid = false
+		resp.Errors = append(resp.Errors, &pb.ValidationError{
+			Field:   "relationship_type",
+			Message: fmt.Sprintf("unknown relationship type: %s", req.RelationshipType),
+			Code:    "UNKNOWN_TYPE",
+		})
+		return resp, nil
+	}
+
+	// Validate from_type is in the allowed list
+	fromTypeValid := false
+	for _, ft := range relTypeDef.FromTypes {
+		if ft == req.FromNodeType {
+			fromTypeValid = true
+			break
+		}
+	}
+	if !fromTypeValid && len(relTypeDef.FromTypes) > 0 {
+		resp.Valid = false
+		resp.Errors = append(resp.Errors, &pb.ValidationError{
+			Field:   "from_node_type",
+			Message: fmt.Sprintf("node type '%s' is not valid as source for relationship '%s' (allowed: %v)", req.FromNodeType, req.RelationshipType, relTypeDef.FromTypes),
+			Code:    "INVALID_FROM_TYPE",
+		})
+	}
+
+	// Validate to_type is in the allowed list
+	toTypeValid := false
+	for _, tt := range relTypeDef.ToTypes {
+		if tt == req.ToNodeType {
+			toTypeValid = true
+			break
+		}
+	}
+	if !toTypeValid && len(relTypeDef.ToTypes) > 0 {
+		resp.Valid = false
+		resp.Errors = append(resp.Errors, &pb.ValidationError{
+			Field:   "to_node_type",
+			Message: fmt.Sprintf("node type '%s' is not valid as target for relationship '%s' (allowed: %v)", req.ToNodeType, req.RelationshipType, relTypeDef.ToTypes),
+			Code:    "INVALID_TO_TYPE",
+		})
+	}
+
+	s.logger.Debug("ValidateRelationship completed", "valid", resp.Valid, "errors", len(resp.Errors))
+
+	return resp, nil
 }

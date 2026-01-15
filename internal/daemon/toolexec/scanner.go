@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // BinaryScanner discovers tool binaries and retrieves their schemas.
@@ -188,12 +188,12 @@ func (s *defaultBinaryScanner) GetSchema(ctx context.Context, binaryPath string)
 
 	// Parse the JSON schema response
 	var schemaResponse struct {
-		Name         string              `json:"name"`
-		Version      string              `json:"version"`
-		Description  string              `json:"description"`
-		Tags         []string            `json:"tags"`
-		InputSchema  schema.JSONSchema   `json:"input_schema"`
-		OutputSchema schema.JSONSchema   `json:"output_schema"`
+		Name         string      `json:"name"`
+		Version      string      `json:"version"`
+		Description  string      `json:"description"`
+		Tags         []string    `json:"tags"`
+		InputSchema  schema.JSON `json:"input_schema"`
+		OutputSchema schema.JSON `json:"output_schema"`
 	}
 
 	if err := json.Unmarshal(output, &schemaResponse); err != nil {

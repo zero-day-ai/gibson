@@ -8,10 +8,10 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/zero-day-ai/gibson/internal/plugin"
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
 	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/sdk/registry"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // GRPCPluginClient implements plugin.Plugin interface for plugins discovered via etcd registry.
@@ -288,18 +288,18 @@ func convertMethodDescriptors(protoMethods []*proto.PluginMethodDescriptor) []pl
 	return result
 }
 
-// convertJSONSchema converts proto JSONSchema to internal schema.JSONSchema
-func convertJSONSchema(protoSchema *proto.JSONSchema) schema.JSONSchema {
+// convertJSONSchema converts proto JSONSchema to SDK schema.JSON
+func convertJSONSchema(protoSchema *proto.JSONSchema) schema.JSON {
 	if protoSchema == nil {
-		return schema.JSONSchema{}
+		return schema.JSON{}
 	}
 
 	// The proto JSONSchema is just a JSON string - unmarshal it
-	var result schema.JSONSchema
+	var result schema.JSON
 	if protoSchema.Json != "" {
 		if err := json.Unmarshal([]byte(protoSchema.Json), &result); err != nil {
 			// If unmarshaling fails, return empty schema
-			return schema.JSONSchema{}
+			return schema.JSON{}
 		}
 	}
 

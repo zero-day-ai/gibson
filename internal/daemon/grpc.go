@@ -547,14 +547,6 @@ func (d *daemonImpl) buildAttackOptions(req api.AttackRequest) (*attack.AttackOp
 
 	opts.AgentName = req.AgentID
 
-	// Set goal from request, with fallback to attack_type description
-	// User-provided goal takes precedence
-	if req.Goal != "" {
-		opts.Goal = req.Goal
-	} else if req.AttackType != "" {
-		opts.Goal = fmt.Sprintf("Execute %s attack", req.AttackType)
-	}
-
 	// Apply payload filter if specified
 	if req.PayloadFilter != "" {
 		opts.PayloadCategory = req.PayloadFilter

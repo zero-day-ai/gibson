@@ -7,10 +7,10 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
 	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/sdk/registry"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // GRPCToolClient implements tool.Tool interface for tools discovered via etcd registry.
@@ -42,8 +42,8 @@ type toolDescriptor struct {
 	Description  string
 	Version      string
 	Tags         []string
-	InputSchema  schema.JSONSchema
-	OutputSchema schema.JSONSchema
+	InputSchema  schema.JSON
+	OutputSchema schema.JSON
 }
 
 // NewGRPCToolClient creates a new GRPCToolClient wrapping an existing gRPC connection.
@@ -108,7 +108,7 @@ func (c *GRPCToolClient) Tags() []string {
 //
 // This calls fetchDescriptor() to retrieve the schema from the remote tool
 // if not already cached. The schema is used for input validation.
-func (c *GRPCToolClient) InputSchema() schema.JSONSchema {
+func (c *GRPCToolClient) InputSchema() schema.JSON {
 	// Ensure descriptor is loaded
 	if c.descriptor == nil {
 		ctx := context.Background()
@@ -120,14 +120,14 @@ func (c *GRPCToolClient) InputSchema() schema.JSONSchema {
 	}
 
 	// Return empty schema if fetch failed
-	return schema.JSONSchema{}
+	return schema.JSON{}
 }
 
 // OutputSchema returns the JSON schema defining the output structure.
 //
 // This calls fetchDescriptor() to retrieve the schema from the remote tool
 // if not already cached. The schema documents the expected output format.
-func (c *GRPCToolClient) OutputSchema() schema.JSONSchema {
+func (c *GRPCToolClient) OutputSchema() schema.JSON {
 	// Ensure descriptor is loaded
 	if c.descriptor == nil {
 		ctx := context.Background()
@@ -139,7 +139,7 @@ func (c *GRPCToolClient) OutputSchema() schema.JSONSchema {
 	}
 
 	// Return empty schema if fetch failed
-	return schema.JSONSchema{}
+	return schema.JSON{}
 }
 
 // Execute runs the tool with the given input and returns the result.
@@ -250,18 +250,18 @@ func (c *GRPCToolClient) fetchDescriptor(ctx context.Context) (*toolDescriptor, 
 	return desc, nil
 }
 
-// protoSchemaToInternal converts a proto JSONSchema to internal schema.JSONSchema.
+// protoSchemaToInternal converts a proto JSONSchema to SDK schema.JSON.
 //
 // The proto JSONSchema contains a serialized JSON string that needs to be
-// unmarshaled into the internal schema.JSONSchema struct.
-func protoSchemaToInternal(protoSchema *proto.JSONSchema) (schema.JSONSchema, error) {
+// unmarshaled into the SDK schema.JSON struct.
+func protoSchemaToInternal(protoSchema *proto.JSONSchema) (schema.JSON, error) {
 	if protoSchema == nil || protoSchema.Json == "" {
-		return schema.JSONSchema{}, nil
+		return schema.JSON{}, nil
 	}
 
-	var internalSchema schema.JSONSchema
+	var internalSchema schema.JSON
 	if err := json.Unmarshal([]byte(protoSchema.Json), &internalSchema); err != nil {
-		return schema.JSONSchema{}, fmt.Errorf("failed to unmarshal schema: %w", err)
+		return schema.JSON{}, fmt.Errorf("failed to unmarshal schema: %w", err)
 	}
 
 	return internalSchema, nil

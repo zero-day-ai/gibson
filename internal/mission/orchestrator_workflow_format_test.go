@@ -18,10 +18,11 @@ func TestOrchestrator_JSONWorkflowFormat(t *testing.T) {
 
 	// Create real workflow executor but no harness factory
 	executor := workflow.NewWorkflowExecutor()
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithWorkflowExecutor(executor),
 	)
+	require.NoError(t, err)
 
 	// Create a workflow and serialize it to JSON
 	wf := &workflow.Workflow{
@@ -80,10 +81,11 @@ func TestOrchestrator_YAMLWorkflowFormat(t *testing.T) {
 
 	// Create real workflow executor but no harness factory
 	executor := workflow.NewWorkflowExecutor()
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithWorkflowExecutor(executor),
 	)
+	require.NoError(t, err)
 
 	// Create a YAML workflow (using the same format as createWorkflowJSON helper)
 	yamlWorkflow := `
@@ -112,7 +114,7 @@ nodes:
 		UpdatedAt:    time.Now(),
 	}
 
-	err := store.Save(context.Background(), mission)
+	err = store.Save(context.Background(), mission)
 	require.NoError(t, err, "Failed to save mission")
 
 	// Execute the mission (this should parse the YAML workflow)
@@ -135,10 +137,11 @@ func TestOrchestrator_InvalidJSONWorkflow(t *testing.T) {
 
 	// Create real workflow executor but no harness factory
 	executor := workflow.NewWorkflowExecutor()
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithWorkflowExecutor(executor),
 	)
+	require.NoError(t, err)
 
 	// Create a mission with invalid JSON workflow
 	mission := &Mission{
@@ -153,7 +156,7 @@ func TestOrchestrator_InvalidJSONWorkflow(t *testing.T) {
 		UpdatedAt:    time.Now(),
 	}
 
-	err := store.Save(context.Background(), mission)
+	err = store.Save(context.Background(), mission)
 	require.NoError(t, err, "Failed to save mission")
 
 	// Execute the mission

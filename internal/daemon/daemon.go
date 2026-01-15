@@ -60,6 +60,9 @@ type daemonImpl struct {
 	// eventBus manages event distribution to subscribers
 	eventBus *EventBus
 
+	// graphSubscriber routes execution events to the taxonomy graph engine
+	graphSubscriber *GraphEventSubscriber
+
 	// db is the database connection
 	db *database.DB
 
@@ -324,6 +327,12 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		d.logger.Info("configured callback service with credential store")
 	}
 
+	// Configure callback service with event bus for tool/LLM event publishing
+	if d.eventBus != nil {
+		d.callback.SetEventBus(d.eventBus)
+		d.logger.Info("configured callback service with event bus")
+	}
+
 	// Perform crash recovery: find any missions that were running when daemon stopped
 	// and transition them to paused status before accepting new connections
 	d.logger.Info("checking for missions to recover after daemon restart")
@@ -333,17 +342,24 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	}
 
 	// Initialize attack runner with required dependencies
-	// Create orchestrator with full configuration including harness factory and workflow executor
 	d.logger.Info("initializing attack runner")
-	orchestrator := mission.NewMissionOrchestrator(
+
+	// Create mission orchestrator with full configuration including harness factory and workflow executor
+	orchestrator, err := mission.NewMissionOrchestrator(
 		d.missionStore,
 		mission.WithHarnessFactory(d.infrastructure.harnessFactory),
 		mission.WithWorkflowExecutor(workflow.NewWorkflowExecutor(
 			workflow.WithLogger(d.logger.With("component", "workflow-executor")),
+			workflow.WithEventBus(NewEventBusAdapter(d.eventBus)), // Pass event bus for agent lifecycle events
 		)),
 		mission.WithEventEmitter(mission.NewDefaultEventEmitter()),
+		mission.WithEventBus(NewEventBusAdapter(d.eventBus)), // Pass event bus adapter for graph event routing
 		mission.WithTargetStore(d.targetStore),
 	)
+	if err != nil {
+		d.stopServices(ctx)
+		return fmt.Errorf("failed to create mission orchestrator: %w", err)
+	}
 	payloadRegistry := payload.NewPayloadRegistryWithDefaults(d.db)
 
 	d.attackRunner = attack.NewAttackRunner(
@@ -355,6 +371,20 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		attack.WithLogger(d.logger),
 	)
 	d.logger.Info("initialized attack runner")
+
+	// Start graph event subscriber if both taxonomy engine and event bus are available
+	if d.infrastructure != nil && d.infrastructure.taxonomyEngine != nil && d.eventBus != nil {
+		d.logger.Info("starting graph event subscriber")
+		d.graphSubscriber = NewGraphEventSubscriber(
+			d.infrastructure.taxonomyEngine,
+			d.eventBus,
+			d.logger.With("component", "graph-subscriber"),
+		)
+		d.graphSubscriber.Start(ctx)
+		d.logger.Info("graph event subscriber started")
+	} else {
+		d.logger.Debug("graph event subscriber not started - taxonomy engine or event bus unavailable")
+	}
 
 	// Start callback server
 	if d.config.Callback.Enabled {
@@ -494,6 +524,12 @@ func (d *daemonImpl) stopServices(ctx context.Context) {
 	if d.config.Callback.Enabled && d.callback.IsRunning() {
 		d.logger.Info("stopping callback server")
 		d.callback.Stop()
+	}
+
+	// Stop graph event subscriber (stop routing events to graph engine)
+	if d.graphSubscriber != nil {
+		d.logger.Info("stopping graph event subscriber")
+		d.graphSubscriber.Stop()
 	}
 
 	// Close event bus (no more event subscriptions)

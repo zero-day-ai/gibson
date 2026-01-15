@@ -1,0 +1,58 @@
+# Invalid workflow - references non-existent dependencies
+name: Missing Dependencies Workflow
+description: This workflow has nodes that depend on non-existent nodes
+
+nodes:
+  - id: start_node
+    type: agent
+    name: Start Node
+    description: Valid starting node
+    agent: starter-agent
+    task:
+      action: initialize
+
+  # This node depends on a non-existent node
+  - id: middle_node
+    type: agent
+    name: Middle Node
+    description: Depends on non-existent dependency
+    agent: processor-agent
+    depends_on:
+      - start_node
+      - nonexistent_node_1  # This node doesn't exist
+    task:
+      action: process
+
+  # This node also has invalid dependencies
+  - id: end_node
+    type: tool
+    name: End Node
+    description: Multiple missing dependencies
+    tool: finalizer
+    depends_on:
+      - middle_node
+      - another_missing_node  # This node doesn't exist
+      - yet_another_missing   # This node doesn't exist either
+    input:
+      action: finalize
+
+  # Valid node that should be processed correctly
+  - id: parallel_node
+    type: parallel
+    name: Parallel Operations
+    depends_on:
+      - start_node
+    sub_nodes:
+      - id: sub_task_1
+        type: agent
+        name: Sub Task 1
+        agent: worker
+        task:
+          id: 1
+
+      - id: sub_task_2
+        type: agent
+        name: Sub Task 2
+        agent: worker
+        task:
+          id: 2

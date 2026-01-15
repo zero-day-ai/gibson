@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 	sdktypes "github.com/zero-day-ai/sdk/types"
 )
 
@@ -58,10 +58,10 @@ type ToolBinaryInfo struct {
 	Tags []string
 
 	// InputSchema defines the expected structure of the tool's input.
-	InputSchema schema.JSONSchema
+	InputSchema schema.JSON
 
 	// OutputSchema defines the structure of the tool's output.
-	OutputSchema schema.JSONSchema
+	OutputSchema schema.JSON
 
 	// Timeout defines the timeout configuration for this tool.
 	// Zero value means no timeout constraints are configured.
@@ -76,10 +76,10 @@ type ToolBinaryInfo struct {
 // and documentation purposes.
 type ToolSchema struct {
 	// InputSchema defines the expected structure of the tool's input.
-	InputSchema schema.JSONSchema `json:"input_schema"`
+	InputSchema schema.JSON `json:"input_schema"`
 
 	// OutputSchema defines the structure of the tool's output.
-	OutputSchema schema.JSONSchema `json:"output_schema"`
+	OutputSchema schema.JSON `json:"output_schema"`
 }
 
 // ExecuteRequest contains all information needed to execute a tool subprocess.
@@ -130,10 +130,10 @@ type ToolDescriptor struct {
 	Tags []string `json:"tags"`
 
 	// InputSchema defines the expected input structure.
-	InputSchema schema.JSONSchema `json:"input_schema"`
+	InputSchema schema.JSON `json:"input_schema"`
 
 	// OutputSchema defines the output structure.
-	OutputSchema schema.JSONSchema `json:"output_schema"`
+	OutputSchema schema.JSON `json:"output_schema"`
 
 	// BinaryPath is the absolute path to the tool binary.
 	BinaryPath string `json:"binary_path"`

@@ -157,12 +157,7 @@ func (q *GraphRAGQuery) Validate() error {
 		return NewInvalidQueryError(fmt.Sprintf("graph_weight must be between 0.0 and 1.0, got %f", q.GraphWeight))
 	}
 
-	// Validate node types
-	for _, nt := range q.NodeTypes {
-		if !nt.IsValid() {
-			return NewInvalidQueryError(fmt.Sprintf("invalid node type: %s", nt))
-		}
-	}
+	// Node type validation is now handled by the taxonomy system
 
 	// Validate mission scope
 	if q.MissionScope != "" {

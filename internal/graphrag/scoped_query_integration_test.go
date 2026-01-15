@@ -300,7 +300,7 @@ func TestIntegration_ScopedQueryWithRunMetadata(t *testing.T) {
 		// Test chaining the With methods
 		node := &GraphNode{
 			ID:         types.NewID(),
-			Labels:     []NodeType{NodeTypeFinding},
+			Labels:     []NodeType{NodeType("finding")},
 			Properties: make(map[string]any),
 		}
 
@@ -319,7 +319,7 @@ func TestIntegration_ScopedQueryWithRunMetadata(t *testing.T) {
 		// Test that nodes without run metadata return nil/zero values gracefully
 		node := &GraphNode{
 			ID:         types.NewID(),
-			Labels:     []NodeType{NodeTypeFinding},
+			Labels:     []NodeType{NodeType("finding")},
 			Properties: make(map[string]any),
 		}
 

@@ -9,89 +9,22 @@ import (
 
 // NodeType represents the type of node in the graph.
 // Different node types represent different entities in the security knowledge graph.
-//
-// Deprecated: These hand-written constants are deprecated. Use the taxonomy-generated
-// constants from github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go instead.
-// These constants are maintained for backwards compatibility but will be removed in a future version.
-// The taxonomy system provides a comprehensive, YAML-driven approach to managing graph types.
+// Node types should match those defined in the taxonomy YAML configuration.
 type NodeType string
-
-const (
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	NodeTypeFinding NodeType = "Finding"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	NodeTypeAttackPattern NodeType = "AttackPattern"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	NodeTypeTechnique NodeType = "Technique"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	NodeTypeTarget NodeType = "Target"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	NodeTypeMitigation NodeType = "Mitigation"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	NodeTypeEntity NodeType = "Entity"
-)
 
 // String returns the string representation of NodeType.
 func (nt NodeType) String() string {
 	return string(nt)
 }
 
-// IsValid checks if the NodeType is a valid value.
-func (nt NodeType) IsValid() bool {
-	switch nt {
-	case NodeTypeFinding, NodeTypeAttackPattern, NodeTypeTechnique,
-		NodeTypeTarget, NodeTypeMitigation, NodeTypeEntity:
-		return true
-	default:
-		return false
-	}
-}
-
 // RelationType represents the type of relationship between nodes.
 // Relationships capture semantic connections in the security knowledge graph.
-//
-// Deprecated: These hand-written constants are deprecated. Use the taxonomy-generated
-// constants from github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go instead.
-// These constants are maintained for backwards compatibility but will be removed in a future version.
-// The taxonomy system provides a comprehensive, YAML-driven approach to managing graph types.
+// Relationship types should match those defined in the taxonomy YAML configuration.
 type RelationType string
-
-const (
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationExploits RelationType = "EXPLOITS"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationDiscoveredOn RelationType = "DISCOVERED_ON"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationUsesTechnique RelationType = "USES_TECHNIQUE"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationSimilarTo RelationType = "SIMILAR_TO"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationMitigatedBy RelationType = "MITIGATED_BY"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationTargets RelationType = "TARGETS"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationRelatedTo RelationType = "RELATED_TO"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationDerivedFrom RelationType = "DERIVED_FROM"
-	// Deprecated: Use taxonomy-generated constants instead. See github.com/zero-day-ai/sdk/graphrag/taxonomy_generated.go
-	RelationPartOf RelationType = "PART_OF"
-)
 
 // String returns the string representation of RelationType.
 func (rt RelationType) String() string {
 	return string(rt)
-}
-
-// IsValid checks if the RelationType is a valid value.
-func (rt RelationType) IsValid() bool {
-	switch rt {
-	case RelationExploits, RelationDiscoveredOn, RelationUsesTechnique,
-		RelationSimilarTo, RelationMitigatedBy, RelationTargets,
-		RelationRelatedTo, RelationDerivedFrom, RelationPartOf:
-		return true
-	default:
-		return false
-	}
 }
 
 // GraphNode represents a node in the knowledge graph.
@@ -253,11 +186,6 @@ func (n *GraphNode) Validate() error {
 	if len(n.Labels) == 0 {
 		return fmt.Errorf("node must have at least one label")
 	}
-	for _, label := range n.Labels {
-		if !label.IsValid() {
-			return fmt.Errorf("invalid node label: %s", label)
-		}
-	}
 	return nil
 }
 
@@ -310,9 +238,6 @@ func (r *Relationship) Validate() error {
 	if err := r.ToID.Validate(); err != nil {
 		return fmt.Errorf("invalid to_id: %w", err)
 	}
-	if !r.Type.IsValid() {
-		return fmt.Errorf("invalid relationship type: %s", r.Type)
-	}
 	if r.Weight < 0.0 || r.Weight > 1.0 {
 		return fmt.Errorf("relationship weight must be between 0.0 and 1.0, got %f", r.Weight)
 	}
@@ -354,7 +279,7 @@ func NewAttackPattern(techniqueID, name, description string) *AttackPattern {
 
 // ToGraphNode converts the AttackPattern to a GraphNode.
 func (ap *AttackPattern) ToGraphNode() *GraphNode {
-	node := NewGraphNode(ap.ID, NodeTypeAttackPattern)
+	node := NewGraphNode(ap.ID, NodeType("attack_pattern"))
 	node.WithProperties(map[string]any{
 		"technique_id": ap.TechniqueID,
 		"name":         ap.Name,
@@ -404,7 +329,7 @@ func NewFindingNode(id types.ID, title, description string, missionID types.ID) 
 
 // ToGraphNode converts the FindingNode to a GraphNode.
 func (fn *FindingNode) ToGraphNode() *GraphNode {
-	node := NewGraphNode(fn.ID, NodeTypeFinding)
+	node := NewGraphNode(fn.ID, NodeType("finding"))
 	node.WithProperties(map[string]any{
 		"title":       fn.Title,
 		"description": fn.Description,
@@ -453,7 +378,7 @@ func NewTechniqueNode(techniqueID, name, description, tactic string) *TechniqueN
 
 // ToGraphNode converts the TechniqueNode to a GraphNode.
 func (tn *TechniqueNode) ToGraphNode() *GraphNode {
-	node := NewGraphNode(tn.ID, NodeTypeTechnique)
+	node := NewGraphNode(tn.ID, NodeType("technique"))
 	node.WithProperties(map[string]any{
 		"technique_id": tn.TechniqueID,
 		"name":         tn.Name,

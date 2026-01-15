@@ -210,7 +210,7 @@ func TestDefaultGraphRAGQueryBridge_Query(t *testing.T) {
 				{
 					Node: graphrag.GraphNode{
 						ID:         types.NewID(),
-						Labels:     []graphrag.NodeType{graphrag.NodeTypeFinding},
+						Labels:     []graphrag.NodeType{graphrag.NodeType("Finding")},
 						Properties: map[string]any{"title": "Test Finding"},
 						CreatedAt:  time.Now(),
 						UpdatedAt:  time.Now(),

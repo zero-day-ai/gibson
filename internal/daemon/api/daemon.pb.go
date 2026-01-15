@@ -1754,9 +1754,7 @@ type RunAttackRequest struct {
 	// options contains attack-specific options
 	Options map[string]string `protobuf:"bytes,5,rep,name=options,proto3" json:"options,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// target_name is the name of a stored target to look up from the database
-	TargetName string `protobuf:"bytes,6,opt,name=target_name,json=targetName,proto3" json:"target_name,omitempty"`
-	// goal is the attack objective or what the agent should try to accomplish
-	Goal          string `protobuf:"bytes,7,opt,name=goal,proto3" json:"goal,omitempty"`
+	TargetName    string `protobuf:"bytes,6,opt,name=target_name,json=targetName,proto3" json:"target_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1829,13 +1827,6 @@ func (x *RunAttackRequest) GetOptions() map[string]string {
 func (x *RunAttackRequest) GetTargetName() string {
 	if x != nil {
 		return x.TargetName
-	}
-	return ""
-}
-
-func (x *RunAttackRequest) GetGoal() string {
-	if x != nil {
-		return x.Goal
 	}
 	return ""
 }
@@ -3696,7 +3687,11 @@ type AvailableToolInfo struct {
 	// error_message is non-empty if status is "error"
 	ErrorMessage string `protobuf:"bytes,8,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
 	// metrics contains execution statistics for this tool
-	Metrics       *ToolExecutionMetrics `protobuf:"bytes,9,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	Metrics *ToolExecutionMetrics `protobuf:"bytes,9,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	// input_schema is the structured input schema with taxonomy support (new in v0.12.0)
+	InputSchema *JSONSchemaNode `protobuf:"bytes,10,opt,name=input_schema,json=inputSchema,proto3" json:"input_schema,omitempty"`
+	// output_schema is the structured output schema with taxonomy support (new in v0.12.0)
+	OutputSchema  *JSONSchemaNode `protobuf:"bytes,11,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3794,6 +3789,20 @@ func (x *AvailableToolInfo) GetMetrics() *ToolExecutionMetrics {
 	return nil
 }
 
+func (x *AvailableToolInfo) GetInputSchema() *JSONSchemaNode {
+	if x != nil {
+		return x.InputSchema
+	}
+	return nil
+}
+
+func (x *AvailableToolInfo) GetOutputSchema() *JSONSchemaNode {
+	if x != nil {
+		return x.OutputSchema
+	}
+	return nil
+}
+
 // ToolExecutionMetrics tracks execution statistics for a tool.
 type ToolExecutionMetrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -3874,6 +3883,411 @@ func (x *ToolExecutionMetrics) GetLastExecutedAt() int64 {
 		return x.LastExecutedAt
 	}
 	return 0
+}
+
+// JSONSchemaNode represents a JSON schema with optional taxonomy mapping.
+// This mirrors sdk/schema.JSON for gRPC transport with taxonomy support.
+type JSONSchemaNode struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// type is the JSON schema type (string, integer, number, boolean, array, object)
+	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	// description is the human-readable description of this schema node
+	Description string `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	// properties maps property names to their schemas (for object types)
+	Properties map[string]*JSONSchemaNode `protobuf:"bytes,3,rep,name=properties,proto3" json:"properties,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// required lists required property names (for object types)
+	Required []string `protobuf:"bytes,4,rep,name=required,proto3" json:"required,omitempty"`
+	// items defines the schema for array elements (for array types)
+	Items *JSONSchemaNode `protobuf:"bytes,5,opt,name=items,proto3" json:"items,omitempty"`
+	// enum_values lists allowed values (for enum constraints)
+	EnumValues []string `protobuf:"bytes,6,rep,name=enum_values,json=enumValues,proto3" json:"enum_values,omitempty"`
+	// default_value is the JSON-encoded default value
+	DefaultValue string `protobuf:"bytes,7,opt,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	// minimum is the minimum numeric value constraint
+	Minimum float64 `protobuf:"fixed64,8,opt,name=minimum,proto3" json:"minimum,omitempty"`
+	// maximum is the maximum numeric value constraint
+	Maximum float64 `protobuf:"fixed64,9,opt,name=maximum,proto3" json:"maximum,omitempty"`
+	// min_length is the minimum string length constraint
+	MinLength int32 `protobuf:"varint,10,opt,name=min_length,json=minLength,proto3" json:"min_length,omitempty"`
+	// max_length is the maximum string length constraint
+	MaxLength int32 `protobuf:"varint,11,opt,name=max_length,json=maxLength,proto3" json:"max_length,omitempty"`
+	// pattern is the regex pattern constraint for strings
+	Pattern string `protobuf:"bytes,12,opt,name=pattern,proto3" json:"pattern,omitempty"`
+	// format is the string format hint (e.g., uri, email, date-time, uuid)
+	Format string `protobuf:"bytes,13,opt,name=format,proto3" json:"format,omitempty"`
+	// ref is the JSON schema $ref reference
+	Ref string `protobuf:"bytes,14,opt,name=ref,proto3" json:"ref,omitempty"`
+	// taxonomy defines how this schema node maps to a graph node (the key feature)
+	Taxonomy      *TaxonomyMapping `protobuf:"bytes,15,opt,name=taxonomy,proto3" json:"taxonomy,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JSONSchemaNode) Reset() {
+	*x = JSONSchemaNode{}
+	mi := &file_daemon_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JSONSchemaNode) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JSONSchemaNode) ProtoMessage() {}
+
+func (x *JSONSchemaNode) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JSONSchemaNode.ProtoReflect.Descriptor instead.
+func (*JSONSchemaNode) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *JSONSchemaNode) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *JSONSchemaNode) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *JSONSchemaNode) GetProperties() map[string]*JSONSchemaNode {
+	if x != nil {
+		return x.Properties
+	}
+	return nil
+}
+
+func (x *JSONSchemaNode) GetRequired() []string {
+	if x != nil {
+		return x.Required
+	}
+	return nil
+}
+
+func (x *JSONSchemaNode) GetItems() *JSONSchemaNode {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *JSONSchemaNode) GetEnumValues() []string {
+	if x != nil {
+		return x.EnumValues
+	}
+	return nil
+}
+
+func (x *JSONSchemaNode) GetDefaultValue() string {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return ""
+}
+
+func (x *JSONSchemaNode) GetMinimum() float64 {
+	if x != nil {
+		return x.Minimum
+	}
+	return 0
+}
+
+func (x *JSONSchemaNode) GetMaximum() float64 {
+	if x != nil {
+		return x.Maximum
+	}
+	return 0
+}
+
+func (x *JSONSchemaNode) GetMinLength() int32 {
+	if x != nil {
+		return x.MinLength
+	}
+	return 0
+}
+
+func (x *JSONSchemaNode) GetMaxLength() int32 {
+	if x != nil {
+		return x.MaxLength
+	}
+	return 0
+}
+
+func (x *JSONSchemaNode) GetPattern() string {
+	if x != nil {
+		return x.Pattern
+	}
+	return ""
+}
+
+func (x *JSONSchemaNode) GetFormat() string {
+	if x != nil {
+		return x.Format
+	}
+	return ""
+}
+
+func (x *JSONSchemaNode) GetRef() string {
+	if x != nil {
+		return x.Ref
+	}
+	return ""
+}
+
+func (x *JSONSchemaNode) GetTaxonomy() *TaxonomyMapping {
+	if x != nil {
+		return x.Taxonomy
+	}
+	return nil
+}
+
+// TaxonomyMapping defines how tool output maps to graph nodes and relationships.
+// It specifies the node type, ID generation, property mappings, and relationships
+// to create when processing data according to a taxonomy.
+type TaxonomyMapping struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// node_type is the type of node to create in the graph (e.g., "host", "port", "vulnerability")
+	NodeType string `protobuf:"bytes,1,opt,name=node_type,json=nodeType,proto3" json:"node_type,omitempty"`
+	// id_template is a template string for generating node IDs (e.g., "host:{.ip}")
+	IdTemplate string `protobuf:"bytes,2,opt,name=id_template,json=idTemplate,proto3" json:"id_template,omitempty"`
+	// properties maps source data fields to node properties
+	Properties []*PropertyMapping `protobuf:"bytes,3,rep,name=properties,proto3" json:"properties,omitempty"`
+	// relationships defines edges to create to/from this node
+	Relationships []*RelationshipMapping `protobuf:"bytes,4,rep,name=relationships,proto3" json:"relationships,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaxonomyMapping) Reset() {
+	*x = TaxonomyMapping{}
+	mi := &file_daemon_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaxonomyMapping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaxonomyMapping) ProtoMessage() {}
+
+func (x *TaxonomyMapping) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaxonomyMapping.ProtoReflect.Descriptor instead.
+func (*TaxonomyMapping) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *TaxonomyMapping) GetNodeType() string {
+	if x != nil {
+		return x.NodeType
+	}
+	return ""
+}
+
+func (x *TaxonomyMapping) GetIdTemplate() string {
+	if x != nil {
+		return x.IdTemplate
+	}
+	return ""
+}
+
+func (x *TaxonomyMapping) GetProperties() []*PropertyMapping {
+	if x != nil {
+		return x.Properties
+	}
+	return nil
+}
+
+func (x *TaxonomyMapping) GetRelationships() []*RelationshipMapping {
+	if x != nil {
+		return x.Relationships
+	}
+	return nil
+}
+
+// PropertyMapping defines how to map a source field to a target node property.
+// It supports default values and transformation functions.
+type PropertyMapping struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// source is the field name in the source data
+	Source string `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
+	// target is the property name in the target node
+	Target string `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`
+	// default_value is the JSON-encoded default value if source is missing or empty
+	DefaultValue string `protobuf:"bytes,3,opt,name=default_value,json=defaultValue,proto3" json:"default_value,omitempty"`
+	// transform is a transformation function to apply (e.g., "lowercase", "uppercase", "trim")
+	Transform     string `protobuf:"bytes,4,opt,name=transform,proto3" json:"transform,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PropertyMapping) Reset() {
+	*x = PropertyMapping{}
+	mi := &file_daemon_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PropertyMapping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PropertyMapping) ProtoMessage() {}
+
+func (x *PropertyMapping) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PropertyMapping.ProtoReflect.Descriptor instead.
+func (*PropertyMapping) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *PropertyMapping) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *PropertyMapping) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *PropertyMapping) GetDefaultValue() string {
+	if x != nil {
+		return x.DefaultValue
+	}
+	return ""
+}
+
+func (x *PropertyMapping) GetTransform() string {
+	if x != nil {
+		return x.Transform
+	}
+	return ""
+}
+
+// RelationshipMapping defines a relationship to create between nodes.
+// It supports conditional relationships and property mappings on the edge itself.
+type RelationshipMapping struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// type is the relationship type (e.g., "HAS_PORT", "AFFECTS", "RUNS_ON")
+	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	// from_template is a template for the source node ID (e.g., "host:{.ip}")
+	FromTemplate string `protobuf:"bytes,2,opt,name=from_template,json=fromTemplate,proto3" json:"from_template,omitempty"`
+	// to_template is a template for the target node ID (e.g., "port:{.port}")
+	ToTemplate string `protobuf:"bytes,3,opt,name=to_template,json=toTemplate,proto3" json:"to_template,omitempty"`
+	// condition is an optional condition for creating this relationship (e.g., "{{.severity}} == 'critical'")
+	Condition string `protobuf:"bytes,4,opt,name=condition,proto3" json:"condition,omitempty"`
+	// properties are property mappings for the relationship edge
+	Properties    []*PropertyMapping `protobuf:"bytes,5,rep,name=properties,proto3" json:"properties,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RelationshipMapping) Reset() {
+	*x = RelationshipMapping{}
+	mi := &file_daemon_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RelationshipMapping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RelationshipMapping) ProtoMessage() {}
+
+func (x *RelationshipMapping) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RelationshipMapping.ProtoReflect.Descriptor instead.
+func (*RelationshipMapping) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{56}
+}
+
+func (x *RelationshipMapping) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *RelationshipMapping) GetFromTemplate() string {
+	if x != nil {
+		return x.FromTemplate
+	}
+	return ""
+}
+
+func (x *RelationshipMapping) GetToTemplate() string {
+	if x != nil {
+		return x.ToTemplate
+	}
+	return ""
+}
+
+func (x *RelationshipMapping) GetCondition() string {
+	if x != nil {
+		return x.Condition
+	}
+	return ""
+}
+
+func (x *RelationshipMapping) GetProperties() []*PropertyMapping {
+	if x != nil {
+		return x.Properties
+	}
+	return nil
 }
 
 var File_daemon_proto protoreflect.FileDescriptor
@@ -4008,7 +4422,7 @@ const file_daemon_proto_rawDesc = "" +
 	"resultJson\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1f\n" +
 	"\vduration_ms\x18\x03 \x01(\x03R\n" +
-	"durationMs\"\xc9\x02\n" +
+	"durationMs\"\xb5\x02\n" +
 	"\x10RunAttackRequest\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x1f\n" +
 	"\vattack_type\x18\x02 \x01(\tR\n" +
@@ -4017,8 +4431,7 @@ const file_daemon_proto_rawDesc = "" +
 	"\x0epayload_filter\x18\x04 \x01(\tR\rpayloadFilter\x12I\n" +
 	"\aoptions\x18\x05 \x03(\v2/.gibson.daemon.v1.RunAttackRequest.OptionsEntryR\aoptions\x12\x1f\n" +
 	"\vtarget_name\x18\x06 \x01(\tR\n" +
-	"targetName\x12\x12\n" +
-	"\x04goal\x18\a \x01(\tR\x04goal\x1a:\n" +
+	"targetName\x1a:\n" +
 	"\fOptionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9f\x02\n" +
@@ -4177,7 +4590,7 @@ const file_daemon_proto_rawDesc = "" +
 	"durationMs\"\x1a\n" +
 	"\x18GetAvailableToolsRequest\"V\n" +
 	"\x19GetAvailableToolsResponse\x129\n" +
-	"\x05tools\x18\x01 \x03(\v2#.gibson.daemon.v1.AvailableToolInfoR\x05tools\"\xd0\x02\n" +
+	"\x05tools\x18\x01 \x03(\v2#.gibson.daemon.v1.AvailableToolInfoR\x05tools\"\xdc\x03\n" +
 	"\x11AvailableToolInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -4187,14 +4600,64 @@ const file_daemon_proto_rawDesc = "" +
 	"\x12output_schema_json\x18\x06 \x01(\tR\x10outputSchemaJson\x12\x16\n" +
 	"\x06status\x18\a \x01(\tR\x06status\x12#\n" +
 	"\rerror_message\x18\b \x01(\tR\ferrorMessage\x12@\n" +
-	"\ametrics\x18\t \x01(\v2&.gibson.daemon.v1.ToolExecutionMetricsR\ametrics\"\xd1\x01\n" +
+	"\ametrics\x18\t \x01(\v2&.gibson.daemon.v1.ToolExecutionMetricsR\ametrics\x12C\n" +
+	"\finput_schema\x18\n" +
+	" \x01(\v2 .gibson.daemon.v1.JSONSchemaNodeR\vinputSchema\x12E\n" +
+	"\routput_schema\x18\v \x01(\v2 .gibson.daemon.v1.JSONSchemaNodeR\foutputSchema\"\xd1\x01\n" +
 	"\x14ToolExecutionMetrics\x12\x1f\n" +
 	"\vtotal_calls\x18\x01 \x01(\x03R\n" +
 	"totalCalls\x12#\n" +
 	"\rsuccess_calls\x18\x02 \x01(\x03R\fsuccessCalls\x12!\n" +
 	"\ffailed_calls\x18\x03 \x01(\x03R\vfailedCalls\x12&\n" +
 	"\x0favg_duration_ms\x18\x04 \x01(\x03R\ravgDurationMs\x12(\n" +
-	"\x10last_executed_at\x18\x05 \x01(\x03R\x0elastExecutedAt2\x9d\x0f\n" +
+	"\x10last_executed_at\x18\x05 \x01(\x03R\x0elastExecutedAt\"\x88\x05\n" +
+	"\x0eJSONSchemaNode\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12P\n" +
+	"\n" +
+	"properties\x18\x03 \x03(\v20.gibson.daemon.v1.JSONSchemaNode.PropertiesEntryR\n" +
+	"properties\x12\x1a\n" +
+	"\brequired\x18\x04 \x03(\tR\brequired\x126\n" +
+	"\x05items\x18\x05 \x01(\v2 .gibson.daemon.v1.JSONSchemaNodeR\x05items\x12\x1f\n" +
+	"\venum_values\x18\x06 \x03(\tR\n" +
+	"enumValues\x12#\n" +
+	"\rdefault_value\x18\a \x01(\tR\fdefaultValue\x12\x18\n" +
+	"\aminimum\x18\b \x01(\x01R\aminimum\x12\x18\n" +
+	"\amaximum\x18\t \x01(\x01R\amaximum\x12\x1d\n" +
+	"\n" +
+	"min_length\x18\n" +
+	" \x01(\x05R\tminLength\x12\x1d\n" +
+	"\n" +
+	"max_length\x18\v \x01(\x05R\tmaxLength\x12\x18\n" +
+	"\apattern\x18\f \x01(\tR\apattern\x12\x16\n" +
+	"\x06format\x18\r \x01(\tR\x06format\x12\x10\n" +
+	"\x03ref\x18\x0e \x01(\tR\x03ref\x12=\n" +
+	"\btaxonomy\x18\x0f \x01(\v2!.gibson.daemon.v1.TaxonomyMappingR\btaxonomy\x1a_\n" +
+	"\x0fPropertiesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x126\n" +
+	"\x05value\x18\x02 \x01(\v2 .gibson.daemon.v1.JSONSchemaNodeR\x05value:\x028\x01\"\xdf\x01\n" +
+	"\x0fTaxonomyMapping\x12\x1b\n" +
+	"\tnode_type\x18\x01 \x01(\tR\bnodeType\x12\x1f\n" +
+	"\vid_template\x18\x02 \x01(\tR\n" +
+	"idTemplate\x12A\n" +
+	"\n" +
+	"properties\x18\x03 \x03(\v2!.gibson.daemon.v1.PropertyMappingR\n" +
+	"properties\x12K\n" +
+	"\rrelationships\x18\x04 \x03(\v2%.gibson.daemon.v1.RelationshipMappingR\rrelationships\"\x84\x01\n" +
+	"\x0fPropertyMapping\x12\x16\n" +
+	"\x06source\x18\x01 \x01(\tR\x06source\x12\x16\n" +
+	"\x06target\x18\x02 \x01(\tR\x06target\x12#\n" +
+	"\rdefault_value\x18\x03 \x01(\tR\fdefaultValue\x12\x1c\n" +
+	"\ttransform\x18\x04 \x01(\tR\ttransform\"\xd0\x01\n" +
+	"\x13RelationshipMapping\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12#\n" +
+	"\rfrom_template\x18\x02 \x01(\tR\ffromTemplate\x12\x1f\n" +
+	"\vto_template\x18\x03 \x01(\tR\n" +
+	"toTemplate\x12\x1c\n" +
+	"\tcondition\x18\x04 \x01(\tR\tcondition\x12A\n" +
+	"\n" +
+	"properties\x18\x05 \x03(\v2!.gibson.daemon.v1.PropertyMappingR\n" +
+	"properties2\x9d\x0f\n" +
 	"\rDaemonService\x12N\n" +
 	"\aConnect\x12 .gibson.daemon.v1.ConnectRequest\x1a!.gibson.daemon.v1.ConnectResponse\x12E\n" +
 	"\x04Ping\x12\x1d.gibson.daemon.v1.PingRequest\x1a\x1e.gibson.daemon.v1.PingResponse\x12K\n" +
@@ -4232,7 +4695,7 @@ func file_daemon_proto_rawDescGZIP() []byte {
 	return file_daemon_proto_rawDescData
 }
 
-var file_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 55)
+var file_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 60)
 var file_daemon_proto_goTypes = []any{
 	(*ConnectRequest)(nil),                // 0: gibson.daemon.v1.ConnectRequest
 	(*ConnectResponse)(nil),               // 1: gibson.daemon.v1.ConnectResponse
@@ -4287,18 +4750,23 @@ var file_daemon_proto_goTypes = []any{
 	(*GetAvailableToolsResponse)(nil),     // 50: gibson.daemon.v1.GetAvailableToolsResponse
 	(*AvailableToolInfo)(nil),             // 51: gibson.daemon.v1.AvailableToolInfo
 	(*ToolExecutionMetrics)(nil),          // 52: gibson.daemon.v1.ToolExecutionMetrics
-	nil,                                   // 53: gibson.daemon.v1.RunMissionRequest.VariablesEntry
-	nil,                                   // 54: gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	(*JSONSchemaNode)(nil),                // 53: gibson.daemon.v1.JSONSchemaNode
+	(*TaxonomyMapping)(nil),               // 54: gibson.daemon.v1.TaxonomyMapping
+	(*PropertyMapping)(nil),               // 55: gibson.daemon.v1.PropertyMapping
+	(*RelationshipMapping)(nil),           // 56: gibson.daemon.v1.RelationshipMapping
+	nil,                                   // 57: gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	nil,                                   // 58: gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	nil,                                   // 59: gibson.daemon.v1.JSONSchemaNode.PropertiesEntry
 }
 var file_daemon_proto_depIdxs = []int32{
-	53, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	57, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
 	37, // 1: gibson.daemon.v1.MissionEvent.result:type_name -> gibson.daemon.v1.OperationResult
 	12, // 2: gibson.daemon.v1.ListMissionsResponse.missions:type_name -> gibson.daemon.v1.MissionInfo
 	15, // 3: gibson.daemon.v1.ListAgentsResponse.agents:type_name -> gibson.daemon.v1.AgentInfo
 	15, // 4: gibson.daemon.v1.AgentStatusResponse.agent:type_name -> gibson.daemon.v1.AgentInfo
 	20, // 5: gibson.daemon.v1.ListToolsResponse.tools:type_name -> gibson.daemon.v1.ToolInfo
 	23, // 6: gibson.daemon.v1.ListPluginsResponse.plugins:type_name -> gibson.daemon.v1.PluginInfo
-	54, // 7: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	58, // 7: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
 	28, // 8: gibson.daemon.v1.AttackEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
 	37, // 9: gibson.daemon.v1.AttackEvent.result:type_name -> gibson.daemon.v1.OperationResult
 	7,  // 10: gibson.daemon.v1.Event.mission_event:type_name -> gibson.daemon.v1.MissionEvent
@@ -4310,53 +4778,62 @@ var file_daemon_proto_depIdxs = []int32{
 	46, // 16: gibson.daemon.v1.GetMissionCheckpointsResponse.checkpoints:type_name -> gibson.daemon.v1.CheckpointInfo
 	51, // 17: gibson.daemon.v1.GetAvailableToolsResponse.tools:type_name -> gibson.daemon.v1.AvailableToolInfo
 	52, // 18: gibson.daemon.v1.AvailableToolInfo.metrics:type_name -> gibson.daemon.v1.ToolExecutionMetrics
-	0,  // 19: gibson.daemon.v1.DaemonService.Connect:input_type -> gibson.daemon.v1.ConnectRequest
-	2,  // 20: gibson.daemon.v1.DaemonService.Ping:input_type -> gibson.daemon.v1.PingRequest
-	4,  // 21: gibson.daemon.v1.DaemonService.Status:input_type -> gibson.daemon.v1.StatusRequest
-	6,  // 22: gibson.daemon.v1.DaemonService.RunMission:input_type -> gibson.daemon.v1.RunMissionRequest
-	8,  // 23: gibson.daemon.v1.DaemonService.StopMission:input_type -> gibson.daemon.v1.StopMissionRequest
-	10, // 24: gibson.daemon.v1.DaemonService.ListMissions:input_type -> gibson.daemon.v1.ListMissionsRequest
-	13, // 25: gibson.daemon.v1.DaemonService.ListAgents:input_type -> gibson.daemon.v1.ListAgentsRequest
-	16, // 26: gibson.daemon.v1.DaemonService.GetAgentStatus:input_type -> gibson.daemon.v1.GetAgentStatusRequest
-	18, // 27: gibson.daemon.v1.DaemonService.ListTools:input_type -> gibson.daemon.v1.ListToolsRequest
-	21, // 28: gibson.daemon.v1.DaemonService.ListPlugins:input_type -> gibson.daemon.v1.ListPluginsRequest
-	24, // 29: gibson.daemon.v1.DaemonService.QueryPlugin:input_type -> gibson.daemon.v1.QueryPluginRequest
-	26, // 30: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
-	29, // 31: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
-	33, // 32: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
-	35, // 33: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
-	38, // 34: gibson.daemon.v1.DaemonService.PauseMission:input_type -> gibson.daemon.v1.PauseMissionRequest
-	40, // 35: gibson.daemon.v1.DaemonService.ResumeMission:input_type -> gibson.daemon.v1.ResumeMissionRequest
-	41, // 36: gibson.daemon.v1.DaemonService.GetMissionHistory:input_type -> gibson.daemon.v1.GetMissionHistoryRequest
-	44, // 37: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:input_type -> gibson.daemon.v1.GetMissionCheckpointsRequest
-	47, // 38: gibson.daemon.v1.DaemonService.ExecuteTool:input_type -> gibson.daemon.v1.ExecuteToolRequest
-	49, // 39: gibson.daemon.v1.DaemonService.GetAvailableTools:input_type -> gibson.daemon.v1.GetAvailableToolsRequest
-	1,  // 40: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
-	3,  // 41: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
-	5,  // 42: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
-	7,  // 43: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
-	9,  // 44: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
-	11, // 45: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
-	14, // 46: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
-	17, // 47: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
-	19, // 48: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
-	22, // 49: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
-	25, // 50: gibson.daemon.v1.DaemonService.QueryPlugin:output_type -> gibson.daemon.v1.QueryPluginResponse
-	27, // 51: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
-	30, // 52: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
-	34, // 53: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
-	36, // 54: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
-	39, // 55: gibson.daemon.v1.DaemonService.PauseMission:output_type -> gibson.daemon.v1.PauseMissionResponse
-	7,  // 56: gibson.daemon.v1.DaemonService.ResumeMission:output_type -> gibson.daemon.v1.MissionEvent
-	42, // 57: gibson.daemon.v1.DaemonService.GetMissionHistory:output_type -> gibson.daemon.v1.GetMissionHistoryResponse
-	45, // 58: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:output_type -> gibson.daemon.v1.GetMissionCheckpointsResponse
-	48, // 59: gibson.daemon.v1.DaemonService.ExecuteTool:output_type -> gibson.daemon.v1.ExecuteToolResponse
-	50, // 60: gibson.daemon.v1.DaemonService.GetAvailableTools:output_type -> gibson.daemon.v1.GetAvailableToolsResponse
-	40, // [40:61] is the sub-list for method output_type
-	19, // [19:40] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	53, // 19: gibson.daemon.v1.AvailableToolInfo.input_schema:type_name -> gibson.daemon.v1.JSONSchemaNode
+	53, // 20: gibson.daemon.v1.AvailableToolInfo.output_schema:type_name -> gibson.daemon.v1.JSONSchemaNode
+	59, // 21: gibson.daemon.v1.JSONSchemaNode.properties:type_name -> gibson.daemon.v1.JSONSchemaNode.PropertiesEntry
+	53, // 22: gibson.daemon.v1.JSONSchemaNode.items:type_name -> gibson.daemon.v1.JSONSchemaNode
+	54, // 23: gibson.daemon.v1.JSONSchemaNode.taxonomy:type_name -> gibson.daemon.v1.TaxonomyMapping
+	55, // 24: gibson.daemon.v1.TaxonomyMapping.properties:type_name -> gibson.daemon.v1.PropertyMapping
+	56, // 25: gibson.daemon.v1.TaxonomyMapping.relationships:type_name -> gibson.daemon.v1.RelationshipMapping
+	55, // 26: gibson.daemon.v1.RelationshipMapping.properties:type_name -> gibson.daemon.v1.PropertyMapping
+	53, // 27: gibson.daemon.v1.JSONSchemaNode.PropertiesEntry.value:type_name -> gibson.daemon.v1.JSONSchemaNode
+	0,  // 28: gibson.daemon.v1.DaemonService.Connect:input_type -> gibson.daemon.v1.ConnectRequest
+	2,  // 29: gibson.daemon.v1.DaemonService.Ping:input_type -> gibson.daemon.v1.PingRequest
+	4,  // 30: gibson.daemon.v1.DaemonService.Status:input_type -> gibson.daemon.v1.StatusRequest
+	6,  // 31: gibson.daemon.v1.DaemonService.RunMission:input_type -> gibson.daemon.v1.RunMissionRequest
+	8,  // 32: gibson.daemon.v1.DaemonService.StopMission:input_type -> gibson.daemon.v1.StopMissionRequest
+	10, // 33: gibson.daemon.v1.DaemonService.ListMissions:input_type -> gibson.daemon.v1.ListMissionsRequest
+	13, // 34: gibson.daemon.v1.DaemonService.ListAgents:input_type -> gibson.daemon.v1.ListAgentsRequest
+	16, // 35: gibson.daemon.v1.DaemonService.GetAgentStatus:input_type -> gibson.daemon.v1.GetAgentStatusRequest
+	18, // 36: gibson.daemon.v1.DaemonService.ListTools:input_type -> gibson.daemon.v1.ListToolsRequest
+	21, // 37: gibson.daemon.v1.DaemonService.ListPlugins:input_type -> gibson.daemon.v1.ListPluginsRequest
+	24, // 38: gibson.daemon.v1.DaemonService.QueryPlugin:input_type -> gibson.daemon.v1.QueryPluginRequest
+	26, // 39: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
+	29, // 40: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
+	33, // 41: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
+	35, // 42: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
+	38, // 43: gibson.daemon.v1.DaemonService.PauseMission:input_type -> gibson.daemon.v1.PauseMissionRequest
+	40, // 44: gibson.daemon.v1.DaemonService.ResumeMission:input_type -> gibson.daemon.v1.ResumeMissionRequest
+	41, // 45: gibson.daemon.v1.DaemonService.GetMissionHistory:input_type -> gibson.daemon.v1.GetMissionHistoryRequest
+	44, // 46: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:input_type -> gibson.daemon.v1.GetMissionCheckpointsRequest
+	47, // 47: gibson.daemon.v1.DaemonService.ExecuteTool:input_type -> gibson.daemon.v1.ExecuteToolRequest
+	49, // 48: gibson.daemon.v1.DaemonService.GetAvailableTools:input_type -> gibson.daemon.v1.GetAvailableToolsRequest
+	1,  // 49: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
+	3,  // 50: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
+	5,  // 51: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
+	7,  // 52: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
+	9,  // 53: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
+	11, // 54: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
+	14, // 55: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
+	17, // 56: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
+	19, // 57: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
+	22, // 58: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
+	25, // 59: gibson.daemon.v1.DaemonService.QueryPlugin:output_type -> gibson.daemon.v1.QueryPluginResponse
+	27, // 60: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
+	30, // 61: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
+	34, // 62: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
+	36, // 63: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
+	39, // 64: gibson.daemon.v1.DaemonService.PauseMission:output_type -> gibson.daemon.v1.PauseMissionResponse
+	7,  // 65: gibson.daemon.v1.DaemonService.ResumeMission:output_type -> gibson.daemon.v1.MissionEvent
+	42, // 66: gibson.daemon.v1.DaemonService.GetMissionHistory:output_type -> gibson.daemon.v1.GetMissionHistoryResponse
+	45, // 67: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:output_type -> gibson.daemon.v1.GetMissionCheckpointsResponse
+	48, // 68: gibson.daemon.v1.DaemonService.ExecuteTool:output_type -> gibson.daemon.v1.ExecuteToolResponse
+	50, // 69: gibson.daemon.v1.DaemonService.GetAvailableTools:output_type -> gibson.daemon.v1.GetAvailableToolsResponse
+	49, // [49:70] is the sub-list for method output_type
+	28, // [28:49] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_daemon_proto_init() }
@@ -4376,7 +4853,7 @@ func file_daemon_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_daemon_proto_rawDesc), len(file_daemon_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   55,
+			NumMessages:   60,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

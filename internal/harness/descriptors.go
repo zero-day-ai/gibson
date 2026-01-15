@@ -3,19 +3,19 @@ package harness
 import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/plugin"
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/tool"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // ToolDescriptor provides lightweight metadata about a tool without requiring
 // the full tool interface. Used for discovery, filtering, and capability queries.
 type ToolDescriptor struct {
-	Name         string            `json:"name"`
-	Description  string            `json:"description"`
-	Version      string            `json:"version"`
-	Tags         []string          `json:"tags"`
-	InputSchema  schema.JSONSchema `json:"input_schema"`
-	OutputSchema schema.JSONSchema `json:"output_schema"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	Version      string      `json:"version"`
+	Tags         []string    `json:"tags"`
+	InputSchema  schema.JSON `json:"input_schema"`
+	OutputSchema schema.JSON `json:"output_schema"`
 }
 
 // FromTool creates a ToolDescriptor from a Tool interface.

@@ -160,12 +160,16 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 	eventEmitter := mission.NewDefaultEventEmitter(mission.WithBufferSize(100))
 
 	// Step 8: Create mission orchestrator
-	orchestrator := mission.NewMissionOrchestrator(
+	orchestrator, err := mission.NewMissionOrchestrator(
 		missionStore,
 		mission.WithWorkflowExecutor(workflowExecutor),
 		mission.WithHarnessFactory(harnessFactory),
 		mission.WithEventEmitter(eventEmitter),
 	)
+	if err != nil {
+		cleanup()
+		return nil, fmt.Errorf("failed to create mission orchestrator: %w", err)
+	}
 
 	return &OrchestratorBundle{
 		Orchestrator:    orchestrator,

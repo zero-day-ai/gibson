@@ -14,6 +14,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -23,10 +24,11 @@ func TestWithEvalOptions(t *testing.T) {
 	evalOpts := eval.NewEvalOptions()
 	evalOpts.Enabled = true
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEvalOptions(evalOpts),
 	)
+	require.NoError(t, err)
 
 	assert.NotNil(t, orchestrator.evalOptions)
 	assert.Equal(t, evalOpts, orchestrator.evalOptions)
@@ -107,7 +109,8 @@ func TestWrapFactoryWithEval_ValidOptions(t *testing.T) {
 // TestGetEvalResults_NotEnabled tests GetEvalResults when eval is not enabled.
 func TestGetEvalResults_NotEnabled(t *testing.T) {
 	store := &mockMissionStore{}
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 
 	results := orchestrator.GetEvalResults()
 	assert.Nil(t, results)
@@ -131,11 +134,12 @@ func TestGetEvalResults_Enabled(t *testing.T) {
 	// Create mock factory
 	mockFactory := &mockHarnessFactory{}
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithHarnessFactory(mockFactory),
 		WithEvalOptions(evalOpts),
 	)
+	require.NoError(t, err)
 
 	results := orchestrator.GetEvalResults()
 	assert.NotNil(t, results)
@@ -144,7 +148,8 @@ func TestGetEvalResults_Enabled(t *testing.T) {
 // TestFinalizeEvalResults_NotEnabled tests finalization when eval is not enabled.
 func TestFinalizeEvalResults_NotEnabled(t *testing.T) {
 	store := &mockMissionStore{}
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	summary, err := orchestrator.FinalizeEvalResults(ctx)
@@ -172,11 +177,12 @@ func TestFinalizeEvalResults_Enabled(t *testing.T) {
 	// Create mock factory
 	mockFactory := &mockHarnessFactory{}
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithHarnessFactory(mockFactory),
 		WithEvalOptions(evalOpts),
 	)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	summary, err := orchestrator.FinalizeEvalResults(ctx)
@@ -211,11 +217,12 @@ func TestOrchestratorIntegration_WithEval(t *testing.T) {
 	// Create mock factory
 	mockFactory := &mockHarnessFactory{}
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithHarnessFactory(mockFactory),
 		WithEvalOptions(evalOpts),
 	)
+	require.NoError(t, err)
 
 	// Verify orchestrator is properly configured
 	assert.NotNil(t, orchestrator)
@@ -258,11 +265,12 @@ func TestOrchestratorIntegration_EvalOptionsSetAfterFactory(t *testing.T) {
 	mockFactory := &mockHarnessFactory{}
 
 	// Set factory first, then eval options
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithHarnessFactory(mockFactory),
 		WithEvalOptions(evalOpts),
 	)
+	require.NoError(t, err)
 
 	// Verify the harness factory is wrapped
 	_, ok := orchestrator.harnessFactory.(*eval.EvalHarnessFactory)
@@ -289,10 +297,11 @@ func TestOrchestratorIntegration_NoFactorySet(t *testing.T) {
 	evalOpts.GroundTruthPath = groundTruthPath
 
 	// Create orchestrator with eval options but no factory
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEvalOptions(evalOpts),
 	)
+	require.NoError(t, err)
 
 	// Verify orchestrator is created but eval is not active
 	assert.NotNil(t, orchestrator)
@@ -399,4 +408,28 @@ func (m *mockAgentHarness) TokenUsage() *llm.TokenTracker {
 
 func (m *mockAgentHarness) Tracer() trace.Tracer {
 	return nil
+}
+
+func (m *mockAgentHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, targetType any, opts ...harness.CompletionOption) (any, error) {
+	return nil, nil
+}
+
+func (m *mockAgentHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+
+func (m *mockAgentHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return nil, nil
+}
+
+func (m *mockAgentHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+
+func (m *mockAgentHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
+}
+
+func (m *mockAgentHarness) MissionID() types.ID {
+	return types.NewID()
 }

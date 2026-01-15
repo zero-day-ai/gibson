@@ -488,7 +488,6 @@ type DaemonStartedPayload struct {
 type AttackStartedPayload struct {
 	AttackID   types.ID `json:"attack_id"`
 	TargetName string   `json:"target_name,omitempty"`
-	Goal       string   `json:"goal,omitempty"`
 	AgentName  string   `json:"agent_name"`
 }
 

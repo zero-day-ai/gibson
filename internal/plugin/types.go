@@ -3,7 +3,7 @@ package plugin
 import (
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // PluginConfig holds plugin initialization configuration
@@ -16,10 +16,10 @@ type PluginConfig struct {
 
 // MethodDescriptor describes a plugin method
 type MethodDescriptor struct {
-	Name         string            `json:"name"`
-	Description  string            `json:"description"`
-	InputSchema  schema.JSONSchema `json:"input_schema"`
-	OutputSchema schema.JSONSchema `json:"output_schema"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	InputSchema  schema.JSON `json:"input_schema"`
+	OutputSchema schema.JSON `json:"output_schema"`
 }
 
 // PluginDescriptor contains plugin metadata

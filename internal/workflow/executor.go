@@ -20,6 +20,13 @@ type VerboseEventBus interface {
 	Emit(ctx context.Context, event interface{}) error
 }
 
+// EventBusPublisher is an interface for publishing daemon-wide events.
+// This allows the workflow executor to publish agent lifecycle events
+// to the daemon's event bus for graph processing.
+type EventBusPublisher interface {
+	Publish(ctx context.Context, event interface{}) error
+}
+
 // WorkflowExecutor orchestrates the execution of workflow DAGs.
 // It manages parallel node execution, respects dependencies, enforces
 // parallelism limits, and integrates with guardrails and observability.
@@ -28,7 +35,8 @@ type WorkflowExecutor struct {
 	logger      *slog.Logger
 	tracer      trace.Tracer
 	maxParallel int
-	verboseBus  VerboseEventBus // Optional event bus for verbose logging
+	verboseBus  VerboseEventBus   // Optional event bus for verbose logging
+	eventBus    EventBusPublisher // Optional event bus for daemon events (agent lifecycle, etc.)
 }
 
 // ExecutorOption is a functional option for configuring WorkflowExecutor
@@ -74,6 +82,14 @@ func WithMaxParallel(n int) ExecutorOption {
 func WithVerboseEventBus(bus VerboseEventBus) ExecutorOption {
 	return func(e *WorkflowExecutor) {
 		e.verboseBus = bus
+	}
+}
+
+// WithEventBus configures the executor to emit agent lifecycle events
+// to the daemon's event bus for graph processing (agent.started, agent.completed, agent.failed).
+func WithEventBus(bus EventBusPublisher) ExecutorOption {
+	return func(e *WorkflowExecutor) {
+		e.eventBus = bus
 	}
 }
 
@@ -304,6 +320,114 @@ func (e *WorkflowExecutor) emitNodeEvent(ctx context.Context, node *WorkflowNode
 
 	// Emit to the verbose event bus (adapter will convert to proper format)
 	_ = e.verboseBus.Emit(ctx, nodeData)
+}
+
+// emitAgentStarted emits an agent.started event to the daemon event bus.
+// If eventBus is nil, this is a no-op.
+// This event is used by the graph processor to create Agent nodes and PART_OF relationships.
+func (e *WorkflowExecutor) emitAgentStarted(ctx context.Context, agentName string, taskID string, parentSpanID string) {
+	if e.eventBus == nil {
+		return
+	}
+
+	// Extract trace context from current span
+	span := trace.SpanFromContext(ctx)
+	var traceID, spanID string
+	if span.IsRecording() {
+		spanCtx := span.SpanContext()
+		if spanCtx.IsValid() {
+			traceID = spanCtx.TraceID().String()
+			spanID = spanCtx.SpanID().String()
+		}
+	}
+
+	// Create event data matching daemon/graph_event.go structure
+	eventData := map[string]interface{}{
+		"type":           "agent.started",
+		"trace_id":       traceID,
+		"span_id":        spanID,
+		"parent_span_id": parentSpanID,
+		"timestamp":      time.Now(),
+		"data": map[string]interface{}{
+			"agent_name": agentName,
+			"task_id":    taskID,
+		},
+	}
+
+	// Publish to daemon event bus (best effort - don't fail execution on event errors)
+	_ = e.eventBus.Publish(ctx, eventData)
+}
+
+// emitAgentCompleted emits an agent.completed event to the daemon event bus.
+// If eventBus is nil, this is a no-op.
+// This event is used by the graph processor to update Agent node properties.
+func (e *WorkflowExecutor) emitAgentCompleted(ctx context.Context, agentName string, duration time.Duration, outputSummary string) {
+	if e.eventBus == nil {
+		return
+	}
+
+	// Extract trace context from current span
+	span := trace.SpanFromContext(ctx)
+	var traceID, spanID string
+	if span.IsRecording() {
+		spanCtx := span.SpanContext()
+		if spanCtx.IsValid() {
+			traceID = spanCtx.TraceID().String()
+			spanID = spanCtx.SpanID().String()
+		}
+	}
+
+	// Create event data matching daemon/graph_event.go structure
+	eventData := map[string]interface{}{
+		"type":      "agent.completed",
+		"trace_id":  traceID,
+		"span_id":   spanID,
+		"timestamp": time.Now(),
+		"data": map[string]interface{}{
+			"agent_name":     agentName,
+			"duration":       duration.Milliseconds(),
+			"output_summary": outputSummary,
+		},
+	}
+
+	// Publish to daemon event bus (best effort - don't fail execution on event errors)
+	_ = e.eventBus.Publish(ctx, eventData)
+}
+
+// emitAgentFailed emits an agent.failed event to the daemon event bus.
+// If eventBus is nil, this is a no-op.
+// This event is used by the graph processor to record agent failures.
+func (e *WorkflowExecutor) emitAgentFailed(ctx context.Context, agentName string, duration time.Duration, errorMsg string) {
+	if e.eventBus == nil {
+		return
+	}
+
+	// Extract trace context from current span
+	span := trace.SpanFromContext(ctx)
+	var traceID, spanID string
+	if span.IsRecording() {
+		spanCtx := span.SpanContext()
+		if spanCtx.IsValid() {
+			traceID = spanCtx.TraceID().String()
+			spanID = spanCtx.SpanID().String()
+		}
+	}
+
+	// Create event data matching daemon/graph_event.go structure
+	eventData := map[string]interface{}{
+		"type":      "agent.failed",
+		"trace_id":  traceID,
+		"span_id":   spanID,
+		"timestamp": time.Now(),
+		"data": map[string]interface{}{
+			"agent_name": agentName,
+			"duration":   duration.Milliseconds(),
+			"error":      errorMsg,
+		},
+	}
+
+	// Publish to daemon event bus (best effort - don't fail execution on event errors)
+	_ = e.eventBus.Publish(ctx, eventData)
 }
 
 // buildWorkflowResult constructs the final WorkflowResult from the execution state.

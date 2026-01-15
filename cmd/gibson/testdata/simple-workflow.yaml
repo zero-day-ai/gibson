@@ -1,0 +1,24 @@
+# Simple test workflow for CLI testing
+name: simple-test-workflow
+description: A simple workflow for testing CLI commands
+
+nodes:
+  - id: recon
+    name: Reconnaissance
+    type: agent
+    agent: test-agent
+    context:
+      mode: reconnaissance
+    goal: Perform initial reconnaissance
+
+  - id: analyze
+    name: Analysis
+    type: agent
+    agent: test-agent
+    context:
+      mode: analysis
+    goal: Analyze findings from recon
+
+edges:
+  - from: recon
+    to: analyze

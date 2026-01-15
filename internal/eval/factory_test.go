@@ -121,6 +121,30 @@ func (m *mockAgentHarness) SignalReplanRecommended(ctx context.Context, reason s
 func (m *mockAgentHarness) ReportStepHints(ctx context.Context, hints *harness.StepHints) error {
 	return nil
 }
+func (m *mockAgentHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (any, error) {
+	return nil, nil
+}
+func (m *mockAgentHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return []agent.Finding{}, nil
+}
+func (m *mockAgentHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return []harness.MissionRunSummarySDK{}, nil
+}
+func (m *mockAgentHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return []agent.Finding{}, nil
+}
+func (m *mockAgentHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
+}
+func (m *mockAgentHarness) MissionID() types.ID {
+	return types.NewID()
+}
+func (m *mockAgentHarness) RunNumber() int {
+	return 1
+}
+func (m *mockAgentHarness) CurrentAgentName() string {
+	return m.agentName
+}
 
 // TestNewEvalHarnessFactory tests factory creation
 func TestNewEvalHarnessFactory(t *testing.T) {

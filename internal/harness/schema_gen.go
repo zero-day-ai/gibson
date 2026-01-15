@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // SchemaFromType generates a JSONSchema from a Go type using reflection.
@@ -20,13 +20,13 @@ import (
 //	    Age   int    `json:"age"`
 //	}
 //	schema := SchemaFromType[User]()
-func SchemaFromType[T any]() schema.JSONSchema {
+func SchemaFromType[T any]() schema.JSON {
 	var t T
 	return schemaFromReflectType(reflect.TypeOf(t))
 }
 
 // schemaFromReflectType generates a JSONSchema from a reflect.Type
-func schemaFromReflectType(t reflect.Type) schema.JSONSchema {
+func schemaFromReflectType(t reflect.Type) schema.JSON {
 	// Handle pointer types
 	if t.Kind() == reflect.Ptr {
 		return schemaFromReflectType(t.Elem())
@@ -37,40 +37,37 @@ func schemaFromReflectType(t reflect.Type) schema.JSONSchema {
 		return schemaFromStruct(t)
 	case reflect.Slice, reflect.Array:
 		itemSchema := schemaFieldFromReflectType(t.Elem())
-		return schema.JSONSchema{
+		return schema.JSON{
 			Type:  "array",
 			Items: &itemSchema,
 		}
 	case reflect.Map:
-		// Maps are represented as objects with additionalProperties
-		// Note: JSONSchema.AdditionalProperties is *bool, but we need to handle
-		// the value type. For now, we'll set it to true to allow any properties.
-		allowAdditional := true
-		return schema.JSONSchema{
-			Type:                 "object",
-			AdditionalProperties: &allowAdditional,
+		// Maps are represented as objects
+		// Note: SDK schema.JSON doesn't have AdditionalProperties field
+		return schema.JSON{
+			Type: "object",
 		}
 	case reflect.String:
-		return schema.JSONSchema{Type: "string"}
+		return schema.JSON{Type: "string"}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return schema.JSONSchema{Type: "integer"}
+		return schema.JSON{Type: "integer"}
 	case reflect.Float32, reflect.Float64:
-		return schema.JSONSchema{Type: "number"}
+		return schema.JSON{Type: "number"}
 	case reflect.Bool:
-		return schema.JSONSchema{Type: "boolean"}
+		return schema.JSON{Type: "boolean"}
 	case reflect.Interface:
 		// interface{} or any - allow any type (no constraints)
-		return schema.JSONSchema{}
+		return schema.JSON{}
 	default:
 		// Fallback for unsupported types
-		return schema.JSONSchema{}
+		return schema.JSON{}
 	}
 }
 
 // schemaFieldFromReflectType generates a SchemaField from a reflect.Type
 // This is similar to schemaFromReflectType but returns SchemaField for nested properties
-func schemaFieldFromReflectType(t reflect.Type) schema.SchemaField {
+func schemaFieldFromReflectType(t reflect.Type) schema.JSON {
 	// Handle pointer types
 	if t.Kind() == reflect.Ptr {
 		return schemaFieldFromReflectType(t.Elem())
@@ -78,7 +75,7 @@ func schemaFieldFromReflectType(t reflect.Type) schema.SchemaField {
 
 	// Special handling for time.Time
 	if t == reflect.TypeOf(time.Time{}) {
-		return schema.SchemaField{
+		return schema.JSON{
 			Type:   "string",
 			Format: "date-time",
 		}
@@ -89,39 +86,39 @@ func schemaFieldFromReflectType(t reflect.Type) schema.SchemaField {
 		return schemaFieldFromStruct(t)
 	case reflect.Slice, reflect.Array:
 		itemSchema := schemaFieldFromReflectType(t.Elem())
-		return schema.SchemaField{
+		return schema.JSON{
 			Type:  "array",
 			Items: &itemSchema,
 		}
 	case reflect.Map:
 		// For maps in nested contexts, we create an object with additionalProperties
 		// Since SchemaField doesn't have AdditionalProperties, we just return object type
-		return schema.SchemaField{
+		return schema.JSON{
 			Type: "object",
 		}
 	case reflect.String:
-		return schema.SchemaField{Type: "string"}
+		return schema.JSON{Type: "string"}
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return schema.SchemaField{Type: "integer"}
+		return schema.JSON{Type: "integer"}
 	case reflect.Float32, reflect.Float64:
-		return schema.SchemaField{Type: "number"}
+		return schema.JSON{Type: "number"}
 	case reflect.Bool:
-		return schema.SchemaField{Type: "boolean"}
+		return schema.JSON{Type: "boolean"}
 	case reflect.Interface:
 		// interface{} or any - allow any type (no constraints)
-		return schema.SchemaField{}
+		return schema.JSON{}
 	default:
 		// Fallback for unsupported types
-		return schema.SchemaField{}
+		return schema.JSON{}
 	}
 }
 
 // schemaFromStruct generates a JSONSchema from a struct type
-func schemaFromStruct(t reflect.Type) schema.JSONSchema {
-	s := schema.JSONSchema{
+func schemaFromStruct(t reflect.Type) schema.JSON {
+	s := schema.JSON{
 		Type:       "object",
-		Properties: make(map[string]schema.SchemaField),
+		Properties: make(map[string]schema.JSON),
 		Required:   []string{},
 	}
 
@@ -184,10 +181,10 @@ func schemaFromStruct(t reflect.Type) schema.JSONSchema {
 
 // schemaFieldFromStruct generates a SchemaField from a struct type
 // This is used for nested structs within properties
-func schemaFieldFromStruct(t reflect.Type) schema.SchemaField {
-	s := schema.SchemaField{
+func schemaFieldFromStruct(t reflect.Type) schema.JSON {
+	s := schema.JSON{
 		Type:       "object",
-		Properties: make(map[string]schema.SchemaField),
+		Properties: make(map[string]schema.JSON),
 		Required:   []string{},
 	}
 

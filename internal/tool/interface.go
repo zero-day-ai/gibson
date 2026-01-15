@@ -3,8 +3,8 @@ package tool
 import (
 	"context"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // Tool represents an atomic, stateless operation that can be executed by the Gibson framework.
@@ -24,10 +24,10 @@ type Tool interface {
 	Tags() []string
 
 	// InputSchema returns the JSON schema defining valid input parameters
-	InputSchema() schema.JSONSchema
+	InputSchema() schema.JSON
 
 	// OutputSchema returns the JSON schema defining the output structure
-	OutputSchema() schema.JSONSchema
+	OutputSchema() schema.JSON
 
 	// Execute runs the tool with the given input and returns the result.
 	// The input and output maps must conform to the InputSchema and OutputSchema respectively.

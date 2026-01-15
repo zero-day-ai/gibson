@@ -3,6 +3,7 @@ package attack
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,11 +88,11 @@ func TestOrchestratorWithHarnessFactoryOption(t *testing.T) {
 	store := &mockMissionStore{}
 
 	// Create orchestrator with harness factory
-	orchestrator := mission.NewMissionOrchestrator(
+	orchestrator, err := mission.NewMissionOrchestrator(
 		store,
 		mission.WithHarnessFactory(factory),
 	)
-
+	require.NoError(t, err)
 	require.NotNil(t, orchestrator)
 }
 

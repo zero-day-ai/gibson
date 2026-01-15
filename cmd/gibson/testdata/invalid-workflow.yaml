@@ -1,0 +1,9 @@
+# Invalid workflow - missing required fields
+name: invalid-workflow
+
+nodes:
+  - id: bad-node
+    name: Bad Node
+    type: agent
+    # Missing agent field - this should fail validation
+    goal: This will fail validation

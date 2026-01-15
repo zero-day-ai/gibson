@@ -71,11 +71,10 @@ import (
 // YAMLWorkflow represents the top-level structure of a workflow YAML file.
 // This structure maps directly to the YAML format for workflow definitions.
 type YAMLWorkflow struct {
-	Name        string          `yaml:"name"`
-	Description string          `yaml:"description"`
-	Target      *YAMLTarget     `yaml:"target,omitempty"`
-	Nodes       []YAMLNode      `yaml:"nodes"`
-	Planning    *PlanningConfig `yaml:"planning,omitempty"`
+	Name        string      `yaml:"name"`
+	Description string      `yaml:"description"`
+	Target      *YAMLTarget `yaml:"target,omitempty"`
+	Nodes       []YAMLNode  `yaml:"nodes"`
 }
 
 // YAMLTarget represents a target specification in YAML format.
@@ -263,15 +262,6 @@ func ParseWorkflow(data []byte) (*Workflow, error) {
 	wf.EntryPoints = calculateEntryPoints(wf)
 	wf.ExitPoints = calculateExitPoints(wf)
 
-	// Copy planning configuration if present
-	if yamlWf.Planning != nil {
-		wf.Planning = yamlWf.Planning
-		// Validate planning configuration
-		if err := wf.Planning.Validate(); err != nil {
-			return nil, fmt.Errorf("invalid planning configuration: %w", err)
-		}
-	}
-
 	return wf, nil
 }
 
@@ -393,9 +383,6 @@ func convertAgentNode(yamlNode *YAMLNode, node *WorkflowNode) error {
 		}
 		if desc, ok := yamlNode.Task["description"].(string); ok {
 			task.Description = desc
-		}
-		if goal, ok := yamlNode.Task["goal"].(string); ok {
-			task.Goal = goal
 		}
 		if context, ok := yamlNode.Task["context"].(map[string]any); ok {
 			task.Context = context

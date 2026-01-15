@@ -5,14 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sync"
 	"time"
-
-	"go.opentelemetry.io/otel/codes"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -23,170 +20,405 @@ const (
 	langfuseAPIPath      = "/api/public/ingestion"
 )
 
-// LangfuseOption is a functional option for configuring the Langfuse exporter.
-type LangfuseOption func(*langfuseOptions)
-
-// langfuseOptions holds configuration options for the Langfuse exporter.
-type langfuseOptions struct {
-	batchSize     int
-	flushInterval time.Duration
-	maxRetries    int
-	retryDelay    time.Duration
+// Trace represents a Langfuse trace for tracking a complete interaction.
+type Trace struct {
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name,omitempty"`
+	Timestamp time.Time              `json:"timestamp"`
+	UserID    string                 `json:"userId,omitempty"`
+	SessionID string                 `json:"sessionId,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	Tags      []string               `json:"tags,omitempty"`
+	Public    bool                   `json:"public,omitempty"`
 }
 
-// WithBatchSize sets the maximum number of spans to buffer before flushing.
-// Larger batch sizes reduce network overhead but increase memory usage.
-func WithBatchSize(size int) LangfuseOption {
-	return func(o *langfuseOptions) {
-		if size > 0 {
-			o.batchSize = size
-		}
-	}
+// Generation represents an LLM generation event in Langfuse.
+type Generation struct {
+	ID                   string                 `json:"id"`
+	TraceID              string                 `json:"traceId"`
+	Name                 string                 `json:"name,omitempty"`
+	StartTime            time.Time              `json:"startTime"`
+	EndTime              time.Time              `json:"endTime,omitempty"`
+	CompletionStartTime  time.Time              `json:"completionStartTime,omitempty"`
+	Model                string                 `json:"model,omitempty"`
+	ModelParameters      map[string]interface{} `json:"modelParameters,omitempty"`
+	Input                interface{}            `json:"input,omitempty"`
+	Output               interface{}            `json:"output,omitempty"`
+	Usage                *Usage                 `json:"usage,omitempty"`
+	Metadata             map[string]interface{} `json:"metadata,omitempty"`
+	ParentObservationID  string                 `json:"parentObservationId,omitempty"`
+	Level                string                 `json:"level,omitempty"` // DEBUG, DEFAULT, WARNING, ERROR
+	StatusMessage        string                 `json:"statusMessage,omitempty"`
+	Version              string                 `json:"version,omitempty"`
+	PromptName           string                 `json:"promptName,omitempty"`
+	PromptVersion        int                    `json:"promptVersion,omitempty"`
 }
 
-// WithFlushInterval sets the maximum time between automatic flushes.
-// Spans are automatically flushed when this interval expires.
-func WithFlushInterval(interval time.Duration) LangfuseOption {
-	return func(o *langfuseOptions) {
-		if interval > 0 {
-			o.flushInterval = interval
-		}
-	}
+// Span represents a generic span event in Langfuse.
+type Span struct {
+	ID                  string                 `json:"id"`
+	TraceID             string                 `json:"traceId"`
+	Name                string                 `json:"name,omitempty"`
+	StartTime           time.Time              `json:"startTime"`
+	EndTime             time.Time              `json:"endTime,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
+	Input               interface{}            `json:"input,omitempty"`
+	Output              interface{}            `json:"output,omitempty"`
+	ParentObservationID string                 `json:"parentObservationId,omitempty"`
+	Level               string                 `json:"level,omitempty"` // DEBUG, DEFAULT, WARNING, ERROR
+	StatusMessage       string                 `json:"statusMessage,omitempty"`
+	Version             string                 `json:"version,omitempty"`
 }
 
-// WithRetryPolicy sets the retry behavior for failed HTTP requests.
-// The exporter will retry up to maxRetries times with exponential backoff.
-func WithRetryPolicy(maxRetries int, retryDelay time.Duration) LangfuseOption {
-	return func(o *langfuseOptions) {
-		if maxRetries >= 0 {
-			o.maxRetries = maxRetries
-		}
-		if retryDelay > 0 {
-			o.retryDelay = retryDelay
-		}
-	}
+// Usage represents token usage information for LLM generations.
+type Usage struct {
+	PromptTokens     int64 `json:"promptTokens,omitempty"`
+	CompletionTokens int64 `json:"completionTokens,omitempty"`
+	TotalTokens      int64 `json:"totalTokens,omitempty"`
 }
 
-// LangfuseExporter exports OpenTelemetry spans to Langfuse for LLM observability.
-// It implements the sdktrace.SpanExporter interface and provides batching,
-// buffering, and retry capabilities for reliable span export.
-type LangfuseExporter struct {
-	client        *http.Client
+// LangfuseEvent represents a single event in the Langfuse ingestion batch.
+type LangfuseEvent struct {
+	Type      string                 `json:"type"`
+	ID        string                 `json:"id"`
+	Timestamp time.Time              `json:"timestamp"`
+	Body      map[string]interface{} `json:"body"`
+}
+
+// LangfuseBatch represents a batch of events to send to Langfuse.
+type LangfuseBatch struct {
+	Batch []LangfuseEvent `json:"batch"`
+}
+
+// LangfuseClient provides a client for sending telemetry data to Langfuse.
+// It supports batched, async sending of traces, generations, and spans.
+type LangfuseClient struct {
 	host          string
 	publicKey     string
 	secretKey     string
-	buffer        []sdktrace.ReadOnlySpan
-	bufferMu      sync.Mutex
+	httpClient    *http.Client
 	batchSize     int
 	flushInterval time.Duration
 	maxRetries    int
 	retryDelay    time.Duration
-	sessionID     string
-	userID        string
-	sessionMu     sync.RWMutex
-	stopCh        chan struct{}
-	wg            sync.WaitGroup
+
+	// Buffer for async batch sending
+	buffer   []LangfuseEvent
+	bufferMu sync.Mutex
+
+	// Background flusher control
+	stopCh chan struct{}
+	wg     sync.WaitGroup
 }
 
-// NewLangfuseExporter creates a new Langfuse exporter with the specified configuration.
-// It starts a background goroutine for periodic flushing of buffered spans.
+// LangfuseClientConfig holds configuration for creating a LangfuseClient.
+type LangfuseClientConfig struct {
+	Host          string
+	PublicKey     string
+	SecretKey     string
+	BatchSize     int
+	FlushInterval time.Duration
+	MaxRetries    int
+	RetryDelay    time.Duration
+	HTTPTimeout   time.Duration
+}
+
+// NewLangfuseClient creates a new Langfuse client with the specified configuration.
+// It starts a background goroutine for periodic flushing of buffered events.
 //
 // Parameters:
-//   - cfg: Langfuse configuration with host, public key, and secret key
-//   - opts: Optional functional options for customizing behavior
+//   - config: Client configuration including API credentials and batch settings
 //
 // Returns:
-//   - *LangfuseExporter: The initialized exporter
+//   - *LangfuseClient: The initialized client
 //   - error: Any error encountered during initialization
-func NewLangfuseExporter(cfg LangfuseConfig, opts ...LangfuseOption) (*LangfuseExporter, error) {
-	if err := cfg.Validate(); err != nil {
-		return nil, WrapObservabilityError(ErrAuthenticationFailed, "invalid langfuse configuration", err)
+func NewLangfuseClient(config LangfuseClientConfig) (*LangfuseClient, error) {
+	// Validate required fields
+	if config.Host == "" {
+		return nil, NewObservabilityError(ErrAuthenticationFailed, "langfuse host is required")
+	}
+	if config.PublicKey == "" {
+		return nil, NewObservabilityError(ErrAuthenticationFailed, "langfuse public key is required")
+	}
+	if config.SecretKey == "" {
+		return nil, NewObservabilityError(ErrAuthenticationFailed, "langfuse secret key is required")
 	}
 
-	// Set default options
-	options := &langfuseOptions{
-		batchSize:     defaultBatchSize,
-		flushInterval: defaultFlushInterval,
-		maxRetries:    defaultMaxRetries,
-		retryDelay:    defaultRetryDelay,
+	// Set defaults for optional fields
+	if config.BatchSize <= 0 {
+		config.BatchSize = defaultBatchSize
+	}
+	if config.FlushInterval <= 0 {
+		config.FlushInterval = defaultFlushInterval
+	}
+	if config.MaxRetries < 0 {
+		config.MaxRetries = defaultMaxRetries
+	}
+	if config.RetryDelay <= 0 {
+		config.RetryDelay = defaultRetryDelay
+	}
+	if config.HTTPTimeout <= 0 {
+		config.HTTPTimeout = 30 * time.Second
 	}
 
-	// Apply functional options
-	for _, opt := range opts {
-		opt(options)
-	}
-
-	exporter := &LangfuseExporter{
-		client: &http.Client{
-			Timeout: 30 * time.Second,
+	client := &LangfuseClient{
+		host:          config.Host,
+		publicKey:     config.PublicKey,
+		secretKey:     config.SecretKey,
+		batchSize:     config.BatchSize,
+		flushInterval: config.FlushInterval,
+		maxRetries:    config.MaxRetries,
+		retryDelay:    config.RetryDelay,
+		httpClient: &http.Client{
+			Timeout: config.HTTPTimeout,
 		},
-		host:          cfg.Host,
-		publicKey:     cfg.PublicKey,
-		secretKey:     cfg.SecretKey,
-		buffer:        make([]sdktrace.ReadOnlySpan, 0, options.batchSize),
-		batchSize:     options.batchSize,
-		flushInterval: options.flushInterval,
-		maxRetries:    options.maxRetries,
-		retryDelay:    options.retryDelay,
-		stopCh:        make(chan struct{}),
+		buffer: make([]LangfuseEvent, 0, config.BatchSize),
+		stopCh: make(chan struct{}),
 	}
 
 	// Start background flusher
-	exporter.wg.Add(1)
-	go exporter.backgroundFlusher()
+	client.wg.Add(1)
+	go client.backgroundFlusher()
 
-	return exporter, nil
+	return client, nil
 }
 
-// ExportSpans exports a batch of spans to Langfuse.
-// This method implements the sdktrace.SpanExporter interface.
-//
-// Spans are buffered and exported in batches to reduce network overhead.
-// If the buffer reaches the configured batch size, spans are immediately flushed.
+// CreateTrace creates a trace in Langfuse asynchronously.
+// The trace is buffered and sent in the next batch.
 //
 // Parameters:
-//   - ctx: Context for the export operation
-//   - spans: Slice of read-only spans to export
+//   - trace: The trace to create
 //
 // Returns:
-//   - error: Any error encountered during export
-func (e *LangfuseExporter) ExportSpans(ctx context.Context, spans []sdktrace.ReadOnlySpan) error {
-	if len(spans) == 0 {
-		return nil
+//   - error: Any error encountered during buffering
+func (c *LangfuseClient) CreateTrace(trace *Trace) error {
+	if trace == nil {
+		return NewObservabilityError(ErrExporterConnection, "trace cannot be nil")
+	}
+	if trace.ID == "" {
+		return NewObservabilityError(ErrExporterConnection, "trace ID is required")
 	}
 
-	e.bufferMu.Lock()
-	defer e.bufferMu.Unlock()
-
-	// Add spans to buffer
-	e.buffer = append(e.buffer, spans...)
-
-	// Flush if buffer is full
-	if len(e.buffer) >= e.batchSize {
-		return e.flush(ctx)
+	// Convert to event body
+	body := map[string]interface{}{
+		"id":        trace.ID,
+		"timestamp": trace.Timestamp.Format(time.RFC3339Nano),
+	}
+	if trace.Name != "" {
+		body["name"] = trace.Name
+	}
+	if trace.UserID != "" {
+		body["userId"] = trace.UserID
+	}
+	if trace.SessionID != "" {
+		body["sessionId"] = trace.SessionID
+	}
+	if trace.Metadata != nil {
+		body["metadata"] = trace.Metadata
+	}
+	if trace.Tags != nil {
+		body["tags"] = trace.Tags
+	}
+	if trace.Public {
+		body["public"] = trace.Public
 	}
 
-	return nil
+	event := LangfuseEvent{
+		Type:      "trace-create",
+		ID:        generateClientEventID("trace", trace.ID),
+		Timestamp: trace.Timestamp,
+		Body:      body,
+	}
+
+	return c.addEvent(event)
 }
 
-// Shutdown gracefully shuts down the exporter, flushing any pending spans.
-// This method implements the sdktrace.SpanExporter interface.
+// CreateGeneration creates a generation (LLM completion) in Langfuse asynchronously.
+// The generation is buffered and sent in the next batch.
 //
 // Parameters:
-//   - ctx: Context with optional timeout for shutdown operation
+//   - gen: The generation to create
+//
+// Returns:
+//   - error: Any error encountered during buffering
+func (c *LangfuseClient) CreateGeneration(gen *Generation) error {
+	if gen == nil {
+		return NewObservabilityError(ErrExporterConnection, "generation cannot be nil")
+	}
+	if gen.ID == "" {
+		return NewObservabilityError(ErrExporterConnection, "generation ID is required")
+	}
+	if gen.TraceID == "" {
+		return NewObservabilityError(ErrExporterConnection, "generation trace ID is required")
+	}
+
+	// Convert to event body
+	body := map[string]interface{}{
+		"id":        gen.ID,
+		"traceId":   gen.TraceID,
+		"startTime": gen.StartTime.Format(time.RFC3339Nano),
+	}
+	if gen.Name != "" {
+		body["name"] = gen.Name
+	}
+	if !gen.EndTime.IsZero() {
+		body["endTime"] = gen.EndTime.Format(time.RFC3339Nano)
+	}
+	if !gen.CompletionStartTime.IsZero() {
+		body["completionStartTime"] = gen.CompletionStartTime.Format(time.RFC3339Nano)
+	}
+	if gen.Model != "" {
+		body["model"] = gen.Model
+	}
+	if gen.ModelParameters != nil {
+		body["modelParameters"] = gen.ModelParameters
+	}
+	if gen.Input != nil {
+		body["input"] = gen.Input
+	}
+	if gen.Output != nil {
+		body["output"] = gen.Output
+	}
+	if gen.Usage != nil {
+		usage := make(map[string]interface{})
+		if gen.Usage.PromptTokens > 0 {
+			usage["promptTokens"] = gen.Usage.PromptTokens
+		}
+		if gen.Usage.CompletionTokens > 0 {
+			usage["completionTokens"] = gen.Usage.CompletionTokens
+		}
+		if gen.Usage.TotalTokens > 0 {
+			usage["totalTokens"] = gen.Usage.TotalTokens
+		}
+		if len(usage) > 0 {
+			body["usage"] = usage
+		}
+	}
+	if gen.Metadata != nil {
+		body["metadata"] = gen.Metadata
+	}
+	if gen.ParentObservationID != "" {
+		body["parentObservationId"] = gen.ParentObservationID
+	}
+	if gen.Level != "" {
+		body["level"] = gen.Level
+	}
+	if gen.StatusMessage != "" {
+		body["statusMessage"] = gen.StatusMessage
+	}
+	if gen.Version != "" {
+		body["version"] = gen.Version
+	}
+	if gen.PromptName != "" {
+		body["promptName"] = gen.PromptName
+	}
+	if gen.PromptVersion > 0 {
+		body["promptVersion"] = gen.PromptVersion
+	}
+
+	event := LangfuseEvent{
+		Type:      "generation-create",
+		ID:        generateClientEventID("generation", gen.ID),
+		Timestamp: gen.StartTime,
+		Body:      body,
+	}
+
+	return c.addEvent(event)
+}
+
+// CreateSpan creates a span in Langfuse asynchronously.
+// The span is buffered and sent in the next batch.
+//
+// Parameters:
+//   - span: The span to create
+//
+// Returns:
+//   - error: Any error encountered during buffering
+func (c *LangfuseClient) CreateSpan(span *Span) error {
+	if span == nil {
+		return NewObservabilityError(ErrExporterConnection, "span cannot be nil")
+	}
+	if span.ID == "" {
+		return NewObservabilityError(ErrExporterConnection, "span ID is required")
+	}
+	if span.TraceID == "" {
+		return NewObservabilityError(ErrExporterConnection, "span trace ID is required")
+	}
+
+	// Convert to event body
+	body := map[string]interface{}{
+		"id":        span.ID,
+		"traceId":   span.TraceID,
+		"startTime": span.StartTime.Format(time.RFC3339Nano),
+	}
+	if span.Name != "" {
+		body["name"] = span.Name
+	}
+	if !span.EndTime.IsZero() {
+		body["endTime"] = span.EndTime.Format(time.RFC3339Nano)
+	}
+	if span.Metadata != nil {
+		body["metadata"] = span.Metadata
+	}
+	if span.Input != nil {
+		body["input"] = span.Input
+	}
+	if span.Output != nil {
+		body["output"] = span.Output
+	}
+	if span.ParentObservationID != "" {
+		body["parentObservationId"] = span.ParentObservationID
+	}
+	if span.Level != "" {
+		body["level"] = span.Level
+	}
+	if span.StatusMessage != "" {
+		body["statusMessage"] = span.StatusMessage
+	}
+	if span.Version != "" {
+		body["version"] = span.Version
+	}
+
+	event := LangfuseEvent{
+		Type:      "span-create",
+		ID:        generateClientEventID("span", span.ID),
+		Timestamp: span.StartTime,
+		Body:      body,
+	}
+
+	return c.addEvent(event)
+}
+
+// Flush immediately sends all buffered events to Langfuse.
+// This blocks until the flush completes or fails.
+//
+// Returns:
+//   - error: Any error encountered during flushing
+func (c *LangfuseClient) Flush() error {
+	c.bufferMu.Lock()
+	defer c.bufferMu.Unlock()
+
+	return c.flush(context.Background())
+}
+
+// Close gracefully shuts down the client, flushing any pending events.
+// It stops the background flusher and waits for it to complete.
 //
 // Returns:
 //   - error: Any error encountered during shutdown
-func (e *LangfuseExporter) Shutdown(ctx context.Context) error {
+func (c *LangfuseClient) Close() error {
 	// Signal background flusher to stop
-	close(e.stopCh)
+	close(c.stopCh)
 
-	// Wait for background flusher to finish
+	// Wait for background flusher to finish with timeout
 	doneCh := make(chan struct{})
 	go func() {
-		e.wg.Wait()
+		c.wg.Wait()
 		close(doneCh)
 	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
 	select {
 	case <-doneCh:
@@ -195,96 +427,96 @@ func (e *LangfuseExporter) Shutdown(ctx context.Context) error {
 		return WrapObservabilityError(ErrShutdownTimeout, "timeout waiting for background flusher", ctx.Err())
 	}
 
-	// Flush remaining spans
-	e.bufferMu.Lock()
-	defer e.bufferMu.Unlock()
+	// Flush remaining events
+	c.bufferMu.Lock()
+	defer c.bufferMu.Unlock()
 
-	if len(e.buffer) > 0 {
-		if err := e.flush(ctx); err != nil {
-			return WrapObservabilityError(ErrShutdownTimeout, "failed to flush remaining spans", err)
+	if len(c.buffer) > 0 {
+		if err := c.flush(ctx); err != nil {
+			return WrapObservabilityError(ErrShutdownTimeout, "failed to flush remaining events", err)
 		}
 	}
 
 	return nil
 }
 
-// SetSession sets the session ID to be associated with all exported spans.
-// This allows grouping spans by session in the Langfuse UI.
-func (e *LangfuseExporter) SetSession(sessionID string) {
-	e.sessionMu.Lock()
-	defer e.sessionMu.Unlock()
-	e.sessionID = sessionID
+// addEvent adds an event to the buffer and triggers flush if buffer is full.
+// Must be called without holding bufferMu.
+func (c *LangfuseClient) addEvent(event LangfuseEvent) error {
+	c.bufferMu.Lock()
+	defer c.bufferMu.Unlock()
+
+	c.buffer = append(c.buffer, event)
+
+	// Flush if buffer is full
+	if len(c.buffer) >= c.batchSize {
+		return c.flush(context.Background())
+	}
+
+	return nil
 }
 
-// SetUser sets the user ID to be associated with all exported spans.
-// This allows filtering and grouping spans by user in the Langfuse UI.
-func (e *LangfuseExporter) SetUser(userID string) {
-	e.sessionMu.Lock()
-	defer e.sessionMu.Unlock()
-	e.userID = userID
-}
+// backgroundFlusher periodically flushes buffered events.
+func (c *LangfuseClient) backgroundFlusher() {
+	defer c.wg.Done()
 
-// backgroundFlusher periodically flushes buffered spans.
-func (e *LangfuseExporter) backgroundFlusher() {
-	defer e.wg.Done()
-
-	ticker := time.NewTicker(e.flushInterval)
+	ticker := time.NewTicker(c.flushInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			e.bufferMu.Lock()
-			if len(e.buffer) > 0 {
-				// Use background context for periodic flushes
-				_ = e.flush(context.Background())
+			c.bufferMu.Lock()
+			if len(c.buffer) > 0 {
+				// Ignore errors in background flush, just log them
+				_ = c.flush(context.Background())
 			}
-			e.bufferMu.Unlock()
+			c.bufferMu.Unlock()
 
-		case <-e.stopCh:
+		case <-c.stopCh:
 			return
 		}
 	}
 }
 
-// flush sends buffered spans to Langfuse with retry logic.
+// flush sends buffered events to Langfuse with retry logic.
 // Must be called with bufferMu locked.
-func (e *LangfuseExporter) flush(ctx context.Context) error {
-	if len(e.buffer) == 0 {
+func (c *LangfuseClient) flush(ctx context.Context) error {
+	if len(c.buffer) == 0 {
 		return nil
 	}
 
-	// Convert spans to Langfuse format
-	traces := e.convertSpans(e.buffer)
+	// Create batch payload
+	batch := LangfuseBatch{
+		Batch: c.buffer,
+	}
 
 	// Marshal to JSON
-	payload, err := json.Marshal(map[string]interface{}{
-		"batch": traces,
-	})
+	payload, err := json.Marshal(batch)
 	if err != nil {
-		return WrapObservabilityError(ErrExporterConnection, "failed to marshal spans", err)
+		return WrapObservabilityError(ErrExporterConnection, "failed to marshal events", err)
 	}
 
 	// Send with retry logic
-	if err := e.sendWithRetry(ctx, payload); err != nil {
+	if err := c.sendWithRetry(ctx, payload); err != nil {
 		return err
 	}
 
 	// Clear buffer after successful send
-	e.buffer = e.buffer[:0]
+	c.buffer = c.buffer[:0]
 
 	return nil
 }
 
 // sendWithRetry sends a payload to Langfuse with exponential backoff retry.
-func (e *LangfuseExporter) sendWithRetry(ctx context.Context, payload []byte) error {
-	url := e.host + langfuseAPIPath
+func (c *LangfuseClient) sendWithRetry(ctx context.Context, payload []byte) error {
+	url := c.host + langfuseAPIPath
 
 	var lastErr error
-	for attempt := 0; attempt <= e.maxRetries; attempt++ {
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			// Calculate exponential backoff delay
-			delay := time.Duration(math.Pow(2, float64(attempt-1))) * e.retryDelay
+			delay := time.Duration(math.Pow(2, float64(attempt-1))) * c.retryDelay
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
@@ -299,15 +531,16 @@ func (e *LangfuseExporter) sendWithRetry(ctx context.Context, payload []byte) er
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.SetBasicAuth(e.publicKey, e.secretKey)
+		req.SetBasicAuth(c.publicKey, c.secretKey)
 
-		resp, err := e.client.Do(req)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 
-		// Handle response
+		// Read and close response body
+		_, _ = io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
 		// Success
@@ -331,206 +564,12 @@ func (e *LangfuseExporter) sendWithRetry(ctx context.Context, payload []byte) er
 	return NewExporterConnectionError(url, fmt.Errorf("max retries exceeded: %w", lastErr))
 }
 
-// convertSpans converts OpenTelemetry spans to Langfuse ingestion event format.
-// The Langfuse API expects events with a "type" field indicating the event type
-// (trace-create, span-create, generation-create, etc.) and a "body" field with the data.
-func (e *LangfuseExporter) convertSpans(spans []sdktrace.ReadOnlySpan) []map[string]interface{} {
-	e.sessionMu.RLock()
-	sessionID := e.sessionID
-	userID := e.userID
-	e.sessionMu.RUnlock()
-
-	events := make([]map[string]interface{}, 0, len(spans)*2)
-
-	// Group spans by trace ID to create trace-create events
-	tracesSeen := make(map[string]bool)
-
-	for _, span := range spans {
-		spanCtx := span.SpanContext()
-		parentCtx := span.Parent()
-		traceID := spanCtx.TraceID().String()
-
-		// Create trace-create event for new traces (root spans without parent)
-		if !tracesSeen[traceID] {
-			tracesSeen[traceID] = true
-
-			traceEvent := map[string]interface{}{
-				"type":      "trace-create",
-				"id":        "trace-" + traceID[:8], // Use first 8 chars of trace ID as unique event ID
-				"timestamp": span.StartTime().Format(time.RFC3339Nano),
-				"body": map[string]interface{}{
-					"id":        traceID,
-					"name":      span.Name(),
-					"timestamp": span.StartTime().Format(time.RFC3339Nano),
-				},
-			}
-
-			// Add session ID if set
-			if sessionID != "" {
-				traceEvent["body"].(map[string]interface{})["sessionId"] = sessionID
-			}
-
-			// Add user ID if set
-			if userID != "" {
-				traceEvent["body"].(map[string]interface{})["userId"] = userID
-			}
-
-			events = append(events, traceEvent)
-		}
-
-		// Determine if this is an LLM generation span
-		// Check by span name first, but also detect by presence of gen_ai.* attributes
-		// which indicates this span contains LLM completion data
-		spanName := span.Name()
-		isGeneration := spanName == SpanGenAIChat || spanName == SpanGenAIChatStream ||
-			span.SpanKind() == trace.SpanKindClient ||
-			hasGenAIAttributes(span)
-
-		// Create span or generation event based on span type
-		eventType := "span-create"
-		if isGeneration {
-			eventType = "generation-create"
-		}
-
-		body := map[string]interface{}{
-			"id":        spanCtx.SpanID().String(),
-			"traceId":   traceID,
-			"name":      span.Name(),
-			"startTime": span.StartTime().Format(time.RFC3339Nano),
-			"endTime":   span.EndTime().Format(time.RFC3339Nano),
-		}
-
-		// Add parent span if exists
-		if parentCtx.IsValid() {
-			body["parentObservationId"] = parentCtx.SpanID().String()
-		}
-
-		// Add attributes as metadata, extracting Langfuse-specific fields
-		metadata := make(map[string]interface{})
-
-		// Track structured output attributes separately for special handling
-		var structuredOutput map[string]interface{}
-
-		// Track LLM-specific fields for Langfuse generation events
-		var promptTokens, completionTokens int64
-		var model, input, output string
-
-		for _, attr := range span.Attributes() {
-			key := string(attr.Key)
-			value := attr.Value.AsInterface()
-
-			// Extract LLM-specific attributes for Langfuse generation fields
-			switch key {
-			case GenAIPrompt:
-				input = attr.Value.AsString()
-			case GenAICompletion:
-				output = attr.Value.AsString()
-			case GenAIResponseModel:
-				model = attr.Value.AsString()
-			case GenAIUsageInputTokens:
-				promptTokens = attr.Value.AsInt64()
-			case GenAIUsageOutputTokens:
-				completionTokens = attr.Value.AsInt64()
-			case GenAIResponseFormat, GenAISchemaName, GenAISchemaStrict,
-				GenAIValidated, GenAIValidationError, GenAIValidationErrorPath, GenAIRawJSON:
-				// Extract structured output attributes into a nested object for better organization
-				if structuredOutput == nil {
-					structuredOutput = make(map[string]interface{})
-				}
-				// Strip prefix for cleaner metadata keys
-				cleanKey := key
-				if len(key) > len("gen_ai.") && key[:len("gen_ai.")] == "gen_ai." {
-					cleanKey = key[len("gen_ai."):]
-				}
-				structuredOutput[cleanKey] = value
-			default:
-				metadata[key] = value
-			}
-		}
-
-		// Add structured output metadata if present
-		if len(structuredOutput) > 0 {
-			metadata["structured_output"] = structuredOutput
-		}
-
-		body["metadata"] = metadata
-
-		// Add LLM-specific fields for generation events
-		if isGeneration {
-			if input != "" {
-				body["input"] = input
-			}
-			if output != "" {
-				body["output"] = output
-			}
-			if model != "" {
-				body["model"] = model
-			}
-			if promptTokens > 0 {
-				body["promptTokens"] = promptTokens
-			}
-			if completionTokens > 0 {
-				body["completionTokens"] = completionTokens
-			}
-		}
-
-		// Add status
-		status := span.Status()
-		body["level"] = statusCodeToLevel(status.Code)
-		if status.Description != "" {
-			body["statusMessage"] = status.Description
-		}
-
-		spanEvent := map[string]interface{}{
-			"type":      eventType,
-			"id":        "span-" + spanCtx.SpanID().String()[:8],
-			"timestamp": span.StartTime().Format(time.RFC3339Nano),
-			"body":      body,
-		}
-
-		events = append(events, spanEvent)
+// generateClientEventID generates a unique event ID for Langfuse ingestion.
+// It combines the event type and entity ID to create a deterministic ID.
+func generateClientEventID(eventType, entityID string) string {
+	// Use first 8 characters of entity ID for brevity
+	if len(entityID) > 8 {
+		entityID = entityID[:8]
 	}
-
-	return events
-}
-
-// spanKindToLangfuse converts OpenTelemetry span kind to Langfuse observation type.
-func spanKindToLangfuse(kind trace.SpanKind) string {
-	switch kind {
-	case trace.SpanKindClient:
-		return "GENERATION"
-	case trace.SpanKindServer:
-		return "SPAN"
-	case trace.SpanKindInternal:
-		return "SPAN"
-	default:
-		return "SPAN"
-	}
-}
-
-// statusCodeToLevel converts OpenTelemetry status code to Langfuse level.
-func statusCodeToLevel(code codes.Code) string {
-	switch code {
-	case codes.Error:
-		return "ERROR"
-	case codes.Ok:
-		return "DEFAULT"
-	default:
-		return "DEFAULT"
-	}
-}
-
-// hasGenAIAttributes checks if a span has LLM-related attributes that indicate
-// it should be treated as a generation event in Langfuse.
-func hasGenAIAttributes(span sdktrace.ReadOnlySpan) bool {
-	for _, attr := range span.Attributes() {
-		key := string(attr.Key)
-		// Check for key gen_ai attributes that indicate LLM completion data
-		switch key {
-		case GenAIPrompt, GenAICompletion, GenAIResponseModel,
-			GenAIUsageInputTokens, GenAIUsageOutputTokens:
-			return true
-		}
-	}
-	return false
+	return fmt.Sprintf("%s-%s-%d", eventType, entityID, time.Now().UnixNano())
 }

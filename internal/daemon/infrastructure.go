@@ -61,6 +61,9 @@ type Infrastructure struct {
 
 	// graphRAGQueryBridge for querying the knowledge graph
 	graphRAGQueryBridge harness.GraphRAGQueryBridge
+
+	// taxonomyEngine processes execution events and creates graph nodes/relationships
+	taxonomyEngine engine.TaxonomyGraphEngine
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -358,6 +361,9 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 		d.logger.With("component", "taxonomy-engine"),
 	)
 	d.logger.Info("created taxonomy graph engine")
+
+	// Store taxonomy engine in infrastructure for graph event subscriber
+	d.infrastructure.taxonomyEngine = taxonomyEngine
 
 	// Create bridge adapter with the store and engine
 	adapter, err := NewGraphRAGBridgeAdapter(GraphRAGBridgeConfig{

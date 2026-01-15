@@ -716,7 +716,7 @@ func (l *LocalGraphRAGProvider) recordToRelationship(record map[string]any) grap
 	toID, _ := types.ParseID(toIDStr)
 
 	// Extract relationship type and properties
-	relType := graphrag.RelationRelatedTo // Default
+	relType := graphrag.RelationType("related_to") // Default
 	weight := 1.0
 	properties := make(map[string]any)
 

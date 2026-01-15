@@ -357,19 +357,15 @@ func (r *DefaultAttackRunner) createSingleNodeWorkflow(
 
 	// Create agent task
 	taskInput := make(map[string]any)
-	if opts.Goal != "" {
-		taskInput["goal"] = opts.Goal
-	}
 	if opts.MaxTurns > 0 {
 		taskInput["max_turns"] = opts.MaxTurns
 	}
 
 	agentTask := agent.NewTask(
 		opts.AgentName,
-		opts.Goal, // description
+		fmt.Sprintf("Execute %s agent", opts.AgentName), // description
 		taskInput,
 	)
-	agentTask.Goal = opts.Goal // Set the Goal field explicitly
 
 	if opts.Timeout > 0 {
 		agentTask = agentTask.WithTimeout(opts.Timeout)

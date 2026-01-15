@@ -602,6 +602,15 @@ func (m *mockDaemonServiceClient) GetMissionHistory(ctx context.Context, req *ap
 func (m *mockDaemonServiceClient) GetMissionCheckpoints(ctx context.Context, req *api.GetMissionCheckpointsRequest, opts ...grpc.CallOption) (*api.GetMissionCheckpointsResponse, error) {
 	return nil, nil
 }
+func (m *mockDaemonServiceClient) ExecuteTool(ctx context.Context, req *api.ExecuteToolRequest, opts ...grpc.CallOption) (*api.ExecuteToolResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) GetAvailableTools(ctx context.Context, req *api.GetAvailableToolsRequest, opts ...grpc.CallOption) (*api.GetAvailableToolsResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) QueryPlugin(ctx context.Context, req *api.QueryPluginRequest, opts ...grpc.CallOption) (*api.QueryPluginResponse, error) {
+	return nil, nil
+}
 
 // TestClient_Ping tests the Ping method with mock client.
 func TestClient_Ping(t *testing.T) {

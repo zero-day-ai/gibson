@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/plugin"
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // MockPluginRegistry is a mock implementation of plugin.PluginRegistry
@@ -151,17 +151,10 @@ func createTestMethodDescriptor(name, description string) plugin.MethodDescripto
 	return plugin.MethodDescriptor{
 		Name:        name,
 		Description: description,
-		InputSchema: schema.JSONSchema{
-			Type: "object",
-			Properties: map[string]schema.SchemaField{
-				"key": {
-					Type: "string",
-				},
-			},
-		},
-		OutputSchema: schema.JSONSchema{
-			Type: "object",
-		},
+		InputSchema: schema.Object(map[string]schema.JSON{
+			"key": schema.String(),
+		}),
+		OutputSchema: schema.Object(nil),
 	}
 }
 

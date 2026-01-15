@@ -369,7 +369,7 @@ func TestToSDKResult(t *testing.T) {
 			input: graphrag.GraphRAGResult{
 				Node: graphrag.GraphNode{
 					ID:     nodeID,
-					Labels: []graphrag.NodeType{graphrag.NodeTypeFinding},
+					Labels: []graphrag.NodeType{graphrag.NodeType("Finding")},
 					Properties: map[string]any{
 						"content":    "test content",
 						"agent_name": "test-agent",
@@ -402,7 +402,7 @@ func TestToSDKResult(t *testing.T) {
 			input: graphrag.GraphRAGResult{
 				Node: graphrag.GraphNode{
 					ID:         nodeID,
-					Labels:     []graphrag.NodeType{graphrag.NodeTypeEntity},
+					Labels:     []graphrag.NodeType{graphrag.NodeType("Entity")},
 					Properties: make(map[string]any),
 					CreatedAt:  now,
 					UpdatedAt:  now,
@@ -423,7 +423,7 @@ func TestToSDKResult(t *testing.T) {
 			input: graphrag.GraphRAGResult{
 				Node: graphrag.GraphNode{
 					ID:         nodeID,
-					Labels:     []graphrag.NodeType{graphrag.NodeTypeTechnique},
+					Labels:     []graphrag.NodeType{graphrag.NodeType("Technique")},
 					Properties: make(map[string]any),
 					CreatedAt:  now,
 					UpdatedAt:  now,
@@ -464,7 +464,7 @@ func TestToSDKNode(t *testing.T) {
 			name: "normal conversion with content and agent_name",
 			input: graphrag.GraphNode{
 				ID:     nodeID,
-				Labels: []graphrag.NodeType{graphrag.NodeTypeFinding},
+				Labels: []graphrag.NodeType{graphrag.NodeType("Finding")},
 				Properties: map[string]any{
 					"content":    "Important finding",
 					"agent_name": "scanner-v1",
@@ -510,8 +510,8 @@ func TestToSDKNode(t *testing.T) {
 			input: graphrag.GraphNode{
 				ID: nodeID,
 				Labels: []graphrag.NodeType{
-					graphrag.NodeTypeFinding,
-					graphrag.NodeTypeEntity,
+					graphrag.NodeType("Finding"),
+					graphrag.NodeType("Entity"),
 				},
 				Properties: make(map[string]any),
 				CreatedAt:  now,
@@ -525,7 +525,7 @@ func TestToSDKNode(t *testing.T) {
 			name: "nil properties map",
 			input: graphrag.GraphNode{
 				ID:         nodeID,
-				Labels:     []graphrag.NodeType{graphrag.NodeTypeTarget},
+				Labels:     []graphrag.NodeType{graphrag.NodeType("Target")},
 				Properties: nil,
 				CreatedAt:  now,
 				UpdatedAt:  now,
@@ -539,7 +539,7 @@ func TestToSDKNode(t *testing.T) {
 			name: "nil mission ID",
 			input: graphrag.GraphNode{
 				ID:         nodeID,
-				Labels:     []graphrag.NodeType{graphrag.NodeTypeMitigation},
+				Labels:     []graphrag.NodeType{graphrag.NodeType("Mitigation")},
 				Properties: make(map[string]any),
 				MissionID:  nil,
 				CreatedAt:  now,
@@ -553,7 +553,7 @@ func TestToSDKNode(t *testing.T) {
 			name: "non-string content property ignored and dropped",
 			input: graphrag.GraphNode{
 				ID:     nodeID,
-				Labels: []graphrag.NodeType{graphrag.NodeTypeEntity},
+				Labels: []graphrag.NodeType{graphrag.NodeType("Entity")},
 				Properties: map[string]any{
 					"content": 12345, // Not a string
 				},
@@ -571,7 +571,7 @@ func TestToSDKNode(t *testing.T) {
 			name: "non-string agent_name property ignored and dropped",
 			input: graphrag.GraphNode{
 				ID:     nodeID,
-				Labels: []graphrag.NodeType{graphrag.NodeTypeEntity},
+				Labels: []graphrag.NodeType{graphrag.NodeType("Entity")},
 				Properties: map[string]any{
 					"agent_name": true, // Not a string
 				},

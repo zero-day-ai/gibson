@@ -92,13 +92,14 @@ func TestMission_PauseResumeE2E(t *testing.T) {
 	}
 
 	// Create orchestrator with event store
-	orchestrator := mission.NewMissionOrchestrator(
+	orchestrator, err := mission.NewMissionOrchestrator(
 		missionStore,
 		mission.WithWorkflowExecutor(workflowExecutor),
 		mission.WithHarnessFactory(harnessFactory),
 		mission.WithEventStore(eventStore),
 		mission.WithEventEmitter(mission.NewDefaultEventEmitter(mission.WithBufferSize(100))),
 	)
+	require.NoError(t, err, "failed to create orchestrator")
 
 	// Start mission execution in background
 	resultChan := make(chan *mission.MissionResult, 1)
@@ -121,7 +122,6 @@ func TestMission_PauseResumeE2E(t *testing.T) {
 
 	// Verify 2 findings were submitted (one per node)
 	findings1, err := findingStore.List(ctx, testMission.ID, finding.NewFindingFilter())
-	require.NoError(t, err)
 	assert.Len(t, findings1, 2, "should have 2 findings after 2 nodes")
 
 	// Request pause
@@ -315,12 +315,13 @@ func TestMission_CrashRecoveryE2E(t *testing.T) {
 		missionID:     testMission.ID,
 	}
 
-	orchestrator := mission.NewMissionOrchestrator(
+	orchestrator, err := mission.NewMissionOrchestrator(
 		missionStore,
 		mission.WithWorkflowExecutor(workflowExecutor),
 		mission.WithHarnessFactory(harnessFactory),
 		mission.WithEventEmitter(mission.NewDefaultEventEmitter(mission.WithBufferSize(100))),
 	)
+	require.NoError(t, err, "failed to create orchestrator")
 
 	// Resume execution
 	resumeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -414,12 +415,13 @@ func TestMission_MultiRunHistoryE2E(t *testing.T) {
 			missionID:     missionID,
 		}
 
-		orchestrator := mission.NewMissionOrchestrator(
+		orchestrator, err := mission.NewMissionOrchestrator(
 			missionStore,
 			mission.WithWorkflowExecutor(workflowExecutor),
 			mission.WithHarnessFactory(harnessFactory),
 			mission.WithEventEmitter(mission.NewDefaultEventEmitter(mission.WithBufferSize(100))),
 		)
+		require.NoError(t, err, "failed to create orchestrator for run %d", runNum)
 
 		execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		result, err := orchestrator.Execute(execCtx, testMission)
@@ -635,6 +637,10 @@ func (m *mockHarnessWithFindings) CompleteWithTools(ctx context.Context, slot st
 	return m.Complete(ctx, slot, messages, opts...)
 }
 
+func (m *mockHarnessWithFindings) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, structuredOutputDef any, opts ...harness.CompletionOption) (any, error) {
+	return nil, nil
+}
+
 func (m *mockHarnessWithFindings) Stream(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (<-chan llm.StreamChunk, error) {
 	ch := make(chan llm.StreamChunk)
 	close(ch)
@@ -715,6 +721,10 @@ func (m *mockHarnessWithFindings) Metrics() harness.MetricsRecorder {
 
 func (m *mockHarnessWithFindings) TokenUsage() *llm.TokenTracker {
 	return nil
+}
+
+func (m *mockHarnessWithFindings) MissionID() types.ID {
+	return m.missionID
 }
 
 // Helper pointer functions

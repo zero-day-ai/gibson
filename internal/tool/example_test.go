@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // ExampleTool demonstrates implementing a custom tool
@@ -17,21 +17,22 @@ func (t *ExampleTool) Description() string { return "An example tool for demonst
 func (t *ExampleTool) Version() string     { return "1.0.0" }
 func (t *ExampleTool) Tags() []string      { return []string{"example", "demo"} }
 
-func (t *ExampleTool) InputSchema() schema.JSONSchema {
-	return schema.NewObjectSchema(
-		map[string]schema.SchemaField{
-			"message": schema.NewStringField("Message to process").WithMinLength(1),
+func (t *ExampleTool) InputSchema() schema.JSON {
+	minLen := 1
+	return schema.Object(
+		map[string]schema.JSON{
+			"message": {Type: "string", Description: "Message to process", MinLength: &minLen},
 		},
-		[]string{"message"},
+		"message",
 	)
 }
 
-func (t *ExampleTool) OutputSchema() schema.JSONSchema {
-	return schema.NewObjectSchema(
-		map[string]schema.SchemaField{
-			"result": schema.NewStringField("Processed result"),
+func (t *ExampleTool) OutputSchema() schema.JSON {
+	return schema.Object(
+		map[string]schema.JSON{
+			"result": schema.StringWithDesc("Processed result"),
 		},
-		[]string{"result"},
+		"result",
 	)
 }
 

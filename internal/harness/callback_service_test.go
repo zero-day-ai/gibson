@@ -76,37 +76,36 @@ func TestGetHarness_WithExplicitMissionId(t *testing.T) {
 	assert.Equal(t, mockHarn, harness)
 }
 
-// TestGetHarness_EmptyMissionId_FallsBackToTaskId tests backward compatibility.
-func TestGetHarness_EmptyMissionId_FallsBackToTaskId(t *testing.T) {
+// TestGetHarness_EmptyMissionId_ReturnsError tests that empty mission_id returns an error.
+// Legacy task-based fallback is no longer supported.
+func TestGetHarness_EmptyMissionId_ReturnsError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
-	// Create a mock harness
-	mockHarn := newMockHarness()
+	// Create callback harness registry
+	registry := NewCallbackHarnessRegistry()
 
-	// Create service without registry
-	service := NewHarnessCallbackService(logger)
-
-	// Register harness by task ID (legacy mode)
-	taskID := "task-789"
-	service.RegisterHarness(taskID, mockHarn)
+	// Create service with registry
+	service := NewHarnessCallbackServiceWithRegistry(logger, registry)
 
 	// Create ContextInfo with empty MissionId
 	contextInfo := &pb.ContextInfo{
-		TaskId:    taskID,
+		TaskId:    "task-789",
 		AgentName: "test-agent",
-		MissionId: "", // Empty - should fall back to task-based lookup
+		MissionId: "", // Empty - should return error (legacy fallback removed)
 	}
 
 	// Test getHarness
 	harness, err := service.getHarness(context.Background(), contextInfo)
 
-	// Verify
-	require.NoError(t, err)
-	assert.Equal(t, mockHarn, harness)
+	// Verify error is returned (legacy fallback no longer supported)
+	require.Error(t, err)
+	assert.Nil(t, harness)
+	assert.Contains(t, err.Error(), "missing mission_id")
 }
 
-// TestGetHarness_LegacyTaskIdWithColon tests legacy missionID:taskID format.
-func TestGetHarness_LegacyTaskIdWithColon(t *testing.T) {
+// TestGetHarness_LegacyTaskIdWithColon tests that legacy missionID:taskID format no longer works.
+// The new implementation requires explicit MissionId field.
+func TestGetHarness_LegacyTaskIdWithColon_NoLongerSupported(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	// Create a mock harness
@@ -119,19 +118,20 @@ func TestGetHarness_LegacyTaskIdWithColon(t *testing.T) {
 	// Create service with registry
 	service := NewHarnessCallbackServiceWithRegistry(logger, registry)
 
-	// Create ContextInfo with legacy format (mission in TaskId)
+	// Create ContextInfo with legacy format (mission in TaskId) but no explicit MissionId
 	contextInfo := &pb.ContextInfo{
 		TaskId:    "mission-abc:task-xyz", // Legacy format
 		AgentName: "test-agent",
-		MissionId: "", // Empty - should parse from TaskId
+		MissionId: "", // Empty - legacy parsing no longer supported
 	}
 
 	// Test getHarness
 	harness, err := service.getHarness(context.Background(), contextInfo)
 
-	// Verify
-	require.NoError(t, err)
-	assert.Equal(t, mockHarn, harness)
+	// Verify error is returned (legacy format no longer supported)
+	require.Error(t, err)
+	assert.Nil(t, harness)
+	assert.Contains(t, err.Error(), "missing mission_id")
 }
 
 // TestGetHarness_MissionIdNotFound tests error handling when mission not found.
@@ -157,5 +157,5 @@ func TestGetHarness_MissionIdNotFound(t *testing.T) {
 	// Verify error is returned
 	require.Error(t, err)
 	assert.Nil(t, harness)
-	assert.Contains(t, err.Error(), "no active harness for task")
+	assert.Contains(t, err.Error(), "no active harness for mission")
 }

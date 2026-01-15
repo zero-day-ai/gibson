@@ -1,6 +1,8 @@
 package taxonomy
 
 import (
+	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1537,14 +1539,14 @@ func TestTaxonomyRegistry_ListExecutionEvents(t *testing.T) {
 		eventMap[et] = true
 	}
 
-	if !eventMap["tool_started"] {
-		t.Error("ListExecutionEvents() missing 'tool_started' event type")
+	if !eventMap["tool.call.started"] {
+		t.Error("ListExecutionEvents() missing 'tool.call.started' event type")
 	}
-	if !eventMap["tool_completed"] {
-		t.Error("ListExecutionEvents() missing 'tool_completed' event type")
+	if !eventMap["tool.call.completed"] {
+		t.Error("ListExecutionEvents() missing 'tool.call.completed' event type")
 	}
-	if !eventMap["agent_started"] {
-		t.Error("ListExecutionEvents() missing 'agent_started' event type")
+	if !eventMap["agent.iteration.started"] {
+		t.Error("ListExecutionEvents() missing 'agent.iteration.started' event type")
 	}
 }
 
@@ -1554,19 +1556,16 @@ func TestTaxonomyRegistry_ListToolOutputSchemas(t *testing.T) {
 
 	// Add test tool output schemas
 	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
-		ID:       "schema.tool.nmap",
-		ToolName: "nmap",
-		Name:     "Nmap Scan Results",
+		Tool:        "nmap",
+		Description: "Nmap Scan Results",
 	})
 	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
-		ID:       "schema.tool.sqlmap",
-		ToolName: "sqlmap",
-		Name:     "SQLMap Results",
+		Tool:        "sqlmap",
+		Description: "SQLMap Results",
 	})
 	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
-		ID:       "schema.tool.nuclei",
-		ToolName: "nuclei",
-		Name:     "Nuclei Results",
+		Tool:        "nuclei",
+		Description: "Nuclei Results",
 	})
 
 	registry, err := NewTaxonomyRegistry(taxonomy)
@@ -1602,10 +1601,8 @@ func TestTaxonomyRegistry_HasExecutionEvent(t *testing.T) {
 	taxonomy := NewTaxonomy("0.1.0")
 
 	_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
-		ID:        "event.tool.started",
-		EventType: "tool_started",
-		Name:      "Tool Started",
-		Category:  "tool",
+		EventType:   "tool_started",
+		Description: "Tool Started",
 	})
 
 	registry, err := NewTaxonomyRegistry(taxonomy)
@@ -1644,9 +1641,8 @@ func TestTaxonomyRegistry_HasToolOutputSchema(t *testing.T) {
 	taxonomy := NewTaxonomy("0.1.0")
 
 	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
-		ID:       "schema.tool.nmap",
-		ToolName: "nmap",
-		Name:     "Nmap Scan Results",
+		Tool:        "nmap",
+		Description: "Nmap Scan Results",
 	})
 
 	registry, err := NewTaxonomyRegistry(taxonomy)
@@ -1687,10 +1683,8 @@ func TestTaxonomyRegistry_ExecutionEventConcurrency(t *testing.T) {
 	// Add test execution events
 	for i := 0; i < 10; i++ {
 		_ = taxonomy.AddExecutionEvent(&ExecutionEventDefinition{
-			ID:        "event.tool.test_" + string(rune('0'+i)),
-			EventType: "test_event_" + string(rune('0'+i)),
-			Name:      "Test Event " + string(rune('0'+i)),
-			Category:  "test",
+			EventType:   "test_event_" + string(rune('0'+i)),
+			Description: "Test Event " + string(rune('0'+i)),
 		})
 	}
 
@@ -1722,9 +1716,8 @@ func TestTaxonomyRegistry_ToolOutputSchemaConcurrency(t *testing.T) {
 	// Add test tool output schemas
 	for i := 0; i < 10; i++ {
 		_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
-			ID:       "schema.tool.test_" + string(rune('0'+i)),
-			ToolName: "test_tool_" + string(rune('0'+i)),
-			Name:     "Test Tool " + string(rune('0'+i)),
+			Tool:        "test_tool_" + string(rune('0'+i)),
+			Description: "Test Tool " + string(rune('0'+i)),
 		})
 	}
 
@@ -1747,4 +1740,132 @@ func TestTaxonomyRegistry_ToolOutputSchemaConcurrency(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+// TestTaxonomyRegistry_IsSchemaBasedToolSchema tests the IsSchemaBasedToolSchema method.
+func TestTaxonomyRegistry_IsSchemaBasedToolSchema(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	// Add a YAML-based tool schema
+	_ = taxonomy.AddToolOutputSchema(&ToolOutputSchema{
+		Tool:        "yaml_tool",
+		Description: "Tool loaded from YAML",
+	})
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	// All tools should NOT be schema-based initially
+	if registry.IsSchemaBasedToolSchema("yaml_tool") {
+		t.Error("expected yaml_tool to NOT be schema-based initially")
+	}
+
+	// Non-existent tools should also return false
+	if registry.IsSchemaBasedToolSchema("nonexistent") {
+		t.Error("expected nonexistent tool to return false")
+	}
+}
+
+// TestTaxonomyRegistry_LoadToolSchemasFromBinaries_EmptyDir tests loading from non-existent directory.
+func TestTaxonomyRegistry_LoadToolSchemasFromBinaries_EmptyDir(t *testing.T) {
+	taxonomy := NewTaxonomy("0.1.0")
+
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
+	}
+
+	// Loading from non-existent directory should succeed with no tools loaded
+	err = registry.LoadToolSchemasFromBinaries(context.Background(), "/nonexistent/dir", nil)
+	if err != nil {
+		t.Errorf("LoadToolSchemasFromBinaries() error = %v, want nil", err)
+	}
+
+	// No schema-based tools should be loaded
+	if len(registry.ListToolOutputSchemas()) != 0 {
+		t.Error("expected 0 tool schemas after loading from nonexistent dir")
+	}
+}
+
+// TestLoadAndValidateTaxonomyWithTools tests the convenience function for loading with tools.
+func TestLoadAndValidateTaxonomyWithTools(t *testing.T) {
+	// Test with empty tools dir
+	registry, err := LoadAndValidateTaxonomyWithTools(context.Background(), "", nil)
+	if err != nil {
+		t.Fatalf("LoadAndValidateTaxonomyWithTools() error = %v", err)
+	}
+
+	if registry == nil {
+		t.Fatal("LoadAndValidateTaxonomyWithTools() returned nil registry")
+	}
+
+	// Version should be valid
+	if registry.Version() == "" {
+		t.Error("expected non-empty version")
+	}
+}
+
+// TestLoadAndValidateTaxonomyWithToolsAndCustom tests loading with custom taxonomy and tools.
+func TestLoadAndValidateTaxonomyWithToolsAndCustom(t *testing.T) {
+	// Create temp dir for custom taxonomy with proper structure
+	tempDir := t.TempDir()
+
+	// Create nodes directory (path must contain "nodes/" per loader.go)
+	nodesDir := tempDir + "/nodes"
+	if err := os.MkdirAll(nodesDir, 0755); err != nil {
+		t.Fatalf("failed to create nodes dir: %v", err)
+	}
+
+	// Create node types file in the nodes/ directory
+	nodeTypesContent := `
+node_types:
+  - type: CustomTestNode
+    id: custom_test_node
+    name: Custom Test Node
+    category: custom
+    description: A custom test node
+    id_template: "custom:{value}"
+    properties:
+      - name: value
+        type: string
+        required: true
+        description: Test value property
+`
+	nodeTypesFile := nodesDir + "/custom.yaml"
+	if err := os.WriteFile(nodeTypesFile, []byte(nodeTypesContent), 0644); err != nil {
+		t.Fatalf("failed to write nodes/custom.yaml: %v", err)
+	}
+
+	// Create root custom taxonomy file that includes the node_types file
+	rootContent := `
+version: "0.1.0"
+includes:
+  - nodes/custom.yaml
+`
+	customFile := tempDir + "/custom_taxonomy.yaml"
+	if err := os.WriteFile(customFile, []byte(rootContent), 0644); err != nil {
+		t.Fatalf("failed to write custom taxonomy root: %v", err)
+	}
+
+	// Test loading with custom taxonomy and empty tools dir
+	registry, err := LoadAndValidateTaxonomyWithToolsAndCustom(context.Background(), "", customFile, nil)
+	if err != nil {
+		t.Fatalf("LoadAndValidateTaxonomyWithToolsAndCustom() error = %v", err)
+	}
+
+	if registry == nil {
+		t.Fatal("LoadAndValidateTaxonomyWithToolsAndCustom() returned nil registry")
+	}
+
+	// Custom node type should exist
+	if _, ok := registry.NodeType("CustomTestNode"); !ok {
+		t.Error("expected CustomTestNode to exist in registry")
+	}
+
+	// Version should include +custom suffix
+	if !strings.HasSuffix(registry.Version(), "+custom") {
+		t.Errorf("expected version to end with +custom, got %s", registry.Version())
+	}
 }

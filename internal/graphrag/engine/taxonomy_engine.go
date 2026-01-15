@@ -249,6 +249,12 @@ func (e *taxonomyGraphEngine) Health(ctx context.Context) HealthStatus {
 
 // createNodeFromEvent creates a node based on event data.
 func (e *taxonomyGraphEngine) createNodeFromEvent(ctx context.Context, nodeSpec *taxonomy.EventNodeCreation, data map[string]any) error {
+	// Look up the node type definition to get the proper Neo4j label
+	nodeDef, found := e.registry.NodeType(nodeSpec.Type)
+	if !found {
+		return fmt.Errorf("node type not found in taxonomy: %s", nodeSpec.Type)
+	}
+
 	// Interpolate ID template
 	nodeID, err := e.interpolateTemplate(nodeSpec.IDTemplate, data)
 	if err != nil {
@@ -282,11 +288,12 @@ func (e *taxonomyGraphEngine) createNodeFromEvent(ctx context.Context, nodeSpec 
 	}
 
 	// Generate MERGE Cypher query for idempotency
+	// Use nodeDef.Name for the Neo4j label (PascalCase like "Mission", "AgentRun")
 	cypher := fmt.Sprintf(`
 		MERGE (n:%s {id: $id})
 		SET n += $props
 		RETURN n
-	`, nodeSpec.Type)
+	`, nodeDef.Name)
 
 	params := map[string]any{
 		"id":    nodeID,
@@ -492,11 +499,12 @@ func (e *taxonomyGraphEngine) createNodeFromExtraction(ctx context.Context, extr
 	props["id"] = nodeID
 
 	// Create node using MERGE for idempotency
+	// Use nodeDef.Name for the Neo4j label (PascalCase like "Host", "Port")
 	cypher := fmt.Sprintf(`
 		MERGE (n:%s {id: $id})
 		SET n += $props
 		RETURN n
-	`, extractSpec.NodeType)
+	`, nodeDef.Name)
 
 	params := map[string]any{
 		"id":    nodeID,

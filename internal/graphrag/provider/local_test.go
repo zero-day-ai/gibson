@@ -220,7 +220,7 @@ func TestLocalProvider_StoreNode(t *testing.T) {
 		provider, err := NewLocalProvider(config)
 		require.NoError(t, err)
 
-		node := graphrag.NewGraphNode(types.NewID(), graphrag.NodeTypeFinding)
+		node := graphrag.NewGraphNode(types.NewID(), graphrag.NodeType("finding"))
 		ctx := context.Background()
 
 		err = provider.StoreNode(ctx, *node)
@@ -257,7 +257,7 @@ func TestLocalProvider_StoreRelationship(t *testing.T) {
 		provider, err := NewLocalProvider(config)
 		require.NoError(t, err)
 
-		rel := graphrag.NewRelationship(types.NewID(), types.NewID(), graphrag.RelationExploits)
+		rel := graphrag.NewRelationship(types.NewID(), types.NewID(), graphrag.RelationType("exploits"))
 		ctx := context.Background()
 
 		err = provider.StoreRelationship(ctx, *rel)
@@ -275,7 +275,7 @@ func TestLocalProvider_StoreRelationship(t *testing.T) {
 		provider.initialized = true
 		provider.graphHealthy = false
 
-		rel := graphrag.NewRelationship(types.NewID(), types.NewID(), graphrag.RelationExploits)
+		rel := graphrag.NewRelationship(types.NewID(), types.NewID(), graphrag.RelationType("exploits"))
 		ctx := context.Background()
 
 		err = provider.StoreRelationship(ctx, *rel)

@@ -580,17 +580,17 @@ func TestDefaultQueryProcessor_FilterByNodeType(t *testing.T) {
 	provider.SetGraphNodes([]GraphNode{
 		{
 			ID:     testID("node3"),
-			Labels: []NodeType{NodeTypeFinding},
+			Labels: []NodeType{NodeType("finding")},
 		},
 	})
 	provider.SetQueriedNodes([]GraphNode{
 		{
 			ID:     testID("node1"),
-			Labels: []NodeType{NodeTypeFinding},
+			Labels: []NodeType{NodeType("finding")},
 		},
 		{
 			ID:     testID("node2"),
-			Labels: []NodeType{NodeTypeAttackPattern},
+			Labels: []NodeType{NodeType("attack_pattern")},
 		},
 	})
 
@@ -598,7 +598,7 @@ func TestDefaultQueryProcessor_FilterByNodeType(t *testing.T) {
 	query := NewGraphRAGQuery("test query").
 		WithTopK(10).
 		WithMaxHops(1).
-		WithNodeTypes(NodeTypeFinding) // Only findings
+		WithNodeTypes(NodeType("finding")) // Only findings
 
 	ctx := context.Background()
 	results, err := processor.ProcessQuery(ctx, *query, provider)
@@ -607,7 +607,7 @@ func TestDefaultQueryProcessor_FilterByNodeType(t *testing.T) {
 
 	// Verify all results are findings
 	for _, r := range results {
-		assert.True(t, r.Node.HasLabel(NodeTypeFinding),
+		assert.True(t, r.Node.HasLabel(NodeType("finding")),
 			"result should have Finding label")
 	}
 }

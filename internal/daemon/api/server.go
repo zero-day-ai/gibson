@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zero-day-ai/sdk/schema"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	status_grpc "google.golang.org/grpc/status"
@@ -176,6 +177,7 @@ type MissionEventData struct {
 	Data      string
 	Error     string
 	Result    *OperationResult
+	Payload   map[string]interface{} // Additional payload data (workflow_name, duration, status, etc.)
 }
 
 // AttackRequest represents an attack request.
@@ -186,7 +188,6 @@ type AttackRequest struct {
 	AgentID       string
 	PayloadFilter string
 	Options       map[string]string
-	Goal          string
 }
 
 // AttackEventData represents attack event data from the daemon.
@@ -219,6 +220,7 @@ type EventData struct {
 	Timestamp    time.Time
 	Source       string
 	Data         string
+	Metadata     map[string]interface{} // Additional metadata (e.g., trace_id, span_id, parent_span_id)
 	MissionEvent *MissionEventData
 	AttackEvent  *AttackEventData
 	AgentEvent   *AgentEventData
@@ -233,6 +235,7 @@ type AgentEventData struct {
 	AgentName string
 	Message   string
 	Data      string
+	Metadata  map[string]interface{} // Additional metadata (duration, output_summary, etc.)
 }
 
 // FindingEventData represents finding event data.
@@ -668,7 +671,6 @@ func (s *DaemonServer) RunAttack(req *RunAttackRequest, stream grpc.ServerStream
 		AgentID:       req.AgentId,
 		PayloadFilter: req.PayloadFilter,
 		Options:       req.Options,
-		Goal:          req.Goal,
 	}
 
 	// Start attack and get event channel
@@ -1216,6 +1218,21 @@ func (s *DaemonServer) GetAvailableTools(ctx context.Context, req *GetAvailableT
 			Status:           tool.Status,
 			ErrorMessage:     tool.ErrorMessage,
 			Metrics:          protoMetrics,
+		}
+
+		// Parse JSON schemas and convert to structured proto format (with taxonomy support)
+		// This enables taxonomy propagation from tools to agents
+		if tool.InputSchemaJSON != "" {
+			var inputSchema schema.JSON
+			if err := json.Unmarshal([]byte(tool.InputSchemaJSON), &inputSchema); err == nil {
+				protoTools[i].InputSchema = SchemaToProto(inputSchema)
+			}
+		}
+		if tool.OutputSchemaJSON != "" {
+			var outputSchema schema.JSON
+			if err := json.Unmarshal([]byte(tool.OutputSchemaJSON), &outputSchema); err == nil {
+				protoTools[i].OutputSchema = SchemaToProto(outputSchema)
+			}
 		}
 	}
 

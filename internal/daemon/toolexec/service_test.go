@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 func TestNewToolExecutorService(t *testing.T) {
@@ -196,13 +196,9 @@ func TestToolExecutorService_CountReadyTools(t *testing.T) {
 	service.tools = map[string]*toolEntry{
 		"tool1": {
 			info: ToolBinaryInfo{
-				Name: "tool1",
-				InputSchema: schema.JSONSchema{
-					Type: "object",
-				},
-				OutputSchema: schema.JSONSchema{
-					Type: "object",
-				},
+				Name:         "tool1",
+				InputSchema:  schema.Object(map[string]schema.JSON{}),
+				OutputSchema: schema.Object(map[string]schema.JSON{}),
 			},
 		},
 		"tool2": {
@@ -214,10 +210,10 @@ func TestToolExecutorService_CountReadyTools(t *testing.T) {
 		"tool3": {
 			info: ToolBinaryInfo{
 				Name: "tool3",
-				InputSchema: schema.JSONSchema{
+				InputSchema: schema.JSON{
 					Type: "",
 				},
-				OutputSchema: schema.JSONSchema{
+				OutputSchema: schema.JSON{
 					Type: "",
 				},
 			},

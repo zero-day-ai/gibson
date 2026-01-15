@@ -898,7 +898,6 @@ func TestRunAttack_OptionsMapping(t *testing.T) {
 	assert.Equal(t, 10, capturedOpts.MaxTurns)
 	assert.Equal(t, 5*time.Minute, capturedOpts.Timeout)
 	assert.True(t, capturedOpts.Verbose)
-	assert.Contains(t, capturedOpts.Goal, "injection")
 }
 
 // TestRunAttack_NoFindings tests attack execution with no findings
@@ -1023,7 +1022,7 @@ func TestBuildAttackOptions(t *testing.T) {
 				AttackType: "sql-injection",
 			},
 			check: func(t *testing.T, opts *attack.AttackOptions) {
-				assert.Contains(t, opts.Goal, "sql-injection")
+				assert.Equal(t, "test-agent", opts.AgentName)
 			},
 		},
 		{
@@ -1289,8 +1288,8 @@ func TestBuildAttackOptions_TargetNameResolution(t *testing.T) {
 	}
 }
 
-// TestBuildAttackOptions_GoalPropagation tests that user-provided goal takes precedence
-func TestBuildAttackOptions_GoalPropagation(t *testing.T) {
+// TestBuildAttackOptions_TargetPropagation tests that target info is correctly propagated
+func TestBuildAttackOptions_TargetPropagation(t *testing.T) {
 	mockDAO := &mockTargetDAO{
 		getByNameFunc: func(ctx context.Context, name string) (*types.Target, error) {
 			return &types.Target{
@@ -1305,36 +1304,27 @@ func TestBuildAttackOptions_GoalPropagation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		req           api.AttackRequest
-		expectedGoal  string
+		name         string
+		req          api.AttackRequest
+		expectedURL  string
 	}{
 		{
-			name: "user-provided goal takes precedence",
+			name: "target from database",
 			req: api.AttackRequest{
 				TargetName: "test-target",
 				AgentID:    "test-agent",
 				AttackType: "sql-injection",
-				Goal:       "Find SQL injection vulnerabilities in the login form",
 			},
-			expectedGoal: "Find SQL injection vulnerabilities in the login form",
+			expectedURL: "https://api.example.com",
 		},
 		{
-			name: "fallback to attack type when goal not provided",
+			name: "direct target URL",
 			req: api.AttackRequest{
-				TargetName: "test-target",
+				Target:     "https://direct.example.com",
 				AgentID:    "test-agent",
 				AttackType: "prompt-injection",
 			},
-			expectedGoal: "Execute prompt-injection attack",
-		},
-		{
-			name: "empty goal when neither goal nor attack_type provided",
-			req: api.AttackRequest{
-				TargetName: "test-target",
-				AgentID:    "test-agent",
-			},
-			expectedGoal: "",
+			expectedURL: "https://direct.example.com",
 		},
 	}
 
@@ -1348,7 +1338,7 @@ func TestBuildAttackOptions_GoalPropagation(t *testing.T) {
 			opts, err := daemon.buildAttackOptions(tt.req)
 			require.NoError(t, err)
 			require.NotNil(t, opts)
-			assert.Equal(t, tt.expectedGoal, opts.Goal)
+			assert.Equal(t, tt.expectedURL, opts.TargetURL)
 		})
 	}
 }

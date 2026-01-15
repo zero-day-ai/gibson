@@ -61,11 +61,12 @@ func TestE2E_AttackWithHarnessFactory(t *testing.T) {
 	workflowExecutor := workflow.NewWorkflowExecutor()
 
 	// 6. Create orchestrator with harness factory
-	orchestrator := mission.NewMissionOrchestrator(
+	orchestrator, err := mission.NewMissionOrchestrator(
 		store,
 		mission.WithHarnessFactory(factory),
 		mission.WithWorkflowExecutor(workflowExecutor),
 	)
+	require.NoError(t, err)
 	require.NotNil(t, orchestrator)
 
 	// 7. Create test mission with workflow
@@ -460,6 +461,10 @@ func (m *trackingMockHarness) CompleteWithTools(ctx context.Context, slot string
 	}, nil
 }
 
+func (m *trackingMockHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, structuredOutputDef any, opts ...harness.CompletionOption) (any, error) {
+	return nil, nil
+}
+
 func (m *trackingMockHarness) Stream(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (<-chan llm.StreamChunk, error) {
 	ch := make(chan llm.StreamChunk, 1)
 	ch <- llm.StreamChunk{Delta: llm.StreamDelta{Content: "mock"}}
@@ -532,4 +537,8 @@ func (m *trackingMockHarness) Metrics() harness.MetricsRecorder {
 
 func (m *trackingMockHarness) TokenUsage() *llm.TokenTracker {
 	return nil
+}
+
+func (m *trackingMockHarness) MissionID() types.ID {
+	return types.NewID()
 }

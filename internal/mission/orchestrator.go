@@ -10,7 +10,6 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/eval"
 	"github.com/zero-day-ai/gibson/internal/harness"
-	"github.com/zero-day-ai/gibson/internal/planning"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
 )
@@ -29,16 +28,23 @@ type MissionOrchestrator interface {
 	Execute(ctx context.Context, mission *Mission) (*MissionResult, error)
 }
 
+// EventBusPublisher is an interface for publishing daemon-wide events.
+// This allows the orchestrator to publish to the daemon's event bus
+// without creating a circular dependency.
+type EventBusPublisher interface {
+	Publish(ctx context.Context, event interface{}) error
+}
+
 // DefaultMissionOrchestrator implements MissionOrchestrator.
 type DefaultMissionOrchestrator struct {
 	store                MissionStore
 	targetStore          TargetStore // For loading full target entities with connection details
 	emitter              EventEmitter
 	eventStore           EventStore
+	eventBus             EventBusPublisher // For publishing to daemon event bus
 	workflowExecutor     *workflow.WorkflowExecutor
 	harnessFactory       harness.HarnessFactoryInterface
 	missionService       MissionService // For loading workflows from store
-	planningOrchestrator *planning.PlanningOrchestrator
 	evalOptions          *eval.EvalOptions
 	evalCollector        *eval.EvalResultCollector
 
@@ -54,6 +60,13 @@ type OrchestratorOption func(*DefaultMissionOrchestrator)
 func WithEventEmitter(emitter EventEmitter) OrchestratorOption {
 	return func(o *DefaultMissionOrchestrator) {
 		o.emitter = emitter
+	}
+}
+
+// WithEventBus sets the event bus for publishing daemon-wide events.
+func WithEventBus(eventBus EventBusPublisher) OrchestratorOption {
+	return func(o *DefaultMissionOrchestrator) {
+		o.eventBus = eventBus
 	}
 }
 
@@ -78,12 +91,6 @@ func WithMissionService(service MissionService) OrchestratorOption {
 	}
 }
 
-// WithPlanningOrchestrator sets the planning orchestrator for bounded planning.
-func WithPlanningOrchestrator(po *planning.PlanningOrchestrator) OrchestratorOption {
-	return func(o *DefaultMissionOrchestrator) {
-		o.planningOrchestrator = po
-	}
-}
 
 // WithEventStore sets the event store for event persistence.
 func WithEventStore(store EventStore) OrchestratorOption {
@@ -100,7 +107,7 @@ func WithTargetStore(store TargetStore) OrchestratorOption {
 }
 
 // NewMissionOrchestrator creates a new mission orchestrator.
-func NewMissionOrchestrator(store MissionStore, opts ...OrchestratorOption) *DefaultMissionOrchestrator {
+func NewMissionOrchestrator(store MissionStore, opts ...OrchestratorOption) (*DefaultMissionOrchestrator, error) {
 	o := &DefaultMissionOrchestrator{
 		store:          store,
 		emitter:        NewDefaultEventEmitter(WithBufferSize(100)), // Default buffer size
@@ -124,7 +131,7 @@ func NewMissionOrchestrator(store MissionStore, opts ...OrchestratorOption) *Def
 		}
 	}
 
-	return o
+	return o, nil
 }
 
 // Execute orchestrates mission execution.
@@ -151,10 +158,19 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 	}
 
 	// Emit and persist mission started event
+	startedPayload := make(map[string]interface{})
+	if mission.WorkflowID != "" {
+		startedPayload["workflow_id"] = mission.WorkflowID.String()
+	}
+	if mission.TargetID != "" {
+		startedPayload["target_id"] = mission.TargetID.String()
+	}
+
 	o.emitAndPersist(ctx, MissionEvent{
 		Type:      EventMissionStarted,
 		MissionID: mission.ID,
 		Timestamp: startedAt,
+		Payload:   startedPayload,
 	})
 
 	// Create result
@@ -169,25 +185,20 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 	var workflowResult *workflow.WorkflowResult
 	var workflowErr error
 
-	// Check if planning orchestrator is enabled
-	if o.planningOrchestrator != nil {
-		// Emit and persist event that planning is enabled for this mission
-		o.emitAndPersist(ctx, MissionEvent{
-			Type:      "planning_enabled",
-			MissionID: mission.ID,
-			Timestamp: time.Now(),
-			Payload: map[string]interface{}{
-				"message": "Mission execution will use bounded planning orchestrator",
-			},
-		})
-	}
+	// Emit event that workflow execution is starting
+	o.emitAndPersist(ctx, MissionEvent{
+		Type:      "workflow_started",
+		MissionID: mission.ID,
+		Timestamp: time.Now(),
+		Payload: map[string]interface{}{
+			"message": "Mission workflow execution started",
+		},
+	})
 
 	// Check if workflow executor is configured
 	if o.workflowExecutor == nil {
-		// TODO: Handle approval workflows
-		// TODO: Create checkpoints for pause/resume
-
-		// For now, just simulate execution without workflow executor
+		// No workflow executor configured - complete immediately
+		// This is the minimal execution path for missions without workflow definitions
 		time.Sleep(100 * time.Millisecond)
 	} else {
 		// Parse workflow from mission's workflow definition or load from store
@@ -449,13 +460,21 @@ func (o *DefaultMissionOrchestrator) Execute(ctx context.Context, mission *Missi
 	}
 
 	// Emit and persist completion event
+	completedPayload := map[string]interface{}{
+		"duration":    mission.Metrics.Duration.Milliseconds(),
+		"duration_ms": mission.Metrics.Duration.Milliseconds(),
+		"status":      string(result.Status),
+	}
+	if workflowResult != nil {
+		completedPayload["nodes_executed"] = workflowResult.NodesExecuted
+		completedPayload["finding_count"] = len(result.FindingIDs)
+	}
+
 	o.emitAndPersist(ctx, MissionEvent{
 		Type:      EventMissionCompleted,
 		MissionID: mission.ID,
 		Timestamp: completedAt,
-		Payload: map[string]interface{}{
-			"duration": mission.Metrics.Duration.String(),
-		},
+		Payload:   completedPayload,
 	})
 
 	result.CompletedAt = completedAt
@@ -671,11 +690,19 @@ func (o *DefaultMissionOrchestrator) checkConstraints(ctx context.Context, missi
 }
 
 // emitAndPersist emits an event and persists it to the event store if configured.
+// It also publishes to the daemon event bus if configured.
 // Emission to emitter happens regardless of persistence success.
 // Persistence failures are logged but do not block execution.
 func (o *DefaultMissionOrchestrator) emitAndPersist(ctx context.Context, event MissionEvent) {
 	// Always emit to the event emitter for real-time subscribers
 	o.emitter.Emit(ctx, event)
+
+	// Publish to daemon event bus if configured
+	if o.eventBus != nil {
+		// The event bus takes interface{}, but we need to ensure it's the right type
+		// Convert to the type expected by daemon event bus (which is the interface passed)
+		o.publishToEventBus(ctx, event)
+	}
 
 	// Persist to event store if configured
 	if o.eventStore != nil {
@@ -695,6 +722,81 @@ func (o *DefaultMissionOrchestrator) emitAndPersist(ctx context.Context, event M
 			})
 		}
 	}
+}
+
+// publishToEventBus converts a MissionEvent to daemon api.EventData and publishes to the event bus.
+// This method handles the conversion and gracefully handles errors.
+func (o *DefaultMissionOrchestrator) publishToEventBus(ctx context.Context, event MissionEvent) {
+	// Note: We can't import daemon/api here due to circular dependency
+	// So we create a compatible structure that will match api.EventData
+	// The EventBusPublisher interface accepts interface{} to avoid circular dependency
+
+	// Create event data structure that matches api.EventData
+	eventData := struct {
+		EventType    string
+		Timestamp    time.Time
+		Source       string
+		Data         string
+		Metadata     map[string]interface{}
+		MissionEvent *struct {
+			EventType string
+			Timestamp time.Time
+			MissionID string
+			NodeID    string
+			Message   string
+			Data      string
+			Error     string
+			Result    interface{}
+			Payload   map[string]interface{}
+		}
+		AttackEvent  interface{}
+		AgentEvent   interface{}
+		FindingEvent interface{}
+	}{
+		EventType: string(event.Type),
+		Timestamp: event.Timestamp,
+		Source:    "mission-orchestrator",
+		Metadata:  make(map[string]interface{}),
+		MissionEvent: &struct {
+			EventType string
+			Timestamp time.Time
+			MissionID string
+			NodeID    string
+			Message   string
+			Data      string
+			Error     string
+			Result    interface{}
+			Payload   map[string]interface{}
+		}{
+			EventType: string(event.Type),
+			Timestamp: event.Timestamp,
+			MissionID: event.MissionID.String(),
+			Payload:   convertPayload(event.Payload),
+		},
+	}
+
+	// Extract trace context if available in context
+	// TODO: Add OpenTelemetry trace extraction when available
+	// For now, trace context will be added by the workflow executor
+
+	// Publish to event bus
+	if err := o.eventBus.Publish(ctx, eventData); err != nil {
+		// Log error but don't fail mission execution
+		// Event bus publishing is best-effort
+		// In production, this would use proper logging
+	}
+}
+
+// convertPayload converts an interface{} payload to map[string]interface{}.
+// Returns empty map if payload is nil or not a map.
+func convertPayload(payload interface{}) map[string]interface{} {
+	if payload == nil {
+		return make(map[string]interface{})
+	}
+	if m, ok := payload.(map[string]interface{}); ok {
+		return m
+	}
+	return make(map[string]interface{})
 }
 
 // Ensure DefaultMissionOrchestrator implements MissionOrchestrator.

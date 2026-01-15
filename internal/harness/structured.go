@@ -3,14 +3,13 @@ package harness
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
@@ -261,11 +260,12 @@ func CompleteStructured[T any](
 			attribute.String(genAIRawJSON, resp.RawJSON),
 		)
 
-		// Extract path from schema validation error if available
-		var schemaErr *schema.SchemaValidationError
-		if errors.As(err, &schemaErr) {
-			span.SetAttributes(attribute.String(genAIValidationErrorPath, schemaErr.Path))
-		}
+		// Note: SDK schema doesn't have SchemaValidationError type
+		// Extract path from error message if possible
+		// var schemaErr *schema.SchemaValidationError
+		// if errors.As(err, &schemaErr) {
+		//	 span.SetAttributes(attribute.String(genAIValidationErrorPath, schemaErr.Path))
+		// }
 
 		span.SetStatus(codes.Error, "validation failed")
 
@@ -607,10 +607,10 @@ func (h *DefaultAgentHarness) CompleteWithSchema(
 	}, nil
 }
 
-// convertToSDKSchema converts internal schema.JSONSchema to sdk/types.JSONSchema.
+// convertToSDKSchema converts internal schema.JSON to sdk/types.JSONSchema.
 // This handles the translation between the internal schema representation used
 // for generation and the SDK type used in the public API.
-func convertToSDKSchema(s schema.JSONSchema) *types.JSONSchema {
+func convertToSDKSchema(s schema.JSON) *types.JSONSchema {
 	if s.Type == "" {
 		return nil
 	}
@@ -634,17 +634,14 @@ func convertToSDKSchema(s schema.JSONSchema) *types.JSONSchema {
 		result.Items = convertSchemaFieldToSDK(*s.Items)
 	}
 
-	// Copy additional properties flag
-	if s.AdditionalProperties != nil {
-		result.AdditionalProperties = s.AdditionalProperties
-	}
+	// Note: SDK schema.JSON doesn't have AdditionalProperties field
 
 	return result
 }
 
-// convertSchemaFieldToSDK converts internal schema.SchemaField to sdk/types.JSONSchema.
+// convertSchemaFieldToSDK converts internal schema.JSON to sdk/types.JSONSchema.
 // This recursive function handles nested schemas and all field types.
-func convertSchemaFieldToSDK(f schema.SchemaField) *types.JSONSchema {
+func convertSchemaFieldToSDK(f schema.JSON) *types.JSONSchema {
 	result := &types.JSONSchema{
 		Type:        f.Type,
 		Description: f.Description,
@@ -1083,10 +1080,10 @@ func mapToJSONSchema(m map[string]any) *types.JSONSchema {
 		result.Items = mapToJSONSchema(items)
 	}
 
-	// Handle additionalProperties
-	if addProps, ok := m["additionalProperties"].(bool); ok {
-		result.AdditionalProperties = &addProps
-	}
+	// Note: SDK schema.JSON doesn't have AdditionalProperties field
+	// if addProps, ok := m["additionalProperties"].(bool); ok {
+	//	 result.AdditionalProperties = &addProps
+	// }
 
 	// Handle numeric constraints
 	if min, ok := m["minimum"].(float64); ok {

@@ -14,19 +14,19 @@ func TestNodeType_String(t *testing.T) {
 		want     string
 	}{
 		{
-			name:     "Finding",
-			nodeType: NodeTypeFinding,
-			want:     "Finding",
+			name:     "finding",
+			nodeType: NodeType("finding"),
+			want:     "finding",
 		},
 		{
-			name:     "AttackPattern",
-			nodeType: NodeTypeAttackPattern,
-			want:     "AttackPattern",
+			name:     "attack_pattern",
+			nodeType: NodeType("attack_pattern"),
+			want:     "attack_pattern",
 		},
 		{
-			name:     "Technique",
-			nodeType: NodeTypeTechnique,
-			want:     "Technique",
+			name:     "technique",
+			nodeType: NodeType("technique"),
+			want:     "technique",
 		},
 	}
 
@@ -39,37 +39,8 @@ func TestNodeType_String(t *testing.T) {
 	}
 }
 
-func TestNodeType_IsValid(t *testing.T) {
-	tests := []struct {
-		name     string
-		nodeType NodeType
-		want     bool
-	}{
-		{
-			name:     "valid - Finding",
-			nodeType: NodeTypeFinding,
-			want:     true,
-		},
-		{
-			name:     "valid - AttackPattern",
-			nodeType: NodeTypeAttackPattern,
-			want:     true,
-		},
-		{
-			name:     "invalid",
-			nodeType: NodeType("Invalid"),
-			want:     false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.nodeType.IsValid(); got != tt.want {
-				t.Errorf("NodeType.IsValid() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
+// TestNodeType_IsValid has been removed because node type validation
+// is now handled by the taxonomy system, not hardcoded constants.
 
 func TestRelationType_String(t *testing.T) {
 	tests := []struct {
@@ -78,14 +49,14 @@ func TestRelationType_String(t *testing.T) {
 		want         string
 	}{
 		{
-			name:         "EXPLOITS",
-			relationType: RelationExploits,
-			want:         "EXPLOITS",
+			name:         "exploits",
+			relationType: RelationType("exploits"),
+			want:         "exploits",
 		},
 		{
-			name:         "SIMILAR_TO",
-			relationType: RelationSimilarTo,
-			want:         "SIMILAR_TO",
+			name:         "similar_to",
+			relationType: RelationType("similar_to"),
+			want:         "similar_to",
 		},
 	}
 
@@ -98,41 +69,12 @@ func TestRelationType_String(t *testing.T) {
 	}
 }
 
-func TestRelationType_IsValid(t *testing.T) {
-	tests := []struct {
-		name         string
-		relationType RelationType
-		want         bool
-	}{
-		{
-			name:         "valid - EXPLOITS",
-			relationType: RelationExploits,
-			want:         true,
-		},
-		{
-			name:         "valid - SIMILAR_TO",
-			relationType: RelationSimilarTo,
-			want:         true,
-		},
-		{
-			name:         "invalid",
-			relationType: RelationType("INVALID"),
-			want:         false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.relationType.IsValid(); got != tt.want {
-				t.Errorf("RelationType.IsValid() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
+// TestRelationType_IsValid has been removed because relationship type validation
+// is now handled by the taxonomy system, not hardcoded constants.
 
 func TestNewGraphNode(t *testing.T) {
 	id := types.NewID()
-	node := NewGraphNode(id, NodeTypeFinding, NodeTypeEntity)
+	node := NewGraphNode(id, NodeType("finding"), NodeType("entity"))
 
 	if node.ID != id {
 		t.Errorf("NewGraphNode() ID = %v, want %v", node.ID, id)
@@ -140,8 +82,8 @@ func TestNewGraphNode(t *testing.T) {
 	if len(node.Labels) != 2 {
 		t.Errorf("NewGraphNode() Labels count = %v, want 2", len(node.Labels))
 	}
-	if node.Labels[0] != NodeTypeFinding {
-		t.Errorf("NewGraphNode() Labels[0] = %v, want %v", node.Labels[0], NodeTypeFinding)
+	if node.Labels[0] != NodeType("finding") {
+		t.Errorf("NewGraphNode() Labels[0] = %v, want %v", node.Labels[0], NodeType("finding"))
 	}
 	if node.Properties == nil {
 		t.Error("NewGraphNode() Properties should not be nil")
@@ -152,7 +94,7 @@ func TestNewGraphNode(t *testing.T) {
 }
 
 func TestGraphNode_WithProperty(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	result := node.WithProperty("key", "value")
 
 	if result != node {
@@ -164,7 +106,7 @@ func TestGraphNode_WithProperty(t *testing.T) {
 }
 
 func TestGraphNode_WithProperties(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	props := map[string]any{
 		"key1": "value1",
 		"key2": 42,
@@ -183,7 +125,7 @@ func TestGraphNode_WithProperties(t *testing.T) {
 }
 
 func TestGraphNode_WithEmbedding(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	embedding := []float64{0.1, 0.2, 0.3}
 	result := node.WithEmbedding(embedding)
 
@@ -196,7 +138,7 @@ func TestGraphNode_WithEmbedding(t *testing.T) {
 }
 
 func TestGraphNode_WithMission(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	missionID := types.NewID()
 	result := node.WithMission(missionID)
 
@@ -212,7 +154,7 @@ func TestGraphNode_WithMission(t *testing.T) {
 }
 
 func TestGraphNode_HasLabel(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding, NodeTypeEntity)
+	node := NewGraphNode(types.NewID(), NodeType("finding"), NodeType("entity"))
 
 	tests := []struct {
 		name  string
@@ -221,17 +163,17 @@ func TestGraphNode_HasLabel(t *testing.T) {
 	}{
 		{
 			name:  "has label - Finding",
-			label: NodeTypeFinding,
+			label: NodeType("finding"),
 			want:  true,
 		},
 		{
 			name:  "has label - Entity",
-			label: NodeTypeEntity,
+			label: NodeType("entity"),
 			want:  true,
 		},
 		{
 			name:  "does not have label - Technique",
-			label: NodeTypeTechnique,
+			label: NodeType("technique"),
 			want:  false,
 		},
 	}
@@ -246,7 +188,7 @@ func TestGraphNode_HasLabel(t *testing.T) {
 }
 
 func TestGraphNode_GetProperty(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	node.WithProperty("key", "value")
 
 	tests := []struct {
@@ -277,7 +219,7 @@ func TestGraphNode_GetProperty(t *testing.T) {
 }
 
 func TestGraphNode_GetStringProperty(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	node.WithProperty("string_key", "string_value")
 	node.WithProperty("int_key", 42)
 
@@ -321,7 +263,7 @@ func TestGraphNode_Validate(t *testing.T) {
 	}{
 		{
 			name:    "valid node",
-			node:    NewGraphNode(types.NewID(), NodeTypeFinding),
+			node:    NewGraphNode(types.NewID(), NodeType("finding")),
 			wantErr: false,
 		},
 		{
@@ -334,13 +276,13 @@ func TestGraphNode_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "invalid - invalid label",
+			name: "valid - taxonomy type (host)",
 			node: &GraphNode{
 				ID:         types.NewID(),
-				Labels:     []NodeType{NodeType("Invalid")},
+				Labels:     []NodeType{NodeType("host")},
 				Properties: make(map[string]any),
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 	}
 
@@ -357,7 +299,7 @@ func TestGraphNode_Validate(t *testing.T) {
 func TestNewRelationship(t *testing.T) {
 	fromID := types.NewID()
 	toID := types.NewID()
-	rel := NewRelationship(fromID, toID, RelationExploits)
+	rel := NewRelationship(fromID, toID, RelationType("exploits"))
 
 	if rel.FromID != fromID {
 		t.Errorf("NewRelationship() FromID = %v, want %v", rel.FromID, fromID)
@@ -365,8 +307,8 @@ func TestNewRelationship(t *testing.T) {
 	if rel.ToID != toID {
 		t.Errorf("NewRelationship() ToID = %v, want %v", rel.ToID, toID)
 	}
-	if rel.Type != RelationExploits {
-		t.Errorf("NewRelationship() Type = %v, want %v", rel.Type, RelationExploits)
+	if rel.Type != RelationType("exploits") {
+		t.Errorf("NewRelationship() Type = %v, want %v", rel.Type, RelationType("exploits"))
 	}
 	if rel.Weight != 1.0 {
 		t.Errorf("NewRelationship() Weight = %v, want 1.0", rel.Weight)
@@ -377,7 +319,7 @@ func TestNewRelationship(t *testing.T) {
 }
 
 func TestRelationship_WithProperty(t *testing.T) {
-	rel := NewRelationship(types.NewID(), types.NewID(), RelationExploits)
+	rel := NewRelationship(types.NewID(), types.NewID(), RelationType("exploits"))
 	result := rel.WithProperty("key", "value")
 
 	if result != rel {
@@ -389,7 +331,7 @@ func TestRelationship_WithProperty(t *testing.T) {
 }
 
 func TestRelationship_WithWeight(t *testing.T) {
-	rel := NewRelationship(types.NewID(), types.NewID(), RelationExploits)
+	rel := NewRelationship(types.NewID(), types.NewID(), RelationType("exploits"))
 	result := rel.WithWeight(0.75)
 
 	if result != rel {
@@ -408,19 +350,19 @@ func TestRelationship_Validate(t *testing.T) {
 	}{
 		{
 			name:    "valid relationship",
-			rel:     NewRelationship(types.NewID(), types.NewID(), RelationExploits),
+			rel:     NewRelationship(types.NewID(), types.NewID(), RelationType("exploits")),
 			wantErr: false,
 		},
 		{
-			name: "invalid - invalid type",
+			name: "valid - taxonomy type",
 			rel: &Relationship{
 				ID:     types.NewID(),
 				FromID: types.NewID(),
 				ToID:   types.NewID(),
-				Type:   RelationType("INVALID"),
+				Type:   RelationType("discovered_on"),
 				Weight: 1.0,
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "invalid - weight too high",
@@ -428,7 +370,7 @@ func TestRelationship_Validate(t *testing.T) {
 				ID:     types.NewID(),
 				FromID: types.NewID(),
 				ToID:   types.NewID(),
-				Type:   RelationExploits,
+				Type:   RelationType("exploits"),
 				Weight: 1.5,
 			},
 			wantErr: true,
@@ -439,7 +381,7 @@ func TestRelationship_Validate(t *testing.T) {
 				ID:     types.NewID(),
 				FromID: types.NewID(),
 				ToID:   types.NewID(),
-				Type:   RelationExploits,
+				Type:   RelationType("exploits"),
 				Weight: -0.1,
 			},
 			wantErr: true,
@@ -487,7 +429,7 @@ func TestAttackPattern_ToGraphNode(t *testing.T) {
 	if node.ID != ap.ID {
 		t.Errorf("ToGraphNode() ID = %v, want %v", node.ID, ap.ID)
 	}
-	if !node.HasLabel(NodeTypeAttackPattern) {
+	if !node.HasLabel(NodeType("attack_pattern")) {
 		t.Error("ToGraphNode() should have AttackPattern label")
 	}
 	if node.GetStringProperty("technique_id") != "T1566" {
@@ -532,7 +474,7 @@ func TestFindingNode_ToGraphNode(t *testing.T) {
 	if node.ID != fn.ID {
 		t.Errorf("ToGraphNode() ID = %v, want %v", node.ID, fn.ID)
 	}
-	if !node.HasLabel(NodeTypeFinding) {
+	if !node.HasLabel(NodeType("finding")) {
 		t.Error("ToGraphNode() should have Finding label")
 	}
 	if node.GetStringProperty("title") != "Test Finding" {
@@ -573,7 +515,7 @@ func TestTechniqueNode_ToGraphNode(t *testing.T) {
 	if node.ID != tn.ID {
 		t.Errorf("ToGraphNode() ID = %v, want %v", node.ID, tn.ID)
 	}
-	if !node.HasLabel(NodeTypeTechnique) {
+	if !node.HasLabel(NodeType("technique")) {
 		t.Error("ToGraphNode() should have Technique label")
 	}
 	if node.GetStringProperty("technique_id") != "T1566.001" {
@@ -588,7 +530,7 @@ func TestTechniqueNode_ToGraphNode(t *testing.T) {
 }
 
 func TestGraphNode_UpdatedAt(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	originalTime := node.UpdatedAt
 
 	// Sleep briefly to ensure time difference
@@ -603,7 +545,7 @@ func TestGraphNode_UpdatedAt(t *testing.T) {
 
 func TestRelationship_CreatedAt(t *testing.T) {
 	before := time.Now()
-	rel := NewRelationship(types.NewID(), types.NewID(), RelationExploits)
+	rel := NewRelationship(types.NewID(), types.NewID(), RelationType("exploits"))
 	after := time.Now()
 
 	if rel.CreatedAt.Before(before) || rel.CreatedAt.After(after) {

@@ -24,7 +24,6 @@ type AttackOptions struct {
 
 	// Agent configuration
 	AgentName string        // Required: Agent to execute (e.g., "prompt-injection")
-	Goal      string        // Optional goal/objective for the agent
 	MaxTurns  int           // Maximum agent turns (0 = use agent default)
 	Timeout   time.Duration // Attack timeout (0 = no timeout)
 
@@ -210,13 +209,6 @@ func WithCredential(credential string) AttackOption {
 func WithAgentName(name string) AttackOption {
 	return func(o *AttackOptions) {
 		o.AgentName = name
-	}
-}
-
-// WithGoal sets the agent goal/objective.
-func WithGoal(goal string) AttackOption {
-	return func(o *AttackOptions) {
-		o.Goal = goal
 	}
 }
 

@@ -30,17 +30,17 @@ func NewMockQueryProcessor(results []GraphRAGResult, err error) *MockQueryProces
 }
 
 func TestGraphRecord_Methods(t *testing.T) {
-	node := NewGraphNode(types.NewID(), NodeTypeFinding)
+	node := NewGraphNode(types.NewID(), NodeType("finding"))
 	record := NewGraphRecord(*node)
 
 	// Test WithRelationship
-	rel1 := NewRelationship(types.NewID(), types.NewID(), RelationSimilarTo)
+	rel1 := NewRelationship(types.NewID(), types.NewID(), RelationType("similar_to"))
 	record.WithRelationship(*rel1)
 	assert.Len(t, record.Relationships, 1)
 
 	// Test WithRelationships
-	rel2 := NewRelationship(types.NewID(), types.NewID(), RelationRelatedTo)
-	rel3 := NewRelationship(types.NewID(), types.NewID(), RelationExploits)
+	rel2 := NewRelationship(types.NewID(), types.NewID(), RelationType("related_to"))
+	rel3 := NewRelationship(types.NewID(), types.NewID(), RelationType("exploits"))
 	record.WithRelationships([]Relationship{*rel2, *rel3})
 	assert.Len(t, record.Relationships, 3)
 
@@ -64,7 +64,7 @@ func TestDefaultGraphRAGStore_Store(t *testing.T) {
 		}
 
 		record := GraphRecord{
-			Node:         *NewGraphNode(types.NewID(), NodeTypeFinding),
+			Node:         *NewGraphNode(types.NewID(), NodeType("finding")),
 			EmbedContent: "test content",
 		}
 
@@ -89,7 +89,7 @@ func TestDefaultGraphRAGStore_Store(t *testing.T) {
 		}
 
 		record := GraphRecord{
-			Node: *NewGraphNode(types.NewID(), NodeTypeFinding).
+			Node: *NewGraphNode(types.NewID(), NodeType("finding")).
 				WithEmbedding([]float64{0.1, 0.2, 0.3}),
 		}
 
@@ -112,10 +112,10 @@ func TestDefaultGraphRAGStore_Store(t *testing.T) {
 		}
 
 		record := GraphRecord{
-			Node: *NewGraphNode(types.NewID(), NodeTypeFinding).
+			Node: *NewGraphNode(types.NewID(), NodeType("finding")).
 				WithEmbedding([]float64{0.1, 0.2, 0.3}),
 			Relationships: []Relationship{
-				*NewRelationship(types.NewID(), types.NewID(), RelationSimilarTo),
+				*NewRelationship(types.NewID(), types.NewID(), RelationType("similar_to")),
 			},
 		}
 
@@ -142,15 +142,15 @@ func TestDefaultGraphRAGStore_StoreBatch(t *testing.T) {
 	// Create test records
 	records := []GraphRecord{
 		{
-			Node:         *NewGraphNode(types.NewID(), NodeTypeFinding),
+			Node:         *NewGraphNode(types.NewID(), NodeType("finding")),
 			EmbedContent: "content 1",
 		},
 		{
-			Node:         *NewGraphNode(types.NewID(), NodeTypeFinding),
+			Node:         *NewGraphNode(types.NewID(), NodeType("finding")),
 			EmbedContent: "content 2",
 		},
 		{
-			Node: *NewGraphNode(types.NewID(), NodeTypeFinding).
+			Node: *NewGraphNode(types.NewID(), NodeType("finding")).
 				WithEmbedding([]float64{0.1, 0.2, 0.3}), // Already has embedding
 		},
 	}
@@ -174,7 +174,7 @@ func TestDefaultGraphRAGStore_Query(t *testing.T) {
 	// Create expected results
 	expectedResults := []GraphRAGResult{
 		{
-			Node:        *NewGraphNode(types.NewID(), NodeTypeFinding),
+			Node:        *NewGraphNode(types.NewID(), NodeType("finding")),
 			Score:       0.9,
 			VectorScore: 0.8,
 			GraphScore:  0.7,
@@ -243,7 +243,7 @@ func TestDefaultGraphRAGStore_FindSimilarAttacks(t *testing.T) {
 
 	// Create test attack pattern node
 	patternID := types.NewID()
-	patternNode := NewGraphNode(patternID, NodeTypeAttackPattern).
+	patternNode := NewGraphNode(patternID, NodeType("attack_pattern")).
 		WithProperty("technique_id", "T1566").
 		WithProperty("name", "Phishing").
 		WithProperty("description", "Phishing attack").
@@ -282,7 +282,7 @@ func TestDefaultGraphRAGStore_FindSimilarFindings(t *testing.T) {
 	// Create source finding
 	sourceFindingID := types.NewID()
 	sourceEmbedding := []float64{0.1, 0.2, 0.3}
-	sourceFindingNode := NewGraphNode(sourceFindingID, NodeTypeFinding).
+	sourceFindingNode := NewGraphNode(sourceFindingID, NodeType("finding")).
 		WithProperty("title", "Source Finding").
 		WithProperty("description", "Source description").
 		WithProperty("severity", "high").
@@ -290,7 +290,7 @@ func TestDefaultGraphRAGStore_FindSimilarFindings(t *testing.T) {
 
 	// Create similar finding
 	similarFindingID := types.NewID()
-	similarFindingNode := NewGraphNode(similarFindingID, NodeTypeFinding).
+	similarFindingNode := NewGraphNode(similarFindingID, NodeType("finding")).
 		WithProperty("title", "Similar Finding").
 		WithProperty("description", "Similar description").
 		WithProperty("severity", "medium")
@@ -331,13 +331,13 @@ func TestDefaultGraphRAGStore_GetAttackChains(t *testing.T) {
 	maxDepth := 3
 
 	// Create starting technique node
-	startNode := NewGraphNode(types.NewID(), NodeTypeTechnique).
+	startNode := NewGraphNode(types.NewID(), NodeType("technique")).
 		WithProperty("technique_id", techniqueID).
 		WithProperty("name", "Phishing").
 		WithProperty("description", "Phishing technique")
 
 	// Create subsequent technique nodes
-	node2 := NewGraphNode(types.NewID(), NodeTypeTechnique).
+	node2 := NewGraphNode(types.NewID(), NodeType("technique")).
 		WithProperty("technique_id", "T1204").
 		WithProperty("name", "User Execution").
 		WithProperty("description", "User execution technique")
@@ -400,13 +400,13 @@ func TestDefaultGraphRAGStore_GetRelatedFindings(t *testing.T) {
 	relatedFindingID := types.NewID()
 
 	// Create related finding node
-	relatedNode := NewGraphNode(relatedFindingID, NodeTypeFinding).
+	relatedNode := NewGraphNode(relatedFindingID, NodeType("finding")).
 		WithProperty("title", "Related Finding").
 		WithProperty("description", "Related description")
 
 	// Setup mock responses
 	mockProvider.relationships = []Relationship{
-		*NewRelationship(findingID, relatedFindingID, RelationSimilarTo),
+		*NewRelationship(findingID, relatedFindingID, RelationType("similar_to")),
 	}
 	mockProvider.queriedNodes = []GraphNode{*relatedNode}
 
@@ -510,7 +510,7 @@ func TestDefaultGraphRAGStore_Close(t *testing.T) {
 
 func TestGraphNodeToAttackPattern(t *testing.T) {
 	// Create a GraphNode with attack pattern properties
-	node := NewGraphNode(types.NewID(), NodeTypeAttackPattern).
+	node := NewGraphNode(types.NewID(), NodeType("attack_pattern")).
 		WithProperty("technique_id", "T1566").
 		WithProperty("name", "Phishing").
 		WithProperty("description", "Phishing attack").
@@ -534,7 +534,7 @@ func TestGraphNodeToFindingNode(t *testing.T) {
 	// Create a GraphNode with finding properties
 	missionID := types.NewID()
 	targetID := types.NewID()
-	node := NewGraphNode(types.NewID(), NodeTypeFinding).
+	node := NewGraphNode(types.NewID(), NodeType("finding")).
 		WithProperty("title", "Test Finding").
 		WithProperty("description", "Finding description").
 		WithProperty("severity", "high").
@@ -561,16 +561,16 @@ func TestGraphNodeToFindingNode(t *testing.T) {
 
 func TestBuildAttackChainsFromNodes(t *testing.T) {
 	// Create starting technique node
-	startNode := NewGraphNode(types.NewID(), NodeTypeTechnique).
+	startNode := NewGraphNode(types.NewID(), NodeType("technique")).
 		WithProperty("technique_id", "T1566").
 		WithProperty("description", "Phishing")
 
 	// Create subsequent technique nodes
-	node2 := NewGraphNode(types.NewID(), NodeTypeTechnique).
+	node2 := NewGraphNode(types.NewID(), NodeType("technique")).
 		WithProperty("technique_id", "T1204").
 		WithProperty("description", "User Execution")
 
-	node3 := NewGraphNode(types.NewID(), NodeTypeTechnique).
+	node3 := NewGraphNode(types.NewID(), NodeType("technique")).
 		WithProperty("technique_id", "T1059").
 		WithProperty("description", "Command Execution")
 

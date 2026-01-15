@@ -310,7 +310,11 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 		orchestratorOpts = append(orchestratorOpts, mission.WithTargetStore(ts))
 	}
 
-	orchestrator := mission.NewMissionOrchestrator(m.missionStore, orchestratorOpts...)
+	orchestrator, err := mission.NewMissionOrchestrator(m.missionStore, orchestratorOpts...)
+	if err != nil {
+		m.logger.Error("failed to create mission orchestrator", "error", err)
+		return
+	}
 
 	// Emit workflow execution started event
 	m.emitEvent(eventChan, api.MissionEventData{

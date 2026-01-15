@@ -125,16 +125,10 @@ func InitTracing(ctx context.Context, cfg TracingConfig, langfuse *LangfuseConfi
 	provider := strings.ToLower(cfg.Provider)
 	switch provider {
 	case "langfuse":
-		if langfuse == nil {
-			return nil, NewObservabilityError(ErrExporterConnection, "langfuse configuration is required for langfuse provider")
-		}
-		if err := langfuse.Validate(); err != nil {
-			return nil, WrapObservabilityError(ErrAuthenticationFailed, "invalid langfuse configuration", err)
-		}
-		exporter, err = NewLangfuseExporter(*langfuse)
-		if err != nil {
-			return nil, WrapObservabilityError(ErrExporterConnection, "failed to create langfuse exporter", err)
-		}
+		// Langfuse integration has been moved to MissionTracer.
+		// Use NewMissionTracer() directly instead of the OpenTelemetry provider.
+		// For now, return a no-op provider when langfuse is requested via InitTracing.
+		return sdktrace.NewTracerProvider(), nil
 
 	case "otlp":
 		// Build OTLP options based on TLS configuration

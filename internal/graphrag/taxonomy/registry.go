@@ -1,10 +1,12 @@
 package taxonomy
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -111,12 +113,22 @@ type TaxonomyRegistry interface {
 
 	// HasToolOutputSchema checks if a tool has an output schema.
 	HasToolOutputSchema(toolName string) bool
+
+	// LoadToolSchemasFromBinaries loads taxonomy from tool binaries in the given directory.
+	// Tools must embed their taxonomy using schema.TaxonomyMapping in their Go schema files.
+	LoadToolSchemasFromBinaries(ctx context.Context, toolsDir string, logger *slog.Logger) error
+
+	// IsSchemaBasedToolSchema returns true if the tool schema was loaded from a tool binary.
+	IsSchemaBasedToolSchema(toolName string) bool
 }
 
 // taxonomyRegistry is the default implementation of TaxonomyRegistry.
 type taxonomyRegistry struct {
 	taxonomy *Taxonomy
 	mu       sync.RWMutex // Thread-safe for concurrent access
+
+	// schemaBasedTools tracks which tools had their schema loaded from binaries.
+	schemaBasedTools map[string]bool
 }
 
 // NewTaxonomyRegistry creates a new TaxonomyRegistry from a loaded taxonomy.
@@ -126,7 +138,8 @@ func NewTaxonomyRegistry(taxonomy *Taxonomy) (TaxonomyRegistry, error) {
 	}
 
 	return &taxonomyRegistry{
-		taxonomy: taxonomy,
+		taxonomy:         taxonomy,
+		schemaBasedTools: make(map[string]bool),
 	}, nil
 }
 
@@ -386,6 +399,75 @@ func LoadAndValidateTaxonomyWithCustom(customPath string) (TaxonomyRegistry, err
 	return registry, nil
 }
 
+// LoadAndValidateTaxonomyWithTools is a convenience function that loads taxonomy
+// and augments it with schema-based tool output schemas from tool binaries.
+// Schema-based schemas take precedence over YAML-based schemas.
+func LoadAndValidateTaxonomyWithTools(ctx context.Context, toolsDir string, logger *slog.Logger) (TaxonomyRegistry, error) {
+	// Load base taxonomy
+	taxonomy, err := LoadTaxonomy()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load taxonomy: %w", err)
+	}
+
+	// Validate taxonomy
+	if err := ValidateTaxonomy(taxonomy); err != nil {
+		return nil, fmt.Errorf("taxonomy validation failed: %w", err)
+	}
+
+	// Create registry
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create taxonomy registry: %w", err)
+	}
+
+	// Load schema-based tool schemas from tool binaries
+	if toolsDir != "" {
+		if err := registry.LoadToolSchemasFromBinaries(ctx, toolsDir, logger); err != nil {
+			if logger != nil {
+				logger.Warn("failed to load schema-based tool schemas",
+					"tools_dir", toolsDir,
+					"error", err)
+			}
+		}
+	}
+
+	return registry, nil
+}
+
+// LoadAndValidateTaxonomyWithToolsAndCustom is a convenience function that loads taxonomy
+// with custom extensions and schema-based tool output schemas.
+func LoadAndValidateTaxonomyWithToolsAndCustom(ctx context.Context, toolsDir, customPath string, logger *slog.Logger) (TaxonomyRegistry, error) {
+	// Load taxonomy with custom extensions
+	taxonomy, err := LoadTaxonomyWithCustom(customPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load taxonomy with custom: %w", err)
+	}
+
+	// Validate taxonomy
+	if err := ValidateTaxonomy(taxonomy); err != nil {
+		return nil, fmt.Errorf("taxonomy validation failed: %w", err)
+	}
+
+	// Create registry
+	registry, err := NewTaxonomyRegistry(taxonomy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create taxonomy registry: %w", err)
+	}
+
+	// Load schema-based tool schemas from tool binaries
+	if toolsDir != "" {
+		if err := registry.LoadToolSchemasFromBinaries(ctx, toolsDir, logger); err != nil {
+			if logger != nil {
+				logger.Warn("failed to load schema-based tool schemas",
+					"tools_dir", toolsDir,
+					"error", err)
+			}
+		}
+	}
+
+	return registry, nil
+}
+
 // GetTargetType returns a target type definition by its Type field.
 func (r *taxonomyRegistry) GetTargetType(typeName string) (*TargetTypeDefinition, bool) {
 	r.mu.RLock()
@@ -627,4 +709,47 @@ func (r *taxonomyRegistry) HasToolOutputSchema(toolName string) bool {
 
 	_, ok := r.taxonomy.ToolOutputSchemas[toolName]
 	return ok
+}
+
+// LoadToolSchemasFromBinaries loads taxonomy from tool binaries in the given directory.
+// Tools must embed their taxonomy using schema.TaxonomyMapping in their Go schema files.
+func (r *taxonomyRegistry) LoadToolSchemasFromBinaries(ctx context.Context, toolsDir string, logger *slog.Logger) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	// Create schema-based loader
+	loader := NewSchemaBasedLoader(toolsDir, logger)
+
+	// Load all tool schemas from binaries
+	schemas, err := loader.LoadAllTools(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load schemas from binaries: %w", err)
+	}
+
+	// Add schema-based schemas to taxonomy
+	for toolName, schema := range schemas {
+		r.taxonomy.ToolOutputSchemas[toolName] = schema
+		r.schemaBasedTools[toolName] = true
+		logger.Debug("loaded schema-based tool",
+			"tool", toolName,
+			"extracts", len(schema.Extracts))
+	}
+
+	logger.Info("loaded tool schemas from binaries",
+		"tools_dir", toolsDir,
+		"schema_based_tools", len(schemas))
+
+	return nil
+}
+
+// IsSchemaBasedToolSchema returns true if the tool schema was loaded from a tool binary.
+func (r *taxonomyRegistry) IsSchemaBasedToolSchema(toolName string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.schemaBasedTools[toolName]
 }

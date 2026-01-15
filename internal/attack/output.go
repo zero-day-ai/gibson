@@ -105,10 +105,6 @@ func (h *TextOutputHandler) OnStart(opts *AttackOptions) {
 	// Agent information
 	fmt.Fprintf(h.writer, "%sAgent:%s         %s\n", colorBold, colorReset, opts.AgentName)
 
-	if opts.Goal != "" {
-		fmt.Fprintf(h.writer, "%sGoal:%s          %s\n", colorBold, colorReset, opts.Goal)
-	}
-
 	// Configuration details (verbose only)
 	if h.verbose {
 		fmt.Fprintf(h.writer, "\n%sConfiguration:%s\n", colorBold, colorReset)
@@ -347,7 +343,6 @@ func (h *JSONOutputHandler) OnStart(opts *AttackOptions) {
 		Data: map[string]interface{}{
 			"target":    getTargetIdentifier(opts),
 			"agent":     opts.AgentName,
-			"goal":      opts.Goal,
 			"max_turns": opts.MaxTurns,
 			"timeout":   opts.Timeout.String(),
 		},

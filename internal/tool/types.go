@@ -3,20 +3,20 @@ package tool
 import (
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // ToolDescriptor contains tool metadata for discovery and introspection.
 // It provides all the information needed to understand what a tool does
 // and how to interact with it, without requiring tool execution.
 type ToolDescriptor struct {
-	Name         string            `json:"name"`
-	Description  string            `json:"description"`
-	Version      string            `json:"version"`
-	Tags         []string          `json:"tags"`
-	InputSchema  schema.JSONSchema `json:"input_schema"`
-	OutputSchema schema.JSONSchema `json:"output_schema"`
-	IsExternal   bool              `json:"is_external"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	Version      string      `json:"version"`
+	Tags         []string    `json:"tags"`
+	InputSchema  schema.JSON `json:"input_schema"`
+	OutputSchema schema.JSON `json:"output_schema"`
+	IsExternal   bool        `json:"is_external"`
 }
 
 // NewToolDescriptor creates a ToolDescriptor from a Tool interface.

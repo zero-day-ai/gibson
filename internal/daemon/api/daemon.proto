@@ -440,9 +440,6 @@ message RunAttackRequest {
 
   // target_name is the name of a stored target to look up from the database
   string target_name = 6;
-
-  // goal is the attack objective or what the agent should try to accomplish
-  string goal = 7;
 }
 
 // AttackEvent represents an attack execution event.
@@ -845,6 +842,12 @@ message AvailableToolInfo {
 
   // metrics contains execution statistics for this tool
   ToolExecutionMetrics metrics = 9;
+
+  // input_schema is the structured input schema with taxonomy support (new in v0.12.0)
+  JSONSchemaNode input_schema = 10;
+
+  // output_schema is the structured output schema with taxonomy support (new in v0.12.0)
+  JSONSchemaNode output_schema = 11;
 }
 
 // ToolExecutionMetrics tracks execution statistics for a tool.
@@ -863,4 +866,105 @@ message ToolExecutionMetrics {
 
   // last_executed_at is the Unix timestamp in milliseconds of the last execution
   int64 last_executed_at = 5;
+}
+
+// JSONSchemaNode represents a JSON schema with optional taxonomy mapping.
+// This mirrors sdk/schema.JSON for gRPC transport with taxonomy support.
+message JSONSchemaNode {
+  // type is the JSON schema type (string, integer, number, boolean, array, object)
+  string type = 1;
+
+  // description is the human-readable description of this schema node
+  string description = 2;
+
+  // properties maps property names to their schemas (for object types)
+  map<string, JSONSchemaNode> properties = 3;
+
+  // required lists required property names (for object types)
+  repeated string required = 4;
+
+  // items defines the schema for array elements (for array types)
+  JSONSchemaNode items = 5;
+
+  // enum_values lists allowed values (for enum constraints)
+  repeated string enum_values = 6;
+
+  // default_value is the JSON-encoded default value
+  string default_value = 7;
+
+  // minimum is the minimum numeric value constraint
+  double minimum = 8;
+
+  // maximum is the maximum numeric value constraint
+  double maximum = 9;
+
+  // min_length is the minimum string length constraint
+  int32 min_length = 10;
+
+  // max_length is the maximum string length constraint
+  int32 max_length = 11;
+
+  // pattern is the regex pattern constraint for strings
+  string pattern = 12;
+
+  // format is the string format hint (e.g., uri, email, date-time, uuid)
+  string format = 13;
+
+  // ref is the JSON schema $ref reference
+  string ref = 14;
+
+  // taxonomy defines how this schema node maps to a graph node (the key feature)
+  TaxonomyMapping taxonomy = 15;
+}
+
+// TaxonomyMapping defines how tool output maps to graph nodes and relationships.
+// It specifies the node type, ID generation, property mappings, and relationships
+// to create when processing data according to a taxonomy.
+message TaxonomyMapping {
+  // node_type is the type of node to create in the graph (e.g., "host", "port", "vulnerability")
+  string node_type = 1;
+
+  // id_template is a template string for generating node IDs (e.g., "host:{.ip}")
+  string id_template = 2;
+
+  // properties maps source data fields to node properties
+  repeated PropertyMapping properties = 3;
+
+  // relationships defines edges to create to/from this node
+  repeated RelationshipMapping relationships = 4;
+}
+
+// PropertyMapping defines how to map a source field to a target node property.
+// It supports default values and transformation functions.
+message PropertyMapping {
+  // source is the field name in the source data
+  string source = 1;
+
+  // target is the property name in the target node
+  string target = 2;
+
+  // default_value is the JSON-encoded default value if source is missing or empty
+  string default_value = 3;
+
+  // transform is a transformation function to apply (e.g., "lowercase", "uppercase", "trim")
+  string transform = 4;
+}
+
+// RelationshipMapping defines a relationship to create between nodes.
+// It supports conditional relationships and property mappings on the edge itself.
+message RelationshipMapping {
+  // type is the relationship type (e.g., "HAS_PORT", "AFFECTS", "RUNS_ON")
+  string type = 1;
+
+  // from_template is a template for the source node ID (e.g., "host:{.ip}")
+  string from_template = 2;
+
+  // to_template is a template for the target node ID (e.g., "port:{.port}")
+  string to_template = 3;
+
+  // condition is an optional condition for creating this relationship (e.g., "{{.severity}} == 'critical'")
+  string condition = 4;
+
+  // properties are property mappings for the relationship edge
+  repeated PropertyMapping properties = 5;
 }

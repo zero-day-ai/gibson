@@ -2,6 +2,7 @@ package observability
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/harness"
@@ -263,9 +264,16 @@ func TargetAttributes(target harness.TargetInfo) []attribute.KeyValue {
 
 // sanitizeURL removes credentials from URLs for safe logging.
 func sanitizeURL(urlStr string) string {
-	// Basic sanitization - in production, use url.Parse and redact credentials
-	// This is a placeholder implementation
-	return urlStr
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		// If URL can't be parsed, return redacted version
+		return "[redacted-url]"
+	}
+	// Redact any credentials in the URL
+	if parsed.User != nil {
+		parsed.User = url.User("[redacted]")
+	}
+	return parsed.String()
 }
 
 // CombineAttributes merges multiple attribute slices into one.

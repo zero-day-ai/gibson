@@ -543,7 +543,7 @@ func TestExtractArrayPaths(t *testing.T) {
 		{
 			name:     "no arrays",
 			jsonPath: "$.host.ip",
-			expected: []string{},
+			expected: nil,
 		},
 	}
 

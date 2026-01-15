@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -122,6 +123,8 @@ func (c *Neo4jClient) Health(ctx context.Context) types.HealthStatus {
 }
 
 // Query executes a Cypher query with the given parameters.
+// Automatically detects write queries (CREATE, MERGE, SET, DELETE, REMOVE)
+// and uses ExecuteWrite; otherwise uses ExecuteRead for better performance.
 func (c *Neo4jClient) Query(ctx context.Context, cypher string, params map[string]any) (QueryResult, error) {
 	if c.driver == nil {
 		return QueryResult{}, types.NewError(ErrCodeGraphConnectionClosed,
@@ -136,8 +139,11 @@ func (c *Neo4jClient) Query(ctx context.Context, cypher string, params map[strin
 	})
 	defer session.Close(ctx)
 
-	// Execute query in a read transaction
-	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+	// Detect if query is a write operation
+	isWriteQuery := isWriteOperation(cypher)
+
+	// Transaction work function
+	txWork := func(tx neo4j.ManagedTransaction) (any, error) {
 		neoResult, err := tx.Run(ctx, cypher, params)
 		if err != nil {
 			return nil, err
@@ -157,7 +163,16 @@ func (c *Neo4jClient) Query(ctx context.Context, cypher string, params map[strin
 
 		// Convert Neo4j records to our QueryResult format
 		return convertNeo4jResult(records, summary), nil
-	})
+	}
+
+	var result any
+	var err error
+
+	if isWriteQuery {
+		result, err = session.ExecuteWrite(ctx, txWork)
+	} else {
+		result, err = session.ExecuteRead(ctx, txWork)
+	}
 
 	if err != nil {
 		return QueryResult{}, types.WrapError(ErrCodeGraphQueryFailed,
@@ -230,10 +245,11 @@ func (c *Neo4jClient) CreateRelationship(ctx context.Context, fromID, toID, relT
 			"driver not connected")
 	}
 
-	// Build MATCH + CREATE query using element IDs
+	// Build MATCH + CREATE query using id property (Gibson UUIDs stored as node.id)
+	// Note: We match on the 'id' property, not Neo4j's internal elementId(),
+	// because relationships reference Gibson node IDs, not Neo4j element IDs.
 	cypher := fmt.Sprintf(`
-		MATCH (from), (to)
-		WHERE elementId(from) = $fromId AND elementId(to) = $toId
+		MATCH (from {id: $fromId}), (to {id: $toId})
 		CREATE (from)-[r:%s]->(to)
 		SET r = $props
 		RETURN r
@@ -351,6 +367,31 @@ func (c *Neo4jClient) ExecuteWrite(ctx context.Context, cypher string, params ma
 	queryResult.Summary.ExecutionTime = time.Since(startTime)
 
 	return queryResult, nil
+}
+
+// isWriteOperation detects if a Cypher query is a write operation.
+// Write operations include CREATE, MERGE, SET, DELETE, REMOVE, and DETACH DELETE.
+func isWriteOperation(cypher string) bool {
+	// Convert to uppercase for case-insensitive matching
+	upper := strings.ToUpper(cypher)
+
+	// Check for write keywords
+	writeKeywords := []string{
+		"CREATE",
+		"MERGE",
+		"SET ",  // Space to avoid matching OFFSET
+		"DELETE",
+		"REMOVE",
+		"DETACH",
+	}
+
+	for _, keyword := range writeKeywords {
+		if strings.Contains(upper, keyword) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // convertNeo4jResult converts Neo4j records and summary to our QueryResult format.

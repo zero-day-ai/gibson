@@ -25,7 +25,7 @@ import (
 	gibsonHarness "github.com/zero-day-ai/gibson/internal/harness"
 	gibsonLLM "github.com/zero-day-ai/gibson/internal/llm"
 	gibsonMemory "github.com/zero-day-ai/gibson/internal/memory"
-	gibsonSchema "github.com/zero-day-ai/gibson/internal/schema"
+	gibsonSchema "github.com/zero-day-ai/sdk/schema"
 	gibsonTypes "github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -456,14 +456,14 @@ func convertToolDefsToGibson(tools []llm.ToolDef) []gibsonLLM.ToolDef {
 	return gibsonTools
 }
 
-func convertMapToJSONSchema(m map[string]any) gibsonSchema.JSONSchema {
-	var s gibsonSchema.JSONSchema
+func convertMapToJSONSchema(m map[string]any) gibsonSchema.JSON {
+	var s gibsonSchema.JSON
 	data, err := json.Marshal(m)
 	if err != nil {
-		return gibsonSchema.JSONSchema{Type: "object"}
+		return gibsonSchema.JSON{Type: "object"}
 	}
 	if err := json.Unmarshal(data, &s); err != nil {
-		return gibsonSchema.JSONSchema{Type: "object"}
+		return gibsonSchema.JSON{Type: "object"}
 	}
 	return s
 }

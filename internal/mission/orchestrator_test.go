@@ -81,6 +81,24 @@ func (m *MockAgentHarness) Tracer() trace.Tracer             { return nil }
 func (m *MockAgentHarness) Logger() *slog.Logger             { return slog.Default() }
 func (m *MockAgentHarness) Metrics() harness.MetricsRecorder { return nil }
 func (m *MockAgentHarness) TokenUsage() *llm.TokenTracker    { return nil }
+func (m *MockAgentHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, targetType any, opts ...harness.CompletionOption) (any, error) {
+	return nil, nil
+}
+func (m *MockAgentHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+func (m *MockAgentHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return nil, nil
+}
+func (m *MockAgentHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return nil, nil
+}
+func (m *MockAgentHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
+}
+func (m *MockAgentHarness) MissionID() types.ID {
+	return types.NewID()
+}
 
 // Helper functions
 
@@ -108,11 +126,12 @@ nodes:
 func TestDefaultMissionOrchestrator_Execute(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	result, err := orchestrator.Execute(ctx, mission)
@@ -156,12 +175,13 @@ func TestDefaultMissionOrchestrator_Execute_MissingWorkflowExecutor(t *testing.T
 	ctx := context.Background()
 
 	// Create orchestrator without workflow executor (fallback mode)
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 
 	// Create mission with workflow JSON
 	mission := createTestMission(t)
 	mission.WorkflowJSON = createWorkflowJSON(t, mission.WorkflowID)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - should complete without executor (fallback behavior)
@@ -181,15 +201,16 @@ func TestDefaultMissionOrchestrator_Execute_MissingHarnessFactory(t *testing.T) 
 	executor := workflow.NewWorkflowExecutor()
 
 	// Create orchestrator without harness factory
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithWorkflowExecutor(executor),
 	)
+	require.NoError(t, err)
 
 	// Create mission with workflow JSON
 	mission := createTestMission(t)
 	mission.WorkflowJSON = createWorkflowJSON(t, mission.WorkflowID)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - should fail without harness factory
@@ -215,16 +236,17 @@ func TestDefaultMissionOrchestrator_Execute_MissingWorkflowJSON(t *testing.T) {
 	executor := workflow.NewWorkflowExecutor()
 	mockFactory := &MockHarnessFactory{}
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithWorkflowExecutor(executor),
 		WithHarnessFactory(mockFactory),
 	)
+	require.NoError(t, err)
 
 	// Create mission without workflow JSON
 	mission := createTestMission(t)
 	mission.WorkflowJSON = "" // No workflow JSON
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - should fail without workflow definition
@@ -250,16 +272,17 @@ func TestDefaultMissionOrchestrator_Execute_InvalidWorkflowJSON(t *testing.T) {
 	executor := workflow.NewWorkflowExecutor()
 	mockFactory := &MockHarnessFactory{}
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithWorkflowExecutor(executor),
 		WithHarnessFactory(mockFactory),
 	)
+	require.NoError(t, err)
 
 	// Create mission with invalid workflow JSON
 	mission := createTestMission(t)
 	mission.WorkflowJSON = "{invalid json"
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - should fail due to invalid JSON
@@ -291,16 +314,17 @@ func TestDefaultMissionOrchestrator_Execute_HarnessCreationFailure(t *testing.T)
 		},
 	}
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithWorkflowExecutor(executor),
 		WithHarnessFactory(mockFactory),
 	)
+	require.NoError(t, err)
 
 	// Create mission with workflow JSON
 	mission := createTestMission(t)
 	mission.WorkflowJSON = createWorkflowJSON(t, mission.WorkflowID)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - should fail due to harness creation error
@@ -326,12 +350,13 @@ func TestDefaultMissionOrchestrator_Execute_WorkflowCancelled(t *testing.T) {
 func TestDefaultMissionOrchestrator_InvalidState(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	mission := createTestMission(t)
 	mission.Status = MissionStatusCompleted // Terminal state
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	_, err = orchestrator.Execute(ctx, mission)
@@ -344,7 +369,8 @@ func TestDefaultMissionOrchestrator_Execute_WithConstraints(t *testing.T) {
 	store := NewDBMissionStore(db)
 	ctx := context.Background()
 
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 
 	// Create mission with constraints
 	mission := createTestMission(t)
@@ -354,7 +380,7 @@ func TestDefaultMissionOrchestrator_Execute_WithConstraints(t *testing.T) {
 		MaxTokens:   10000,
 		MaxCost:     50.0,
 	}
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - should complete successfully even with constraints
@@ -370,10 +396,11 @@ func TestDefaultMissionOrchestrator_Execute_UpdatesMetrics(t *testing.T) {
 	store := NewDBMissionStore(db)
 	ctx := context.Background()
 
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission
@@ -399,10 +426,11 @@ func TestDefaultMissionOrchestrator_WithEventEmitter(t *testing.T) {
 	events, unsubscribe := emitter.Subscribe(ctx)
 	defer unsubscribe()
 
-	orchestrator := NewMissionOrchestrator(store, WithEventEmitter(emitter))
+	orchestrator, err := NewMissionOrchestrator(store, WithEventEmitter(emitter))
+	require.NoError(t, err)
 
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	_, err = orchestrator.Execute(ctx, mission)
@@ -437,11 +465,12 @@ func TestExecute_PropagatesWorkflowMetrics(t *testing.T) {
 
 	// Create orchestrator without workflow executor to use fallback mode
 	// This tests that metrics are still populated even without a workflow
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 
 	// Create mission
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - will use fallback mode without executor
@@ -473,14 +502,15 @@ func TestOrchestrator_EventPersistence(t *testing.T) {
 	ctx := context.Background()
 
 	// Create orchestrator with event store
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventStore(eventStore),
 	)
+	require.NoError(t, err)
 
 	// Create and save mission
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - this will emit events
@@ -526,14 +556,15 @@ func TestOrchestrator_EventPersistence_WithEventTypes(t *testing.T) {
 	ctx := context.Background()
 
 	// Create orchestrator with event store
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventStore(eventStore),
 	)
+	require.NoError(t, err)
 
 	// Create and execute mission
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	_, err = orchestrator.Execute(ctx, mission)
@@ -577,16 +608,17 @@ func TestOrchestrator_EventPersistence_FailedMission(t *testing.T) {
 	executor := workflow.NewWorkflowExecutor()
 
 	// Create orchestrator with event store but no harness factory to cause failure
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventStore(eventStore),
 		WithWorkflowExecutor(executor),
 	)
+	require.NoError(t, err)
 
 	// Create mission with workflow JSON that requires harness
 	mission := createTestMission(t)
 	mission.WorkflowJSON = createWorkflowJSON(t, mission.WorkflowID)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission - should fail due to missing harness factory
@@ -624,17 +656,18 @@ func TestOrchestrator_EventPersistence_TimeRange(t *testing.T) {
 	ctx := context.Background()
 
 	// Create orchestrator with event store
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventStore(eventStore),
 	)
+	require.NoError(t, err)
 
 	// Record start time
 	startTime := time.Now()
 
 	// Create and execute mission
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	_, err = orchestrator.Execute(ctx, mission)
@@ -677,14 +710,15 @@ func TestOrchestrator_EventStore_Stream(t *testing.T) {
 	ctx := context.Background()
 
 	// Create orchestrator with event store
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventStore(eventStore),
 	)
+	require.NoError(t, err)
 
 	// Create and execute mission
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	startTime := time.Now()
@@ -723,11 +757,12 @@ func TestOrchestrator_EventStore_Stream(t *testing.T) {
 func TestOrchestrator_IsPauseRequested(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	mission := createTestMission(t)
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Initially, no pause should be requested
@@ -751,12 +786,13 @@ func TestOrchestrator_IsPauseRequested(t *testing.T) {
 func TestOrchestrator_IsPauseRequested_MultipleMissions(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	// Create two missions
 	mission1 := createTestMission(t)
-	err := store.Save(ctx, mission1)
+	err = store.Save(ctx, mission1)
 	require.NoError(t, err)
 
 	mission2 := createTestMission(t)
@@ -795,10 +831,11 @@ func TestOrchestrator_ExecuteFromCheckpoint(t *testing.T) {
 	ctx := context.Background()
 
 	// Create orchestrator with event store
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventStore(eventStore),
 	)
+	require.NoError(t, err)
 
 	// Create mission in paused state
 	mission := createTestMission(t)
@@ -812,7 +849,7 @@ func TestOrchestrator_ExecuteFromCheckpoint(t *testing.T) {
 		CompletedNodes:     2,
 		TotalNodes:         5,
 	}
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Create a checkpoint
@@ -855,7 +892,8 @@ func TestOrchestrator_ExecuteFromCheckpoint(t *testing.T) {
 func TestOrchestrator_ExecuteFromCheckpoint_InvalidState(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
-	orchestrator := NewMissionOrchestrator(store)
+	orchestrator, err := NewMissionOrchestrator(store)
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	// Create mission in completed state (cannot resume)
@@ -863,7 +901,7 @@ func TestOrchestrator_ExecuteFromCheckpoint_InvalidState(t *testing.T) {
 	mission.Status = MissionStatusCompleted
 	completedAt := time.Now()
 	mission.CompletedAt = &completedAt
-	err := store.Save(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Create a checkpoint
@@ -877,4 +915,19 @@ func TestOrchestrator_ExecuteFromCheckpoint_InvalidState(t *testing.T) {
 	_, err = orchestrator.ExecuteFromCheckpoint(ctx, mission, checkpoint)
 	require.Error(t, err)
 	assert.True(t, IsInvalidStateError(err), "Should return invalid state error")
+}
+
+// TestNewMissionOrchestrator_Success verifies that orchestrator can be created successfully.
+func TestNewMissionOrchestrator_Success(t *testing.T) {
+	// Use mock store to avoid DB dependencies
+	store := &mockMissionStore{}
+
+	// Create orchestrator without any options
+	orchestrator, err := NewMissionOrchestrator(store)
+
+	// Should succeed
+	require.NoError(t, err)
+	assert.NotNil(t, orchestrator)
+	assert.NotNil(t, orchestrator.emitter)
+	assert.NotNil(t, orchestrator.pauseRequested)
 }

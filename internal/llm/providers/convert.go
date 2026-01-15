@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/zero-day-ai/gibson/internal/llm"
-	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/sdk/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -222,7 +222,7 @@ func buildCallOptionsWithToolChoice(req llm.CompletionRequest, tool llm.ToolDef)
 // convertResponseFormatToTool converts a ResponseFormat to a ToolDef for Anthropic's tool_use pattern.
 // This enables structured output by having the model call a "tool" that represents the response schema.
 func convertResponseFormatToTool(format *types.ResponseFormat) llm.ToolDef {
-	// Convert SDK JSONSchema to internal schema.JSONSchema
+	// Convert SDK JSONSchema to internal schema.JSON
 	params := convertSDKSchemaToInternal(format.Schema)
 
 	return llm.ToolDef{
@@ -232,14 +232,14 @@ func convertResponseFormatToTool(format *types.ResponseFormat) llm.ToolDef {
 	}
 }
 
-// convertSDKSchemaToInternal converts types.JSONSchema to internal/schema.JSONSchema.
+// convertSDKSchemaToInternal converts types.JSONSchema to internal/schema.JSON.
 // This bridges the type boundary for internal provider use.
-func convertSDKSchemaToInternal(sdkSchema *types.JSONSchema) schema.JSONSchema {
+func convertSDKSchemaToInternal(sdkSchema *types.JSONSchema) schema.JSON {
 	if sdkSchema == nil {
-		return schema.JSONSchema{Type: "object"}
+		return schema.JSON{Type: "object"}
 	}
 
-	internalSchema := schema.JSONSchema{
+	internalSchema := schema.JSON{
 		Type:        sdkSchema.Type,
 		Description: sdkSchema.Description,
 		Required:    sdkSchema.Required,
@@ -247,7 +247,7 @@ func convertSDKSchemaToInternal(sdkSchema *types.JSONSchema) schema.JSONSchema {
 
 	// Convert properties if present
 	if len(sdkSchema.Properties) > 0 {
-		internalSchema.Properties = make(map[string]schema.SchemaField)
+		internalSchema.Properties = make(map[string]schema.JSON)
 		for name, prop := range sdkSchema.Properties {
 			internalSchema.Properties[name] = convertSDKSchemaFieldToInternal(prop)
 		}
@@ -259,22 +259,19 @@ func convertSDKSchemaToInternal(sdkSchema *types.JSONSchema) schema.JSONSchema {
 		internalSchema.Items = &field
 	}
 
-	// Handle AdditionalProperties
-	if sdkSchema.AdditionalProperties != nil {
-		internalSchema.AdditionalProperties = sdkSchema.AdditionalProperties
-	}
+	// Note: SDK schema.JSON doesn't have AdditionalProperties field
 
 	return internalSchema
 }
 
-// convertSDKSchemaFieldToInternal converts types.JSONSchema to internal/schema.SchemaField.
+// convertSDKSchemaFieldToInternal converts types.JSONSchema to internal/schema.JSON.
 // This is used recursively when converting nested schemas.
-func convertSDKSchemaFieldToInternal(sdkField *types.JSONSchema) schema.SchemaField {
+func convertSDKSchemaFieldToInternal(sdkField *types.JSONSchema) schema.JSON {
 	if sdkField == nil {
-		return schema.SchemaField{Type: "object"}
+		return schema.JSON{Type: "object"}
 	}
 
-	field := schema.SchemaField{
+	field := schema.JSON{
 		Type:        sdkField.Type,
 		Description: sdkField.Description,
 		Pattern:     sdkField.Pattern,
@@ -288,17 +285,13 @@ func convertSDKSchemaFieldToInternal(sdkField *types.JSONSchema) schema.SchemaFi
 
 	// Convert enum values
 	if len(sdkField.Enum) > 0 {
-		field.Enum = make([]string, len(sdkField.Enum))
-		for i, v := range sdkField.Enum {
-			if str, ok := v.(string); ok {
-				field.Enum[i] = str
-			}
-		}
+		field.Enum = make([]any, len(sdkField.Enum))
+		copy(field.Enum, sdkField.Enum)
 	}
 
 	// Convert nested properties
 	if len(sdkField.Properties) > 0 {
-		field.Properties = make(map[string]schema.SchemaField)
+		field.Properties = make(map[string]schema.JSON)
 		for name, prop := range sdkField.Properties {
 			field.Properties[name] = convertSDKSchemaFieldToInternal(prop)
 		}

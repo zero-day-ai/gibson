@@ -168,7 +168,7 @@
 //	    WithTopK(10).                  // Return top 10 results
 //	    WithMaxHops(2).                // Traverse up to 2 hops in graph
 //	    WithMinScore(0.75).            // Only return matches above 75% similarity
-//	    WithNodeTypes(graphrag.NodeTypeFinding).  // Filter to findings only
+//	    WithNodeTypes(graphrag.NodeType("finding")).  // Filter to findings only
 //	    WithFilters(map[string]any{
 //	        "severity": "high",        // Additional property filters
 //	    })
@@ -256,7 +256,7 @@
 // 4. Filtered Query:
 //
 //	query := graphrag.NewGraphRAGQuery("privilege escalation").
-//	    WithNodeTypes(graphrag.NodeTypeFinding).
+//	    WithNodeTypes(graphrag.NodeType("finding")).
 //	    WithFilters(map[string]any{
 //	        "severity": "critical",
 //	        "mission_id": missionID.String(),
@@ -345,7 +345,7 @@
 //	rel := graphrag.NewRelationship(
 //	    finding1.ID,
 //	    finding2.ID,
-//	    graphrag.RelationSimilarTo,
+//	    graphrag.RelationType("similar_to"),
 //	).WithWeight(0.85).WithProperty("reason", "same exploit technique")
 //
 //	record := graphrag.NewGraphRecord(*finding1.ToGraphNode()).

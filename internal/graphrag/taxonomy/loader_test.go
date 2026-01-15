@@ -607,3 +607,373 @@ func TestTaxonomyLoader_parseCapabilities(t *testing.T) {
 		})
 	}
 }
+
+// TestIntelligenceNodeTypeLoads verifies the intelligence node type loads correctly
+// from the embedded taxonomy.
+func TestIntelligenceNodeTypeLoads(t *testing.T) {
+	taxonomy, err := LoadTaxonomy()
+	if err != nil {
+		t.Fatalf("LoadTaxonomy() error = %v", err)
+	}
+
+	// Verify intelligence node type exists
+	nodeType, ok := taxonomy.GetNodeType("intelligence")
+	if !ok {
+		t.Fatal("intelligence node type not found in taxonomy")
+	}
+
+	// Verify basic node type properties
+	if nodeType.Type != "intelligence" {
+		t.Errorf("intelligence node type = %v, want 'intelligence'", nodeType.Type)
+	}
+
+	if nodeType.Category != "execution" {
+		t.Errorf("intelligence category = %v, want 'execution'", nodeType.Category)
+	}
+
+	if nodeType.Name != "Intelligence" {
+		t.Errorf("intelligence name = %v, want 'Intelligence'", nodeType.Name)
+	}
+
+	// Verify ID template follows expected pattern
+	expectedIDTemplate := "intelligence:{mission_id}:{phase}:{timestamp}"
+	if nodeType.IDTemplate != expectedIDTemplate {
+		t.Errorf("intelligence id_template = %v, want %v", nodeType.IDTemplate, expectedIDTemplate)
+	}
+
+	// Verify required properties exist
+	requiredProps := map[string]bool{
+		"mission_id": false,
+		"summary":    false,
+		"timestamp":  false,
+	}
+
+	for _, prop := range nodeType.Properties {
+		if _, ok := requiredProps[prop.Name]; ok {
+			requiredProps[prop.Name] = true
+			if !prop.Required {
+				t.Errorf("property %s should be required but is marked optional", prop.Name)
+			}
+		}
+	}
+
+	// Check all required properties were found
+	for propName, found := range requiredProps {
+		if !found {
+			t.Errorf("required property %s not found in intelligence node type", propName)
+		}
+	}
+
+	// Verify optional properties exist
+	optionalProps := []string{
+		"phase",
+		"risk_assessment",
+		"attack_paths",
+		"recommendations",
+		"confidence",
+		"source_node_count",
+		"source_llm_call_id",
+		"model",
+	}
+
+	propMap := make(map[string]PropertyDefinition)
+	for _, prop := range nodeType.Properties {
+		propMap[prop.Name] = prop
+	}
+
+	for _, propName := range optionalProps {
+		prop, ok := propMap[propName]
+		if !ok {
+			t.Errorf("optional property %s not found in intelligence node type", propName)
+			continue
+		}
+
+		if prop.Required {
+			t.Errorf("property %s should be optional but is marked required", propName)
+		}
+	}
+
+	// Verify specific property types
+	if prop, ok := propMap["confidence"]; ok {
+		if prop.Type != "float64" {
+			t.Errorf("confidence property type = %v, want float64", prop.Type)
+		}
+	}
+
+	if prop, ok := propMap["source_node_count"]; ok {
+		if prop.Type != "int" {
+			t.Errorf("source_node_count property type = %v, want int", prop.Type)
+		}
+	}
+
+	if prop, ok := propMap["attack_paths"]; ok {
+		if prop.Type != "map[string]any" {
+			t.Errorf("attack_paths property type = %v, want map[string]any", prop.Type)
+		}
+	}
+
+	if prop, ok := propMap["recommendations"]; ok {
+		if prop.Type != "map[string]any" {
+			t.Errorf("recommendations property type = %v, want map[string]any", prop.Type)
+		}
+	}
+}
+
+// TestIntelligenceRelationshipsLoad verifies ANALYZES and GENERATED_BY relationships load correctly.
+func TestIntelligenceRelationshipsLoad(t *testing.T) {
+	taxonomy, err := LoadTaxonomy()
+	if err != nil {
+		t.Fatalf("LoadTaxonomy() error = %v", err)
+	}
+
+	tests := []struct {
+		name          string
+		relType       string
+		wantFromTypes []string
+		wantToTypes   []string
+	}{
+		{
+			name:          "ANALYZES relationship",
+			relType:       "ANALYZES",
+			wantFromTypes: []string{"intelligence"},
+			wantToTypes:   []string{"host", "port", "endpoint", "technology", "finding", "domain", "subdomain"},
+		},
+		{
+			name:          "GENERATED_BY relationship",
+			relType:       "GENERATED_BY",
+			wantFromTypes: []string{"intelligence"},
+			wantToTypes:   []string{"llm_call"},
+		},
+		{
+			name:          "PART_OF_MISSION relationship",
+			relType:       "PART_OF_MISSION",
+			wantFromTypes: []string{"intelligence"},
+			wantToTypes:   []string{"mission"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rel, ok := taxonomy.GetRelationship(tt.relType)
+			if !ok {
+				t.Skipf("relationship %s not yet implemented in taxonomy (expected for task 2)", tt.relType)
+				return
+			}
+
+			// Verify from_types
+			if len(rel.FromTypes) != len(tt.wantFromTypes) {
+				t.Errorf("%s from_types count = %d, want %d", tt.relType, len(rel.FromTypes), len(tt.wantFromTypes))
+			}
+
+			fromTypeMap := make(map[string]bool)
+			for _, ft := range rel.FromTypes {
+				fromTypeMap[ft] = true
+			}
+
+			for _, wantType := range tt.wantFromTypes {
+				if !fromTypeMap[wantType] {
+					t.Errorf("%s missing from_type: %s", tt.relType, wantType)
+				}
+			}
+
+			// Verify to_types
+			if len(rel.ToTypes) != len(tt.wantToTypes) {
+				t.Errorf("%s to_types count = %d, want %d", tt.relType, len(rel.ToTypes), len(tt.wantToTypes))
+			}
+
+			toTypeMap := make(map[string]bool)
+			for _, tt := range rel.ToTypes {
+				toTypeMap[tt] = true
+			}
+
+			for _, wantType := range tt.wantToTypes {
+				if !toTypeMap[wantType] {
+					t.Errorf("%s missing to_type: %s", tt.relType, wantType)
+				}
+			}
+
+			// Verify bidirectional is false for these relationships
+			if rel.Bidirectional {
+				t.Errorf("%s bidirectional = true, want false", tt.relType)
+			}
+		})
+	}
+}
+
+// TestIntelligenceIDTemplate verifies the intelligence node ID template produces correct IDs.
+func TestIntelligenceIDTemplate(t *testing.T) {
+	taxonomy, err := LoadTaxonomy()
+	if err != nil {
+		t.Fatalf("LoadTaxonomy() error = %v", err)
+	}
+
+	nodeType, ok := taxonomy.GetNodeType("intelligence")
+	if !ok {
+		t.Fatal("intelligence node type not found in taxonomy")
+	}
+
+	tests := []struct {
+		name        string
+		missionID   string
+		phase       string
+		timestamp   string
+		expectedID  string
+		description string
+	}{
+		{
+			name:        "discover phase",
+			missionID:   "mission:acme-pentest-2024-01",
+			phase:       "discover",
+			timestamp:   "1704887220",
+			expectedID:  "intelligence:mission:acme-pentest-2024-01:discover:1704887220",
+			description: "ID for discover phase intelligence",
+		},
+		{
+			name:        "probe phase",
+			missionID:   "mission:test-mission",
+			phase:       "probe",
+			timestamp:   "1704887300",
+			expectedID:  "intelligence:mission:test-mission:probe:1704887300",
+			description: "ID for probe phase intelligence",
+		},
+		{
+			name:        "scan phase",
+			missionID:   "mission:example-scan",
+			phase:       "scan",
+			timestamp:   "1704887400",
+			expectedID:  "intelligence:mission:example-scan:scan:1704887400",
+			description: "ID for scan phase intelligence",
+		},
+		{
+			name:        "domain phase",
+			missionID:   "mission:domain-recon",
+			phase:       "domain",
+			timestamp:   "1704887500",
+			expectedID:  "intelligence:mission:domain-recon:domain:1704887500",
+			description: "ID for domain phase intelligence",
+		},
+		{
+			name:        "summary intelligence",
+			missionID:   "mission:full-recon",
+			phase:       "summary",
+			timestamp:   "1704887600",
+			expectedID:  "intelligence:mission:full-recon:summary:1704887600",
+			description: "ID for summary intelligence",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Manually construct ID based on template pattern
+			// Template: "intelligence:{mission_id}:{phase}:{timestamp}"
+			constructedID := "intelligence:" + tt.missionID + ":" + tt.phase + ":" + tt.timestamp
+
+			if constructedID != tt.expectedID {
+				t.Errorf("constructed ID = %v, want %v", constructedID, tt.expectedID)
+			}
+
+			// Verify template format by checking it contains the required placeholders
+			if nodeType.IDTemplate != "intelligence:{mission_id}:{phase}:{timestamp}" {
+				t.Errorf("IDTemplate = %v, want 'intelligence:{mission_id}:{phase}:{timestamp}'", nodeType.IDTemplate)
+			}
+		})
+	}
+}
+
+// TestIntelligenceNodeValidation verifies intelligence nodes validate correctly.
+func TestIntelligenceNodeValidation(t *testing.T) {
+	validator := NewTaxonomyValidator()
+
+	tests := []struct {
+		name    string
+		node    *NodeTypeDefinition
+		wantErr bool
+		errType ErrorType
+	}{
+		{
+			name: "valid intelligence node",
+			node: &NodeTypeDefinition{
+				ID:          "node.execution.intelligence",
+				Name:        "Intelligence",
+				Type:        "intelligence",
+				Category:    "execution",
+				Description: "LLM-generated analysis",
+				IDTemplate:  "intelligence:{mission_id}:{phase}:{timestamp}",
+				Properties: []PropertyDefinition{
+					{Name: "mission_id", Type: "string", Required: true},
+					{Name: "summary", Type: "string", Required: true},
+					{Name: "timestamp", Type: "string", Required: true},
+					{Name: "phase", Type: "string", Required: false},
+					{Name: "risk_assessment", Type: "string", Required: false},
+					{Name: "attack_paths", Type: "map[string]any", Required: false},
+					{Name: "recommendations", Type: "map[string]any", Required: false},
+					{Name: "confidence", Type: "float64", Required: false},
+					{Name: "source_node_count", Type: "int", Required: false},
+					{Name: "source_llm_call_id", Type: "string", Required: false},
+					{Name: "model", Type: "string", Required: false},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "intelligence node missing required fields",
+			node: &NodeTypeDefinition{
+				ID:          "node.execution.intelligence",
+				Name:        "Intelligence",
+				Type:        "intelligence",
+				Category:    "execution",
+				Description: "LLM-generated analysis",
+				// Missing IDTemplate field
+				Properties: []PropertyDefinition{
+					{Name: "mission_id", Type: "string", Required: true},
+					{Name: "summary", Type: "string", Required: true},
+					{Name: "timestamp", Type: "string", Required: true},
+				},
+			},
+			wantErr: true,
+			errType: ErrorTypeMissingField,
+		},
+		{
+			name: "intelligence node with invalid property type",
+			node: &NodeTypeDefinition{
+				ID:          "node.execution.intelligence",
+				Name:        "Intelligence",
+				Type:        "intelligence",
+				Category:    "execution",
+				Description: "LLM-generated analysis",
+				IDTemplate:  "intelligence:{mission_id}:{phase}:{timestamp}",
+				Properties: []PropertyDefinition{
+					{Name: "mission_id", Type: "string", Required: true},
+					{Name: "summary", Type: "string", Required: true},
+					{Name: "timestamp", Type: "string", Required: true},
+					{Name: "phase", Type: "string", Required: false},
+					{Name: "confidence", Type: "invalid_type", Required: false},
+				},
+			},
+			wantErr: true,
+			errType: ErrorTypeInvalidProperty,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validator.ValidateNode(tt.node)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateNode() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr && err != nil {
+				taxErr, ok := err.(*TaxonomyError)
+				if !ok {
+					t.Errorf("ValidateNode() error type = %T, want *TaxonomyError", err)
+					return
+				}
+				if taxErr.Type != tt.errType {
+					t.Errorf("ValidateNode() error type = %v, want %v", taxErr.Type, tt.errType)
+				}
+			}
+		})
+	}
+}

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/api/gen/proto"
+	"github.com/zero-day-ai/sdk/schema"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -28,8 +28,8 @@ type GRPCToolClient struct {
 	tags         []string
 	conn         *grpc.ClientConn
 	client       proto.ToolServiceClient
-	inputSchema  schema.JSONSchema
-	outputSchema schema.JSONSchema
+	inputSchema  schema.JSON
+	outputSchema schema.JSON
 }
 
 // NewGRPCToolClient creates a new GRPCToolClient by connecting to a gRPC tool service.
@@ -93,16 +93,16 @@ func NewGRPCToolClient(endpoint string, opts ...grpc.DialOption) (*GRPCToolClien
 	}, nil
 }
 
-// protoSchemaToInternal converts a proto JSONSchema to internal schema.JSONSchema.
+// protoSchemaToInternal converts a proto JSONSchema to SDK schema.JSON.
 // The proto type contains a serialized JSON string that we unmarshal.
-func protoSchemaToInternal(protoSchema *proto.JSONSchema) (schema.JSONSchema, error) {
+func protoSchemaToInternal(protoSchema *proto.JSONSchema) (schema.JSON, error) {
 	if protoSchema == nil {
-		return schema.NewObjectSchema(nil, nil), nil
+		return schema.Object(nil), nil
 	}
 
-	var result schema.JSONSchema
+	var result schema.JSON
 	if err := json.Unmarshal([]byte(protoSchema.GetJson()), &result); err != nil {
-		return schema.JSONSchema{}, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
+		return schema.JSON{}, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
 	}
 
 	return result, nil
@@ -129,12 +129,12 @@ func (c *GRPCToolClient) Tags() []string {
 }
 
 // InputSchema returns the JSON schema defining valid input parameters.
-func (c *GRPCToolClient) InputSchema() schema.JSONSchema {
+func (c *GRPCToolClient) InputSchema() schema.JSON {
 	return c.inputSchema
 }
 
 // OutputSchema returns the JSON schema defining the output structure.
-func (c *GRPCToolClient) OutputSchema() schema.JSONSchema {
+func (c *GRPCToolClient) OutputSchema() schema.JSON {
 	return c.outputSchema
 }
 

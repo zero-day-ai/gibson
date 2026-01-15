@@ -75,9 +75,6 @@ type Workflow struct {
 	// Metadata contains additional custom metadata for the workflow.
 	Metadata map[string]any `json:"metadata,omitempty"`
 
-	// Planning holds configuration for the bounded planning system.
-	Planning *PlanningConfig `json:"planning,omitempty"`
-
 	// CreatedAt is the timestamp when the workflow was created.
 	CreatedAt time.Time `json:"created_at"`
 }

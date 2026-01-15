@@ -458,7 +458,7 @@ func TestIntegration_GraphRAGStoreEndToEnd(t *testing.T) {
 		WithTopK(5).
 		WithMaxHops(2).
 		WithMinScore(0.7).
-		WithNodeTypes(NodeTypeFinding)
+		WithNodeTypes(NodeType("finding"))
 
 	embedder.SetEmbedding("SQL injection vulnerability", generateMockEmbedding("SQL injection vulnerability", 1536))
 
@@ -480,7 +480,7 @@ func TestIntegration_GraphRAGStoreEndToEnd(t *testing.T) {
 	assert.LessOrEqual(t, len(results), 5, "should respect topK limit")
 	for _, result := range results {
 		assert.GreaterOrEqual(t, result.Score, 0.7, "should respect minScore filter")
-		assert.True(t, result.Node.HasLabel(NodeTypeFinding), "should filter by node type")
+		assert.True(t, result.Node.HasLabel(NodeType("finding")), "should filter by node type")
 	}
 
 	// Test 3: Health check
@@ -529,13 +529,13 @@ func TestIntegration_QueryProcessorWithMocks(t *testing.T) {
 	// Setup graph traversal results
 	id3 := types.NewID()
 	provider.SetGraphNodes([]GraphNode{
-		{ID: id3, Labels: []NodeType{NodeTypeAttackPattern}},
+		{ID: id3, Labels: []NodeType{NodeType("attack_pattern")}},
 	})
 
 	// Setup queried nodes for node details
 	provider.SetQueriedNodes([]GraphNode{
-		{ID: id1, Labels: []NodeType{NodeTypeAttackPattern}},
-		{ID: id2, Labels: []NodeType{NodeTypeAttackPattern}},
+		{ID: id1, Labels: []NodeType{NodeType("attack_pattern")}},
+		{ID: id2, Labels: []NodeType{NodeType("attack_pattern")}},
 	})
 
 	results, err := processor.ProcessQuery(ctx, *query, provider)

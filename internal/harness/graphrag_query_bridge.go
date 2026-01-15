@@ -299,7 +299,7 @@ func (b *DefaultGraphRAGQueryBridge) CreateRelationship(ctx context.Context, rel
 		return fmt.Errorf("%w: invalid from_id: %v", sdkgraphrag.ErrInvalidQuery, err)
 	}
 
-	dummyNode := graphrag.NewGraphNode(fromID, graphrag.NodeTypeEntity)
+	dummyNode := graphrag.NewGraphNode(fromID, graphrag.NodeType("entity"))
 	record := graphrag.NewGraphRecord(*dummyNode)
 	record.WithRelationship(*internalRel)
 

@@ -24,10 +24,11 @@ func TestMissionOrchestrator_EmitsProgressEvents(t *testing.T) {
 
 	// Create orchestrator with event emitter but no workflow executor
 	// This will skip workflow execution but emit start/complete events
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventEmitter(emitter),
 	)
+	require.NoError(t, err)
 
 	// Create mission
 	mission := &Mission{
@@ -37,7 +38,7 @@ func TestMissionOrchestrator_EmitsProgressEvents(t *testing.T) {
 		WorkflowJSON: "", // No workflow - will skip execution
 	}
 
-	err := store.Create(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission in goroutine
@@ -45,36 +46,41 @@ func TestMissionOrchestrator_EmitsProgressEvents(t *testing.T) {
 		_, _ = orchestrator.Execute(ctx, mission)
 	}()
 
-	// Collect events
+	// Collect events until we receive a completed event
 	receivedEvents := []MissionEvent{}
 	timeout := time.After(2 * time.Second)
+	completedReceived := false
 
-	// We expect at least started and completed events
-	expectedEventCount := 2
-
-	for i := 0; i < expectedEventCount; i++ {
+	for !completedReceived {
 		select {
 		case event := <-eventChan:
 			receivedEvents = append(receivedEvents, event)
 			if event.Type == EventMissionCompleted {
 				// Mission completed, we're done
-				goto checkEvents
+				completedReceived = true
 			}
 		case <-timeout:
-			t.Fatalf("Timeout waiting for event %d", i+1)
+			t.Fatalf("Timeout waiting for mission.completed event. Received %d events: %v", len(receivedEvents), receivedEvents)
 		}
 	}
 
-checkEvents:
 	// Verify we received events in order
 	assert.GreaterOrEqual(t, len(receivedEvents), 2)
 	assert.Equal(t, EventMissionStarted, receivedEvents[0].Type)
 	assert.Equal(t, mission.ID, receivedEvents[0].MissionID)
 
-	// Last event should be completed
-	lastEvent := receivedEvents[len(receivedEvents)-1]
-	assert.Equal(t, EventMissionCompleted, lastEvent.Type)
-	assert.Equal(t, mission.ID, lastEvent.MissionID)
+	// Find the completed event (there may be other events like planning_enabled in between)
+	var completedEvent *MissionEvent
+	for i := range receivedEvents {
+		if receivedEvents[i].Type == EventMissionCompleted {
+			completedEvent = &receivedEvents[i]
+			break
+		}
+	}
+
+	// Verify we got a completed event
+	require.NotNil(t, completedEvent, "Should have received a mission.completed event")
+	assert.Equal(t, mission.ID, completedEvent.MissionID)
 }
 
 // TestMissionOrchestrator_EmitsFailedEvents verifies that failed events are emitted
@@ -92,10 +98,11 @@ func TestMissionOrchestrator_EmitsCancelledEvents(t *testing.T) {
 	eventChan, cleanup := emitter.Subscribe(ctx)
 	defer cleanup()
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventEmitter(emitter),
 	)
+	require.NoError(t, err)
 
 	// Create mission - no workflow executor means it will simulate execution
 	mission := &Mission{
@@ -105,7 +112,7 @@ func TestMissionOrchestrator_EmitsCancelledEvents(t *testing.T) {
 		WorkflowJSON: "",
 	}
 
-	err := store.Create(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Start execution and cancel immediately
@@ -147,10 +154,11 @@ func TestMissionOrchestrator_EventOrderAndTiming(t *testing.T) {
 	eventChan, cleanup := emitter.Subscribe(ctx)
 	defer cleanup()
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventEmitter(emitter),
 	)
+	require.NoError(t, err)
 
 	mission := &Mission{
 		ID:           types.NewID(),
@@ -159,7 +167,7 @@ func TestMissionOrchestrator_EventOrderAndTiming(t *testing.T) {
 		WorkflowJSON: "",
 	}
 
-	err := store.Create(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Track event timestamps
@@ -220,10 +228,11 @@ func TestMissionOrchestrator_MultipleSubscribers(t *testing.T) {
 	eventChan2, cleanup2 := emitter.Subscribe(ctx)
 	defer cleanup2()
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventEmitter(emitter),
 	)
+	require.NoError(t, err)
 
 	mission := &Mission{
 		ID:           types.NewID(),
@@ -232,7 +241,7 @@ func TestMissionOrchestrator_MultipleSubscribers(t *testing.T) {
 		WorkflowJSON: "",
 	}
 
-	err := store.Create(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Execute mission
@@ -291,10 +300,11 @@ func TestMissionOrchestrator_EventMissionID(t *testing.T) {
 	eventChan, cleanup := emitter.Subscribe(ctx)
 	defer cleanup()
 
-	orchestrator := NewMissionOrchestrator(
+	orchestrator, err := NewMissionOrchestrator(
 		store,
 		WithEventEmitter(emitter),
 	)
+	require.NoError(t, err)
 
 	missionID := types.NewID()
 	mission := &Mission{
@@ -304,7 +314,7 @@ func TestMissionOrchestrator_EventMissionID(t *testing.T) {
 		WorkflowJSON: "",
 	}
 
-	err := store.Create(ctx, mission)
+	err = store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	go func() {

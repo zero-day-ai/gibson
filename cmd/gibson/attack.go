@@ -53,9 +53,8 @@ Examples:
   # Attack using the stored target
   gibson attack --target my-api --agent web-scanner
 
-  # Attack with specific goal and timeout
-  gibson attack --target api-prod --agent prompt-injector \
-    --goal "Find prompt injection vulnerabilities" --timeout 30m
+  # Attack with specific timeout
+  gibson attack --target api-prod --agent prompt-injector --timeout 30m
 
   # Attack with payload filtering
   gibson attack --target test-app --agent sql-injector \
@@ -85,7 +84,6 @@ var (
 
 	// Agent configuration
 	attackAgent    string
-	attackGoal     string
 	attackMaxTurns int
 	attackTimeout  string
 
@@ -131,7 +129,6 @@ func init() {
 
 	// Agent configuration flags (--agent is required)
 	attackCmd.Flags().StringVar(&attackAgent, "agent", "", "Agent name to execute (REQUIRED)")
-	attackCmd.Flags().StringVar(&attackGoal, "goal", "", "Attack goal or objective description")
 	attackCmd.Flags().IntVar(&attackMaxTurns, "max-turns", 20, "Maximum number of agent turns")
 	attackCmd.Flags().StringVar(&attackTimeout, "timeout", "10m", "Attack timeout duration (e.g., 10m, 1h, 30s)")
 
@@ -305,7 +302,6 @@ func runAttackViaDaemon(cmd *cobra.Command, daemonClient interface{}) error {
 		AttackType: opts.AgentName,
 		MaxDepth:   opts.MaxTurns,
 		Timeout:    opts.Timeout,
-		Goal:       opts.Goal,
 	}
 
 	// Execute attack via daemon and stream events
@@ -390,7 +386,6 @@ func buildAttackOptions() (*attack.AttackOptions, error) {
 
 	// Agent configuration
 	opts.AgentName = attackAgent
-	opts.Goal = attackGoal
 	opts.MaxTurns = attackMaxTurns
 
 	// Parse timeout
@@ -501,11 +496,14 @@ func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 	)
 
 	// Step 6: Create mission orchestrator
-	orchestrator := mission.NewMissionOrchestrator(
+	orchestrator, err := mission.NewMissionOrchestrator(
 		missionStore,
 		mission.WithWorkflowExecutor(workflowExecutor),
 		mission.WithHarnessFactory(harnessFactory),
 	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create mission orchestrator: %w", err)
+	}
 
 	// Step 7: Create attack runner options
 	runnerOpts := []attack.RunnerOption{
@@ -729,9 +727,6 @@ func runDryRun(cmd *cobra.Command, opts *attack.AttackOptions) error {
 
 	// Agent configuration
 	cmd.Printf("Agent:           %s\n", opts.AgentName)
-	if opts.Goal != "" {
-		cmd.Printf("Goal:            %s\n", opts.Goal)
-	}
 	cmd.Printf("Max Turns:       %d\n", opts.MaxTurns)
 	if opts.Timeout > 0 {
 		cmd.Printf("Timeout:         %s\n", opts.Timeout)

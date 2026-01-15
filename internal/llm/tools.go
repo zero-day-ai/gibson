@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // ToolDef defines a tool that an LLM can call during completion.
@@ -17,7 +17,7 @@ type ToolDef struct {
 	Description string `json:"description"`
 
 	// Parameters defines the JSON schema for the tool's input parameters
-	Parameters schema.JSONSchema `json:"parameters"`
+	Parameters schema.JSON `json:"parameters"`
 }
 
 // Validate checks if the tool definition is valid
@@ -167,7 +167,7 @@ type ToolCallDelta struct {
 }
 
 // NewToolDef creates a new tool definition with the given name, description, and parameters
-func NewToolDef(name, description string, params schema.JSONSchema) ToolDef {
+func NewToolDef(name, description string, params schema.JSON) ToolDef {
 	// Ensure parameters is an object schema
 	if params.Type == "" {
 		params.Type = "object"

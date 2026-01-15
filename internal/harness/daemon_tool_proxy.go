@@ -9,9 +9,9 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/daemon/api"
 	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // Ensure DaemonToolProxy implements tool.Tool at compile time
@@ -40,10 +40,10 @@ type DaemonToolProxy struct {
 	tags []string
 
 	// inputSchema defines the expected input structure.
-	inputSchema schema.JSONSchema
+	inputSchema schema.JSON
 
 	// outputSchema defines the output structure.
-	outputSchema schema.JSONSchema
+	outputSchema schema.JSON
 
 	// defaultTimeout is the default execution timeout if not specified in context.
 	defaultTimeout time.Duration
@@ -67,10 +67,10 @@ type DaemonToolProxyConfig struct {
 	Tags []string
 
 	// InputSchema defines the expected input structure.
-	InputSchema schema.JSONSchema
+	InputSchema schema.JSON
 
 	// OutputSchema defines the output structure.
-	OutputSchema schema.JSONSchema
+	OutputSchema schema.JSON
 
 	// DefaultTimeout is the default execution timeout (default: 5 minutes).
 	DefaultTimeout time.Duration
@@ -128,12 +128,12 @@ func (p *DaemonToolProxy) Tags() []string {
 }
 
 // InputSchema returns the JSON schema defining valid input parameters.
-func (p *DaemonToolProxy) InputSchema() schema.JSONSchema {
+func (p *DaemonToolProxy) InputSchema() schema.JSON {
 	return p.inputSchema
 }
 
 // OutputSchema returns the JSON schema defining the output structure.
-func (p *DaemonToolProxy) OutputSchema() schema.JSONSchema {
+func (p *DaemonToolProxy) OutputSchema() schema.JSON {
 	return p.outputSchema
 }
 
@@ -237,16 +237,26 @@ func NewDaemonToolProxyFactory(client api.DaemonServiceClient) *DaemonToolProxyF
 // CreateFromAvailableToolInfo creates a DaemonToolProxy from daemon tool info.
 func (f *DaemonToolProxyFactory) CreateFromAvailableToolInfo(info *api.AvailableToolInfo) (*DaemonToolProxy, error) {
 	// Parse input schema
-	var inputSchema schema.JSONSchema
-	if info.InputSchemaJson != "" {
+	// Prefer structured schema (with taxonomy support) over JSON string
+	var inputSchema schema.JSON
+	if info.InputSchema != nil {
+		// Convert proto structured schema to SDK schema (with taxonomy preserved)
+		inputSchema = api.ProtoToSchema(info.InputSchema)
+	} else if info.InputSchemaJson != "" {
+		// Fallback to JSON parsing (backward compatibility, but taxonomy is lost)
 		if err := json.Unmarshal([]byte(info.InputSchemaJson), &inputSchema); err != nil {
 			return nil, fmt.Errorf("failed to parse input schema: %w", err)
 		}
 	}
 
 	// Parse output schema
-	var outputSchema schema.JSONSchema
-	if info.OutputSchemaJson != "" {
+	// Prefer structured schema (with taxonomy support) over JSON string
+	var outputSchema schema.JSON
+	if info.OutputSchema != nil {
+		// Convert proto structured schema to SDK schema (with taxonomy preserved)
+		outputSchema = api.ProtoToSchema(info.OutputSchema)
+	} else if info.OutputSchemaJson != "" {
+		// Fallback to JSON parsing (backward compatibility, but taxonomy is lost)
 		if err := json.Unmarshal([]byte(info.OutputSchemaJson), &outputSchema); err != nil {
 			return nil, fmt.Errorf("failed to parse output schema: %w", err)
 		}
@@ -331,8 +341,8 @@ type DirectToolProxy struct {
 	description    string
 	version        string
 	tags           []string
-	inputSchema    schema.JSONSchema
-	outputSchema   schema.JSONSchema
+	inputSchema    schema.JSON
+	outputSchema   schema.JSON
 	defaultTimeout time.Duration
 }
 
@@ -350,7 +360,7 @@ func NewDirectToolProxy(
 		defaultTimeout = 5 * time.Minute
 	}
 
-	var inputSchema, outputSchema schema.JSONSchema
+	var inputSchema, outputSchema schema.JSON
 	if toolSchema != nil {
 		inputSchema = toolSchema.InputSchema
 		outputSchema = toolSchema.OutputSchema
@@ -372,8 +382,8 @@ func (p *DirectToolProxy) Name() string                   { return p.name }
 func (p *DirectToolProxy) Description() string            { return p.description }
 func (p *DirectToolProxy) Version() string                { return p.version }
 func (p *DirectToolProxy) Tags() []string                 { return p.tags }
-func (p *DirectToolProxy) InputSchema() schema.JSONSchema { return p.inputSchema }
-func (p *DirectToolProxy) OutputSchema() schema.JSONSchema { return p.outputSchema }
+func (p *DirectToolProxy) InputSchema() schema.JSON { return p.inputSchema }
+func (p *DirectToolProxy) OutputSchema() schema.JSON { return p.outputSchema }
 
 func (p *DirectToolProxy) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
 	// Use default timeout - don't derive from context deadline or tool input

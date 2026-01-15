@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // MockTool implements Tool interface for testing
@@ -18,8 +18,8 @@ type MockTool struct {
 	description  string
 	version      string
 	tags         []string
-	inputSchema  schema.JSONSchema
-	outputSchema schema.JSONSchema
+	inputSchema  schema.JSON
+	outputSchema schema.JSON
 	executeFn    func(ctx context.Context, input map[string]any) (map[string]any, error)
 	healthFn     func(ctx context.Context) types.HealthStatus
 }
@@ -30,12 +30,12 @@ func NewMockTool(name string) *MockTool {
 		description: fmt.Sprintf("Mock tool: %s", name),
 		version:     "1.0.0",
 		tags:        []string{"mock", "test"},
-		inputSchema: schema.NewObjectSchema(map[string]schema.SchemaField{
-			"input": schema.NewStringField("test input"),
-		}, []string{"input"}),
-		outputSchema: schema.NewObjectSchema(map[string]schema.SchemaField{
-			"output": schema.NewStringField("test output"),
-		}, []string{"output"}),
+		inputSchema: schema.Object(map[string]schema.JSON{
+			"input": schema.StringWithDesc("test input"),
+		}, "input"),
+		outputSchema: schema.Object(map[string]schema.JSON{
+			"output": schema.StringWithDesc("test output"),
+		}, "output"),
 		executeFn: func(ctx context.Context, input map[string]any) (map[string]any, error) {
 			return map[string]any{"output": "success"}, nil
 		},
@@ -45,12 +45,12 @@ func NewMockTool(name string) *MockTool {
 	}
 }
 
-func (m *MockTool) Name() string                    { return m.name }
-func (m *MockTool) Description() string             { return m.description }
-func (m *MockTool) Version() string                 { return m.version }
-func (m *MockTool) Tags() []string                  { return m.tags }
-func (m *MockTool) InputSchema() schema.JSONSchema  { return m.inputSchema }
-func (m *MockTool) OutputSchema() schema.JSONSchema { return m.outputSchema }
+func (m *MockTool) Name() string        { return m.name }
+func (m *MockTool) Description() string { return m.description }
+func (m *MockTool) Version() string     { return m.version }
+func (m *MockTool) Tags() []string      { return m.tags }
+func (m *MockTool) InputSchema() schema.JSON  { return m.inputSchema }
+func (m *MockTool) OutputSchema() schema.JSON { return m.outputSchema }
 func (m *MockTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
 	return m.executeFn(ctx, input)
 }
