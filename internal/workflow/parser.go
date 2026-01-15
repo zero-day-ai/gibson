@@ -439,6 +439,7 @@ func parseAgentNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error 
 			ID:          types.NewID(),
 			Name:        node.Name,
 			Description: node.Description,
+			Goal:        node.Description, // Default goal to description
 			Input:       nodeData.Task,
 			Timeout:     node.Timeout,
 			CreatedAt:   time.Now(),
@@ -452,6 +453,9 @@ func parseAgentNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error 
 		}
 		if desc, ok := nodeData.Task["description"].(string); ok {
 			task.Description = desc
+		}
+		if goal, ok := nodeData.Task["goal"].(string); ok {
+			task.Goal = goal
 		}
 		if context, ok := nodeData.Task["context"].(map[string]interface{}); ok {
 			task.Context = context
