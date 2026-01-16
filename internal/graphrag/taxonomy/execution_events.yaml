@@ -195,6 +195,7 @@ execution_events:
       properties:
         - source: model
           target: model
+          optional: true                         # Model may not be available at request start
         - source: trace_id
           target: trace_id
         - source: span_id
