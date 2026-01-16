@@ -3,6 +3,7 @@
 package schema
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -100,6 +101,15 @@ type AgentExecution struct {
 
 	// Error stores the error message if execution failed
 	Error string `json:"error,omitempty"`
+
+	// ErrorClass categorizes the error by its nature (infrastructure/semantic/transient/permanent)
+	ErrorClass string `json:"error_class,omitempty"`
+
+	// ErrorCode is the standard error code (e.g., BINARY_NOT_FOUND, TIMEOUT)
+	ErrorCode string `json:"error_code,omitempty"`
+
+	// RecoveryHints stores recovery suggestions as JSON-compatible structures
+	RecoveryHints []map[string]any `json:"recovery_hints,omitempty"`
 
 	// LangfuseSpanID correlates this execution to Langfuse observability
 	LangfuseSpanID string `json:"langfuse_span_id,omitempty"`
@@ -201,6 +211,38 @@ func (ae *AgentExecution) MarkFailed(err string) *AgentExecution {
 	now := time.Now()
 	ae.Status = ExecutionStatusFailed
 	ae.Error = err
+	ae.CompletedAt = &now
+	ae.UpdatedAt = now
+	return ae
+}
+
+// MarkFailedWithDetails marks the execution as failed with structured error details.
+// This method stores error classification, error code, and recovery hints for semantic error recovery.
+// The hints parameter should be []RecoveryHint from the toolerr package, which will be converted
+// to JSON-compatible map[string]any structures for storage.
+// Returns the execution for method chaining.
+func (ae *AgentExecution) MarkFailedWithDetails(err string, errorClass string, errorCode string, hints any) *AgentExecution {
+	now := time.Now()
+	ae.Status = ExecutionStatusFailed
+	ae.Error = err
+	ae.ErrorClass = errorClass
+	ae.ErrorCode = errorCode
+
+	// Convert hints to []map[string]any for JSON compatibility
+	// The hints parameter is expected to be []RecoveryHint from toolerr package
+	if hints != nil {
+		// Use JSON marshaling/unmarshaling to convert any struct type to map[string]any
+		// This works because RecoveryHint has proper json tags
+		hintsJSON, err := json.Marshal(hints)
+		if err == nil {
+			var hintsMap []map[string]any
+			if err := json.Unmarshal(hintsJSON, &hintsMap); err == nil {
+				ae.RecoveryHints = hintsMap
+			}
+		}
+		// If conversion fails, RecoveryHints remains nil (graceful degradation)
+	}
+
 	ae.CompletedAt = &now
 	ae.UpdatedAt = now
 	return ae

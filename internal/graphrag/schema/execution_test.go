@@ -116,6 +116,68 @@ func TestAgentExecution_MarkFailed(t *testing.T) {
 	assert.True(t, exec.IsComplete())
 }
 
+func TestAgentExecution_MarkFailedWithDetails(t *testing.T) {
+	exec := NewAgentExecution("agent_1", types.NewID())
+	errMsg := "nmap binary not found"
+	errorClass := "infrastructure"
+	errorCode := "BINARY_NOT_FOUND"
+
+	// Create mock recovery hints as []map[string]any
+	hints := []map[string]any{
+		{
+			"strategy":    "use_alternative_tool",
+			"alternative": "masscan",
+			"reason":      "masscan can perform similar port scanning",
+			"confidence":  0.8,
+			"priority":    1,
+		},
+		{
+			"strategy":    "use_alternative_tool",
+			"alternative": "netcat",
+			"reason":      "nc can probe individual ports",
+			"confidence":  0.5,
+			"priority":    2,
+		},
+	}
+
+	// Sleep briefly to ensure CompletedAt differs from StartedAt
+	time.Sleep(1 * time.Millisecond)
+
+	exec.MarkFailedWithDetails(errMsg, errorClass, errorCode, hints)
+
+	assert.Equal(t, ExecutionStatusFailed, exec.Status)
+	assert.Equal(t, errMsg, exec.Error)
+	assert.Equal(t, errorClass, exec.ErrorClass)
+	assert.Equal(t, errorCode, exec.ErrorCode)
+	assert.NotNil(t, exec.RecoveryHints)
+	assert.Len(t, exec.RecoveryHints, 2)
+	assert.Equal(t, "use_alternative_tool", exec.RecoveryHints[0]["strategy"])
+	assert.Equal(t, "masscan", exec.RecoveryHints[0]["alternative"])
+	assert.NotNil(t, exec.CompletedAt)
+	assert.True(t, exec.CompletedAt.After(exec.StartedAt))
+	assert.True(t, exec.IsComplete())
+}
+
+func TestAgentExecution_MarkFailedWithDetails_NilHints(t *testing.T) {
+	exec := NewAgentExecution("agent_1", types.NewID())
+	errMsg := "unknown error"
+	errorClass := "transient"
+	errorCode := "EXECUTION_FAILED"
+
+	// Sleep briefly to ensure CompletedAt differs from StartedAt
+	time.Sleep(1 * time.Millisecond)
+
+	exec.MarkFailedWithDetails(errMsg, errorClass, errorCode, nil)
+
+	assert.Equal(t, ExecutionStatusFailed, exec.Status)
+	assert.Equal(t, errMsg, exec.Error)
+	assert.Equal(t, errorClass, exec.ErrorClass)
+	assert.Equal(t, errorCode, exec.ErrorCode)
+	assert.Nil(t, exec.RecoveryHints)
+	assert.NotNil(t, exec.CompletedAt)
+	assert.True(t, exec.IsComplete())
+}
+
 func TestAgentExecution_Duration(t *testing.T) {
 	exec := NewAgentExecution("agent_1", types.NewID())
 

@@ -119,6 +119,7 @@ type BudgetInfo struct {
 
 // ExecutionFailure captures details about a failed execution
 type ExecutionFailure struct {
+	// Existing fields
 	NodeID      string    `json:"node_id"`
 	NodeName    string    `json:"node_name"`
 	AgentName   string    `json:"agent_name,omitempty"`
@@ -127,6 +128,41 @@ type ExecutionFailure struct {
 	FailedAt    time.Time `json:"failed_at"`
 	CanRetry    bool      `json:"can_retry"`
 	MaxRetries  int       `json:"max_retries"`
+
+	// NEW: Structured error classification for semantic error recovery
+	// ErrorClass categorizes the error (infrastructure/semantic/transient/permanent)
+	ErrorClass string `json:"error_class,omitempty"`
+
+	// ErrorCode provides a specific error identifier (BINARY_NOT_FOUND, TIMEOUT, etc.)
+	ErrorCode string `json:"error_code,omitempty"`
+
+	// RecoveryHints provides concrete alternatives and recovery strategies
+	RecoveryHints []RecoveryHintSummary `json:"recovery_hints,omitempty"`
+
+	// PartialResults contains any salvageable data from the failed execution
+	PartialResults map[string]any `json:"partial_results,omitempty"`
+
+	// FailureContext contains additional context about what was tried
+	FailureContext map[string]any `json:"failure_context,omitempty"`
+}
+
+// RecoveryHintSummary is the orchestrator's representation of a recovery hint.
+// This is a simplified version that avoids tight coupling to SDK types.
+type RecoveryHintSummary struct {
+	// Strategy indicates the type of recovery action (retry, use_alternative_tool, etc.)
+	Strategy string `json:"strategy"`
+
+	// Alternative specifies an alternative tool or agent name, if applicable
+	Alternative string `json:"alternative,omitempty"`
+
+	// Params contains suggested parameter modifications
+	Params map[string]any `json:"params,omitempty"`
+
+	// Reason explains why this recovery approach might succeed
+	Reason string `json:"reason"`
+
+	// Priority determines the order to try hints (lower = try first)
+	Priority int `json:"priority,omitempty"`
 }
 
 // Observe gathers all execution state for the given mission and builds
@@ -461,14 +497,55 @@ func (s *ObservationState) FormatForPrompt() string {
 
 	// Failed execution context (if present)
 	if s.FailedExecution != nil {
+		f := s.FailedExecution
 		sb.WriteString("=== RECENT FAILURE ===\n")
-		sb.WriteString(fmt.Sprintf("Node: %s (%s)\n", s.FailedExecution.NodeName, s.FailedExecution.NodeID))
-		if s.FailedExecution.AgentName != "" {
-			sb.WriteString(fmt.Sprintf("Agent: %s\n", s.FailedExecution.AgentName))
+		sb.WriteString(fmt.Sprintf("Node: %s (%s)\n", f.NodeName, f.NodeID))
+		if f.AgentName != "" {
+			sb.WriteString(fmt.Sprintf("Agent: %s\n", f.AgentName))
 		}
-		sb.WriteString(fmt.Sprintf("Attempt: %d/%d\n", s.FailedExecution.Attempt, s.FailedExecution.MaxRetries))
-		sb.WriteString(fmt.Sprintf("Error: %s\n", truncateString(s.FailedExecution.Error, 300)))
-		sb.WriteString(fmt.Sprintf("Can Retry: %v\n", s.FailedExecution.CanRetry))
+		sb.WriteString(fmt.Sprintf("Attempt: %d/%d\n", f.Attempt, f.MaxRetries))
+
+		// NEW: Error classification
+		if f.ErrorCode != "" {
+			sb.WriteString(fmt.Sprintf("Error Code: %s\n", f.ErrorCode))
+		}
+		if f.ErrorClass != "" {
+			sb.WriteString(fmt.Sprintf("Error Class: %s\n", f.ErrorClass))
+		}
+		sb.WriteString(fmt.Sprintf("Error: %s\n", truncateString(f.Error, 300)))
+		sb.WriteString(fmt.Sprintf("Can Retry: %v\n", f.CanRetry))
+
+		// NEW: Recovery hints
+		if len(f.RecoveryHints) > 0 {
+			sb.WriteString("\nRecovery Options:\n")
+			for i, hint := range f.RecoveryHints {
+				sb.WriteString(fmt.Sprintf("%d. [%s]", i+1, hint.Strategy))
+				if hint.Alternative != "" {
+					sb.WriteString(fmt.Sprintf(" %s", hint.Alternative))
+				}
+				sb.WriteString(fmt.Sprintf(" - %s\n", hint.Reason))
+				if len(hint.Params) > 0 {
+					sb.WriteString(fmt.Sprintf("   Suggested params: %v\n", hint.Params))
+				}
+			}
+		}
+
+		// NEW: Partial results
+		if len(f.PartialResults) > 0 {
+			sb.WriteString("\nPartial Results Recovered:\n")
+			for k, v := range f.PartialResults {
+				sb.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
+			}
+		}
+
+		// NEW: Failure context
+		if len(f.FailureContext) > 0 {
+			sb.WriteString("\nFailure Context:\n")
+			for k, v := range f.FailureContext {
+				sb.WriteString(fmt.Sprintf("  %s: %v\n", k, v))
+			}
+		}
+
 		sb.WriteString("\n")
 	}
 

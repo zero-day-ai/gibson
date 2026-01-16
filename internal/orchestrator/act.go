@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/graphrag/queries"
 	"github.com/zero-day-ai/gibson/internal/graphrag/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/toolerr"
 )
 
 // Harness defines the interface for agent delegation and tool execution.
@@ -163,8 +165,24 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 
 	// Update execution based on result
 	if err != nil {
-		// Agent delegation failed
-		execution.MarkFailed(err.Error())
+		// Extract structured error if available
+		var toolErr *toolerr.Error
+		if errors.As(err, &toolErr) {
+			// Enrich error with registry hints
+			toolErr = toolerr.EnrichError(toolErr)
+
+			// Store structured error details
+			execution.MarkFailedWithDetails(
+				toolErr.Message,
+				string(toolErr.Class),
+				toolErr.Code,
+				toolErr.Hints,
+			)
+		} else {
+			// Fall back to existing behavior for non-toolerr errors
+			execution.MarkFailed(err.Error())
+		}
+
 		if updateErr := a.execQueries.UpdateExecution(ctx, execution); updateErr != nil {
 			return nil, fmt.Errorf("failed to update execution after error: %w", updateErr)
 		}
@@ -188,8 +206,25 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 		errMsg := "agent execution failed"
 		if result.Error != nil {
 			errMsg = result.Error.Message
+
+			// Check if the error has a code (likely from toolerr)
+			// ResultError.Code might contain the toolerr error code
+			if result.Error.Code != "" {
+				// Infer class from code and store structured error details
+				errorClass := string(toolerr.DefaultClassForCode(result.Error.Code))
+				execution.MarkFailedWithDetails(
+					errMsg,
+					errorClass,
+					result.Error.Code,
+					nil, // No hints available at this level
+				)
+			} else {
+				// No error code, use basic MarkFailed
+				execution.MarkFailed(errMsg)
+			}
+		} else {
+			execution.MarkFailed(errMsg)
 		}
-		execution.MarkFailed(errMsg)
 
 		// Update node status to failed
 		if updateErr := a.updateNodeStatus(ctx, node.ID, schema.WorkflowNodeStatusFailed); updateErr != nil {

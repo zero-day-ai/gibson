@@ -361,8 +361,8 @@ github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9de
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yusufpapurcu/wmi v1.2.4 h1:zFUKzehAFReQwLys1b/iSMl+JQGSCSjtVqQn9bBrPo0=
 github.com/yusufpapurcu/wmi v1.2.4/go.mod h1:SBZ9tNy3G9/m5Oi98Zks0QjeHVDvuK0qfxQmPyzfmi0=
-github.com/zero-day-ai/sdk v0.17.0 h1:lvfb0NjVj7fcu/EhA4R2TH4oRA0UBtEw3ZShnew9Ln8=
-github.com/zero-day-ai/sdk v0.17.0/go.mod h1:MCV66chYD61QPYo+FRmKGg2mdWIVwv9Wee1UOGLLJkQ=
+github.com/zero-day-ai/sdk v0.18.0 h1:FT8K+OwvIlgq6KwztUNplP+0WuaiCtJCe8wHjPXCcAI=
+github.com/zero-day-ai/sdk v0.18.0/go.mod h1:MCV66chYD61QPYo+FRmKGg2mdWIVwv9Wee1UOGLLJkQ=
 go.etcd.io/bbolt v1.3.11 h1:yGEzV1wPz2yVCLsD8ZAiGHhHVlczyC9d1rP43/VCRJ0=
 go.etcd.io/bbolt v1.3.11/go.mod h1:dksAq7YMXoljX0xu6VF5DMZGbhYYoLUalEiSySYAS4I=
 go.etcd.io/etcd/api/v3 v3.5.18 h1:Q4oDAKnmwqTo5lafvB+afbgCDF7E35E4EYV2g+FNGhs=

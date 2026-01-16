@@ -207,6 +207,104 @@ func TestObservationState_FormatForPrompt(t *testing.T) {
 		}
 	})
 
+	t.Run("formats state with enhanced error classification", func(t *testing.T) {
+		state := &ObservationState{
+			MissionInfo: MissionInfo{
+				ID:          "mission-123",
+				Name:        "Test Mission",
+				Objective:   "Test objective",
+				Status:      "running",
+				StartedAt:   time.Now(),
+				TimeElapsed: "1m",
+			},
+			GraphSummary: GraphSummary{
+				TotalNodes: 5,
+			},
+			ReadyNodes:     []NodeSummary{},
+			RunningNodes:   []NodeSummary{},
+			CompletedNodes: []NodeSummary{},
+			FailedNodes:    []NodeSummary{},
+			FailedExecution: &ExecutionFailure{
+				NodeID:     "node-failed",
+				NodeName:   "nmap_scan",
+				AgentName:  "nmap",
+				Attempt:    1,
+				Error:      "nmap binary not found in PATH",
+				FailedAt:   time.Now(),
+				CanRetry:   true,
+				MaxRetries: 3,
+				// NEW: Enhanced error fields
+				ErrorClass: "infrastructure",
+				ErrorCode:  "BINARY_NOT_FOUND",
+				RecoveryHints: []RecoveryHintSummary{
+					{
+						Strategy:    "use_alternative_tool",
+						Alternative: "masscan",
+						Reason:      "masscan can perform similar port scanning",
+						Priority:    1,
+					},
+					{
+						Strategy:    "use_alternative_tool",
+						Alternative: "netcat",
+						Reason:      "nc can probe individual ports",
+						Priority:    2,
+					},
+				},
+				PartialResults: map[string]any{
+					"scanned_hosts": 5,
+					"completed":     false,
+				},
+				FailureContext: map[string]any{
+					"attempted_binary": "/usr/bin/nmap",
+					"search_paths":     []string{"/usr/bin", "/usr/local/bin"},
+				},
+			},
+			RecentDecisions: []DecisionSummary{},
+			ResourceConstraints: ResourceConstraints{
+				MaxConcurrent:  10,
+				CurrentRunning: 0,
+			},
+			ObservedAt: time.Now(),
+		}
+
+		prompt := state.FormatForPrompt()
+
+		// Verify enhanced error classification
+		if !strings.Contains(prompt, "Error Code: BINARY_NOT_FOUND") {
+			t.Error("error code not in prompt")
+		}
+		if !strings.Contains(prompt, "Error Class: infrastructure") {
+			t.Error("error class not in prompt")
+		}
+
+		// Verify recovery hints are rendered
+		if !strings.Contains(prompt, "Recovery Options:") {
+			t.Error("recovery options section not in prompt")
+		}
+		if !strings.Contains(prompt, "[use_alternative_tool] masscan") {
+			t.Error("first recovery hint not in prompt")
+		}
+		if !strings.Contains(prompt, "masscan can perform similar port scanning") {
+			t.Error("recovery hint reason not in prompt")
+		}
+
+		// Verify partial results
+		if !strings.Contains(prompt, "Partial Results Recovered:") {
+			t.Error("partial results section not in prompt")
+		}
+		if !strings.Contains(prompt, "scanned_hosts: 5") {
+			t.Error("partial results not in prompt")
+		}
+
+		// Verify failure context
+		if !strings.Contains(prompt, "Failure Context:") {
+			t.Error("failure context section not in prompt")
+		}
+		if !strings.Contains(prompt, "attempted_binary") {
+			t.Error("failure context not in prompt")
+		}
+	})
+
 	t.Run("handles empty state gracefully", func(t *testing.T) {
 		state := &ObservationState{
 			MissionInfo: MissionInfo{
