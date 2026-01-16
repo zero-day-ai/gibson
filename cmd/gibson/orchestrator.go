@@ -9,10 +9,12 @@ import (
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/orchestrator"
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
@@ -148,31 +150,81 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 		return nil, fmt.Errorf("failed to create harness factory: %w", err)
 	}
 
-	// Step 6: Create workflow executor
-	executorOpts := []workflow.ExecutorOption{
-		workflow.WithLogger(slog.Default()),
-		workflow.WithTracer(tracer),
+	// Step 6: Create GraphRAG client if Neo4j is configured
+	var graphRAGClient graph.GraphClient
+	neo4jURI := os.Getenv("NEO4J_URI")
+	if neo4jURI == "" {
+		neo4jURI = os.Getenv("GIBSON_NEO4J_URI")
 	}
 
-	workflowExecutor := workflow.NewWorkflowExecutor(executorOpts...)
+	if neo4jURI != "" {
+		neo4jUser := os.Getenv("NEO4J_USER")
+		if neo4jUser == "" {
+			neo4jUser = "neo4j"
+		}
+		neo4jPassword := os.Getenv("NEO4J_PASSWORD")
+
+		graphConfig := graph.GraphClientConfig{
+			URI:      neo4jURI,
+			Username: neo4jUser,
+			Password: neo4jPassword,
+		}
+
+		client, err := graph.NewNeo4jClient(graphConfig)
+		if err != nil {
+			slog.Warn("Failed to create Neo4j client, SOTA orchestrator will not be available", "error", err)
+		} else {
+			// Connect to Neo4j
+			if err := client.Connect(ctx); err != nil {
+				slog.Warn("Failed to connect to Neo4j, SOTA orchestrator will not be available", "error", err)
+				client = nil
+			} else {
+				graphRAGClient = client
+				cleanupFuncs = append(cleanupFuncs, func() {
+					if err := client.Close(context.Background()); err != nil {
+						slog.Warn("failed to close Neo4j client", "error", err)
+					}
+				})
+				slog.Info("Connected to Neo4j for SOTA orchestrator")
+			}
+		}
+	}
 
 	// Step 7: Create event emitter for progress reporting
 	eventEmitter := mission.NewDefaultEventEmitter(mission.WithBufferSize(100))
 
-	// Step 8: Create mission orchestrator
-	orchestrator, err := mission.NewMissionOrchestrator(
-		missionStore,
-		mission.WithWorkflowExecutor(workflowExecutor),
-		mission.WithHarnessFactory(harnessFactory),
-		mission.WithEventEmitter(eventEmitter),
-	)
-	if err != nil {
+	// Step 8: Create mission orchestrator using SOTA if GraphRAG is available
+	var orch mission.MissionOrchestrator
+	if graphRAGClient != nil {
+		// Use SOTA orchestrator
+		graphLoader := workflow.NewGraphLoader(graphRAGClient)
+
+		sotaConfig := orchestrator.SOTAOrchestratorConfig{
+			GraphRAGClient:     graphRAGClient,
+			HarnessFactory:     harnessFactory,
+			Logger:             slog.Default(),
+			Tracer:             tracer,
+			MaxIterations:      100,
+			MaxConcurrent:      10,
+			ThinkerMaxRetries:  3,
+			ThinkerTemperature: 0.2,
+			GraphLoader:        graphLoader,
+		}
+
+		orch, err = orchestrator.NewSOTAMissionOrchestrator(sotaConfig)
+		if err != nil {
+			cleanup()
+			return nil, fmt.Errorf("failed to create SOTA orchestrator: %w", err)
+		}
+		slog.Info("Using SOTA orchestrator for mission execution")
+	} else {
+		// Fallback: Neo4j not available
 		cleanup()
-		return nil, fmt.Errorf("failed to create mission orchestrator: %w", err)
+		return nil, fmt.Errorf("Neo4j is required for mission orchestration. Set NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD environment variables")
 	}
 
 	return &OrchestratorBundle{
-		Orchestrator:    orchestrator,
+		Orchestrator:    orch,
 		MissionStore:    missionStore,
 		FindingStore:    findingStore,
 		RegistryAdapter: registryAdapter,

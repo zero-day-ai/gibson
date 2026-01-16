@@ -18,10 +18,12 @@ import (
 	"github.com/zero-day-ai/gibson/internal/daemon/client"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/orchestrator"
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/registry"
@@ -484,25 +486,67 @@ func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 	// Use the base harness factory directly - middleware handles observability
 	harnessFactory := baseHarnessFactory
 
-	// Step 5: Create workflow executor
-	// NOTE (Task 7): When CallbackManager is available (Task 5), pass it to the workflow executor
-	// via a WithCallbackManager option (to be implemented in Task 6).
-	// This enables the workflow engine to register harnesses and provide callback endpoints
-	// when executing external gRPC agents.
-	workflowExecutor := workflow.NewWorkflowExecutor(
-		workflow.WithLogger(slog.Default()),
-		workflow.WithTracer(trace.NewNoopTracerProvider().Tracer("workflow")),
-		// TODO (Task 6): workflow.WithCallbackManager(globalCallbackManager),
-	)
+	// Step 5: Create GraphRAG client if Neo4j is configured
+	var graphRAGClient graph.GraphClient
+	neo4jURI := os.Getenv("NEO4J_URI")
+	if neo4jURI == "" {
+		neo4jURI = os.Getenv("GIBSON_NEO4J_URI")
+	}
 
-	// Step 6: Create mission orchestrator
-	orchestrator, err := mission.NewMissionOrchestrator(
-		missionStore,
-		mission.WithWorkflowExecutor(workflowExecutor),
-		mission.WithHarnessFactory(harnessFactory),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create mission orchestrator: %w", err)
+	if neo4jURI != "" {
+		neo4jUser := os.Getenv("NEO4J_USER")
+		if neo4jUser == "" {
+			neo4jUser = "neo4j"
+		}
+		neo4jPassword := os.Getenv("NEO4J_PASSWORD")
+
+		graphConfig := graph.GraphClientConfig{
+			URI:      neo4jURI,
+			Username: neo4jUser,
+			Password: neo4jPassword,
+		}
+
+		client, err := graph.NewNeo4jClient(graphConfig)
+		if err != nil {
+			slog.Warn("Failed to create Neo4j client, SOTA orchestrator will not be available", "error", err)
+		} else {
+			// Connect to Neo4j
+			if err := client.Connect(context.Background()); err != nil {
+				slog.Warn("Failed to connect to Neo4j, SOTA orchestrator will not be available", "error", err)
+				client = nil
+			} else {
+				graphRAGClient = client
+				slog.Info("Connected to Neo4j for SOTA orchestrator")
+			}
+		}
+	}
+
+	// Step 6: Create mission orchestrator using SOTA if GraphRAG is available
+	var orch mission.MissionOrchestrator
+	if graphRAGClient != nil {
+		// Use SOTA orchestrator
+		graphLoader := workflow.NewGraphLoader(graphRAGClient)
+
+		sotaConfig := orchestrator.SOTAOrchestratorConfig{
+			GraphRAGClient:     graphRAGClient,
+			HarnessFactory:     harnessFactory,
+			Logger:             slog.Default(),
+			Tracer:             trace.NewNoopTracerProvider().Tracer("orchestrator"),
+			MaxIterations:      100,
+			MaxConcurrent:      10,
+			ThinkerMaxRetries:  3,
+			ThinkerTemperature: 0.2,
+			GraphLoader:        graphLoader,
+		}
+
+		orch, err = orchestrator.NewSOTAMissionOrchestrator(sotaConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SOTA orchestrator: %w", err)
+		}
+		slog.Info("Using SOTA orchestrator for attack execution")
+	} else {
+		// Fallback: Neo4j not available
+		return nil, fmt.Errorf("Neo4j is required for attack orchestration. Set NEO4J_URI, NEO4J_USER, and NEO4J_PASSWORD environment variables")
 	}
 
 	// Step 7: Create attack runner options
@@ -513,7 +557,7 @@ func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 
 	// Step 8: Create and return attack runner
 	runner := attack.NewAttackRunner(
-		orchestrator,
+		orch,
 		registryAdapter,
 		payloadRegistry,
 		missionStore,

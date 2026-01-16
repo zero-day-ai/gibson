@@ -423,6 +423,7 @@ func (eq *ExecutionQueries) GetExecutionTools(ctx context.Context, execID string
 // structToProps converts a struct to a map[string]any for Neo4j properties.
 // Uses JSON marshaling/unmarshaling for type conversion.
 // Handles time.Time fields by converting to RFC3339 strings.
+// Nested maps and slices are serialized to JSON strings since Neo4j doesn't support them directly.
 func structToProps(v any) (map[string]any, error) {
 	// Marshal to JSON
 	data, err := json.Marshal(v)
@@ -434,6 +435,29 @@ func structToProps(v any) (map[string]any, error) {
 	var props map[string]any
 	if err := json.Unmarshal(data, &props); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal to map: %w", err)
+	}
+
+	// Convert nested maps/slices to JSON strings since Neo4j doesn't support them
+	for key, val := range props {
+		if val == nil {
+			continue
+		}
+		switch v := val.(type) {
+		case map[string]any:
+			// Serialize nested map to JSON string
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				return nil, fmt.Errorf("failed to serialize %s to JSON: %w", key, err)
+			}
+			props[key] = string(jsonBytes)
+		case []any:
+			// Serialize slice to JSON string
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				return nil, fmt.Errorf("failed to serialize %s to JSON: %w", key, err)
+			}
+			props[key] = string(jsonBytes)
+		}
 	}
 
 	return props, nil

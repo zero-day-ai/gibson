@@ -281,15 +281,15 @@ func TestMission_Validate(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "empty target ref",
+			name: "empty target ref (allowed for discovery missions)",
 			mission: &Mission{
 				ID:         types.NewID(),
 				Name:       "test-mission",
-				TargetRef:  "",
+				TargetRef:  "", // Empty target_ref is allowed for orchestration/discovery missions
 				Status:     MissionStatusPending,
 				YAMLSource: "mission:\n  name: test",
 			},
-			wantErr: true,
+			wantErr: false, // Empty target_ref is now allowed
 		},
 		{
 			name: "empty yaml source",

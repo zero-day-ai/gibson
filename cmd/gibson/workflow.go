@@ -220,7 +220,7 @@ func runWorkflowParse(cmd *cobra.Command, args []string) error {
 	defer graphClient.Close(ctx)
 
 	loader := workflow.NewGraphLoader(graphClient)
-	missionID, err := loader.LoadWorkflow(ctx, parsed)
+	missionID, err := loader.LoadParsedWorkflow(ctx, parsed)
 	if err != nil {
 		return internal.WrapError(internal.ExitError, "failed to load workflow into graph", err)
 	}
@@ -487,14 +487,16 @@ func runWorkflowDiff(cmd *cobra.Command, args []string) error {
 
 // connectToGraph creates a Neo4j graph client
 func connectToGraph(ctx context.Context, graphURL string) (graph.GraphClient, error) {
-	// Parse URL to extract auth if present
-	// For now, use default credentials (neo4j/password)
-	// TODO: Support auth from URL or config file
-	config := graph.GraphClientConfig{
-		URI:      graphURL,
-		Username: "neo4j",
-		Password: "password",
-		Database: "",
+	// Start with defaults and override URI
+	config := graph.DefaultConfig()
+	config.URI = graphURL
+
+	// Check for environment variable overrides
+	if user := os.Getenv("NEO4J_USER"); user != "" {
+		config.Username = user
+	}
+	if pass := os.Getenv("NEO4J_PASSWORD"); pass != "" {
+		config.Password = pass
 	}
 
 	client, err := graph.NewNeo4jClient(config)

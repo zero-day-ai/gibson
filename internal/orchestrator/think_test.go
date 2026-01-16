@@ -375,7 +375,9 @@ func TestThinker_Think_Retries(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, result)
 		assert.Contains(t, err.Error(), "failed after")
-		assert.Equal(t, 3, client.callCount) // Initial + 2 retries
+		// Each retry attempt calls both structured output (CompleteStructuredAny) and
+		// text fallback (Complete), so 3 attempts * 2 calls each = 6 total calls
+		assert.Equal(t, 6, client.callCount)
 	})
 }
 
@@ -415,6 +417,9 @@ func TestThinker_Think_Errors(t *testing.T) {
 			setupClient: func() *mockLLMClient {
 				return &mockLLMClient{
 					completeStructuredFunc: func(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error) {
+						return nil, ctx.Err()
+					},
+					completeFunc: func(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (*llm.CompletionResponse, error) {
 						return nil, ctx.Err()
 					},
 				}
@@ -553,7 +558,7 @@ func TestThinker_buildPrompt(t *testing.T) {
 
 	// Verify prompt contains key information
 	assert.Contains(t, prompt, state.MissionInfo.Objective)
-	assert.Contains(t, prompt, state.MissionInfo.ID)
+	assert.Contains(t, prompt, state.MissionInfo.Name) // Name is included in prompt, not ID
 	assert.Contains(t, prompt, "MISSION CONTEXT")
 	assert.Contains(t, prompt, "WORKFLOW PROGRESS")
 	assert.Contains(t, prompt, "Response Format")

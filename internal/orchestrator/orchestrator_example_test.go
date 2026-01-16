@@ -45,24 +45,18 @@ func ExampleOrchestrator() {
 	fmt.Printf("Duration: %s\n", result.Duration)
 }
 
-// ExampleOrchestratorWithEvents demonstrates orchestrator with event bus integration.
-func ExampleOrchestratorWithEvents() {
+// ExampleNewOrchestrator_withOptions demonstrates orchestrator with options.
+func ExampleNewOrchestrator_withOptions() {
 	var observer *orchestrator.Observer
 	var thinker *orchestrator.Thinker
 	var actor *orchestrator.Actor
 
-	// Create a simple event bus for observability
-	type simpleEventBus struct{}
-	_ = simpleEventBus{} // Placeholder to fix compilation
-
-	eventBus := &simpleEventBus{}
-
-	// Create orchestrator with event bus
+	// Create orchestrator without event bus for this example
+	// In production, you would pass an actual EventBus implementation
 	orch := orchestrator.NewOrchestrator(
 		observer,
 		thinker,
 		actor,
-		orchestrator.WithEventBus(eventBus),
 		orchestrator.WithMaxIterations(50),
 	)
 

@@ -40,7 +40,7 @@ func NewGraphLoader(client graph.GraphClient) *GraphLoader {
 	}
 }
 
-// LoadWorkflow loads a parsed workflow into Neo4j as a Mission with WorkflowNode DAG.
+// LoadWorkflow loads a workflow into Neo4j as a Mission with WorkflowNode DAG.
 // Returns the mission ID on success or an error if the operation fails.
 //
 // The loading process:
@@ -54,12 +54,55 @@ func NewGraphLoader(client graph.GraphClient) *GraphLoader {
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeout
-//   - parsed: The parsed workflow from ParseWorkflowYAML
+//   - wf: The workflow to load
 //
 // Returns:
 //   - string: The mission ID (as string) for future reference
 //   - error: Any error that occurred during loading
-func (g *GraphLoader) LoadWorkflow(ctx context.Context, parsed *ParsedWorkflow) (string, error) {
+func (g *GraphLoader) LoadWorkflow(ctx context.Context, wf *Workflow) (string, error) {
+	if wf == nil {
+		return "", fmt.Errorf("workflow cannot be nil")
+	}
+
+	// Generate mission ID if not set
+	missionID := wf.ID
+	if missionID == "" {
+		missionID = types.NewID()
+	}
+
+	// Serialize the workflow to JSON for snapshot storage
+	yamlSource, err := g.serializeWorkflow(wf)
+	if err != nil {
+		return "", fmt.Errorf("failed to serialize workflow: %w", err)
+	}
+
+	// Create the Mission schema object
+	mission := schema.NewMission(
+		missionID,
+		wf.Name,
+		wf.Description,
+		wf.Name, // Use name as objective if not specified
+		wf.TargetRef,
+		yamlSource,
+	)
+
+	if err := mission.Validate(); err != nil {
+		return "", fmt.Errorf("invalid mission: %w", err)
+	}
+
+	// Execute the entire load operation in a transaction-like manner
+	// We'll use multiple Cypher queries within explicit transactions
+	if err := g.loadWorkflowInTransaction(ctx, mission, wf); err != nil {
+		return "", fmt.Errorf("failed to load workflow: %w", err)
+	}
+
+	return missionID.String(), nil
+}
+
+// LoadParsedWorkflow loads a ParsedWorkflow into Neo4j as a Mission with WorkflowNode DAG.
+// This is the legacy version that accepts ParsedWorkflow for backward compatibility.
+// New code should use LoadWorkflow with *Workflow instead.
+func (g *GraphLoader) LoadParsedWorkflow(ctx context.Context, parsed *ParsedWorkflow) (string, error) {
 	if parsed == nil {
 		return "", fmt.Errorf("parsed workflow cannot be nil")
 	}
@@ -88,7 +131,6 @@ func (g *GraphLoader) LoadWorkflow(ctx context.Context, parsed *ParsedWorkflow) 
 	}
 
 	// Execute the entire load operation in a transaction-like manner
-	// We'll use multiple Cypher queries within explicit transactions
 	if err := g.loadInTransaction(ctx, mission, parsed); err != nil {
 		return "", fmt.Errorf("failed to load workflow: %w", err)
 	}
@@ -96,8 +138,74 @@ func (g *GraphLoader) LoadWorkflow(ctx context.Context, parsed *ParsedWorkflow) 
 	return missionID.String(), nil
 }
 
-// loadInTransaction performs the complete workflow loading within transaction semantics.
+// loadWorkflowInTransaction performs the complete workflow loading within transaction semantics.
 // This ensures atomicity - either all nodes/relationships are created or none are.
+func (g *GraphLoader) loadWorkflowInTransaction(ctx context.Context, mission *schema.Mission, wf *Workflow) error {
+	// Step 1: Create the Mission node
+	if err := g.createMission(ctx, mission); err != nil {
+		return fmt.Errorf("failed to create mission node: %w", err)
+	}
+
+	// Step 2: Create all WorkflowNode nodes
+	nodeMap := make(map[string]*schema.WorkflowNode) // Maps workflow node ID to schema node
+	for nodeID, workflowNode := range wf.Nodes {
+		schemaNode, err := g.convertToSchemaNode(mission.ID, nodeID, workflowNode)
+		if err != nil {
+			return fmt.Errorf("failed to convert node %s: %w", nodeID, err)
+		}
+
+		if err := g.createWorkflowNode(ctx, schemaNode); err != nil {
+			return fmt.Errorf("failed to create workflow node %s: %w", nodeID, err)
+		}
+
+		nodeMap[nodeID] = schemaNode
+	}
+
+	// Step 3: Create PART_OF relationships (WorkflowNode -> Mission)
+	for nodeID, schemaNode := range nodeMap {
+		// Use the schema node's ID (UUID), not the original nodeID (which may be human-readable)
+		if err := g.createPartOfRelationship(ctx, schemaNode.ID.String(), mission.ID.String()); err != nil {
+			return fmt.Errorf("failed to create PART_OF relationship for node %s: %w", nodeID, err)
+		}
+	}
+
+	// Step 4: Create DEPENDS_ON relationships (DAG edges)
+	for _, edge := range wf.Edges {
+		// Map edge IDs to schema node UUIDs
+		fromNode, ok := nodeMap[edge.From]
+		if !ok {
+			return fmt.Errorf("edge references unknown node: %s", edge.From)
+		}
+		toNode, ok := nodeMap[edge.To]
+		if !ok {
+			return fmt.Errorf("edge references unknown node: %s", edge.To)
+		}
+		if err := g.createDependsOnRelationship(ctx, fromNode.ID.String(), toNode.ID.String()); err != nil {
+			return fmt.Errorf("failed to create DEPENDS_ON relationship %s->%s: %w", edge.From, edge.To, err)
+		}
+	}
+
+	// Step 5: Mark entry point nodes (nodes with no dependencies) as "ready"
+	// Entry points are nodes that don't appear as targets of any edge
+	dependentNodes := make(map[string]bool)
+	for _, edge := range wf.Edges {
+		dependentNodes[edge.To] = true
+	}
+	for nodeID, schemaNode := range nodeMap {
+		if !dependentNodes[nodeID] {
+			// This node has no dependencies, mark it as ready
+			if err := g.updateNodeStatus(ctx, schemaNode.ID.String(), "ready"); err != nil {
+				return fmt.Errorf("failed to mark entry point node %s as ready: %w", nodeID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// loadInTransaction performs the complete workflow loading within transaction semantics (for ParsedWorkflow).
+// This ensures atomicity - either all nodes/relationships are created or none are.
+// Deprecated: Use loadWorkflowInTransaction with *Workflow instead.
 func (g *GraphLoader) loadInTransaction(ctx context.Context, mission *schema.Mission, parsed *ParsedWorkflow) error {
 	// Step 1: Create the Mission node
 	if err := g.createMission(ctx, mission); err != nil {
@@ -120,15 +228,25 @@ func (g *GraphLoader) loadInTransaction(ctx context.Context, mission *schema.Mis
 	}
 
 	// Step 3: Create PART_OF relationships (WorkflowNode -> Mission)
-	for nodeID := range nodeMap {
-		if err := g.createPartOfRelationship(ctx, nodeID, mission.ID.String()); err != nil {
+	for nodeID, schemaNode := range nodeMap {
+		// Use the schema node's ID (UUID), not the original nodeID (which may be human-readable)
+		if err := g.createPartOfRelationship(ctx, schemaNode.ID.String(), mission.ID.String()); err != nil {
 			return fmt.Errorf("failed to create PART_OF relationship for node %s: %w", nodeID, err)
 		}
 	}
 
 	// Step 4: Create DEPENDS_ON relationships (DAG edges)
 	for _, edge := range parsed.Edges {
-		if err := g.createDependsOnRelationship(ctx, edge.From, edge.To); err != nil {
+		// Map edge IDs to schema node UUIDs
+		fromNode, ok := nodeMap[edge.From]
+		if !ok {
+			return fmt.Errorf("edge references unknown node: %s", edge.From)
+		}
+		toNode, ok := nodeMap[edge.To]
+		if !ok {
+			return fmt.Errorf("edge references unknown node: %s", edge.To)
+		}
+		if err := g.createDependsOnRelationship(ctx, fromNode.ID.String(), toNode.ID.String()); err != nil {
 			return fmt.Errorf("failed to create DEPENDS_ON relationship %s->%s: %w", edge.From, edge.To, err)
 		}
 	}
@@ -138,7 +256,7 @@ func (g *GraphLoader) loadInTransaction(ctx context.Context, mission *schema.Mis
 
 // createMission creates the Mission node in Neo4j.
 func (g *GraphLoader) createMission(ctx context.Context, mission *schema.Mission) error {
-	// Prepare mission properties
+	// Prepare mission properties - use raw UUID for ID
 	props := map[string]any{
 		"id":          mission.ID.String(),
 		"name":        mission.Name,
@@ -272,11 +390,15 @@ func (g *GraphLoader) createPartOfRelationship(ctx context.Context, nodeID, miss
 }
 
 // createDependsOnRelationship creates a DEPENDS_ON relationship between two WorkflowNodes.
-// This represents a DAG edge where 'from' must complete before 'to' can start.
+// The edge is created as (to)-[:DEPENDS_ON]->(from), meaning 'to' depends on 'from' completing first.
+// This matches the semantic: if B depends_on A, then B cannot run until A completes.
 func (g *GraphLoader) createDependsOnRelationship(ctx context.Context, fromID, toID string) error {
+	// fromID = the prerequisite node (must complete first)
+	// toID = the dependent node (waits for fromID)
+	// Relationship: (dependent)-[:DEPENDS_ON]->(prerequisite)
 	cypher := `
 		MATCH (from:WorkflowNode {id: $fromId}), (to:WorkflowNode {id: $toId})
-		CREATE (from)-[:DEPENDS_ON]->(to)
+		CREATE (to)-[:DEPENDS_ON]->(from)
 		RETURN from.id as from_id, to.id as to_id
 	`
 
@@ -292,6 +414,31 @@ func (g *GraphLoader) createDependsOnRelationship(ctx context.Context, fromID, t
 
 	if len(result.Records) == 0 {
 		return fmt.Errorf("DEPENDS_ON relationship creation returned no records - nodes may not exist")
+	}
+
+	return nil
+}
+
+// updateNodeStatus updates the status of a WorkflowNode in Neo4j.
+func (g *GraphLoader) updateNodeStatus(ctx context.Context, nodeID, status string) error {
+	cypher := `
+		MATCH (n:WorkflowNode {id: $nodeId})
+		SET n.status = $status, n.updated_at = timestamp()
+		RETURN n.id as id
+	`
+
+	params := map[string]any{
+		"nodeId": nodeID,
+		"status": status,
+	}
+
+	result, err := g.client.Query(ctx, cypher, params)
+	if err != nil {
+		return fmt.Errorf("failed to update node status: %w", err)
+	}
+
+	if len(result.Records) == 0 {
+		return fmt.Errorf("node status update returned no records - node may not exist")
 	}
 
 	return nil
@@ -319,12 +466,18 @@ func (g *GraphLoader) convertToSchemaNode(missionID types.ID, nodeID string, wor
 		return nil, fmt.Errorf("unsupported node type: %s", workflowNode.Type)
 	}
 
+	// Use node ID as name if no name is provided
+	nodeName := workflowNode.Name
+	if nodeName == "" {
+		nodeName = nodeID // Fallback to using the node ID as the name
+	}
+
 	// Create the schema node
 	schemaNode := schema.NewWorkflowNode(
 		id,
 		missionID,
 		nodeType,
-		workflowNode.Name,
+		nodeName,
 		workflowNode.Description,
 	)
 
@@ -333,12 +486,14 @@ func (g *GraphLoader) convertToSchemaNode(missionID types.ID, nodeID string, wor
 		schemaNode.AgentName = workflowNode.AgentName
 
 		// Convert agent task to task config
+		// Store all fields needed to reconstruct the SDK Task on the other side
 		if workflowNode.AgentTask != nil {
 			taskConfig := make(map[string]any)
 			taskConfig["name"] = workflowNode.AgentTask.Name
 			taskConfig["description"] = workflowNode.AgentTask.Description
-			taskConfig["input"] = workflowNode.AgentTask.Input
+			taskConfig["goal"] = workflowNode.AgentTask.Goal
 			taskConfig["context"] = workflowNode.AgentTask.Context
+			taskConfig["input"] = workflowNode.AgentTask.Input // deprecated but kept for compatibility
 			taskConfig["priority"] = workflowNode.AgentTask.Priority
 			taskConfig["tags"] = workflowNode.AgentTask.Tags
 			schemaNode.TaskConfig = taskConfig
@@ -399,8 +554,78 @@ func (g *GraphLoader) convertRetryPolicy(policy *RetryPolicy) *schema.RetryPolic
 	return schemaPolicy
 }
 
+// serializeWorkflow serializes a Workflow to JSON for storage.
+// We use JSON instead of YAML for more reliable round-tripping and smaller size.
+func (g *GraphLoader) serializeWorkflow(wf *Workflow) (string, error) {
+	// Create a simplified representation suitable for storage
+	snapshot := map[string]any{
+		"id":           wf.ID.String(),
+		"name":         wf.Name,
+		"description":  wf.Description,
+		"target_ref":   wf.TargetRef,
+		"entry_points": wf.EntryPoints,
+		"exit_points":  wf.ExitPoints,
+		"created_at":   wf.CreatedAt.Format(time.RFC3339),
+	}
+
+	// Add metadata if present
+	if wf.Metadata != nil {
+		snapshot["metadata"] = wf.Metadata
+	}
+
+	// Serialize nodes
+	nodes := make([]map[string]any, 0, len(wf.Nodes))
+	for id, node := range wf.Nodes {
+		nodeData := map[string]any{
+			"id":           id,
+			"type":         string(node.Type),
+			"name":         node.Name,
+			"description":  node.Description,
+			"dependencies": node.Dependencies,
+		}
+
+		if node.AgentName != "" {
+			nodeData["agent_name"] = node.AgentName
+		}
+		if node.ToolName != "" {
+			nodeData["tool_name"] = node.ToolName
+		}
+		if node.Timeout > 0 {
+			nodeData["timeout"] = node.Timeout.String()
+		}
+		if node.RetryPolicy != nil {
+			nodeData["retry_policy"] = node.RetryPolicy
+		}
+		if node.Metadata != nil {
+			nodeData["metadata"] = node.Metadata
+		}
+
+		nodes = append(nodes, nodeData)
+	}
+	snapshot["nodes"] = nodes
+
+	// Serialize edges
+	edges := make([]map[string]any, 0, len(wf.Edges))
+	for _, edge := range wf.Edges {
+		edges = append(edges, map[string]any{
+			"from": edge.From,
+			"to":   edge.To,
+		})
+	}
+	snapshot["edges"] = edges
+
+	// Convert to JSON
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal workflow snapshot: %w", err)
+	}
+
+	return string(data), nil
+}
+
 // serializeParsedWorkflow serializes the parsed workflow to JSON for storage.
 // We use JSON instead of YAML for more reliable round-tripping and smaller size.
+// Deprecated: Use serializeWorkflow with *Workflow instead.
 func (g *GraphLoader) serializeParsedWorkflow(parsed *ParsedWorkflow) (string, error) {
 	// Create a simplified representation suitable for storage
 	snapshot := map[string]any{

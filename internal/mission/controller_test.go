@@ -15,10 +15,8 @@ func setupTestController(t *testing.T) MissionController {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
 	service := NewMissionService(store, nil, nil)
-	orchestrator, err := NewMissionOrchestrator(store)
-	if err != nil {
-		t.Fatalf("failed to create mission orchestrator: %v", err)
-	}
+	// Use mock orchestrator instead of real implementation
+	orchestrator := &mockMissionOrchestrator{}
 
 	return NewMissionController(store, service, orchestrator)
 }
@@ -59,8 +57,7 @@ func TestDefaultMissionController_GetAndList(t *testing.T) {
 
 	// Re-create controller with same store
 	service := NewMissionService(store, nil, nil)
-	orchestrator, err := NewMissionOrchestrator(store)
-	require.NoError(t, err)
+	orchestrator := &mockMissionOrchestrator{}
 	controller = NewMissionController(store, service, orchestrator)
 
 	t.Run("get mission", func(t *testing.T) {
@@ -80,13 +77,12 @@ func TestDefaultMissionController_StartAndStop(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
 	service := NewMissionService(store, nil, nil)
-	orchestrator, err := NewMissionOrchestrator(store)
-	require.NoError(t, err)
+	orchestrator := &mockMissionOrchestrator{}
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()
 
 	mission := createTestMission(t)
-	err = store.Save(ctx, mission)
+	err := store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Start mission
@@ -110,8 +106,7 @@ func TestDefaultMissionController_PauseAndResume(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
 	service := NewMissionService(store, nil, nil)
-	orchestrator, err := NewMissionOrchestrator(store)
-	require.NoError(t, err)
+	orchestrator := &mockMissionOrchestrator{}
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()
 
@@ -119,7 +114,7 @@ func TestDefaultMissionController_PauseAndResume(t *testing.T) {
 	mission.Status = MissionStatusRunning
 	startedAt := time.Now()
 	mission.StartedAt = &startedAt
-	err = store.Save(ctx, mission)
+	err := store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	// Pause mission
@@ -135,8 +130,7 @@ func TestDefaultMissionController_Delete(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
 	service := NewMissionService(store, nil, nil)
-	orchestrator, err := NewMissionOrchestrator(store)
-	require.NoError(t, err)
+	orchestrator := &mockMissionOrchestrator{}
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()
 
@@ -168,13 +162,12 @@ func TestDefaultMissionController_GetProgress(t *testing.T) {
 	db := setupTestDB(t)
 	store := NewDBMissionStore(db)
 	service := NewMissionService(store, nil, nil)
-	orchestrator, err := NewMissionOrchestrator(store)
-	require.NoError(t, err)
+	orchestrator := &mockMissionOrchestrator{}
 	controller := NewMissionController(store, service, orchestrator)
 	ctx := context.Background()
 
 	mission := createTestMission(t)
-	err = store.Save(ctx, mission)
+	err := store.Save(ctx, mission)
 	require.NoError(t, err)
 
 	progress, err := controller.GetProgress(ctx, mission.ID)

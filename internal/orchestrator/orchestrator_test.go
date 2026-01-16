@@ -281,9 +281,11 @@ func TestOrchestrator_Run_MultipleIterations(t *testing.T) {
 		node1ID := types.NewID().String()
 		node2ID := types.NewID().String()
 
+		observeCount := 0
 		observer := &mockObserver{
 			observeFunc: func(ctx context.Context, mid string) (*ObservationState, error) {
-				iteration := observer.callCount
+				observeCount++
+				iteration := observeCount
 				switch iteration {
 				case 1:
 					// Iteration 1: 2 ready nodes
@@ -552,9 +554,11 @@ func TestOrchestrator_Run_ThinkerFailure(t *testing.T) {
 			},
 		}
 
+		thinkCount := 0
 		thinker := &mockThinker{
 			thinkFunc: func(ctx context.Context, state *ObservationState) (*ThinkResult, error) {
-				if thinker.callCount == 1 {
+				thinkCount++
+				if thinkCount == 1 {
 					return createDefaultThinkResult(ActionExecuteAgent), nil
 				}
 				return nil, thinkerErr
@@ -683,9 +687,11 @@ func TestOrchestrator_Run_AllDecisionTypes(t *testing.T) {
 				},
 			}
 
+			thinkCount := 0
 			thinker := &mockThinker{
 				thinkFunc: func(ctx context.Context, state *ObservationState) (*ThinkResult, error) {
-					if thinker.callCount == 1 {
+					thinkCount++
+					if thinkCount == 1 {
 						return createDefaultThinkResult(tt.action), nil
 					}
 					return createDefaultThinkResult(ActionComplete), nil
@@ -853,9 +859,11 @@ func BenchmarkOrchestrator_Run_MultipleIterations(b *testing.B) {
 	missionID := types.NewID().String()
 	ctx := context.Background()
 
+	observeCount := 0
 	observer := &mockObserver{
 		observeFunc: func(ctx context.Context, mid string) (*ObservationState, error) {
-			if observer.callCount <= 10 {
+			observeCount++
+			if observeCount <= 10 {
 				state := createDefaultObservationState(mid)
 				state.ReadyNodes = []NodeSummary{
 					{ID: types.NewID().String(), Name: "Node", AgentName: "agent"},

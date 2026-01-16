@@ -160,6 +160,7 @@ func NewMission(id types.ID, name, description, objective, targetRef, yamlSource
 }
 
 // Validate checks that all required fields are set correctly.
+// Note: target_ref is optional to support orchestration/discovery missions without specific targets.
 func (m *Mission) Validate() error {
 	if err := m.ID.Validate(); err != nil {
 		return fmt.Errorf("invalid mission ID: %w", err)
@@ -167,9 +168,7 @@ func (m *Mission) Validate() error {
 	if m.Name == "" {
 		return fmt.Errorf("mission name is required")
 	}
-	if m.TargetRef == "" {
-		return fmt.Errorf("mission target_ref is required")
-	}
+	// target_ref is optional - some missions (discovery, orchestration) don't target a specific system
 	if err := m.Status.Validate(); err != nil {
 		return err
 	}

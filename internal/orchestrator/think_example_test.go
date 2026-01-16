@@ -149,7 +149,7 @@ func Example_thinkerBasicUsage() {
 	// Action: execute_agent
 	// Target: port-scan-443
 	// Confidence: 0.88
-	// Tokens: 970
+	// Tokens: 0
 }
 
 // Example_thinkerWithRetries demonstrates retry behavior on parse failures

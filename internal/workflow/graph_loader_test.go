@@ -79,7 +79,7 @@ func TestGraphLoader_LoadWorkflow(t *testing.T) {
 	})
 
 	// Load workflow
-	missionID, err := loader.LoadWorkflow(ctx, parsed)
+	missionID, err := loader.LoadParsedWorkflow(ctx, parsed)
 	require.NoError(t, err)
 	assert.NotEmpty(t, missionID)
 
@@ -149,7 +149,7 @@ func TestGraphLoader_LoadWorkflow_WithDependencies(t *testing.T) {
 		})
 	}
 
-	missionID, err := loader.LoadWorkflow(ctx, parsed)
+	missionID, err := loader.LoadParsedWorkflow(ctx, parsed)
 	require.NoError(t, err)
 	assert.NotEmpty(t, missionID)
 
@@ -187,7 +187,7 @@ func TestGraphLoader_LoadWorkflow_ValidationErrors(t *testing.T) {
 			})
 		}
 		
-		_, err := loader.LoadWorkflow(ctx, parsed)
+		_, err := loader.LoadParsedWorkflow(ctx, parsed)
 		// Should fail validation
 		require.Error(t, err)
 	})
@@ -274,7 +274,7 @@ func TestGraphLoader_FullCycle(t *testing.T) {
 		})
 	}
 
-	missionIDStr, err := loader.LoadWorkflow(ctx, parsed)
+	missionIDStr, err := loader.LoadParsedWorkflow(ctx, parsed)
 	require.NoError(t, err)
 	assert.NotEmpty(t, missionIDStr)
 
@@ -341,7 +341,7 @@ func TestGraphLoader_ConcurrentLoads(t *testing.T) {
 		}
 
 		go func() {
-			missionID, _ := loader.LoadWorkflow(ctx, parsed)
+			missionID, _ := loader.LoadParsedWorkflow(ctx, parsed)
 			done <- missionID
 		}()
 	}

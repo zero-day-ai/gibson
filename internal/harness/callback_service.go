@@ -289,12 +289,14 @@ func (s *HarnessCallbackService) LLMComplete(ctx context.Context, req *pb.LLMCom
 	}
 
 	// Publish llm.request.started event
+	// Include parent_span_id from context so taxonomy engine can create MADE_CALL relationship
 	s.publishEvent(ctx, "llm.request.started", map[string]interface{}{
-		"slot":          req.Slot,
-		"mission_id":    req.Context.MissionId,
-		"agent_name":    req.Context.AgentName,
-		"task_id":       req.Context.TaskId,
-		"message_count": len(req.Messages),
+		"slot":           req.Slot,
+		"mission_id":     req.Context.MissionId,
+		"agent_name":     req.Context.AgentName,
+		"task_id":        req.Context.TaskId,
+		"message_count":  len(req.Messages),
+		"parent_span_id": req.Context.SpanId, // Agent's span ID becomes LLM call's parent
 	})
 
 	// Convert proto messages to llm.Message
@@ -322,11 +324,12 @@ func (s *HarnessCallbackService) LLMComplete(ctx context.Context, req *pb.LLMCom
 
 		// Publish llm.request.failed event
 		s.publishEvent(ctx, "llm.request.failed", map[string]interface{}{
-			"slot":       req.Slot,
-			"mission_id": req.Context.MissionId,
-			"agent_name": req.Context.AgentName,
-			"task_id":    req.Context.TaskId,
-			"error":      err.Error(),
+			"slot":           req.Slot,
+			"mission_id":     req.Context.MissionId,
+			"agent_name":     req.Context.AgentName,
+			"task_id":        req.Context.TaskId,
+			"error":          err.Error(),
+			"parent_span_id": req.Context.SpanId,
 		})
 
 		return &pb.LLMCompleteResponse{
@@ -347,6 +350,7 @@ func (s *HarnessCallbackService) LLMComplete(ctx context.Context, req *pb.LLMCom
 		"prompt_tokens":     resp.Usage.PromptTokens,
 		"completion_tokens": resp.Usage.CompletionTokens,
 		"total_tokens":      resp.Usage.PromptTokens + resp.Usage.CompletionTokens,
+		"parent_span_id":    req.Context.SpanId,
 	})
 
 	// Convert response
@@ -527,11 +531,13 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 	}
 
 	// Publish tool.call.started event
+	// Include parent_span_id from context so taxonomy engine can create EXECUTED_BY relationship
 	s.publishEvent(ctx, "tool.call.started", map[string]interface{}{
-		"tool_name":  req.Name,
-		"mission_id": req.Context.MissionId,
-		"agent_name": req.Context.AgentName,
-		"task_id":    req.Context.TaskId,
+		"tool_name":      req.Name,
+		"mission_id":     req.Context.MissionId,
+		"agent_name":     req.Context.AgentName,
+		"task_id":        req.Context.TaskId,
+		"parent_span_id": req.Context.SpanId, // Agent's span ID becomes tool call's parent
 	})
 
 	// Deserialize input
@@ -539,11 +545,12 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 	if err := json.Unmarshal([]byte(req.InputJson), &input); err != nil {
 		// Publish tool.call.failed event for invalid input
 		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
-			"tool_name":  req.Name,
-			"mission_id": req.Context.MissionId,
-			"agent_name": req.Context.AgentName,
-			"task_id":    req.Context.TaskId,
-			"error":      fmt.Sprintf("invalid input JSON: %v", err),
+			"tool_name":      req.Name,
+			"mission_id":     req.Context.MissionId,
+			"agent_name":     req.Context.AgentName,
+			"task_id":        req.Context.TaskId,
+			"error":          fmt.Sprintf("invalid input JSON: %v", err),
+			"parent_span_id": req.Context.SpanId,
 		})
 
 		return &pb.CallToolResponse{
@@ -561,11 +568,12 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 
 		// Publish tool.call.failed event
 		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
-			"tool_name":  req.Name,
-			"mission_id": req.Context.MissionId,
-			"agent_name": req.Context.AgentName,
-			"task_id":    req.Context.TaskId,
-			"error":      err.Error(),
+			"tool_name":      req.Name,
+			"mission_id":     req.Context.MissionId,
+			"agent_name":     req.Context.AgentName,
+			"task_id":        req.Context.TaskId,
+			"error":          err.Error(),
+			"parent_span_id": req.Context.SpanId,
 		})
 
 		return &pb.CallToolResponse{
@@ -581,11 +589,12 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 	if err != nil {
 		// Publish tool.call.failed event for serialization error
 		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
-			"tool_name":  req.Name,
-			"mission_id": req.Context.MissionId,
-			"agent_name": req.Context.AgentName,
-			"task_id":    req.Context.TaskId,
-			"error":      fmt.Sprintf("failed to serialize output: %v", err),
+			"tool_name":      req.Name,
+			"mission_id":     req.Context.MissionId,
+			"agent_name":     req.Context.AgentName,
+			"task_id":        req.Context.TaskId,
+			"error":          fmt.Sprintf("failed to serialize output: %v", err),
+			"parent_span_id": req.Context.SpanId,
 		})
 
 		return &pb.CallToolResponse{
@@ -598,10 +607,11 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 
 	// Publish tool.call.completed event
 	s.publishEvent(ctx, "tool.call.completed", map[string]interface{}{
-		"tool_name":  req.Name,
-		"mission_id": req.Context.MissionId,
-		"agent_name": req.Context.AgentName,
-		"task_id":    req.Context.TaskId,
+		"tool_name":      req.Name,
+		"mission_id":     req.Context.MissionId,
+		"agent_name":     req.Context.AgentName,
+		"task_id":        req.Context.TaskId,
+		"parent_span_id": req.Context.SpanId,
 	})
 
 	// Graph tool output automatically (if engine is configured)
@@ -2376,13 +2386,28 @@ func (s *HarnessCallbackService) publishEvent(ctx context.Context, eventType str
 		return // Event bus not configured, skip
 	}
 
-	// Extract trace context
-	var traceID, spanID string
+	// Extract trace context from OpenTelemetry span
+	var traceID, spanID, parentSpanID string
 	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
 		spanCtx := span.SpanContext()
 		traceID = spanCtx.TraceID().String()
 		spanID = spanCtx.SpanID().String()
 	}
+
+	// Extract parent_span_id from data if provided (for relationship creation)
+	// This is passed explicitly by callers who know their parent span
+	if psid, ok := data["parent_span_id"].(string); ok {
+		parentSpanID = psid
+	}
+
+	// IMPORTANT: Add trace context to data map for taxonomy engine
+	// The taxonomy engine reads from data map, not the event struct fields
+	// This ensures LLMCall, ToolExecution nodes can create relationships
+	timestamp := time.Now()
+	data["trace_id"] = traceID
+	data["span_id"] = spanID
+	data["parent_span_id"] = parentSpanID
+	data["timestamp"] = timestamp.Format(time.RFC3339Nano)
 
 	// Create event structure matching daemon.GraphEvent
 	event := struct {
@@ -2393,11 +2418,12 @@ func (s *HarnessCallbackService) publishEvent(ctx context.Context, eventType str
 		Timestamp    time.Time
 		Data         map[string]interface{}
 	}{
-		Type:      eventType,
-		TraceID:   traceID,
-		SpanID:    spanID,
-		Timestamp: time.Now(),
-		Data:      data,
+		Type:         eventType,
+		TraceID:      traceID,
+		SpanID:       spanID,
+		ParentSpanID: parentSpanID,
+		Timestamp:    timestamp,
+		Data:         data,
 	}
 
 	// Publish in background to avoid blocking the callback response

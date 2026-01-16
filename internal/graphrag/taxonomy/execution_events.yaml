@@ -17,7 +17,7 @@ execution_events:
   - event_type: mission.started
     creates_node:
       type: mission                              # References node.execution.mission
-      id_template: "mission:{mission_id}"
+      id_template: "{mission_id}"
       properties:
         - source: mission_id
           target: name
@@ -44,7 +44,7 @@ execution_events:
   - event_type: mission.completed
     updates_node:
       type: mission
-      id_template: "mission:{mission_id}"
+      id_template: "{mission_id}"
       properties:
         - source: timestamp
           target: ended_at
@@ -67,7 +67,7 @@ execution_events:
   - event_type: mission.failed
     updates_node:
       type: mission
-      id_template: "mission:{mission_id}"
+      id_template: "{mission_id}"
       properties:
         - source: timestamp
           target: ended_at
@@ -116,7 +116,7 @@ execution_events:
     creates_relationships:
       - type: PART_OF                            # References rel.execution.part_of
         from_template: "agent_run:{trace_id}:{span_id}"
-        to_template: "mission:{mission_id}"
+        to_template: "{mission_id}"
         properties: []
 
   # Agent Completion Event

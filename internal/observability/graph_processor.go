@@ -185,7 +185,9 @@ func (p *GraphSpanProcessor) extractSpanData(s sdktrace.ReadOnlySpan, traceID, s
 			data["agent_name"] = value
 		case GibsonToolName:
 			data["tool_name"] = value
-		case GenAIResponseModel:
+		case GenAIResponseModel, GenAIRequestModel:
+			// Use either request model or response model for the model field
+			// Request model is set at start, response model is set at completion
 			data["model"] = value
 		case GenAISystem:
 			data["provider"] = value

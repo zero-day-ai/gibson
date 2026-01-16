@@ -16,10 +16,12 @@ import (
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/observability"
+	"github.com/zero-day-ai/gibson/internal/orchestrator"
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // targetStore is an interface for target data access
@@ -344,26 +346,49 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	// Initialize attack runner with required dependencies
 	d.logger.Info("initializing attack runner")
 
-	// Create mission orchestrator with full configuration including harness factory and workflow executor
-	orchestrator, err := mission.NewMissionOrchestrator(
-		d.missionStore,
-		mission.WithHarnessFactory(d.infrastructure.harnessFactory),
-		mission.WithWorkflowExecutor(workflow.NewWorkflowExecutor(
-			workflow.WithLogger(d.logger.With("component", "workflow-executor")),
-			workflow.WithEventBus(NewEventBusAdapter(d.eventBus)), // Pass event bus for agent lifecycle events
-		)),
-		mission.WithEventEmitter(mission.NewDefaultEventEmitter()),
-		mission.WithEventBus(NewEventBusAdapter(d.eventBus)), // Pass event bus adapter for graph event routing
-		mission.WithTargetStore(d.targetStore),
-	)
-	if err != nil {
-		d.stopServices(ctx)
-		return fmt.Errorf("failed to create mission orchestrator: %w", err)
+	// Create mission orchestrator using SOTA if GraphRAG is available
+	var orch mission.MissionOrchestrator
+	if d.infrastructure.graphRAGClient != nil {
+		// Use SOTA orchestrator
+		graphLoader := workflow.NewGraphLoader(d.infrastructure.graphRAGClient)
+
+		// Get tracer from tracer provider
+		var tracer trace.Tracer
+		if d.infrastructure.tracerProvider != nil {
+			tracer = d.infrastructure.tracerProvider.Tracer("gibson-orchestrator")
+		} else {
+			tracer = trace.NewNoopTracerProvider().Tracer("orchestrator")
+		}
+
+		sotaConfig := orchestrator.SOTAOrchestratorConfig{
+			GraphRAGClient:     d.infrastructure.graphRAGClient,
+			HarnessFactory:     d.infrastructure.harnessFactory,
+			Logger:             d.logger.With("component", "sota-orchestrator"),
+			Tracer:             tracer,
+			EventBus:           nil, // EventBus adapter incompatible, will add later
+			MaxIterations:      100,
+			MaxConcurrent:      10,
+			ThinkerMaxRetries:  3,
+			ThinkerTemperature: 0.2,
+			GraphLoader:        graphLoader,
+		}
+
+		var err error
+		orch, err = orchestrator.NewSOTAMissionOrchestrator(sotaConfig)
+		if err != nil {
+			d.logger.Error("failed to create SOTA orchestrator", "error", err)
+			return fmt.Errorf("failed to create SOTA orchestrator: %w", err)
+		}
+		d.logger.Info("Using SOTA orchestrator for attack runner")
+	} else {
+		d.logger.Error("GraphRAG not available, cannot create attack runner")
+		return fmt.Errorf("GraphRAG (Neo4j) is required for attack runner but not configured")
 	}
+
 	payloadRegistry := payload.NewPayloadRegistryWithDefaults(d.db)
 
 	d.attackRunner = attack.NewAttackRunner(
-		orchestrator,
+		orch,
 		d.registryAdapter,
 		payloadRegistry,
 		d.missionStore,

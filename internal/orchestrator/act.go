@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/graphrag/queries"
@@ -153,11 +155,48 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 		return nil, fmt.Errorf("failed to update node status: %w", err)
 	}
 
-	// Build agent task
-	task := agent.NewTask(node.Name, node.Description, node.TaskConfig)
-	task.MissionID = &missionID
+	// Build agent task from node's TaskConfig
+	// TaskConfig contains: goal, context (merged with task config), input, name, description, etc.
+	task := agent.Task{
+		ID:        types.NewID(),
+		Name:      node.Name,
+		MissionID: &missionID,
+		CreatedAt: time.Now(),
+	}
+
+	// Set timeout
 	if node.Timeout > 0 {
-		task = task.WithTimeout(node.Timeout)
+		task.Timeout = node.Timeout
+	} else {
+		task.Timeout = 30 * time.Minute // Default
+	}
+
+	// Set description from node or TaskConfig
+	task.Description = node.Description
+	if desc, ok := node.TaskConfig["description"].(string); ok && desc != "" {
+		task.Description = desc
+	}
+
+	// Set Goal from TaskConfig (populated by workflow parser from YAML goal field)
+	if goal, ok := node.TaskConfig["goal"].(string); ok {
+		task.Goal = goal
+	} else if task.Description != "" {
+		task.Goal = task.Description // Fall back to description
+	}
+
+	// Set Context from TaskConfig (contains merged context + task config from YAML)
+	if ctx, ok := node.TaskConfig["context"].(map[string]any); ok {
+		task.Context = ctx
+	} else {
+		// If no context, use entire TaskConfig as context for backwards compatibility
+		task.Context = node.TaskConfig
+	}
+
+	// Keep Input for backwards compatibility (deprecated)
+	if input, ok := node.TaskConfig["input"].(map[string]any); ok {
+		task.Input = input
+	} else {
+		task.Input = node.TaskConfig
 	}
 
 	// Delegate to agent
@@ -238,6 +277,15 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 		// Update node status to completed
 		if updateErr := a.updateNodeStatus(ctx, node.ID, schema.WorkflowNodeStatusCompleted); updateErr != nil {
 			return nil, fmt.Errorf("failed to update node status: %w", updateErr)
+		}
+
+		// Update dependent nodes to ready if their dependencies are now satisfied
+		if updateErr := a.updateDependentNodesToReady(ctx, node.ID); updateErr != nil {
+			slog.Warn("failed to update dependent nodes to ready",
+				"node_id", node.ID.String(),
+				"error", updateErr,
+			)
+			// Don't fail the whole operation, just log the warning
 		}
 	}
 
@@ -487,12 +535,23 @@ func (a *Actor) getWorkflowNode(ctx context.Context, nodeID string) (*schema.Wor
 		return nil, fmt.Errorf("workflow node %s not found", nodeID)
 	}
 
-	nodeData, ok := result.Records[0]["n"].(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("invalid node data format")
+	nodeData := result.Records[0]["n"]
+	if nodeData == nil {
+		return nil, fmt.Errorf("workflow node data is nil")
 	}
 
-	return a.parseWorkflowNode(nodeData)
+	// Handle different return types from Neo4j driver
+	var dataMap map[string]any
+	switch n := nodeData.(type) {
+	case dbtype.Node:
+		dataMap = n.Props
+	case map[string]any:
+		dataMap = n
+	default:
+		return nil, fmt.Errorf("invalid node data format: got %T", nodeData)
+	}
+
+	return a.parseWorkflowNode(dataMap)
 }
 
 // updateNodeStatus updates the status of a workflow node in the graph.
@@ -516,6 +575,49 @@ func (a *Actor) updateNodeStatus(ctx context.Context, nodeID types.ID, status sc
 
 	if len(result.Records) == 0 {
 		return fmt.Errorf("node %s not found", nodeID)
+	}
+
+	return nil
+}
+
+// updateDependentNodesToReady marks nodes as "ready" if all their dependencies are completed.
+// This should be called after a node completes to propagate readiness through the DAG.
+func (a *Actor) updateDependentNodesToReady(ctx context.Context, completedNodeID types.ID) error {
+	// Find all nodes that depend on the completed node and check if all their dependencies are satisfied
+	// A node becomes ready if:
+	// 1. It is currently "pending"
+	// 2. All nodes it DEPENDS_ON are "completed"
+	cypher := `
+		MATCH (completed:WorkflowNode {id: $completed_node_id})
+		MATCH (dependent:WorkflowNode)-[:DEPENDS_ON]->(completed)
+		WHERE dependent.status = 'pending'
+		WITH dependent
+		OPTIONAL MATCH (dependent)-[:DEPENDS_ON]->(dep:WorkflowNode)
+		WITH dependent, collect(dep) as dependencies
+		WHERE ALL(d IN dependencies WHERE d.status = 'completed')
+		SET dependent.status = 'ready', dependent.updated_at = datetime()
+		RETURN dependent.id as id, dependent.name as name
+	`
+
+	params := map[string]interface{}{
+		"completed_node_id": completedNodeID.String(),
+	}
+
+	result, err := a.graphClient.Query(ctx, cypher, params)
+	if err != nil {
+		return fmt.Errorf("failed to update dependent nodes: %w", err)
+	}
+
+	// Log which nodes were marked as ready
+	for _, record := range result.Records {
+		if id, ok := record["id"].(string); ok {
+			name := record["name"]
+			slog.Info("marked dependent node as ready",
+				"node_id", id,
+				"node_name", name,
+				"triggered_by", completedNodeID.String(),
+			)
+		}
 	}
 
 	return nil

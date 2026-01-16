@@ -80,10 +80,17 @@ func (e *taxonomyGraphEngine) HandleEvent(ctx context.Context, eventType string,
 
 	logger.Debug("processing execution event", "event_type", eventDef.EventType)
 
-	// Create node if specified
+	// Create node if specified (uses MERGE for idempotency)
 	if eventDef.CreatesNode != nil {
 		if err := e.createNodeFromEvent(ctx, eventDef.CreatesNode, data); err != nil {
 			return fmt.Errorf("failed to create node from event: %w", err)
+		}
+	}
+
+	// Update existing node if specified
+	if eventDef.UpdatesNode != nil {
+		if err := e.updateNodeFromEvent(ctx, eventDef.UpdatesNode, data); err != nil {
+			return fmt.Errorf("failed to update node from event: %w", err)
 		}
 	}
 
@@ -312,17 +319,112 @@ func (e *taxonomyGraphEngine) createNodeFromEvent(ctx context.Context, nodeSpec 
 	return nil
 }
 
+// updateNodeFromEvent updates an existing node based on event data.
+// This is used for events like mission.completed or mission.failed that update existing nodes.
+func (e *taxonomyGraphEngine) updateNodeFromEvent(ctx context.Context, nodeSpec *taxonomy.EventNodeUpdate, data map[string]any) error {
+	// Look up the node type definition to get the proper Neo4j label
+	nodeDef, found := e.registry.NodeType(nodeSpec.Type)
+	if !found {
+		return fmt.Errorf("node type not found in taxonomy: %s", nodeSpec.Type)
+	}
+
+	// Interpolate ID template to find the node to update
+	nodeID, err := e.interpolateTemplate(nodeSpec.IDTemplate, data)
+	if err != nil {
+		return fmt.Errorf("failed to interpolate node ID: %w", err)
+	}
+
+	// Build properties from mappings
+	props := make(map[string]any)
+
+	for _, propMapping := range nodeSpec.Properties {
+		var value any
+		var ok bool
+
+		if propMapping.Source != "" {
+			// Source-based mapping (from event data)
+			value, ok = data[propMapping.Source]
+		} else if propMapping.Value != nil {
+			// Static value mapping
+			value = propMapping.Value
+			ok = true
+		}
+
+		if ok || !propMapping.Optional {
+			if ok {
+				props[propMapping.Target] = value
+			} else if !propMapping.Optional {
+				return fmt.Errorf("required property %s not found in data", propMapping.Target)
+			}
+		}
+	}
+
+	// Only update if there are properties to set
+	if len(props) == 0 {
+		e.logger.Debug("no properties to update",
+			"node_type", nodeSpec.Type,
+			"node_id", nodeID,
+		)
+		return nil
+	}
+
+	// Generate MATCH + SET Cypher query to update existing node
+	// Use nodeDef.Name for the Neo4j label (PascalCase like "Mission", "AgentRun")
+	cypher := fmt.Sprintf(`
+		MATCH (n:%s {id: $id})
+		SET n += $props
+		RETURN n
+	`, nodeDef.Name)
+
+	params := map[string]any{
+		"id":    nodeID,
+		"props": props,
+	}
+
+	result, err := e.graphClient.Query(ctx, cypher, params)
+	if err != nil {
+		return fmt.Errorf("failed to update node: %w", err)
+	}
+
+	if len(result.Records) == 0 {
+		e.logger.Warn("node not found for update, skipping",
+			"node_type", nodeSpec.Type,
+			"node_id", nodeID,
+		)
+		return nil
+	}
+
+	e.logger.Debug("updated node from event",
+		"node_type", nodeSpec.Type,
+		"node_id", nodeID,
+		"properties_updated", len(props),
+	)
+
+	return nil
+}
+
 // createRelationshipFromEvent creates a relationship based on event data.
+// If template interpolation fails (e.g., missing trace IDs for delegation events),
+// the relationship is gracefully skipped with a warning rather than failing.
 func (e *taxonomyGraphEngine) createRelationshipFromEvent(ctx context.Context, relSpec *taxonomy.EventRelationshipCreation, data map[string]any) error {
 	// Interpolate from and to node references
+	// If interpolation fails, skip the relationship gracefully
 	fromNodeID, err := e.interpolateTemplate(relSpec.FromTemplate, data)
 	if err != nil {
-		return fmt.Errorf("failed to interpolate from node: %w", err)
+		e.logger.Warn("skipping relationship creation - missing from node data",
+			"relationship_type", relSpec.Type,
+			"from_template", relSpec.FromTemplate,
+			"error", err)
+		return nil
 	}
 
 	toNodeID, err := e.interpolateTemplate(relSpec.ToTemplate, data)
 	if err != nil {
-		return fmt.Errorf("failed to interpolate to node: %w", err)
+		e.logger.Warn("skipping relationship creation - missing to node data",
+			"relationship_type", relSpec.Type,
+			"to_template", relSpec.ToTemplate,
+			"error", err)
+		return nil
 	}
 
 	// Build relationship properties

@@ -1,0 +1,29 @@
+package mission
+
+import (
+	"context"
+
+	"github.com/zero-day-ai/gibson/internal/types"
+)
+
+// TargetStore provides access to target entities needed by the orchestrator.
+// This interface allows the orchestrator to load full target details including
+// connection parameters that agents need for testing.
+type TargetStore interface {
+	// Get retrieves a target by ID, returning the full target entity with connection details
+	Get(ctx context.Context, id types.ID) (*types.Target, error)
+}
+
+// MissionOrchestrator defines the interface for executing missions.
+// This interface is implemented by both the legacy orchestrator and the SOTA orchestrator.
+type MissionOrchestrator interface {
+	// Execute runs the mission workflow and manages all orchestration
+	Execute(ctx context.Context, mission *Mission) (*MissionResult, error)
+}
+
+// EventBusPublisher is an interface for publishing daemon-wide events.
+// This allows the orchestrator to publish to the daemon's event bus
+// without creating a circular dependency.
+type EventBusPublisher interface {
+	Publish(ctx context.Context, event interface{}) error
+}

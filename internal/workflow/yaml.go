@@ -141,8 +141,10 @@ type YAMLNode struct {
 	Retry       *YAMLRetry `yaml:"retry,omitempty"`
 
 	// Agent node fields
-	Agent string         `yaml:"agent,omitempty"`
-	Task  map[string]any `yaml:"task,omitempty"`
+	Agent   string         `yaml:"agent,omitempty"`
+	Goal    string         `yaml:"goal,omitempty"`    // Agent's goal/objective (top-level, not inside task)
+	Context map[string]any `yaml:"context,omitempty"` // Agent's context (top-level, not inside task)
+	Task    map[string]any `yaml:"task,omitempty"`
 
 	// Tool node fields
 	Tool  string         `yaml:"tool,omitempty"`
@@ -364,42 +366,51 @@ func convertAgentNode(yamlNode *YAMLNode, node *WorkflowNode) error {
 
 	node.AgentName = yamlNode.Agent
 
-	// Convert task map to agent.Task struct if provided
-	if yamlNode.Task != nil {
-		task := agent.Task{
-			ID:          types.NewID(),
-			Name:        yamlNode.Name,
-			Description: yamlNode.Description,
-			Goal:        yamlNode.Description, // Default goal to description
-			Input:       yamlNode.Task,
-			Timeout:     node.Timeout,
-			CreatedAt:   time.Now(),
-			Priority:    0,
-			Tags:        []string{},
-		}
+	// Build the agent.Task from workflow YAML fields
+	// The SDK Task has: ID, Goal, Context, Constraints, Metadata
+	// We map workflow fields to these SDK fields cleanly:
+	//   - goal: (node level) -> Task.Goal
+	//   - context: (node level) -> Task.Context (merged with task: contents)
+	//   - task: (config map) -> Task.Context (agent-specific config)
 
-		// Extract specific task fields if they exist in the map
-		if name, ok := yamlNode.Task["name"].(string); ok {
-			task.Name = name
-		}
-		if desc, ok := yamlNode.Task["description"].(string); ok {
-			task.Description = desc
-		}
-		if goal, ok := yamlNode.Task["goal"].(string); ok {
-			task.Goal = goal
-		}
-		if context, ok := yamlNode.Task["context"].(map[string]any); ok {
-			task.Context = context
-		}
-		if priority, ok := yamlNode.Task["priority"].(int); ok {
-			task.Priority = priority
-		}
-		if tags, ok := yamlNode.Task["tags"].([]string); ok {
-			task.Tags = tags
-		}
-
-		node.AgentTask = &task
+	task := agent.Task{
+		ID:        types.NewID(),
+		Name:      yamlNode.Name,
+		Timeout:   node.Timeout,
+		CreatedAt: time.Now(),
+		Priority:  0,
+		Tags:      []string{},
 	}
+
+	// Set Goal from node-level goal field (primary) or fall back to description
+	if yamlNode.Goal != "" {
+		task.Goal = yamlNode.Goal
+	} else if yamlNode.Description != "" {
+		task.Goal = yamlNode.Description
+	}
+
+	// Set Description
+	task.Description = yamlNode.Description
+
+	// Build Context by merging node-level context with task config
+	// This gives agents a single Context map with all the info they need
+	task.Context = make(map[string]any)
+
+	// First, add node-level context (phase, etc.)
+	for k, v := range yamlNode.Context {
+		task.Context[k] = v
+	}
+
+	// Then merge in task config (mode, verbose, etc.)
+	// Task config values take precedence if there's overlap
+	for k, v := range yamlNode.Task {
+		task.Context[k] = v
+	}
+
+	// Keep Input for backwards compatibility (deprecated)
+	task.Input = yamlNode.Task
+
+	node.AgentTask = &task
 
 	return nil
 }

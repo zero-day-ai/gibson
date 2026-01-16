@@ -226,7 +226,7 @@ func TestBuildSnapshotFromMission(t *testing.T) {
 
 				// Validate first decision
 				assert.Equal(t, 1, snap.Decisions[0].Iteration)
-				assert.Equal(t, "execute", snap.Decisions[0].Action)
+				assert.Equal(t, "execute_agent", snap.Decisions[0].Action)
 				assert.Equal(t, "Starting initial scan of target", snap.Decisions[0].Reasoning)
 				assert.Equal(t, 0.95, snap.Decisions[0].Confidence)
 				assert.Equal(t, "initial_scan", snap.Decisions[0].TargetNodeID)

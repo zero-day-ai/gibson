@@ -43,13 +43,28 @@ func (s OrchestratorStatus) String() string {
 	return string(s)
 }
 
+// OrchestratorObserver defines the interface for observing mission state.
+type OrchestratorObserver interface {
+	Observe(ctx context.Context, missionID string) (*ObservationState, error)
+}
+
+// OrchestratorThinker defines the interface for making orchestration decisions.
+type OrchestratorThinker interface {
+	Think(ctx context.Context, state *ObservationState) (*ThinkResult, error)
+}
+
+// OrchestratorActor defines the interface for executing orchestration decisions.
+type OrchestratorActor interface {
+	Act(ctx context.Context, decision *Decision, missionID string) (*ActionResult, error)
+}
+
 // Orchestrator implements the main Observe → Think → Act control loop.
 // It coordinates the observer, thinker, and actor components to autonomously
 // execute mission workflows based on LLM reasoning.
 type Orchestrator struct {
-	observer  *Observer
-	thinker   *Thinker
-	actor     *Actor
+	observer  OrchestratorObserver
+	thinker   OrchestratorThinker
+	actor     OrchestratorActor
 	eventBus  EventBus
 	logger    *slog.Logger
 	tracer    trace.Tracer
@@ -60,6 +75,7 @@ type Orchestrator struct {
 	budget        int // Total token budget (0 = unlimited)
 	maxConcurrent int // Max concurrent node executions
 	timeout       time.Duration
+	runMode       RunMode // Error handling behavior mode
 }
 
 // EventBus defines the interface for emitting orchestrator events.
@@ -160,13 +176,21 @@ func WithDecisionLogWriter(writer DecisionLogWriter) OrchestratorOption {
 // NewOrchestrator creates a new Orchestrator with the specified components and options.
 //
 // Required components:
-//   - observer: Gathers execution state from the graph
-//   - thinker: Makes decisions using LLM reasoning
-//   - actor: Executes decisions and updates graph state
+//   - observer: Gathers execution state from the graph (implements OrchestratorObserver)
+//   - thinker: Makes decisions using LLM reasoning (implements OrchestratorThinker)
+//   - actor: Executes decisions and updates graph state (implements OrchestratorActor)
 //
 // The orchestrator coordinates these components in a loop until the mission
 // completes, fails, or hits resource limits.
-func NewOrchestrator(observer *Observer, thinker *Thinker, actor *Actor, options ...OrchestratorOption) *Orchestrator {
+//
+// Run mode is determined by the following precedence:
+//  1. Explicit WithRunMode() option
+//  2. GIBSON_RUN_MODE environment variable
+//  3. Default: RunModeProduction
+func NewOrchestrator(observer OrchestratorObserver, thinker OrchestratorThinker, actor OrchestratorActor, options ...OrchestratorOption) *Orchestrator {
+	// Read run mode from environment variable (can be overridden by options)
+	envRunMode := GetRunModeFromEnv()
+
 	o := &Orchestrator{
 		observer:      observer,
 		thinker:       thinker,
@@ -175,10 +199,12 @@ func NewOrchestrator(observer *Observer, thinker *Thinker, actor *Actor, options
 		maxConcurrent: 10,         // Default concurrency limit
 		budget:        0,          // Unlimited by default
 		timeout:       0,          // No timeout by default
+		runMode:       envRunMode, // Default from environment or production
 		logger:        slog.Default(),
 		tracer:        trace.NewNoopTracerProvider().Tracer("orchestrator"),
 	}
 
+	// Apply functional options (can override environment variable)
 	for _, opt := range options {
 		opt(o)
 	}
@@ -570,4 +596,10 @@ func (r *OrchestratorResult) String() string {
 		r.CompletedNodes,
 		r.FailedNodes,
 	)
+}
+
+// RunMode returns the current run mode of the orchestrator.
+// This can be used to conditionally adjust behavior based on the mode.
+func (o *Orchestrator) RunMode() RunMode {
+	return o.runMode
 }

@@ -8,13 +8,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/daemon/api"
 	"github.com/zero-day-ai/gibson/internal/finding"
+	"github.com/zero-day-ai/gibson/internal/graphrag/queries"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/observability"
+	"github.com/zero-day-ai/gibson/internal/orchestrator"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/gibson/internal/workflow"
@@ -43,6 +46,7 @@ type missionManager struct {
 	targetStore     targetStoreLookup
 	runLinker       mission.MissionRunLinker
 	infrastructure  *Infrastructure
+	graphLoader     *workflow.GraphLoader // GraphLoader for storing workflows in Neo4j
 
 	// Track active missions with their contexts and event channels
 	mu             sync.RWMutex
@@ -74,6 +78,13 @@ func newMissionManager(
 	runLinker mission.MissionRunLinker,
 	infrastructure *Infrastructure,
 ) *missionManager {
+	// Create GraphLoader if Neo4j client is available
+	var graphLoader *workflow.GraphLoader
+	if infrastructure != nil && infrastructure.graphRAGClient != nil {
+		graphLoader = workflow.NewGraphLoader(infrastructure.graphRAGClient)
+		logger.Info("initialized GraphLoader for workflow persistence to Neo4j")
+	}
+
 	return &missionManager{
 		config:          cfg,
 		logger:          logger.With("component", "mission-manager"),
@@ -86,6 +97,7 @@ func newMissionManager(
 		targetStore:     targetStore,
 		runLinker:       runLinker,
 		infrastructure:  infrastructure,
+		graphLoader:     graphLoader,
 		activeMissions:  make(map[string]*activeMission),
 	}
 }
@@ -119,6 +131,38 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	// Generate mission ID if not provided
 	if missionID == "" {
 		missionID = types.NewID().String()
+	}
+
+	// IMPORTANT: Set workflow ID to match mission ID
+	// This ensures the GraphLoader creates the Mission node with the same ID
+	// that will be used in subsequent events (mission.started, agent.started, etc.)
+	// Without this, we'd have two different Mission nodes with different IDs.
+	missionIDTyped, err := types.ParseID(missionID)
+	if err != nil {
+		m.logger.Error("invalid mission ID format", "error", err, "mission_id", missionID)
+		return nil, fmt.Errorf("invalid mission ID format: %w", err)
+	}
+	wf.ID = missionIDTyped
+
+	// Store workflow in Neo4j GraphRAG for state tracking and cross-mission analysis
+	if m.graphLoader != nil {
+		graphMissionID, err := m.graphLoader.LoadWorkflow(ctx, wf)
+		if err != nil {
+			// Log warning but continue - graph storage is optional for execution
+			m.logger.Warn("failed to store workflow in GraphRAG, continuing without graph persistence",
+				"error", err,
+				"mission_id", missionID,
+				"workflow_name", wf.Name,
+			)
+		} else {
+			m.logger.Info("workflow stored in GraphRAG",
+				"graph_mission_id", graphMissionID,
+				"mission_id", missionID,
+				"workflow_name", wf.Name,
+				"node_count", len(wf.Nodes),
+				"edge_count", len(wf.Edges),
+			)
+		}
 	}
 
 	// Check if mission ID already exists
@@ -243,8 +287,9 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	return eventChan, nil
 }
 
-// executeMission runs the workflow execution in a goroutine.
-// This handles the full mission lifecycle including setup, execution, and cleanup.
+// executeMission runs the workflow execution using the SOTA orchestrator.
+// This handles the full mission lifecycle including setup, execution via
+// the Observe → Think → Act loop, and cleanup.
 func (m *missionManager) executeMission(ctx context.Context, missionID string, wf *workflow.Workflow, eventChan chan api.MissionEventData) {
 	defer close(eventChan)
 	defer m.cleanupMission(missionID)
@@ -262,7 +307,7 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 		defer span.End()
 	}
 
-	m.logger.Info("executing mission workflow", "mission_id", missionID)
+	m.logger.Info("executing mission workflow with SOTA orchestrator", "mission_id", missionID)
 
 	// Get active mission
 	m.mu.RLock()
@@ -292,40 +337,100 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 		span.SetAttributes(attribute.String(observability.GibsonMissionName, active.mission.Name))
 	}
 
-	// Create workflow executor
-	workflowExecutor := workflow.NewWorkflowExecutor(
-		workflow.WithLogger(m.logger.With("component", "workflow-executor")),
-		workflow.WithMaxParallel(10),
-	)
+	// Check if GraphRAG is available - required for SOTA orchestrator
+	if m.infrastructure == nil || m.infrastructure.graphRAGClient == nil {
+		m.logger.Error("GraphRAG not available - SOTA orchestrator requires Neo4j",
+			"mission_id", missionID)
 
-	// Create mission orchestrator with harness factory
-	orchestratorOpts := []mission.OrchestratorOption{
-		mission.WithHarnessFactory(m.harnessFactory),
-		mission.WithWorkflowExecutor(workflowExecutor),
-		mission.WithEventEmitter(mission.NewDefaultEventEmitter(mission.WithBufferSize(100))),
-	}
-
-	// Add target store if it implements the required interface
-	if ts, ok := m.targetStore.(mission.TargetStore); ok {
-		orchestratorOpts = append(orchestratorOpts, mission.WithTargetStore(ts))
-	}
-
-	orchestrator, err := mission.NewMissionOrchestrator(m.missionStore, orchestratorOpts...)
-	if err != nil {
-		m.logger.Error("failed to create mission orchestrator", "error", err)
+		m.emitEvent(eventChan, api.MissionEventData{
+			EventType: "mission.failed",
+			Timestamp: time.Now(),
+			MissionID: missionID,
+			Error:     "GraphRAG (Neo4j) is required for mission execution but not configured",
+		})
 		return
 	}
+
+	// Create query handlers for graph operations
+	graphClient := m.infrastructure.graphRAGClient
+	missionQueries := queries.NewMissionQueries(graphClient)
+	executionQueries := queries.NewExecutionQueries(graphClient)
+
+	// Create mission context and target info for harness
+	missionCtx := harness.NewMissionContext(active.mission.ID, active.mission.Name, "")
+
+	// Load target entity to get connection details
+	var targetInfo harness.TargetInfo
+	if active.mission.TargetID == "00000000-0000-0000-0000-d15c00e00000" {
+		// Synthetic target for discovery/orchestration missions
+		targetInfo = harness.NewTargetInfo(active.mission.TargetID, "discovery-mission", "", "discovery")
+	} else if ts, ok := m.targetStore.(mission.TargetStore); ok {
+		target, err := ts.Get(ctx, active.mission.TargetID)
+		if err != nil {
+			m.logger.Error("failed to load target", "error", err, "target_id", active.mission.TargetID)
+			m.emitEvent(eventChan, api.MissionEventData{
+				EventType: "mission.failed",
+				Timestamp: time.Now(),
+				MissionID: missionID,
+				Error:     fmt.Sprintf("failed to load target: %v", err),
+			})
+			return
+		}
+		targetInfo = harness.NewTargetInfoFull(
+			target.ID,
+			target.Name,
+			target.URL,
+			target.Type,
+			target.Connection,
+		)
+	} else {
+		targetInfo = harness.NewTargetInfo(active.mission.TargetID, "mission-target", "", "")
+	}
+
+	// Create harness for agent execution
+	agentHarness, err := m.harnessFactory.Create("orchestrator", missionCtx, targetInfo)
+	if err != nil {
+		m.logger.Error("failed to create harness", "error", err)
+		m.emitEvent(eventChan, api.MissionEventData{
+			EventType: "mission.failed",
+			Timestamp: time.Now(),
+			MissionID: missionID,
+			Error:     fmt.Sprintf("failed to create harness: %v", err),
+		})
+		return
+	}
+
+	// Create LLM client adapter for the Thinker
+	llmClient := &llmClientAdapter{harness: agentHarness}
+
+	// Create harness adapter for the Actor
+	harnessAdapter := &orchestratorHarnessAdapter{harness: agentHarness}
+
+	// Create SOTA orchestrator components
+	observer := orchestrator.NewObserver(missionQueries, executionQueries)
+	thinker := orchestrator.NewThinker(llmClient,
+		orchestrator.WithMaxRetries(3),
+		orchestrator.WithThinkerTemperature(0.2),
+	)
+	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient)
+
+	// Create the SOTA orchestrator
+	sotaOrchestrator := orchestrator.NewOrchestrator(observer, thinker, actor,
+		orchestrator.WithMaxIterations(100),
+		orchestrator.WithMaxConcurrent(10),
+		orchestrator.WithLogger(m.logger.With("component", "sota-orchestrator")),
+	)
 
 	// Emit workflow execution started event
 	m.emitEvent(eventChan, api.MissionEventData{
 		EventType: "workflow.started",
 		Timestamp: time.Now(),
 		MissionID: missionID,
-		Message:   fmt.Sprintf("Starting workflow execution for mission %s", missionID),
+		Message:   fmt.Sprintf("Starting SOTA orchestrator for mission %s", missionID),
 	})
 
-	// Execute mission through orchestrator
-	result, err := orchestrator.Execute(ctx, active.mission)
+	// Execute mission through SOTA orchestrator's Observe → Think → Act loop
+	result, err := sotaOrchestrator.Run(ctx, missionID)
 
 	// Calculate mission duration
 	missionDuration := time.Since(active.startTime)
@@ -333,7 +438,6 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 	// Determine final status based on execution result
 	var finalStatus mission.MissionStatus
 	var errorMsg string
-	var findingsCount int
 
 	if err != nil {
 		m.logger.Error("mission execution failed", "mission_id", missionID, "error", err)
@@ -356,18 +460,54 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 			Error:     errorMsg,
 		})
 	} else if result != nil {
-		// Use the status from the result
-		finalStatus = result.Status
-		findingsCount = len(result.FindingIDs)
+		// Map orchestrator status to mission status
+		switch result.Status {
+		case orchestrator.StatusCompleted:
+			finalStatus = mission.MissionStatusCompleted
+		case orchestrator.StatusFailed:
+			finalStatus = mission.MissionStatusFailed
+			errorMsg = "orchestrator reported failure"
+			if result.Error != nil {
+				errorMsg = result.Error.Error()
+			}
+		case orchestrator.StatusCancelled:
+			finalStatus = mission.MissionStatusCancelled
+			errorMsg = "mission was cancelled"
+		case orchestrator.StatusMaxIterations:
+			finalStatus = mission.MissionStatusFailed
+			errorMsg = "max iterations reached"
+		case orchestrator.StatusTimeout:
+			finalStatus = mission.MissionStatusFailed
+			errorMsg = "orchestrator timed out"
+		case orchestrator.StatusBudgetExceeded:
+			finalStatus = mission.MissionStatusFailed
+			errorMsg = "token budget exceeded"
+		default:
+			finalStatus = mission.MissionStatusFailed
+			errorMsg = fmt.Sprintf("unknown orchestrator status: %s", result.Status)
+		}
+
+		// Log orchestrator statistics
+		m.logger.Info("SOTA orchestrator completed",
+			"mission_id", missionID,
+			"status", result.Status,
+			"iterations", result.TotalIterations,
+			"decisions", result.TotalDecisions,
+			"tokens_used", result.TotalTokensUsed,
+			"completed_nodes", result.CompletedNodes,
+			"failed_nodes", result.FailedNodes,
+			"duration", result.Duration,
+			"stop_reason", result.StopReason,
+		)
 
 		if finalStatus == mission.MissionStatusFailed {
-			errorMsg = "workflow execution failed"
-
 			// Record error on span
 			if span != nil {
 				span.SetStatus(codes.Error, errorMsg)
 				span.SetAttributes(
-					attribute.Int("gibson.mission.findings_count", findingsCount),
+					attribute.Int("gibson.mission.iterations", result.TotalIterations),
+					attribute.Int("gibson.mission.decisions", result.TotalDecisions),
+					attribute.Int("gibson.mission.tokens_used", result.TotalTokensUsed),
 					attribute.Int("gibson.mission.duration_ms", int(missionDuration.Milliseconds())),
 				)
 			}
@@ -376,7 +516,11 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 			if span != nil {
 				span.SetStatus(codes.Ok, "mission completed")
 				span.SetAttributes(
-					attribute.Int("gibson.mission.findings_count", findingsCount),
+					attribute.Int("gibson.mission.iterations", result.TotalIterations),
+					attribute.Int("gibson.mission.decisions", result.TotalDecisions),
+					attribute.Int("gibson.mission.tokens_used", result.TotalTokensUsed),
+					attribute.Int("gibson.mission.completed_nodes", result.CompletedNodes),
+					attribute.Int("gibson.mission.failed_nodes", result.FailedNodes),
 					attribute.Int("gibson.mission.duration_ms", int(missionDuration.Milliseconds())),
 				)
 			}
@@ -386,12 +530,12 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 			EventType: "mission.completed",
 			Timestamp: time.Now(),
 			MissionID: missionID,
-			Message:   fmt.Sprintf("Mission completed with status: %s", finalStatus),
+			Message:   fmt.Sprintf("Mission completed with status: %s (iterations: %d, decisions: %d)", finalStatus, result.TotalIterations, result.TotalDecisions),
 		})
 	} else {
 		// No result returned - treat as failed
 		finalStatus = mission.MissionStatusFailed
-		errorMsg = "no result returned from orchestrator"
+		errorMsg = "no result returned from SOTA orchestrator"
 
 		// Record error on span
 		if span != nil {
@@ -788,4 +932,68 @@ func containsStr(s, substr string) bool {
 			}
 			return false
 		}())
+}
+
+// llmClientAdapter adapts an AgentHarness to the orchestrator.LLMClient interface.
+// This allows the SOTA orchestrator's Thinker to use the harness for LLM operations.
+type llmClientAdapter struct {
+	harness harness.AgentHarness
+}
+
+// Complete performs a synchronous LLM completion using the harness.
+func (a *llmClientAdapter) Complete(ctx context.Context, slot string, messages []llm.Message, opts ...orchestrator.CompletionOption) (*llm.CompletionResponse, error) {
+	// Convert orchestrator options to harness options
+	harnessOpts := make([]harness.CompletionOption, 0, len(opts))
+	compOpts := &orchestrator.CompletionOptions{}
+	for _, opt := range opts {
+		opt(compOpts)
+	}
+	if compOpts.Temperature > 0 {
+		harnessOpts = append(harnessOpts, harness.WithTemperature(compOpts.Temperature))
+	}
+	if compOpts.MaxTokens > 0 {
+		harnessOpts = append(harnessOpts, harness.WithMaxTokens(compOpts.MaxTokens))
+	}
+	if compOpts.TopP > 0 {
+		harnessOpts = append(harnessOpts, harness.WithTopP(compOpts.TopP))
+	}
+
+	return a.harness.Complete(ctx, slot, messages, harnessOpts...)
+}
+
+// CompleteStructuredAny performs a completion with provider-native structured output.
+func (a *llmClientAdapter) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...orchestrator.CompletionOption) (any, error) {
+	// Convert orchestrator options to harness options
+	harnessOpts := make([]harness.CompletionOption, 0, len(opts))
+	compOpts := &orchestrator.CompletionOptions{}
+	for _, opt := range opts {
+		opt(compOpts)
+	}
+	if compOpts.Temperature > 0 {
+		harnessOpts = append(harnessOpts, harness.WithTemperature(compOpts.Temperature))
+	}
+	if compOpts.MaxTokens > 0 {
+		harnessOpts = append(harnessOpts, harness.WithMaxTokens(compOpts.MaxTokens))
+	}
+	if compOpts.TopP > 0 {
+		harnessOpts = append(harnessOpts, harness.WithTopP(compOpts.TopP))
+	}
+
+	return a.harness.CompleteStructuredAny(ctx, slot, messages, schemaType, harnessOpts...)
+}
+
+// orchestratorHarnessAdapter adapts an AgentHarness to the orchestrator.Harness interface.
+// This allows the SOTA orchestrator's Actor to delegate to agents.
+type orchestratorHarnessAdapter struct {
+	harness harness.AgentHarness
+}
+
+// DelegateToAgent delegates a task to another agent via the harness.
+func (a *orchestratorHarnessAdapter) DelegateToAgent(ctx context.Context, agentName string, task agent.Task) (agent.Result, error) {
+	return a.harness.DelegateToAgent(ctx, agentName, task)
+}
+
+// CallTool executes a tool via the harness.
+func (a *orchestratorHarnessAdapter) CallTool(ctx context.Context, toolName string, input map[string]interface{}) (interface{}, error) {
+	return a.harness.CallTool(ctx, toolName, input)
 }

@@ -28,7 +28,7 @@ func NewMissionQueries(client graph.GraphClient) *MissionQueries {
 func (mq *MissionQueries) GetMission(ctx context.Context, missionID types.ID) (*schema.Mission, error) {
 	cypher := `
 		MATCH (m:Mission {id: $mission_id})
-		RETURN m
+		RETURN properties(m) as m
 	`
 
 	params := map[string]any{
@@ -50,8 +50,8 @@ func (mq *MissionQueries) GetMission(ctx context.Context, missionID types.ID) (*
 // GetMissionNodes retrieves all workflow nodes for a mission.
 func (mq *MissionQueries) GetMissionNodes(ctx context.Context, missionID types.ID) ([]*schema.WorkflowNode, error) {
 	cypher := `
-		MATCH (m:Mission {id: $mission_id})-[:HAS_NODE]->(n:WorkflowNode)
-		RETURN n
+		MATCH (n:WorkflowNode)-[:PART_OF]->(m:Mission {id: $mission_id})
+		RETURN properties(n) as n
 		ORDER BY n.created_at
 	`
 
@@ -79,8 +79,8 @@ func (mq *MissionQueries) GetMissionNodes(ctx context.Context, missionID types.I
 // GetMissionDecisions retrieves all orchestrator decisions for a mission, ordered by iteration.
 func (mq *MissionQueries) GetMissionDecisions(ctx context.Context, missionID types.ID) ([]*schema.Decision, error) {
 	cypher := `
-		MATCH (m:Mission {id: $mission_id})-[:HAS_DECISION]->(d:Decision)
-		RETURN d
+		MATCH (d:Decision)-[:PART_OF]->(m:Mission {id: $mission_id})
+		RETURN properties(d) as d
 		ORDER BY d.iteration, d.timestamp
 	`
 
@@ -108,8 +108,8 @@ func (mq *MissionQueries) GetMissionDecisions(ctx context.Context, missionID typ
 // GetNodeExecutions retrieves all executions for a specific workflow node.
 func (mq *MissionQueries) GetNodeExecutions(ctx context.Context, nodeID types.ID) ([]*schema.AgentExecution, error) {
 	cypher := `
-		MATCH (n:WorkflowNode {id: $node_id})-[:HAS_EXECUTION]->(e:AgentExecution)
-		RETURN e
+		MATCH (e:AgentExecution)-[:EXECUTED_BY]->(n:WorkflowNode {id: $node_id})
+		RETURN properties(e) as e
 		ORDER BY e.started_at
 	`
 
@@ -138,13 +138,13 @@ func (mq *MissionQueries) GetNodeExecutions(ctx context.Context, nodeID types.ID
 // A node is ready if all its dependencies have status "completed".
 func (mq *MissionQueries) GetReadyNodes(ctx context.Context, missionID types.ID) ([]*schema.WorkflowNode, error) {
 	cypher := `
-		MATCH (m:Mission {id: $mission_id})-[:HAS_NODE]->(n:WorkflowNode)
+		MATCH (n:WorkflowNode)-[:PART_OF]->(m:Mission {id: $mission_id})
 		WHERE n.status = 'ready'
 		AND NOT EXISTS {
 			MATCH (n)-[:DEPENDS_ON]->(dep:WorkflowNode)
 			WHERE dep.status <> 'completed'
 		}
-		RETURN n
+		RETURN properties(n) as n
 		ORDER BY n.created_at
 	`
 
@@ -173,7 +173,7 @@ func (mq *MissionQueries) GetReadyNodes(ctx context.Context, missionID types.ID)
 func (mq *MissionQueries) GetNodeDependencies(ctx context.Context, nodeID types.ID) ([]*schema.WorkflowNode, error) {
 	cypher := `
 		MATCH (n:WorkflowNode {id: $node_id})-[:DEPENDS_ON]->(dep:WorkflowNode)
-		RETURN dep
+		RETURN properties(dep) as dep
 		ORDER BY dep.created_at
 	`
 
@@ -214,10 +214,10 @@ type MissionStats struct {
 func (mq *MissionQueries) GetMissionStats(ctx context.Context, missionID types.ID) (*MissionStats, error) {
 	cypher := `
 		MATCH (m:Mission {id: $mission_id})
-		OPTIONAL MATCH (m)-[:HAS_NODE]->(n:WorkflowNode)
-		OPTIONAL MATCH (m)-[:HAS_DECISION]->(d:Decision)
-		OPTIONAL MATCH (n)-[:HAS_EXECUTION]->(e:AgentExecution)
-		RETURN 
+		OPTIONAL MATCH (n:WorkflowNode)-[:PART_OF]->(m)
+		OPTIONAL MATCH (d:Decision)-[:PART_OF]->(m)
+		OPTIONAL MATCH (e:AgentExecution)-[:EXECUTED_BY]->(n)
+		RETURN
 			COUNT(DISTINCT n) as total_nodes,
 			COUNT(DISTINCT CASE WHEN n.status = 'completed' THEN n END) as completed_nodes,
 			COUNT(DISTINCT CASE WHEN n.status = 'failed' THEN n END) as failed_nodes,

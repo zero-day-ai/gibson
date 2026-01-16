@@ -292,10 +292,18 @@ type AgentFailedPayload struct {
 }
 
 // AgentDelegatedPayload contains data for agent.delegated events.
+// The trace/span IDs are required for creating DELEGATED_TO relationships
+// in the GraphRAG taxonomy between AgentRun nodes.
 type AgentDelegatedPayload struct {
 	FromAgent       string `json:"from_agent"`
 	ToAgent         string `json:"to_agent"`
 	TaskDescription string `json:"task_description,omitempty"`
+	// Trace context for the delegating agent's run
+	FromTraceID string `json:"from_trace_id,omitempty"`
+	FromSpanID  string `json:"from_span_id,omitempty"`
+	// Trace context for the delegated agent's run
+	ToTraceID string `json:"to_trace_id,omitempty"`
+	ToSpanID  string `json:"to_span_id,omitempty"`
 }
 
 // LLMRequestStartedPayload contains data for llm.request.started events.
