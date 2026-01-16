@@ -485,6 +485,15 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 			attribute.String(AttrBuildCommand, manifest.Build.Command),
 			attribute.Int64(AttrBuildDuration, buildDuration.Milliseconds()),
 		)
+
+		// Copy any artifacts from the repo's bin/ directory to the Gibson bin directory
+		// This handles repos that build to a bin/ directory without explicit artifact lists
+		if err := i.copyRepoBuildArtifacts(kind, componentSourceDir); err != nil {
+			span.AddEvent("failed to copy repo build artifacts", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+			// Don't fail - the manifest might have explicit artifacts
+		}
 	} else {
 		// If no build, use component source dir as work dir
 		buildWorkDir = componentSourceDir
@@ -723,6 +732,16 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 			attribute.String(AttrBuildCommand, manifest.Build.Command),
 			attribute.Int64(AttrBuildDuration, buildDuration.Milliseconds()),
 		)
+
+		// Step 1.5: Copy repository-level build artifacts to bin/ directory
+		// Many repositories (like oss-tools) build all artifacts to a repo-level bin/ directory
+		// We need to copy these to ~/.gibson/{kind}s/bin/ so they're discoverable
+		if err := i.copyRepoBuildArtifacts(kind, repoDir); err != nil {
+			span.AddEvent("failed to copy repo build artifacts", trace.WithAttributes(
+				attribute.String("error", err.Error()),
+			))
+			// Don't fail - individual components may still have their own builds
+		}
 	}
 
 	// Step 2: Find component paths
@@ -2052,6 +2071,59 @@ func (i *DefaultInstaller) cleanupOrphanedComponent(ctx context.Context, kind Co
 		if err := i.dao.Delete(ctx, kind, name); err != nil {
 			return WrapComponentError(ErrCodeLoadFailed, "failed to delete orphaned component", err).
 				WithComponent(name)
+		}
+	}
+
+	return nil
+}
+
+// copyRepoBuildArtifacts copies executable files from a repository's bin/ directory
+// to the Gibson bin directory (~/.gibson/{kind}s/bin/).
+// This handles the common pattern where repository-level builds output all artifacts
+// to a single bin/ directory at the repository root.
+func (i *DefaultInstaller) copyRepoBuildArtifacts(kind ComponentKind, repoDir string) error {
+	// Check if repo has a bin/ directory
+	repoBinDir := filepath.Join(repoDir, "bin")
+	if _, err := os.Stat(repoBinDir); os.IsNotExist(err) {
+		// No bin directory - nothing to copy
+		return nil
+	}
+
+	// Get the destination bin directory
+	destBinDir := i.getBinDir(kind)
+	if err := os.MkdirAll(destBinDir, 0755); err != nil {
+		return fmt.Errorf("failed to create bin directory: %w", err)
+	}
+
+	// Read all files in the repo's bin directory
+	entries, err := os.ReadDir(repoBinDir)
+	if err != nil {
+		return fmt.Errorf("failed to read repo bin directory: %w", err)
+	}
+
+	// Copy each executable file
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		srcPath := filepath.Join(repoBinDir, entry.Name())
+		dstPath := filepath.Join(destBinDir, entry.Name())
+
+		// Check if file is executable
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		// Only copy executable files (has any execute bit set)
+		if info.Mode()&0111 == 0 {
+			continue
+		}
+
+		// Copy the file
+		if err := copyFile(srcPath, dstPath); err != nil {
+			return fmt.Errorf("failed to copy %s: %w", entry.Name(), err)
 		}
 	}
 
