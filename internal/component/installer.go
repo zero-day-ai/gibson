@@ -83,15 +83,15 @@ type installContext struct {
 
 // rollback removes all resources created during installation
 // Errors are intentionally ignored as this is cleanup code during error handling
-func (ic *installContext) rollback(dao ComponentDAO, ctx context.Context) {
+func (ic *installContext) rollback(store ComponentStore, ctx context.Context) {
 	// Remove all copied artifacts
 	for _, artifactPath := range ic.copiedArtifacts {
 		_ = os.Remove(artifactPath)
 	}
 
 	// Remove database entry if it was registered
-	if ic.dbRegistered && dao != nil {
-		_ = dao.Delete(ctx, ic.componentKind, ic.componentName)
+	if ic.dbRegistered && store != nil {
+		_ = store.Delete(ctx, ic.componentKind, ic.componentName)
 	}
 }
 
@@ -244,23 +244,6 @@ type SkippedComponent struct {
 	Reason string
 }
 
-// ComponentDAO defines the database interface for component persistence operations.
-// This interface is defined in the component package to avoid import cycles,
-// while the implementation lives in the database package.
-type ComponentDAO interface {
-	// Create inserts a new component
-	Create(ctx context.Context, comp *Component) error
-
-	// GetByName retrieves a component by kind and name (unique key)
-	GetByName(ctx context.Context, kind ComponentKind, name string) (*Component, error)
-
-	// List returns all components of a specific kind
-	List(ctx context.Context, kind ComponentKind) ([]*Component, error)
-
-	// Delete removes a component by kind and name
-	Delete(ctx context.Context, kind ComponentKind, name string) error
-}
-
 // Installer defines the interface for installing, updating, and uninstalling components
 type Installer interface {
 	// Install installs a component from a git repository URL
@@ -279,22 +262,22 @@ type Installer interface {
 	Uninstall(ctx context.Context, kind ComponentKind, name string) (*UninstallResult, error)
 }
 
-// DefaultInstaller implements Installer using git, build executor, and component DAO
+// DefaultInstaller implements Installer using git, build executor, and ComponentStore
 type DefaultInstaller struct {
 	git       git.GitOperations
 	builder   build.BuildExecutor
-	dao       ComponentDAO
+	store     ComponentStore
 	lifecycle LifecycleManager
 	homeDir   string
 	tracer    trace.Tracer
 }
 
 // NewDefaultInstaller creates a new DefaultInstaller instance
-func NewDefaultInstaller(gitOps git.GitOperations, builder build.BuildExecutor, dao ComponentDAO, lifecycle LifecycleManager) *DefaultInstaller {
+func NewDefaultInstaller(gitOps git.GitOperations, builder build.BuildExecutor, store ComponentStore, lifecycle LifecycleManager) *DefaultInstaller {
 	return &DefaultInstaller{
 		git:       gitOps,
 		builder:   builder,
-		dao:       dao,
+		store:     store,
 		lifecycle: lifecycle,
 		homeDir:   getDefaultHomeDir(),
 		tracer:    otel.GetTracerProvider().Tracer("gibson.component"),
@@ -431,8 +414,8 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	}
 
 	// Step 5: Check if component already exists in database
-	if !opts.Force && i.dao != nil {
-		if existing, err := i.dao.GetByName(ctx, kind, manifest.Name); err == nil && existing != nil {
+	if !opts.Force && i.store != nil {
+		if existing, err := i.store.GetByName(ctx, kind, manifest.Name); err == nil && existing != nil {
 			// Check if this is an orphaned component (DB entry exists but binary is missing)
 			if i.isOrphanedComponent(existing) {
 				// Clean up the orphaned entry and proceed with installation
@@ -561,7 +544,7 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	// Validate component
 	if err := component.Validate(); err != nil {
 		// Rollback on validation failure
-		installCtx.rollback(i.dao, ctx)
+		installCtx.rollback(i.store, ctx)
 		if opts.Force {
 			_ = os.RemoveAll(repoDir)
 		}
@@ -569,10 +552,10 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	}
 
 	// Step 10: Register component in database (unless SkipRegister is set)
-	if !opts.SkipRegister && i.dao != nil {
-		if err := i.dao.Create(ctx, component); err != nil {
+	if !opts.SkipRegister && i.store != nil {
+		if err := i.store.Create(ctx, component); err != nil {
 			// Rollback on DB registration failure
-			installCtx.rollback(i.dao, ctx)
+			installCtx.rollback(i.store, ctx)
 			if opts.Force {
 				_ = os.RemoveAll(repoDir)
 			}
@@ -820,8 +803,8 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 		var buildWorkDir string
 
 		// Check if component already exists in database
-		if !opts.Force && i.dao != nil {
-			if existing, err := i.dao.GetByName(ctx, kind, compManifest.Name); err == nil && existing != nil {
+		if !opts.Force && i.store != nil {
+			if existing, err := i.store.GetByName(ctx, kind, compManifest.Name); err == nil && existing != nil {
 				// Check if this is an orphaned component (DB entry exists but binary is missing)
 				if i.isOrphanedComponent(existing) {
 					// Clean up the orphaned entry and proceed with installation
@@ -848,8 +831,8 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 		}
 
 		// If Force is set and component exists, delete it first
-		if opts.Force && i.dao != nil {
-			_ = i.dao.Delete(ctx, kind, compManifest.Name)
+		if opts.Force && i.store != nil {
+			_ = i.store.Delete(ctx, kind, compManifest.Name)
 		}
 
 		// Build component if it has its own build config (component-level build)
@@ -903,7 +886,7 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 			binPath, err = i.copyArtifactsToBin(kind, compManifest.Build.Artifacts, buildWorkDir)
 			if err != nil {
 				// Rollback any resources created during this installation
-				installCtx.rollback(i.dao, ctx)
+				installCtx.rollback(i.store, ctx)
 				result.Failed = append(result.Failed, InstallFailure{
 					Path:  relPath,
 					Name:  compManifest.Name,
@@ -945,7 +928,7 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 		// Validate component
 		if err := component.Validate(); err != nil {
 			// Rollback any resources created during this installation
-			installCtx.rollback(i.dao, ctx)
+			installCtx.rollback(i.store, ctx)
 			result.Failed = append(result.Failed, InstallFailure{
 				Path:  relPath,
 				Name:  compManifest.Name,
@@ -955,10 +938,10 @@ func (i *DefaultInstaller) installRepository(ctx context.Context, repoDir string
 		}
 
 		// Register component in database (unless SkipRegister is set)
-		if !opts.SkipRegister && i.dao != nil {
-			if err := i.dao.Create(ctx, component); err != nil {
+		if !opts.SkipRegister && i.store != nil {
+			if err := i.store.Create(ctx, component); err != nil {
 				// Rollback any resources created during this installation
-				installCtx.rollback(i.dao, ctx)
+				installCtx.rollback(i.store, ctx)
 				result.Failed = append(result.Failed, InstallFailure{
 					Path: relPath,
 					Name: compManifest.Name,
@@ -1083,8 +1066,8 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 
 	// Check if component already exists (idempotency check)
 	// This prevents unnecessary artifact copying and rollback operations
-	if !opts.Force && i.dao != nil {
-		if existing, err := i.dao.GetByName(ctx, kind, manifest.Name); err == nil && existing != nil {
+	if !opts.Force && i.store != nil {
+		if existing, err := i.store.GetByName(ctx, kind, manifest.Name); err == nil && existing != nil {
 			// Check if this is an orphaned component (DB entry exists but binary is missing)
 			if i.isOrphanedComponent(existing) {
 				// Clean up the orphaned entry and proceed with installation
@@ -1125,8 +1108,8 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 	}
 
 	// If Force is set and component exists, delete it first
-	if opts.Force && i.dao != nil {
-		_ = i.dao.Delete(ctx, kind, manifest.Name)
+	if opts.Force && i.store != nil {
+		_ = i.store.Delete(ctx, kind, manifest.Name)
 	}
 
 	// Determine the source directory for artifacts
@@ -1204,7 +1187,7 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 	// Validate component
 	if err := component.Validate(); err != nil {
 		// Rollback copied artifacts on failure
-		installCtx.rollback(i.dao, ctx)
+		installCtx.rollback(i.store, ctx)
 		validationErr := NewValidationFailedError("component validation failed", err)
 		span.RecordError(validationErr)
 		span.SetStatus(codes.Error, validationErr.Error())
@@ -1219,11 +1202,11 @@ func (i *DefaultInstaller) installSingleComponent(ctx context.Context, repoDir s
 		return result, validationErr
 	}
 
-	// Step 4: Register with i.dao.Create()
-	if !opts.SkipRegister && i.dao != nil {
-		if err := i.dao.Create(ctx, component); err != nil {
+	// Step 4: Register with i.store.Create()
+	if !opts.SkipRegister && i.store != nil {
+		if err := i.store.Create(ctx, component); err != nil {
 			// Rollback copied artifacts on failure
-			installCtx.rollback(i.dao, ctx)
+			installCtx.rollback(i.store, ctx)
 			registerErr := WrapComponentError(ErrCodeLoadFailed, "failed to register component", err).
 				WithComponent(manifest.Name)
 			span.RecordError(registerErr)
@@ -1317,8 +1300,8 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 
 	// Get current component from DAO if available
 	var wasRunning bool
-	if i.dao != nil {
-		if comp, err := i.dao.GetByName(ctx, kind, name); err == nil && comp != nil {
+	if i.store != nil {
+		if comp, err := i.store.GetByName(ctx, kind, name); err == nil && comp != nil {
 			result.OldVersion = comp.Version
 			wasRunning = comp.IsRunning()
 
@@ -1408,7 +1391,7 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 	result.BuildOutput = buildOutput
 
 	// Step 5: Update component in database
-	if i.dao != nil {
+	if i.store != nil {
 		component := &Component{
 			Kind:      kind,
 			Name:      name,
@@ -1423,10 +1406,10 @@ func (i *DefaultInstaller) Update(ctx context.Context, kind ComponentKind, name 
 		}
 
 		// Delete old version
-		_ = i.dao.Delete(ctx, kind, name)
+		_ = i.store.Delete(ctx, kind, name)
 
 		// Create new version
-		if err := i.dao.Create(ctx, component); err != nil {
+		if err := i.store.Create(ctx, component); err != nil {
 			return result, WrapComponentError(ErrCodeLoadFailed, "failed to re-register component", err).
 				WithComponent(name)
 		}
@@ -1464,8 +1447,8 @@ func (i *DefaultInstaller) UpdateAll(ctx context.Context, kind ComponentKind, op
 	// Get all components of this kind from DAO
 	var components []*Component
 	var err error
-	if i.dao != nil {
-		components, err = i.dao.List(ctx, kind)
+	if i.store != nil {
+		components, err = i.store.List(ctx, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -1524,9 +1507,9 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 
 	// Step 1: Get component from database to retrieve BinPath and RepoPath
 	var comp *Component
-	if i.dao != nil {
+	if i.store != nil {
 		var err error
-		comp, err = i.dao.GetByName(ctx, kind, name)
+		comp, err = i.store.GetByName(ctx, kind, name)
 		if err != nil {
 			// Component not found in database
 			notFoundErr := NewComponentNotFoundError(name)
@@ -1598,8 +1581,8 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 	}
 
 	// Step 3: Delete from database
-	if i.dao != nil {
-		if err := i.dao.Delete(ctx, kind, name); err != nil {
+	if i.store != nil {
+		if err := i.store.Delete(ctx, kind, name); err != nil {
 			// Log error but continue with cleanup
 			span.AddEvent("failed to delete from database", trace.WithAttributes(
 				attribute.String("error", err.Error()),
@@ -1611,9 +1594,9 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 	if comp != nil && comp.RepoPath != "" {
 		// Check if other components use the same repository
 		shouldRemoveRepo := true
-		if i.dao != nil {
+		if i.store != nil {
 			// Get all components of this kind
-			allComponents, err := i.dao.List(ctx, kind)
+			allComponents, err := i.store.List(ctx, kind)
 			if err == nil {
 				// Check if any other component shares the same repository path prefix
 				for _, otherComp := range allComponents {
@@ -1696,7 +1679,7 @@ func (i *DefaultInstaller) checkDependencies(ctx context.Context, manifest *Mani
 	}
 
 	// Check component dependencies
-	if i.dao != nil {
+	if i.store != nil {
 		for _, compDep := range deps.GetComponents() {
 			if err := i.checkComponentDependency(compDep); err != nil {
 				return NewDependencyFailedError(manifest.Name, compDep, err, false)
@@ -2067,8 +2050,8 @@ func (i *DefaultInstaller) cleanupOrphanedComponent(ctx context.Context, kind Co
 	))
 
 	// Delete the orphaned entry from the database
-	if i.dao != nil {
-		if err := i.dao.Delete(ctx, kind, name); err != nil {
+	if i.store != nil {
+		if err := i.store.Delete(ctx, kind, name); err != nil {
 			return WrapComponentError(ErrCodeLoadFailed, "failed to delete orphaned component", err).
 				WithComponent(name)
 		}

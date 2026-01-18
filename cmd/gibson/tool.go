@@ -12,7 +12,6 @@ import (
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
 	"github.com/zero-day-ai/gibson/internal/daemon/client"
 	internalcomp "github.com/zero-day-ai/gibson/internal/component"
-	"github.com/zero-day-ai/gibson/internal/component/build"
 )
 
 var toolCmd = &cobra.Command{
@@ -87,78 +86,20 @@ func init() {
 }
 
 // runToolTest executes the tool test command
+// NOTE: This command is deprecated as component data is now stored in etcd
 func runToolTest(cmd *cobra.Command, args []string) error {
-	ctx := cmd.Context()
 	toolName := args[0]
 
 	cmd.Printf("Running tests for tool '%s'...\n", toolName)
 
-	// Get component DAO
-	dao, db, err := getComponentDAO()
+	// Component data is now stored in etcd, not SQLite
+	// This legacy command is no longer supported
+	_, _, err := getComponentDAO()
 	if err != nil {
-		return fmt.Errorf("failed to get component DAO: %w", err)
-	}
-	defer db.Close()
-
-	// Get tool
-	toolComp, err := dao.GetByName(ctx, internalcomp.ComponentKindTool, toolName)
-	if err != nil {
-		return fmt.Errorf("failed to get tool: %w", err)
-	}
-	if toolComp == nil {
-		return fmt.Errorf("tool '%s' not found", toolName)
+		return fmt.Errorf("tool test command is no longer supported: %w", err)
 	}
 
-	// Create build executor for running tests
-	builder := build.NewDefaultBuildExecutor()
-
-	// Prepare test configuration
-	workDir := toolComp.RepoPath
-	if workDir == "" {
-		return fmt.Errorf("tool '%s' has no repository path configured", toolName)
-	}
-	testConfig := build.BuildConfig{
-		WorkDir: workDir,
-		Command: "make",
-		Args:    []string{"test"},
-		Env:     make(map[string]string),
-	}
-
-	// Check if manifest has test configuration
-	if toolComp.Manifest != nil && toolComp.Manifest.Build != nil {
-		if toolComp.Manifest.Build.GetEnv() != nil {
-			testConfig.Env = toolComp.Manifest.Build.GetEnv()
-		}
-	}
-
-	// Run tests
-	start := time.Now()
-	result, err := builder.Build(ctx, testConfig, toolComp.Name, toolComp.Version, "test")
-	if err != nil {
-		cmd.Printf("Tests failed in %v\n", time.Since(start))
-		if result != nil {
-			if result.Stdout != "" {
-				cmd.Printf("\nStdout:\n%s\n", result.Stdout)
-			}
-			if result.Stderr != "" {
-				cmd.Printf("\nStderr:\n%s\n", result.Stderr)
-			}
-		}
-		return fmt.Errorf("tests failed: %w", err)
-	}
-
-	duration := time.Since(start)
-
-	cmd.Printf("Tests passed in %v\n", duration)
-
-	if result.Stdout != "" {
-		cmd.Printf("\nStdout:\n%s\n", result.Stdout)
-	}
-
-	if result.Stderr != "" {
-		cmd.Printf("\nStderr:\n%s\n", result.Stderr)
-	}
-
+	// Unreachable
 	return nil
 }
 

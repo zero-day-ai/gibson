@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
+
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/sdk/registry"
 )
@@ -296,4 +298,37 @@ func (m *Manager) getEndpoint() string {
 	default:
 		return "unknown"
 	}
+}
+
+// ClientAccessor defines an interface for types that can provide an etcd client.
+// Both EmbeddedRegistry and ExternalRegistry implement this interface.
+type ClientAccessor interface {
+	Client() *clientv3.Client
+}
+
+// Client returns the underlying etcd client for direct access.
+// This is used by ComponentStore to share the same etcd connection.
+// Returns nil if the registry is not started or doesn't support client access.
+func (m *Manager) Client() *clientv3.Client {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.registry == nil {
+		return nil
+	}
+
+	// Type assert to get the client
+	if accessor, ok := m.registry.(ClientAccessor); ok {
+		return accessor.Client()
+	}
+
+	return nil
+}
+
+// Namespace returns the configured etcd namespace.
+func (m *Manager) Namespace() string {
+	if m.config.Namespace != "" {
+		return m.config.Namespace
+	}
+	return "gibson"
 }

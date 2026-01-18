@@ -12,7 +12,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/attack"
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/daemon/api"
-	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"google.golang.org/grpc"
@@ -626,15 +625,18 @@ func (d *daemonImpl) StartComponent(ctx context.Context, kind string, name strin
 		return api.StartComponentResult{}, fmt.Errorf("invalid component kind: %s", kind)
 	}
 
-	// Get component from database
-	dao := database.NewComponentDAO(d.db)
-	comp, err := dao.GetByName(ctx, componentKind, name)
+	// Get component from store
+	if d.componentStore == nil {
+		d.logger.Error("component store not available")
+		return api.StartComponentResult{}, fmt.Errorf("component store not available")
+	}
+	comp, err := d.componentStore.GetByName(ctx, componentKind, name)
 	if err != nil {
-		d.logger.Error("failed to get component from database", "error", err, "kind", kind, "name", name)
+		d.logger.Error("failed to get component from store", "error", err, "kind", kind, "name", name)
 		return api.StartComponentResult{}, fmt.Errorf("failed to get component: %w", err)
 	}
 	if comp == nil {
-		d.logger.Warn("component not found in database", "kind", kind, "name", name)
+		d.logger.Warn("component not found in store", "kind", kind, "name", name)
 		return api.StartComponentResult{}, fmt.Errorf("component '%s' not found", name)
 	}
 
@@ -675,15 +677,6 @@ func (d *daemonImpl) StartComponent(ctx context.Context, kind string, name strin
 		return api.StartComponentResult{}, fmt.Errorf("failed to start component: %w", err)
 	}
 
-	// Update component status in database
-	comp.PID = pid
-	comp.Port = port
-	comp.UpdateStatus(component.ComponentStatusRunning)
-	if err := dao.UpdateStatus(ctx, comp.ID, comp.Status, comp.PID, comp.Port); err != nil {
-		// Log warning but don't fail - component is running
-		d.logger.Warn("failed to update component status in database", "error", err, "kind", kind, "name", name)
-	}
-
 	d.logger.Info("component started successfully", "kind", kind, "name", name, "pid", pid, "port", port)
 
 	return api.StartComponentResult{
@@ -710,15 +703,18 @@ func (d *daemonImpl) StopComponent(ctx context.Context, kind string, name string
 		return api.StopComponentResult{}, fmt.Errorf("invalid component kind: %s", kind)
 	}
 
-	// Get component from database
-	dao := database.NewComponentDAO(d.db)
-	comp, err := dao.GetByName(ctx, componentKind, name)
+	// Get component from store
+	if d.componentStore == nil {
+		d.logger.Error("component store not available")
+		return api.StopComponentResult{}, fmt.Errorf("component store not available")
+	}
+	comp, err := d.componentStore.GetByName(ctx, componentKind, name)
 	if err != nil {
-		d.logger.Error("failed to get component from database", "error", err, "kind", kind, "name", name)
+		d.logger.Error("failed to get component from store", "error", err, "kind", kind, "name", name)
 		return api.StopComponentResult{}, fmt.Errorf("failed to get component: %w", err)
 	}
 	if comp == nil {
-		d.logger.Warn("component not found in database", "kind", kind, "name", name)
+		d.logger.Warn("component not found in store", "kind", kind, "name", name)
 		return api.StopComponentResult{}, fmt.Errorf("component '%s' not found", name)
 	}
 
@@ -755,15 +751,6 @@ func (d *daemonImpl) StopComponent(ctx context.Context, kind string, name string
 	if stoppedCount == 0 && lastErr != nil {
 		d.logger.Error("failed to stop any instances", "error", lastErr, "kind", kind, "name", name)
 		return api.StopComponentResult{}, fmt.Errorf("failed to stop any instances: %w", lastErr)
-	}
-
-	// Update component status in database
-	comp.UpdateStatus(component.ComponentStatusStopped)
-	comp.PID = 0
-	comp.Port = 0
-	if err := dao.UpdateStatus(ctx, comp.ID, comp.Status, comp.PID, comp.Port); err != nil {
-		// Log warning but don't fail - component is stopped
-		d.logger.Warn("failed to update component status in database", "error", err, "kind", kind, "name", name)
 	}
 
 	d.logger.Info("component stopped successfully", "kind", kind, "name", name, "stopped", stoppedCount, "total", len(instances))

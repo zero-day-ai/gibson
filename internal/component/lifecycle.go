@@ -35,13 +35,6 @@ const (
 	startupHealthCheckInterval = 500 * time.Millisecond
 )
 
-// StatusUpdater is a minimal interface for updating component status in the database.
-// This interface avoids import cycles with the database package.
-type StatusUpdater interface {
-	// UpdateStatus updates status, pid, port, and timestamps
-	UpdateStatus(ctx context.Context, id int64, status ComponentStatus, pid, port int) error
-}
-
 // LifecycleManager manages the lifecycle of external components.
 // It handles starting, stopping, restarting, and status monitoring.
 type LifecycleManager interface {
@@ -69,21 +62,21 @@ type DefaultLifecycleManager struct {
 	shutdownTimeout time.Duration
 	portRangeStart  int
 	portRangeEnd    int
-	dao             StatusUpdater          // optional, for persisting metadata to database
+	store           ComponentStore         // optional, for persisting metadata to etcd
 	logWriter       LogWriter              // optional, for capturing process output to log files
 	processes       map[string]*os.Process // component name -> process
 	tracer          trace.Tracer
 }
 
 // NewLifecycleManager creates a new DefaultLifecycleManager with default timeouts.
-// The dao and logWriter parameters are optional; pass nil if not needed.
-func NewLifecycleManager(dao StatusUpdater, logWriter LogWriter) *DefaultLifecycleManager {
+// The store and logWriter parameters are optional; pass nil if not needed.
+func NewLifecycleManager(store ComponentStore, logWriter LogWriter) *DefaultLifecycleManager {
 	return &DefaultLifecycleManager{
 		startupTimeout:  DefaultStartupTimeout,
 		shutdownTimeout: DefaultShutdownTimeout,
 		portRangeStart:  DefaultPortRangeStart,
 		portRangeEnd:    DefaultPortRangeEnd,
-		dao:             dao,
+		store:           store,
 		logWriter:       logWriter,
 		processes:       make(map[string]*os.Process),
 		tracer:          otel.GetTracerProvider().Tracer("gibson.component"),
@@ -91,9 +84,9 @@ func NewLifecycleManager(dao StatusUpdater, logWriter LogWriter) *DefaultLifecyc
 }
 
 // NewLifecycleManagerWithTimeouts creates a new DefaultLifecycleManager with custom timeouts.
-// The dao and logWriter parameters are optional; pass nil if not needed.
+// The store and logWriter parameters are optional; pass nil if not needed.
 func NewLifecycleManagerWithTimeouts(
-	dao StatusUpdater,
+	store ComponentStore,
 	logWriter LogWriter,
 	startupTimeout, shutdownTimeout time.Duration,
 	portRangeStart, portRangeEnd int,
@@ -103,7 +96,7 @@ func NewLifecycleManagerWithTimeouts(
 		shutdownTimeout: shutdownTimeout,
 		portRangeStart:  portRangeStart,
 		portRangeEnd:    portRangeEnd,
-		dao:             dao,
+		store:           store,
 		logWriter:       logWriter,
 		processes:       make(map[string]*os.Process),
 		tracer:          otel.GetTracerProvider().Tracer("gibson.component"),

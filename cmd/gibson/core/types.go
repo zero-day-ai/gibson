@@ -17,10 +17,11 @@ type CommandContext struct {
 	Ctx context.Context
 
 	// DB is the database connection for data persistence operations
+	// Note: Components are stored in etcd, not SQLite. DB is used for other data types.
 	DB *database.DB
 
-	// DAO provides access to component data from SQLite
-	DAO database.ComponentDAO
+	// ComponentStore provides access to component data from etcd
+	ComponentStore component.ComponentStore
 
 	// TargetDAO provides access to target data from SQLite
 	TargetDAO *database.TargetDAO

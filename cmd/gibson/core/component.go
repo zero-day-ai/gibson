@@ -19,8 +19,8 @@ func ComponentList(cc *CommandContext, kind component.ComponentKind, opts ListOp
 		return nil, fmt.Errorf("cannot use both local and remote filters")
 	}
 
-	// Get all components of the specified kind from database
-	components, err := cc.DAO.List(cc.Ctx, kind)
+	// Get all components of the specified kind from store
+	components, err := cc.ComponentStore.List(cc.Ctx, kind)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list components: %w", err)
 	}
@@ -45,7 +45,7 @@ func ComponentList(cc *CommandContext, kind component.ComponentKind, opts ListOp
 // ComponentShow returns detailed information about a specific component.
 func ComponentShow(cc *CommandContext, kind component.ComponentKind, name string) (*CommandResult, error) {
 	// Get component
-	comp, err := cc.DAO.GetByName(cc.Ctx, kind, name)
+	comp, err := cc.ComponentStore.GetByName(cc.Ctx, kind, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get component: %w", err)
 	}
@@ -116,7 +116,7 @@ func ComponentInstallAll(cc *CommandContext, kind component.ComponentKind, sourc
 // ComponentUninstall removes an installed component.
 func ComponentUninstall(cc *CommandContext, kind component.ComponentKind, name string, opts UninstallOptions) (*CommandResult, error) {
 	// Check if component exists
-	existing, err := cc.DAO.GetByName(cc.Ctx, kind, name)
+	existing, err := cc.ComponentStore.GetByName(cc.Ctx, kind, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get component: %w", err)
 	}
@@ -140,7 +140,7 @@ func ComponentUninstall(cc *CommandContext, kind component.ComponentKind, name s
 // ComponentUpdate updates a component to the latest version.
 func ComponentUpdate(cc *CommandContext, kind component.ComponentKind, name string, opts UpdateOptions) (*CommandResult, error) {
 	// Check if component exists
-	existing, err := cc.DAO.GetByName(cc.Ctx, kind, name)
+	existing, err := cc.ComponentStore.GetByName(cc.Ctx, kind, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get component: %w", err)
 	}
@@ -170,7 +170,7 @@ func ComponentUpdate(cc *CommandContext, kind component.ComponentKind, name stri
 // ComponentBuild builds a component locally.
 func ComponentBuild(cc *CommandContext, kind component.ComponentKind, name string) (*CommandResult, error) {
 	// Get component
-	comp, err := cc.DAO.GetByName(cc.Ctx, kind, name)
+	comp, err := cc.ComponentStore.GetByName(cc.Ctx, kind, name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get component: %w", err)
 	}

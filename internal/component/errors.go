@@ -5,6 +5,22 @@ import (
 	"fmt"
 )
 
+// Sentinel errors for ComponentStore operations.
+// These are simple errors that can be checked with errors.Is().
+var (
+	// ErrStoreUnavailable is returned when the component store (etcd) is not available.
+	ErrStoreUnavailable = errors.New("component store unavailable")
+
+	// ErrComponentNotFound is returned when a component is not found in the store.
+	ErrComponentNotFound = errors.New("component not found")
+
+	// ErrComponentExists is returned when trying to create a component that already exists.
+	ErrComponentExists = errors.New("component already exists")
+
+	// ErrTransactionFailed is returned when an etcd transaction fails.
+	ErrTransactionFailed = errors.New("transaction failed")
+)
+
 // ComponentErrorCode represents specific error codes for component operations.
 type ComponentErrorCode string
 

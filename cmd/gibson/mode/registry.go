@@ -24,8 +24,7 @@ func init() {
 	Register("gibson daemon restart", Daemon)
 
 	// Client commands - Require daemon connection
-	Register("gibson", Client) // Root command (launches TUI)
-	Register("gibson tui", Client)
+	Register("gibson", Client) // Root command (shows help)
 	Register("gibson status", Client)
 	Register("gibson attack", Client)
 

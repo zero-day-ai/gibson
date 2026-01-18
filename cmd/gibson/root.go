@@ -28,9 +28,7 @@ var rootCmd = &cobra.Command{
 	Use:   "gibson",
 	Short: "Gibson - Autonomous LLM Red-Teaming Framework",
 	Long: `Gibson is an autonomous AI security testing platform for
-red-teaming LLM systems, RAG pipelines, and AI agents.
-
-Use 'gibson ui' to launch the interactive dashboard.`,
+red-teaming LLM systems, RAG pipelines, and AI agents.`,
 	PersistentPreRunE:  loadConfig,
 	PersistentPostRunE: shutdown,
 	SilenceUsage:       true,
@@ -206,7 +204,6 @@ func init() {
 	rootCmd.AddCommand(payloadCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(completionCmd)
-	rootCmd.AddCommand(tuiCmd)
 	rootCmd.AddCommand(daemonCmd)
 }
 
@@ -214,7 +211,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		cmd.Println("Gibson v0.1.0 (Stage 15 - TUI)")
+		cmd.Println("Gibson v0.1.0")
 	},
 }
 

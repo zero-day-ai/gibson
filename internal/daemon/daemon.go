@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/attack"
+	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/database"
@@ -67,6 +68,9 @@ type daemonImpl struct {
 
 	// db is the database connection
 	db *database.DB
+
+	// componentStore provides access to component metadata in etcd
+	componentStore component.ComponentStore
 
 	// missionStore provides access to mission persistence
 	missionStore mission.MissionStore
@@ -271,6 +275,14 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	// Wire callback manager to registry adapter for external agent callback support
 	regAdapter.SetCallbackManager(d.callback)
 	d.logger.Info("wired callback manager to registry adapter")
+
+	// Initialize component store with etcd client from registry
+	if etcdClient := d.registry.Client(); etcdClient != nil {
+		d.componentStore = component.EtcdComponentStore(etcdClient, "gibson")
+		d.logger.Info("initialized component store with etcd backend")
+	} else {
+		d.logger.Warn("etcd client not available, component store not initialized")
+	}
 
 	// Initialize and start Tool Executor Service BEFORE infrastructure
 	// This must happen before harness factory creation so tools can be wired in

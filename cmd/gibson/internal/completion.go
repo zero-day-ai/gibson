@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -17,12 +16,11 @@ type CompletionFunc func(cmd *cobra.Command, args []string, toComplete string) (
 
 // CompletionContext holds dependencies for completion functions
 type CompletionContext struct {
-	ComponentDAO database.ComponentDAO
-	DB           *database.DB
+	DB *database.DB
 }
 
 // NewCompletionContext creates a new completion context
-// It attempts to load the database and component DAO, but returns
+// It attempts to load the database, but returns
 // a minimal context on error to allow completions to work even if
 // the system is not fully initialized
 func NewCompletionContext() *CompletionContext {
@@ -34,7 +32,6 @@ func NewCompletionContext() *CompletionContext {
 		dbPath := filepath.Join(homeDir, ".gibson", "gibson.db")
 		if db, err := database.Open(dbPath); err == nil {
 			ctx.DB = db
-			ctx.ComponentDAO = database.NewComponentDAO(db)
 		}
 	}
 
@@ -49,94 +46,31 @@ func (c *CompletionContext) Close() {
 }
 
 // CompleteAgentNames returns completion suggestions for agent names
+// Note: Component completions are currently disabled as they require
+// access to etcd which is not available in shell completion contexts
 func CompleteAgentNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	ctx := NewCompletionContext()
-	defer ctx.Close()
-
-	if ctx.ComponentDAO == nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	agents, err := ctx.ComponentDAO.List(context.Background(), component.ComponentKindAgent)
-	if err != nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	names := make([]string, 0, len(agents))
-	for _, agent := range agents {
-		names = append(names, agent.Name)
-	}
-
-	return names, cobra.ShellCompDirectiveNoFileComp
+	return []string{}, cobra.ShellCompDirectiveNoFileComp
 }
 
 // CompleteToolNames returns completion suggestions for tool names
+// Note: Component completions are currently disabled as they require
+// access to etcd which is not available in shell completion contexts
 func CompleteToolNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	ctx := NewCompletionContext()
-	defer ctx.Close()
-
-	if ctx.ComponentDAO == nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	tools, err := ctx.ComponentDAO.List(context.Background(), component.ComponentKindTool)
-	if err != nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	names := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		names = append(names, tool.Name)
-	}
-
-	return names, cobra.ShellCompDirectiveNoFileComp
+	return []string{}, cobra.ShellCompDirectiveNoFileComp
 }
 
 // CompletePluginNames returns completion suggestions for plugin names
+// Note: Component completions are currently disabled as they require
+// access to etcd which is not available in shell completion contexts
 func CompletePluginNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	ctx := NewCompletionContext()
-	defer ctx.Close()
-
-	if ctx.ComponentDAO == nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	plugins, err := ctx.ComponentDAO.List(context.Background(), component.ComponentKindPlugin)
-	if err != nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	names := make([]string, 0, len(plugins))
-	for _, plugin := range plugins {
-		names = append(names, plugin.Name)
-	}
-
-	return names, cobra.ShellCompDirectiveNoFileComp
+	return []string{}, cobra.ShellCompDirectiveNoFileComp
 }
 
 // CompleteComponentNames returns completion suggestions for component names (all types)
+// Note: Component completions are currently disabled as they require
+// access to etcd which is not available in shell completion contexts
 func CompleteComponentNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	ctx := NewCompletionContext()
-	defer ctx.Close()
-
-	if ctx.ComponentDAO == nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	allComponents, err := ctx.ComponentDAO.ListAll(context.Background())
-	if err != nil {
-		return []string{}, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	names := make([]string, 0)
-
-	for _, components := range allComponents {
-		for _, comp := range components {
-			names = append(names, comp.Name)
-		}
-	}
-
-	return names, cobra.ShellCompDirectiveNoFileComp
+	return []string{}, cobra.ShellCompDirectiveNoFileComp
 }
 
 // CompleteTargetNames returns completion suggestions for target names

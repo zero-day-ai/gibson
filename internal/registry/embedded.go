@@ -367,6 +367,12 @@ func (r *EmbeddedRegistry) Watch(ctx context.Context, kind, name string) (<-chan
 	return ch, nil
 }
 
+// Client returns the underlying etcd client for direct access.
+// This is used by ComponentStore to share the same etcd connection.
+func (r *EmbeddedRegistry) Client() *clientv3.Client {
+	return r.client
+}
+
 // Close gracefully shuts down the embedded etcd server and stops all background goroutines.
 //
 // After Close() is called, all other methods will fail. All active watches will

@@ -25,32 +25,41 @@ func buildCommandContext(cmd *cobra.Command) (*core.CommandContext, error) {
 		return nil, fmt.Errorf("failed to get Gibson home: %w", err)
 	}
 
-	// Open database
+	// Open database (still used for non-component data: targets, missions, etc.)
 	dbPath := homeDir + "/gibson.db"
 	db, err := database.Open(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Create DAO
-	dao := database.NewComponentDAO(db)
+	// Get registry manager from context (required for ComponentStore)
+	regManager := GetRegistryManager(ctx)
+	if regManager == nil {
+		db.Close()
+		return nil, fmt.Errorf("registry manager not available - ensure daemon is running")
+	}
 
-	// Create installer
+	// Create ComponentStore from registry's etcd client
+	etcdClient := regManager.Client()
+	if etcdClient == nil {
+		db.Close()
+		return nil, fmt.Errorf("etcd client not available - ensure registry is started")
+	}
+	componentStore := component.EtcdComponentStore(etcdClient, regManager.Namespace())
+
+	// Create installer with ComponentStore
 	gitOps := git.NewDefaultGitOperations()
 	builder := build.NewDefaultBuildExecutor()
-	lifecycle := component.NewLifecycleManager(dao, nil)
-	installer := component.NewDefaultInstaller(gitOps, builder, dao, lifecycle)
-
-	// Get registry manager from context (may be nil for some commands)
-	regManager := GetRegistryManager(ctx)
+	lifecycle := component.NewLifecycleManager(componentStore, nil)
+	installer := component.NewDefaultInstaller(gitOps, builder, componentStore, lifecycle)
 
 	return &core.CommandContext{
-		Ctx:        ctx,
-		DB:         db,
-		DAO:        dao,
-		HomeDir:    homeDir,
-		Installer:  installer,
-		RegManager: regManager,
+		Ctx:            ctx,
+		DB:             db,
+		ComponentStore: componentStore,
+		HomeDir:        homeDir,
+		Installer:      installer,
+		RegManager:     regManager,
 	}, nil
 }
 

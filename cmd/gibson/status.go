@@ -302,6 +302,8 @@ func formatDuration(d time.Duration) string {
 }
 
 // checkComponentsStatus checks the status of all components
+// NOTE: Component data is now stored in etcd, not SQLite.
+// This function returns empty status for backwards compatibility.
 func checkComponentsStatus(homeDir string) ComponentsStatus {
 	componentStatus := ComponentsStatus{
 		Agents:  []ComponentInfo{},
@@ -309,56 +311,8 @@ func checkComponentsStatus(homeDir string) ComponentsStatus {
 		Plugins: []ComponentInfo{},
 	}
 
-	// Open database connection
-	dbPath := filepath.Join(homeDir, "gibson.db")
-	db, err := database.Open(dbPath)
-	if err != nil {
-		// Database may not exist yet, return empty status
-		return componentStatus
-	}
-	defer db.Close()
-
-	// Create component DAO
-	dao := database.NewComponentDAO(db)
-	ctx := context.Background()
-
-	// Get all components
-	allComponents, err := dao.ListAll(ctx)
-	if err != nil {
-		// Error listing components, return empty status
-		return componentStatus
-	}
-
-	// Collect agents
-	for _, comp := range allComponents[internalcomponent.ComponentKindAgent] {
-		componentStatus.Agents = append(componentStatus.Agents, ComponentInfo{
-			Name:   comp.Name,
-			Status: comp.Status.String(),
-			Port:   comp.Port,
-			PID:    comp.PID,
-		})
-	}
-
-	// Collect tools
-	for _, comp := range allComponents[internalcomponent.ComponentKindTool] {
-		componentStatus.Tools = append(componentStatus.Tools, ComponentInfo{
-			Name:   comp.Name,
-			Status: comp.Status.String(),
-			Port:   comp.Port,
-			PID:    comp.PID,
-		})
-	}
-
-	// Collect plugins
-	for _, comp := range allComponents[internalcomponent.ComponentKindPlugin] {
-		componentStatus.Plugins = append(componentStatus.Plugins, ComponentInfo{
-			Name:   comp.Name,
-			Status: comp.Status.String(),
-			Port:   comp.Port,
-			PID:    comp.PID,
-		})
-	}
-
+	// Component data is now stored in etcd, not SQLite
+	// Return empty status for backwards compatibility
 	return componentStatus
 }
 

@@ -1,6 +1,6 @@
 # Gibson Platform Guide
 
-Gibson is the runtime platform for AI security testing agents. It provides the TUI, daemon, orchestrator, and all infrastructure that agents run on.
+Gibson is the runtime platform for AI security testing agents. It provides the daemon, orchestrator, and all infrastructure that agents run on.
 
 ## Architecture Overview
 
@@ -11,7 +11,6 @@ gibson/
 │   ├── orchestrator/    # Mission orchestration and agent coordination
 │   ├── harness/         # Agent runtime harness implementation
 │   ├── graphrag/        # Knowledge graph engine (Neo4j + embeddings)
-│   ├── tui/             # Terminal UI (bubbletea)
 │   ├── daemon/          # Background service for agent execution
 │   ├── component/       # External component management
 │   ├── memory/          # Memory store implementations
@@ -56,14 +55,6 @@ Key files:
 - `provider/` - Embedding providers
 - `queries/` - Graph query builders
 
-### internal/tui
-
-Terminal UI built with bubbletea:
-- Mission management views
-- Agent status monitoring
-- Finding browser
-- Real-time log streaming
-
 ### internal/daemon
 
 Background service mode:
@@ -104,9 +95,6 @@ Prompt management system:
 ## CLI Commands
 
 ```bash
-# Start TUI
-gibson
-
 # Mission management
 gibson mission create -f workflow.yaml -t target-id
 gibson mission run <mission-id>
@@ -192,31 +180,6 @@ Node types are defined in `sdk/graphrag/taxonomy.yaml` and generated:
 1. Edit taxonomy YAML in SDK
 2. Run `go generate ./graphrag/...` in SDK
 3. Update Gibson to use new constants
-
-### Working with the TUI
-
-TUI uses bubbletea MVC pattern:
-
-```go
-// internal/tui/views/myview.go
-type MyView struct {
-    // State
-}
-
-func (v *MyView) Init() tea.Cmd {
-    return nil
-}
-
-func (v *MyView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    // Handle messages
-    return v, nil
-}
-
-func (v *MyView) View() string {
-    // Render view
-    return "content"
-}
-```
 
 ## Configuration
 

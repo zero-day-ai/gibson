@@ -374,6 +374,12 @@ func (r *ExternalRegistry) Watch(ctx context.Context, kind, name string) (<-chan
 	return ch, nil
 }
 
+// Client returns the underlying etcd client for direct access.
+// This is used by ComponentStore to share the same etcd connection.
+func (r *ExternalRegistry) Client() *clientv3.Client {
+	return r.client
+}
+
 // Close gracefully shuts down the external registry connection and stops all background goroutines.
 //
 // After Close() is called, all other methods will fail. All active watches will
