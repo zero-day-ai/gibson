@@ -13,6 +13,8 @@ gibson/
 │   ├── graphrag/        # Knowledge graph engine (Neo4j + embeddings)
 │   ├── daemon/          # Background service for agent execution
 │   ├── component/       # External component management
+│   ├── registry/        # etcd-based service discovery
+│   ├── database/        # SQLite persistence layer
 │   ├── memory/          # Memory store implementations
 │   ├── llm/             # LLM provider implementations
 │   ├── prompt/          # Prompt templates and relay system
@@ -73,8 +75,16 @@ External component management:
 
 Three-tier memory implementation:
 - Working memory (in-process)
-- Mission memory (SQLite/etcd)
+- Mission memory (SQLite with FTS5)
 - Long-term memory (vector store)
+
+### internal/registry
+
+Service discovery for agents, tools, and plugins:
+- Embedded etcd mode for development
+- External etcd cluster for production
+- TTL-based health tracking
+- Automatic service deregistration
 
 ### internal/llm
 
@@ -219,20 +229,44 @@ observability:
     endpoint: localhost:4317
 ```
 
-## Testing
+## Building and Testing
+
+**IMPORTANT: AI agents must use make commands, not raw go commands.**
+
+Gibson requires special build flags (`CGO_ENABLED=1` with SQLite FTS5 support). Always use make:
 
 ```bash
-# Unit tests
-go test ./...
+# Build Gibson binary
+make build          # Full build with version injection
+make bin            # Quick local build
 
-# Integration tests (requires Neo4j, etc.)
-go test -tags=integration ./...
+# Testing
+make test           # Run all tests
+make test-race      # Tests with race detection
+make test-coverage  # Tests with coverage report
 
-# E2E tests
-go test -tags=e2e ./cmd/gibson/...
+# Code quality
+make lint           # Run golangci-lint
+make fmt            # Format code
+make vet            # Run go vet
 
-# Specific package
-go test ./internal/orchestrator/...
+# All checks before commit
+make check          # Runs fmt, vet, lint, test-race
+
+# Install to GOPATH/bin
+make install
+
+# Show all targets
+make help
+```
+
+### DON'T: Use Raw Go Commands
+
+```bash
+# NEVER do these - they bypass required build configuration
+go build ./...                    # Missing CGO flags and FTS5 support
+go test ./...                     # May miss race detection
+go run ./cmd/gibson/main.go       # Wrong CGO settings
 ```
 
 ### Test Containers

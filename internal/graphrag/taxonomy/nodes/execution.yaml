@@ -96,7 +96,7 @@ node_types:
       - name: agent_name
         type: string
         required: true
-        description: "Name of the agent (e.g., 'bishop', 'whistler', 'carl')"
+        description: "Name of the agent (e.g., 'k8skiller', 'davinci', 'network-recon')"
       - name: run_number
         type: int
         required: true
@@ -163,7 +163,7 @@ node_types:
         required: false
         description: "Whether the agent run completed successfully"
     examples:
-      - agent_name: "bishop"
+      - agent_name: "k8skiller"
         run_number: 1
         mission_id: "mission:acme-pentest-2024-01"
         started_at: "2024-01-10T10:05:00Z"
@@ -255,7 +255,7 @@ node_types:
         description: "Number of parameters passed to the tool or plugin"
     examples:
       - tool_name: "nmap"
-        agent_run_id: "agent_run:mission:acme-pentest-2024-01:bishop:1"
+        agent_run_id: "agent_run:mission:acme-pentest-2024-01:k8skiller:1"
         command: "nmap -sV -p- 192.0.2.1"
         started_at: "2024-01-10T10:06:00Z"
         duration_ms: 45000
@@ -389,7 +389,7 @@ node_types:
         description: "Length of the final response in characters"
     examples:
       - model: "gpt-4"
-        agent_run_id: "agent_run:mission:acme-pentest-2024-01:bishop:1"
+        agent_run_id: "agent_run:mission:acme-pentest-2024-01:k8skiller:1"
         purpose: "analyze_output"
         prompt_tokens: 1500
         completion_tokens: 500
@@ -466,6 +466,6 @@ node_types:
             description: "Remove or authenticate all /debug, /admin, and /api/v1/internal endpoints"
         confidence: 0.87
         source_node_count: 45
-        source_llm_call_id: "llm_call:agent_run:mission:acme-pentest-2024-01:bishop:1:1704887220"
+        source_llm_call_id: "llm_call:agent_run:mission:acme-pentest-2024-01:k8skiller:1:1704887220"
         model: "gpt-4"
         timestamp: "2024-01-10T10:10:00Z"
