@@ -11,24 +11,24 @@
 //
 // The package defines three primary interfaces for component management:
 //
-// ## ComponentDAO (database.ComponentDAO)
+// ## ComponentStore
 //
-// ComponentDAO manages the registration and persistence of components in SQLite:
+// ComponentStore manages the registration and persistence of components in etcd:
 //
-//	type ComponentDAO interface {
+//	type ComponentStore interface {
 //	    Create(ctx context.Context, comp *Component) error
-//	    GetByID(ctx context.Context, id int64) (*Component, error)
 //	    GetByName(ctx context.Context, kind ComponentKind, name string) (*Component, error)
 //	    List(ctx context.Context, kind ComponentKind) ([]*Component, error)
 //	    ListAll(ctx context.Context) (map[ComponentKind][]*Component, error)
 //	    Update(ctx context.Context, comp *Component) error
-//	    UpdateStatus(ctx context.Context, id int64, status ComponentStatus, pid, port int) error
 //	    Delete(ctx context.Context, kind ComponentKind, name string) error
+//	    ListInstances(ctx context.Context, kind ComponentKind, name string) ([]ServiceInfo, error)
 //	}
 //
-// The DAO is used by the Installer and LifecycleManager to persist component metadata.
+// The store is used by the Installer and LifecycleManager to persist component metadata.
 // Components are organized by kind (agent, tool, plugin) and name, with unique constraints
-// enforced by the database schema.
+// enforced by etcd transactions. Component metadata is stored persistently, while running
+// instances are stored with leases (ephemeral) for automatic cleanup.
 //
 // ## Installer
 //
@@ -265,10 +265,10 @@
 //	    // Create dependencies
 //	    gitOps := git.NewDefaultGitOperations()
 //	    builder := build.NewDefaultBuildExecutor()
-//	    dao := database.NewComponentDAO(db)
+//	    store := component.EtcdComponentStore(etcdClient, "gibson")
 //
 //	    // Create installer
-//	    installer := component.NewDefaultInstaller(gitOps, builder, dao)
+//	    installer := component.NewDefaultInstaller(gitOps, builder, store, lifecycleMgr)
 //
 //	    // Install component
 //	    ctx := context.Background()
@@ -302,9 +302,9 @@
 //
 //	    ctx := context.Background()
 //
-//	    // Get component from database
-//	    dao := database.NewComponentDAO(db)
-//	    comp, err := dao.GetByName(ctx, component.ComponentKindAgent, "scanner")
+//	    // Get component from etcd store
+//	    store := component.EtcdComponentStore(etcdClient, "gibson")
+//	    comp, err := store.GetByName(ctx, component.ComponentKindAgent, "scanner")
 //	    if err != nil || comp == nil {
 //	        log.Fatal("Component not found")
 //	    }
@@ -335,12 +335,12 @@
 //	    fmt.Println("Component stopped successfully")
 //	}
 //
-// ## Using the Component Registry
+// ## Using the Component Store
 //
-// Register, query, and persist components:
+// Register, query, and persist components in etcd:
 //
-//	func useComponentDAO() {
-//	    dao := database.NewComponentDAO(db)
+//	func useComponentStore() {
+//	    store := component.EtcdComponentStore(etcdClient, "gibson")
 //	    ctx := context.Background()
 //
 //	    // Create and register a component
@@ -348,7 +348,7 @@
 //	        Kind:      component.ComponentKindAgent,
 //	        Name:      "scanner",
 //	        Version:   "1.0.0",
-//	        Path:      "/home/user/.gibson/agents/scanner",
+//	        BinPath:   "/home/user/.gibson/agents/bin/scanner",
 //	        Source:    component.ComponentSourceExternal,
 //	        Status:    component.ComponentStatusAvailable,
 //	        CreatedAt: time.Now(),
@@ -356,16 +356,16 @@
 //	    }
 //
 //	    // Register the component
-//	    if err := dao.Create(ctx, comp); err != nil {
+//	    if err := store.Create(ctx, comp); err != nil {
 //	        log.Fatalf("Failed to register component: %v", err)
 //	    }
 //
 //	    // Query components
-//	    scanner, err := dao.GetByName(ctx, component.ComponentKindAgent, "scanner")
+//	    scanner, err := store.GetByName(ctx, component.ComponentKindAgent, "scanner")
 //	    if err != nil {
 //	        log.Fatalf("Failed to get component: %v", err)
 //	    }
-//	    agents, err := dao.List(ctx, component.ComponentKindAgent)
+//	    agents, err := store.List(ctx, component.ComponentKindAgent)
 //	    if err != nil {
 //	        log.Fatalf("Failed to list agents: %v", err)
 //	    }
@@ -374,7 +374,7 @@
 //	    fmt.Printf("Total agents: %d\n", len(agents))
 //
 //	    // List all components
-//	    allComponents, err := dao.ListAll(ctx)
+//	    allComponents, err := store.ListAll(ctx)
 //	    if err != nil {
 //	        log.Fatalf("Failed to list components: %v", err)
 //	    }
@@ -549,8 +549,8 @@
 // The package provides structured error handling with ComponentError:
 //
 //	func handleErrors() {
-//	    dao := database.NewComponentDAO(db)
-//	    comp, err := dao.GetByName(ctx, component.ComponentKindAgent, "scanner")
+//	    store := component.EtcdComponentStore(etcdClient, "gibson")
+//	    comp, err := store.GetByName(ctx, component.ComponentKindAgent, "scanner")
 //
 //	    if err != nil || comp == nil {
 //	        // Component not found - not an error, just nil
@@ -598,8 +598,8 @@
 //	func updateComponents() {
 //	    gitOps := git.NewDefaultGitOperations()
 //	    builder := build.NewDefaultBuildExecutor()
-//	    dao := database.NewComponentDAO(db)
-//	    installer := component.NewDefaultInstaller(gitOps, builder, dao)
+//	    store := component.EtcdComponentStore(etcdClient, "gibson")
+//	    installer := component.NewDefaultInstaller(gitOps, builder, store, lifecycleMgr)
 //
 //	    ctx := context.Background()
 //	    opts := component.UpdateOptions{
@@ -638,9 +638,10 @@
 //
 // # Thread Safety
 //
-// The ComponentDAO uses SQLite for persistence, which provides ACID guarantees
-// through transactions. Multiple processes can safely access the database
-// concurrently using SQLite's WAL mode.
+// The ComponentStore uses etcd for persistence, which provides linearizable
+// consistency through Raft consensus. Multiple processes can safely access
+// the store concurrently. etcd transactions provide atomic operations for
+// create-if-not-exists and delete-with-prefix patterns.
 //
 // # Error Handling
 //
@@ -661,7 +662,7 @@
 //  3. Validate manifests before attempting installation
 //  4. Monitor component health in production environments
 //  5. Implement graceful shutdown handlers for component processes
-//  6. Component state is automatically persisted to SQLite
+//  6. Component state is automatically persisted to etcd
 //  7. Handle dependency failures gracefully
 //  8. Set appropriate timeouts for install/build operations
 //  9. Clean up resources on installation failures

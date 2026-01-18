@@ -440,10 +440,15 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 	var buildOutput string
 	var buildWorkDir string
 
-	if !opts.SkipBuild && manifest.Build != nil {
+	// Determine if we should build:
+	// 1. If manifest.Build is specified, use that
+	// 2. Otherwise, auto-detect if a Makefile exists with a build target
+	shouldBuild := !opts.SkipBuild && (manifest.Build != nil || i.hasMakefileBuildTarget(componentSourceDir))
+
+	if shouldBuild {
 		// Determine build working directory
 		buildWorkDir = componentSourceDir
-		if manifest.Build.WorkDir != "" {
+		if manifest.Build != nil && manifest.Build.WorkDir != "" {
 			buildWorkDir = filepath.Join(componentSourceDir, manifest.Build.WorkDir)
 		}
 
@@ -464,8 +469,12 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 		buildOutput = buildResult.Stdout + "\n" + buildResult.Stderr
 
 		// Add build metrics to span
+		buildCommand := "make build"
+		if manifest.Build != nil && manifest.Build.Command != "" {
+			buildCommand = manifest.Build.Command
+		}
 		span.SetAttributes(
-			attribute.String(AttrBuildCommand, manifest.Build.Command),
+			attribute.String(AttrBuildCommand, buildCommand),
 			attribute.Int64(AttrBuildDuration, buildDuration.Milliseconds()),
 		)
 
@@ -515,9 +524,31 @@ func (i *DefaultInstaller) Install(ctx context.Context, repoURL string, kind Com
 		// Track copied artifact for rollback on failure
 		installCtx.copiedArtifacts = append(installCtx.copiedArtifacts, binPath)
 	} else {
-		// No artifacts specified - this might be a script-based component
-		// Set binPath to empty string for now
-		binPath = ""
+		// No artifacts specified in manifest - try to auto-detect binary
+		// Look for an executable with the component name in the build directory
+		detectedBinary := i.detectComponentBinary(manifest.Name, buildWorkDir)
+		if detectedBinary != "" {
+			// Copy the detected binary to bin/
+			primaryArtifact, err := i.copyArtifactsToBin(kind, []string{detectedBinary}, buildWorkDir)
+			if err != nil {
+				// Log but don't fail - component might be script-based
+				span.AddEvent("failed to copy auto-detected binary", trace.WithAttributes(
+					attribute.String("binary", detectedBinary),
+					attribute.String("error", err.Error()),
+				))
+				binPath = ""
+			} else {
+				binPath = primaryArtifact
+				installCtx.copiedArtifacts = append(installCtx.copiedArtifacts, binPath)
+				span.AddEvent("auto-detected and copied binary", trace.WithAttributes(
+					attribute.String("binary", detectedBinary),
+					attribute.String("bin_path", binPath),
+				))
+			}
+		} else {
+			// No binary detected - this might be a script-based component
+			binPath = ""
+		}
 	}
 
 	// Get the git version (commit hash)
@@ -1722,39 +1753,41 @@ func (i *DefaultInstaller) checkComponentDependency(dep string) error {
 
 // buildComponent builds a component using its build configuration
 func (i *DefaultInstaller) buildComponent(ctx context.Context, componentDir string, manifest *Manifest, verbose bool) (*build.BuildResult, error) {
-	if manifest.Build == nil {
-		return nil, fmt.Errorf("no build configuration in manifest")
-	}
-
-	buildCfg := manifest.Build
-
-	// Prepare build configuration
+	// Prepare default build configuration (make build)
 	buildConfig := build.BuildConfig{
 		WorkDir:    componentDir,
 		Command:    "make",
 		Args:       []string{"build"},
 		OutputPath: "", // Will be determined from build artifacts
-		Env:        buildCfg.GetEnv(),
+		Env:        nil,
 		Verbose:    verbose,
 	}
 
-	// Override with manifest build command if specified
-	if buildCfg.Command != "" {
-		// Parse the command string into command and arguments
-		parts := strings.Fields(buildCfg.Command)
-		if len(parts) > 0 {
-			buildConfig.Command = parts[0]
-			if len(parts) > 1 {
-				buildConfig.Args = parts[1:]
-			} else {
-				buildConfig.Args = []string{}
+	// Override with manifest build config if specified
+	if manifest.Build != nil {
+		buildCfg := manifest.Build
+
+		// Use manifest environment variables
+		buildConfig.Env = buildCfg.GetEnv()
+
+		// Override with manifest build command if specified
+		if buildCfg.Command != "" {
+			// Parse the command string into command and arguments
+			parts := strings.Fields(buildCfg.Command)
+			if len(parts) > 0 {
+				buildConfig.Command = parts[0]
+				if len(parts) > 1 {
+					buildConfig.Args = parts[1:]
+				} else {
+					buildConfig.Args = []string{}
+				}
 			}
 		}
-	}
 
-	// Set working directory if specified
-	if buildCfg.WorkDir != "" {
-		buildConfig.WorkDir = filepath.Join(componentDir, buildCfg.WorkDir)
+		// Set working directory if specified
+		if buildCfg.WorkDir != "" {
+			buildConfig.WorkDir = filepath.Join(componentDir, buildCfg.WorkDir)
+		}
 	}
 
 	// Build with timeout
@@ -2058,6 +2091,82 @@ func (i *DefaultInstaller) cleanupOrphanedComponent(ctx context.Context, kind Co
 	}
 
 	return nil
+}
+
+// detectComponentBinary looks for an executable binary in the build directory.
+// It checks for common binary naming patterns in order of preference:
+//  1. Exact match: {componentName} (e.g., "network-recon")
+//  2. In bin/ subdirectory: bin/{componentName}
+//  3. Any executable file matching the component name pattern
+//
+// Returns the relative path to the binary from buildDir, or empty string if not found.
+func (i *DefaultInstaller) detectComponentBinary(componentName string, buildDir string) string {
+	// Check 1: Exact match in build directory root
+	exactPath := filepath.Join(buildDir, componentName)
+	if i.isExecutableFile(exactPath) {
+		return componentName
+	}
+
+	// Check 2: In bin/ subdirectory
+	binSubdirPath := filepath.Join(buildDir, "bin", componentName)
+	if i.isExecutableFile(binSubdirPath) {
+		return filepath.Join("bin", componentName)
+	}
+
+	// Check 3: Look for any executable in build directory that matches component name
+	entries, err := os.ReadDir(buildDir)
+	if err != nil {
+		return ""
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		// Check if filename contains the component name and is executable
+		if strings.Contains(entry.Name(), componentName) {
+			fullPath := filepath.Join(buildDir, entry.Name())
+			if i.isExecutableFile(fullPath) {
+				return entry.Name()
+			}
+		}
+	}
+
+	return ""
+}
+
+// isExecutableFile checks if a path exists and is an executable file.
+func (i *DefaultInstaller) isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	// Check if file has any execute bit set
+	return info.Mode()&0111 != 0
+}
+
+// hasMakefileBuildTarget checks if the directory contains a Makefile with a build target.
+// This enables auto-build for components that have a Makefile but no explicit build config.
+func (i *DefaultInstaller) hasMakefileBuildTarget(dir string) bool {
+	makefilePath := filepath.Join(dir, "Makefile")
+	content, err := os.ReadFile(makefilePath)
+	if err != nil {
+		return false
+	}
+
+	// Check if Makefile contains a "build:" target
+	// This is a simple check - looks for "build:" at the start of a line
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "build:") || trimmed == "build" {
+			return true
+		}
+	}
+	return false
 }
 
 // copyRepoBuildArtifacts copies executable files from a repository's bin/ directory

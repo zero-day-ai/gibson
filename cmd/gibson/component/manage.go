@@ -11,7 +11,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/component"
-	"github.com/zero-day-ai/gibson/internal/component/build"
 	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -309,24 +308,41 @@ func runListWithDatabase(cmd *cobra.Command, cfg Config, flags *ListFlags) error
 // runShow executes the show command.
 func runShow(cmd *cobra.Command, args []string, cfg Config) error {
 	componentName := args[0]
+	ctx := cmd.Context()
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
-	}
-	defer cc.Close()
-
-	// Call core function
-	result, err := core.ComponentShow(cc, cfg.Kind, componentName)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
 
-	// Extract component from result
-	comp, ok := result.Data.(*component.Component)
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
 	if !ok {
-		return fmt.Errorf("unexpected result type")
+		return fmt.Errorf("invalid daemon client type")
+	}
+
+	// Call appropriate method based on component kind
+	var comp *daemonclient.ComponentInfo
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		comp, err = client.ShowAgent(ctx, componentName)
+	case "tool":
+		comp, err = client.ShowTool(ctx, componentName)
+	case "plugin":
+		comp, err = client.ShowPlugin(ctx, componentName)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
+	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
+		return err
 	}
 
 	// Display component details
@@ -361,75 +377,8 @@ func runShow(cmd *cobra.Command, args []string, cfg Config) error {
 	}
 
 	// Display manifest information if available
-	if comp.Manifest != nil {
-		manifest := comp.Manifest
-		cmd.Printf("\nManifest:\n")
-		cmd.Printf("  Description: %s\n", manifest.Description)
-		cmd.Printf("  Author: %s\n", manifest.Author)
-
-		if manifest.License != "" {
-			cmd.Printf("  License: %s\n", manifest.License)
-		}
-
-		if manifest.Repository != "" {
-			cmd.Printf("  Repository: %s\n", manifest.Repository)
-		}
-
-		// Display runtime information
-		if manifest.Runtime != nil {
-			cmd.Printf("\nRuntime:\n")
-			cmd.Printf("  Type: %s\n", manifest.Runtime.Type)
-			cmd.Printf("  Entrypoint: %s\n", manifest.Runtime.Entrypoint)
-
-			if len(manifest.Runtime.Args) > 0 {
-				cmd.Printf("  Args: %s\n", strings.Join(manifest.Runtime.Args, " "))
-			}
-
-			if manifest.Runtime.WorkDir != "" {
-				cmd.Printf("  Working Directory: %s\n", manifest.Runtime.WorkDir)
-			}
-
-			if manifest.Runtime.Port > 0 {
-				cmd.Printf("  Port: %d\n", manifest.Runtime.Port)
-			}
-
-			if manifest.Runtime.HealthURL != "" {
-				cmd.Printf("  Health URL: %s\n", manifest.Runtime.HealthURL)
-			}
-		}
-
-		// Display dependencies if available
-		if manifest.Dependencies != nil && manifest.Dependencies.HasDependencies() {
-			cmd.Printf("\nDependencies:\n")
-
-			if manifest.Dependencies.Gibson != "" {
-				cmd.Printf("  Gibson: %s\n", manifest.Dependencies.Gibson)
-			}
-
-			systemDeps := manifest.Dependencies.GetSystem()
-			if len(systemDeps) > 0 {
-				cmd.Printf("  System:\n")
-				for _, dep := range systemDeps {
-					cmd.Printf("    - %s\n", dep)
-				}
-			}
-
-			componentDeps := manifest.Dependencies.GetComponents()
-			if len(componentDeps) > 0 {
-				cmd.Printf("  Components:\n")
-				for _, dep := range componentDeps {
-					cmd.Printf("    - %s\n", dep)
-				}
-			}
-
-			envDeps := manifest.Dependencies.GetEnv()
-			if len(envDeps) > 0 {
-				cmd.Printf("  Environment:\n")
-				for key, desc := range envDeps {
-					cmd.Printf("    - %s: %s\n", key, desc)
-				}
-			}
-		}
+	if comp.Manifest != "" {
+		cmd.Printf("\nManifest (JSON):\n%s\n", comp.Manifest)
 	}
 
 	return nil
@@ -438,6 +387,7 @@ func runShow(cmd *cobra.Command, args []string, cfg Config) error {
 // runUninstall executes the uninstall command.
 func runUninstall(cmd *cobra.Command, args []string, cfg Config, flags *UninstallFlags) error {
 	componentName := args[0]
+	ctx := cmd.Context()
 
 	// Confirm uninstall unless --force is set
 	if !flags.Force {
@@ -455,74 +405,107 @@ func runUninstall(cmd *cobra.Command, args []string, cfg Config, flags *Uninstal
 		}
 	}
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+	}
+
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
+
+	// Call appropriate method based on component kind
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		err = client.UninstallAgent(ctx, componentName, flags.Force)
+	case "tool":
+		err = client.UninstallTool(ctx, componentName, flags.Force)
+	case "plugin":
+		err = client.UninstallPlugin(ctx, componentName, flags.Force)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
 	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
 		return err
 	}
-	defer cc.Close()
 
-	// Build uninstall options
-	opts := core.UninstallOptions{
-		Force: flags.Force,
-	}
-
-	// Call core function
-	result, err := core.ComponentUninstall(cc, cfg.Kind, componentName, opts)
-	if err != nil {
-		return err
-	}
-
-	cmd.Printf("%s '%s' uninstalled successfully in %v\n", titleCaser.String(cfg.DisplayName), componentName, result.Duration)
+	cmd.Printf("%s '%s' uninstalled successfully\n", titleCaser.String(cfg.DisplayName), componentName)
 	return nil
 }
 
 // runUpdate executes the update command.
 func runUpdate(cmd *cobra.Command, args []string, cfg Config, flags *UpdateFlags) error {
 	componentName := args[0]
+	ctx := cmd.Context()
 
 	cmd.Printf("Updating %s '%s'...\n", cfg.DisplayName, componentName)
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
-	defer cc.Close()
+
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
 
 	// Build update options
-	opts := core.UpdateOptions{
+	opts := daemonclient.UpdateOptions{
 		Restart:   flags.Restart,
 		SkipBuild: flags.SkipBuild,
 		Verbose:   flags.Verbose,
 	}
 
-	// Call core function
-	result, err := core.ComponentUpdate(cc, cfg.Kind, componentName, opts)
+	// Call appropriate method based on component kind
+	var result *daemonclient.UpdateResult
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		result, err = client.UpdateAgent(ctx, componentName, opts)
+	case "tool":
+		result, err = client.UpdateTool(ctx, componentName, opts)
+	case "plugin":
+		result, err = client.UpdatePlugin(ctx, componentName, opts)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
 	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
 		return err
 	}
 
-	// Extract update result
-	updateResult, ok := result.Data.(*component.UpdateResult)
-	if !ok {
-		return fmt.Errorf("unexpected result type")
-	}
-
-	if !updateResult.Updated {
-		cmd.Printf("%s '%s' is already up to date (v%s)\n", titleCaser.String(cfg.DisplayName), componentName, updateResult.OldVersion)
+	if !result.Updated {
+		cmd.Printf("%s '%s' is already up to date (v%s)\n", titleCaser.String(cfg.DisplayName), componentName, result.OldVersion)
 		return nil
 	}
 
 	cmd.Printf("%s '%s' updated successfully (v%s → v%s) in %v\n",
 		titleCaser.String(cfg.DisplayName),
 		componentName,
-		updateResult.OldVersion,
-		updateResult.NewVersion,
+		result.OldVersion,
+		result.NewVersion,
 		result.Duration)
 
-	if updateResult.BuildOutput != "" && !flags.SkipBuild && flags.Verbose {
-		cmd.Printf("\nBuild output:\n%s\n", updateResult.BuildOutput)
+	if result.BuildOutput != "" && !flags.SkipBuild && flags.Verbose {
+		cmd.Printf("\nBuild output:\n%s\n", result.BuildOutput)
 	}
 
 	return nil
@@ -531,36 +514,53 @@ func runUpdate(cmd *cobra.Command, args []string, cfg Config, flags *UpdateFlags
 // runBuild executes the build command.
 func runBuild(cmd *cobra.Command, args []string, cfg Config) error {
 	componentName := args[0]
+	ctx := cmd.Context()
 
 	cmd.Printf("Building %s '%s'...\n", cfg.DisplayName, componentName)
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
-	}
-	defer cc.Close()
-
-	// Call core function
-	result, err := core.ComponentBuild(cc, cfg.Kind, componentName)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
 
-	// Extract build result
-	buildResult, ok := result.Data.(*build.BuildResult)
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
 	if !ok {
-		return fmt.Errorf("unexpected result type")
+		return fmt.Errorf("invalid daemon client type")
+	}
+
+	// Call appropriate method based on component kind
+	var result *daemonclient.BuildResult
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		result, err = client.BuildAgent(ctx, componentName)
+	case "tool":
+		result, err = client.BuildTool(ctx, componentName)
+	case "plugin":
+		result, err = client.BuildPlugin(ctx, componentName)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
+	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
+		return err
 	}
 
 	cmd.Printf("%s '%s' built successfully in %v\n", titleCaser.String(cfg.DisplayName), componentName, result.Duration)
 
-	if buildResult.Stdout != "" {
-		cmd.Printf("\nStdout:\n%s\n", buildResult.Stdout)
+	if result.Stdout != "" {
+		cmd.Printf("\nStdout:\n%s\n", result.Stdout)
 	}
 
-	if buildResult.Stderr != "" {
-		cmd.Printf("\nStderr:\n%s\n", buildResult.Stderr)
+	if result.Stderr != "" {
+		cmd.Printf("\nStderr:\n%s\n", result.Stderr)
 	}
 
 	return nil

@@ -11,6 +11,8 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/attack"
 	"github.com/zero-day-ai/gibson/internal/component"
+	"github.com/zero-day-ai/gibson/internal/component/build"
+	"github.com/zero-day-ai/gibson/internal/component/git"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/database"
@@ -21,7 +23,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -72,8 +73,20 @@ type daemonImpl struct {
 	// componentStore provides access to component metadata in etcd
 	componentStore component.ComponentStore
 
+	// componentInstaller handles component installation, updates, and uninstallation
+	componentInstaller component.Installer
+
+	// componentBuildExecutor executes component builds
+	componentBuildExecutor build.BuildExecutor
+
+	// componentLogWriter manages component log files
+	componentLogWriter component.LogWriter
+
 	// missionStore provides access to mission persistence
 	missionStore mission.MissionStore
+
+	// missionInstaller handles mission installation, updates, and uninstallation
+	missionInstaller mission.MissionInstaller
 
 	// targetStore provides access to target persistence
 	targetStore targetStore
@@ -280,6 +293,35 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	if etcdClient := d.registry.Client(); etcdClient != nil {
 		d.componentStore = component.EtcdComponentStore(etcdClient, "gibson")
 		d.logger.Info("initialized component store with etcd backend")
+
+		// Initialize component infrastructure for install/uninstall/update operations
+		gitOps := git.NewDefaultGitOperations()
+		buildExecutor := build.NewDefaultBuildExecutor()
+		logsDir := filepath.Join(d.config.Core.HomeDir, "logs")
+		logWriter, err := component.NewDefaultLogWriter(logsDir, nil)
+		if err != nil {
+			d.logger.Warn("failed to create log writer, component lifecycle management may be limited", "error", err)
+		} else {
+			lifecycleManager := component.NewLifecycleManager(d.componentStore, logWriter)
+			d.componentInstaller = component.NewDefaultInstaller(gitOps, buildExecutor, d.componentStore, lifecycleManager)
+			d.componentBuildExecutor = buildExecutor
+			d.componentLogWriter = logWriter
+			d.logger.Info("initialized component installer")
+
+			// Initialize mission installer with same git operations and mission store
+			// Create adapters to bridge component package types to mission interfaces
+			missionsDir := filepath.Join(d.config.Core.HomeDir, "missions")
+			componentStoreAdapter := mission.NewComponentStoreAdapter(d.componentStore)
+			componentInstallerAdapter := mission.NewComponentInstallerAdapter(d.componentInstaller)
+			d.missionInstaller = mission.NewDefaultMissionInstaller(
+				gitOps,
+				d.missionStore,
+				missionsDir,
+				componentStoreAdapter,
+				componentInstallerAdapter,
+			)
+			d.logger.Info("initialized mission installer", "missions_dir", missionsDir)
+		}
 	} else {
 		d.logger.Warn("etcd client not available, component store not initialized")
 	}
@@ -343,7 +385,7 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 
 	// Configure callback service with event bus for tool/LLM event publishing
 	if d.eventBus != nil {
-		d.callback.SetEventBus(d.eventBus)
+		d.callback.SetEventBus(NewEventBusAdapter(d.eventBus))
 		d.logger.Info("configured callback service with event bus")
 	}
 
@@ -362,7 +404,8 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	var orch mission.MissionOrchestrator
 	if d.infrastructure.graphRAGClient != nil {
 		// Use SOTA orchestrator
-		graphLoader := workflow.NewGraphLoader(d.infrastructure.graphRAGClient)
+		// TODO: Create MissionGraphLoader adapter for workflow.GraphLoader
+		// For now, set to nil as it's optional
 
 		// Get tracer from tracer provider
 		var tracer trace.Tracer
@@ -382,7 +425,7 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 			MaxConcurrent:      10,
 			ThinkerMaxRetries:  3,
 			ThinkerTemperature: 0.2,
-			GraphLoader:        graphLoader,
+			GraphLoader:        nil, // TODO: Implement MissionGraphLoader adapter
 			Registry:           d.registryAdapter, // For component discovery and validation
 		}
 

@@ -88,6 +88,44 @@ service DaemonService {
   // Provides detailed information about each tool including schemas, capabilities,
   // and execution metrics.
   rpc GetAvailableTools(GetAvailableToolsRequest) returns (GetAvailableToolsResponse);
+
+  // InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
+  // Clones the repository, builds the component, and registers it in the registry.
+  rpc InstallComponent(InstallComponentRequest) returns (InstallComponentResponse);
+
+  // UninstallComponent removes a component (agent, tool, or plugin) from the system.
+  // Stops the component if running and removes it from the registry.
+  rpc UninstallComponent(UninstallComponentRequest) returns (UninstallComponentResponse);
+
+  // UpdateComponent updates a component (agent, tool, or plugin) to the latest version.
+  // Pulls latest changes, rebuilds, and optionally restarts if it was running.
+  rpc UpdateComponent(UpdateComponentRequest) returns (UpdateComponentResponse);
+
+  // BuildComponent rebuilds a component (agent, tool, or plugin) from source.
+  // Useful for rebuilding after manual code changes.
+  rpc BuildComponent(BuildComponentRequest) returns (BuildComponentResponse);
+
+  // ShowComponent returns detailed information about a component.
+  // Includes manifest, status, paths, and lifecycle information.
+  rpc ShowComponent(ShowComponentRequest) returns (ShowComponentResponse);
+
+  // GetComponentLogs streams log entries for a component.
+  // Supports follow mode for continuous streaming and line limits.
+  rpc GetComponentLogs(GetComponentLogsRequest) returns (stream LogEntry);
+
+  // InstallMission installs a mission from a Git repository.
+  // Clones the repository, validates mission.yaml, and registers it in the registry.
+  rpc InstallMission(InstallMissionRequest) returns (InstallMissionResponse);
+
+  // UninstallMission removes an installed mission from the system.
+  rpc UninstallMission(UninstallMissionRequest) returns (UninstallMissionResponse);
+
+  // ListMissionDefinitions returns all installed mission definitions.
+  rpc ListMissionDefinitions(ListMissionDefinitionsRequest) returns (ListMissionDefinitionsResponse);
+
+  // UpdateMission updates an installed mission to the latest version.
+  // Pulls latest changes and rebuilds the mission definition.
+  rpc UpdateMission(UpdateMissionRequest) returns (UpdateMissionResponse);
 }
 
 // ConnectRequest initiates a client connection to the daemon.
@@ -967,4 +1005,382 @@ message RelationshipMapping {
 
   // properties are property mappings for the relationship edge
   repeated PropertyMapping properties = 5;
+}
+
+// InstallComponentRequest requests installing a component from a Git repository.
+message InstallComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // url is the Git repository URL to clone
+  string url = 2;
+
+  // branch is the Git branch to checkout (optional)
+  string branch = 3;
+
+  // tag is the Git tag to checkout (optional)
+  string tag = 4;
+
+  // force indicates whether to reinstall if already exists
+  bool force = 5;
+
+  // skip_build skips the build step after cloning
+  bool skip_build = 6;
+
+  // verbose enables detailed build output streaming
+  bool verbose = 7;
+}
+
+// InstallComponentResponse returns the result of installing a component.
+message InstallComponentResponse {
+  // success indicates if the component was installed successfully
+  bool success = 1;
+
+  // name is the installed component name
+  string name = 2;
+
+  // version is the installed component version
+  string version = 3;
+
+  // repo_path is the local repository path
+  string repo_path = 4;
+
+  // bin_path is the path to the built binary (if built)
+  string bin_path = 5;
+
+  // build_output contains build stdout/stderr (if verbose)
+  string build_output = 6;
+
+  // duration_ms is the total install time in milliseconds
+  int64 duration_ms = 7;
+
+  // message provides additional context or error information
+  string message = 8;
+}
+
+// UninstallComponentRequest requests removing a component.
+message UninstallComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // name is the component name to uninstall
+  string name = 2;
+
+  // force indicates whether to uninstall even if running
+  bool force = 3;
+}
+
+// UninstallComponentResponse returns the result of uninstalling a component.
+message UninstallComponentResponse {
+  // success indicates if the component was uninstalled successfully
+  bool success = 1;
+
+  // message provides additional context or error information
+  string message = 2;
+}
+
+// UpdateComponentRequest requests updating a component to the latest version.
+message UpdateComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // name is the component name to update
+  string name = 2;
+
+  // restart indicates whether to restart if running
+  bool restart = 3;
+
+  // skip_build skips the rebuild step after pulling
+  bool skip_build = 4;
+
+  // verbose enables detailed build output streaming
+  bool verbose = 5;
+}
+
+// UpdateComponentResponse returns the result of updating a component.
+message UpdateComponentResponse {
+  // success indicates if the component was updated successfully
+  bool success = 1;
+
+  // updated indicates if there were actually changes (false if already latest)
+  bool updated = 2;
+
+  // old_version is the previous version
+  string old_version = 3;
+
+  // new_version is the new version after update
+  string new_version = 4;
+
+  // build_output contains build stdout/stderr (if verbose)
+  string build_output = 5;
+
+  // duration_ms is the total update time in milliseconds
+  int64 duration_ms = 6;
+
+  // message provides additional context or error information
+  string message = 7;
+}
+
+// BuildComponentRequest requests rebuilding a component from source.
+message BuildComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // name is the component name to build
+  string name = 2;
+}
+
+// BuildComponentResponse returns the result of building a component.
+message BuildComponentResponse {
+  // success indicates if the build was successful
+  bool success = 1;
+
+  // stdout contains the build standard output
+  string stdout = 2;
+
+  // stderr contains the build standard error
+  string stderr = 3;
+
+  // duration_ms is the build time in milliseconds
+  int64 duration_ms = 4;
+
+  // message provides additional context or error information
+  string message = 5;
+}
+
+// ShowComponentRequest requests detailed information about a component.
+message ShowComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // name is the component name to show
+  string name = 2;
+}
+
+// ShowComponentResponse returns detailed component information.
+message ShowComponentResponse {
+  // success indicates if the component was found
+  bool success = 1;
+
+  // name is the component name
+  string name = 2;
+
+  // version is the component version
+  string version = 3;
+
+  // kind is the component kind
+  string kind = 4;
+
+  // status is the component status (installed, running, stopped)
+  string status = 5;
+
+  // source is the Git repository URL
+  string source = 6;
+
+  // repo_path is the local repository path
+  string repo_path = 7;
+
+  // bin_path is the path to the binary
+  string bin_path = 8;
+
+  // port is the listening port (if running)
+  int32 port = 9;
+
+  // pid is the process ID (if running)
+  int32 pid = 10;
+
+  // created_at is when the component was installed (Unix timestamp)
+  int64 created_at = 11;
+
+  // updated_at is when the component was last updated (Unix timestamp)
+  int64 updated_at = 12;
+
+  // started_at is when the component was started (Unix timestamp, 0 if not running)
+  int64 started_at = 13;
+
+  // stopped_at is when the component was stopped (Unix timestamp, 0 if never stopped)
+  int64 stopped_at = 14;
+
+  // manifest_info contains manifest details (JSON-encoded)
+  string manifest_info = 15;
+
+  // message provides additional context or error information
+  string message = 16;
+}
+
+// GetComponentLogsRequest requests log entries for a component.
+message GetComponentLogsRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // name is the component name to get logs for
+  string name = 2;
+
+  // follow indicates whether to stream logs continuously
+  bool follow = 3;
+
+  // lines is the number of lines to return (0 = all, default 50)
+  int32 lines = 4;
+}
+
+// LogEntry represents a single log entry from a component.
+message LogEntry {
+  // timestamp is when the log entry was created (Unix timestamp)
+  int64 timestamp = 1;
+
+  // level is the log level (debug, info, warn, error)
+  string level = 2;
+
+  // message is the log message
+  string message = 3;
+
+  // fields contains additional structured log fields (JSON-encoded)
+  string fields = 4;
+}
+
+// InstallMissionRequest requests installing a mission from a Git repository.
+message InstallMissionRequest {
+  // url is the Git repository URL to clone
+  string url = 1;
+
+  // branch is the Git branch to checkout (optional)
+  string branch = 2;
+
+  // tag is the Git tag to checkout (optional)
+  string tag = 3;
+
+  // force indicates whether to reinstall if already exists
+  bool force = 4;
+
+  // yes auto-confirms dependency installation prompts
+  bool yes = 5;
+
+  // timeout_ms is the installation timeout in milliseconds (0 = default 5 minutes)
+  int64 timeout_ms = 6;
+}
+
+// InstallMissionResponse returns the result of installing a mission.
+message InstallMissionResponse {
+  // success indicates if the mission was installed successfully
+  bool success = 1;
+
+  // name is the installed mission name
+  string name = 2;
+
+  // version is the installed mission version
+  string version = 3;
+
+  // path is the local installation path
+  string path = 4;
+
+  // dependencies contains information about installed dependencies
+  repeated InstalledDependency dependencies = 5;
+
+  // duration_ms is the total install time in milliseconds
+  int64 duration_ms = 6;
+
+  // message provides additional context or error information
+  string message = 7;
+}
+
+// InstalledDependency represents a dependency that was installed.
+message InstalledDependency {
+  // type is the dependency type (agent, tool, plugin)
+  string type = 1;
+
+  // name is the dependency name
+  string name = 2;
+
+  // already_installed indicates if it was already installed
+  bool already_installed = 3;
+}
+
+// UninstallMissionRequest requests removing an installed mission.
+message UninstallMissionRequest {
+  // name is the mission name to uninstall
+  string name = 1;
+
+  // force indicates whether to skip confirmation
+  bool force = 2;
+}
+
+// UninstallMissionResponse returns the result of uninstalling a mission.
+message UninstallMissionResponse {
+  // success indicates if the mission was uninstalled successfully
+  bool success = 1;
+
+  // message provides additional context or error information
+  string message = 2;
+}
+
+// ListMissionDefinitionsRequest queries installed mission definitions.
+message ListMissionDefinitionsRequest {
+  // limit restricts the number of results (0 = all)
+  int32 limit = 1;
+
+  // offset is the pagination offset
+  int32 offset = 2;
+}
+
+// ListMissionDefinitionsResponse returns installed mission definitions.
+message ListMissionDefinitionsResponse {
+  // missions is the list of installed mission definitions
+  repeated MissionDefinitionInfo missions = 1;
+
+  // total is the total count of mission definitions (for pagination)
+  int32 total = 2;
+}
+
+// MissionDefinitionInfo describes an installed mission definition.
+message MissionDefinitionInfo {
+  // name is the mission name
+  string name = 1;
+
+  // version is the mission version
+  string version = 2;
+
+  // description is the mission description
+  string description = 3;
+
+  // source is the Git repository URL
+  string source = 4;
+
+  // installed_at is when the mission was installed (Unix timestamp)
+  int64 installed_at = 5;
+
+  // updated_at is when the mission was last updated (Unix timestamp)
+  int64 updated_at = 6;
+
+  // node_count is the number of nodes in the mission
+  int32 node_count = 7;
+}
+
+// UpdateMissionRequest requests updating a mission to the latest version.
+message UpdateMissionRequest {
+  // name is the mission name to update
+  string name = 1;
+
+  // timeout_ms is the update timeout in milliseconds (0 = default 5 minutes)
+  int64 timeout_ms = 2;
+}
+
+// UpdateMissionResponse returns the result of updating a mission.
+message UpdateMissionResponse {
+  // success indicates if the mission was updated successfully
+  bool success = 1;
+
+  // updated indicates if there were actually changes (false if already latest)
+  bool updated = 2;
+
+  // old_version is the previous version
+  string old_version = 3;
+
+  // new_version is the new version after update
+  string new_version = 4;
+
+  // duration_ms is the total update time in milliseconds
+  int64 duration_ms = 5;
+
+  // message provides additional context or error information
+  string message = 6;
 }

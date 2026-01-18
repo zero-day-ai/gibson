@@ -1,13 +1,10 @@
-// Package workflow provides YAML workflow parsing with enhanced error reporting.
-//
-// This file implements the primary workflow parser that reads YAML workflow definitions
-// and converts them into executable workflow structures. It provides comprehensive
-// error reporting with line numbers for debugging workflow files.
-package workflow
+package mission
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
@@ -15,8 +12,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseError represents a workflow parsing error with source location information.
-// It provides detailed context about where errors occur in YAML workflow files.
+// ParseError represents a mission parsing error with source location information.
+// It provides detailed context about where errors occur in YAML mission files.
 type ParseError struct {
 	// Message is the human-readable error message
 	Message string
@@ -46,58 +43,26 @@ func (e *ParseError) Unwrap() error {
 	return e.Err
 }
 
-// ParsedWorkflow represents the complete result of parsing a workflow YAML file.
-// It contains all the information needed to create and execute a workflow.
-type ParsedWorkflow struct {
-	// Metadata about the workflow
-	Name        string
-	Description string
-	Version     string
-
-	// Target specification (optional)
-	TargetRef string
-
-	// Configuration sections
-	Config map[string]any
-
-	// Graph structure
-	Nodes       map[string]*WorkflowNode
-	Edges       []WorkflowEdge
-	EntryPoints []string
-	ExitPoints  []string
-
-	// Source metadata for debugging
-	SourceFile string
-	ParsedAt   time.Time
+// yamlMissionData represents the mission YAML structure with all sections
+type yamlMissionData struct {
+	Name         string                   `yaml:"name"`
+	Description  string                   `yaml:"description"`
+	Version      string                   `yaml:"version"`
+	Target       *yamlTargetSpec          `yaml:"target,omitempty"`
+	Nodes        yaml.Node                `yaml:"nodes"` // Can be array or map
+	Dependencies *MissionDependencies     `yaml:"dependencies,omitempty"`
+	Metadata     map[string]any           `yaml:"metadata,omitempty"`
 }
 
-// yamlWorkflowWithPosition is an internal structure that captures YAML nodes
-// with their source positions for better error reporting.
-type yamlWorkflowWithPosition struct {
-	Node *yaml.Node
-	Data *yamlWorkflowData
-}
-
-// yamlWorkflowData represents the complete workflow YAML structure with all sections
-type yamlWorkflowData struct {
-	Name        string               `yaml:"name"`
-	Description string               `yaml:"description"`
-	Version     string               `yaml:"version"`
-	Config      map[string]any       `yaml:"config,omitempty"`
-	Target      *yamlTargetWithSeeds `yaml:"target,omitempty"`
-	Nodes       []yamlNodeData       `yaml:"nodes"`
-}
-
-// yamlTargetWithSeeds represents target configuration including seed values
-type yamlTargetWithSeeds struct {
-	Reference string                   `yaml:"-"` // For string form
-	Name      string                   `yaml:"name,omitempty"`
-	Type      string                   `yaml:"type,omitempty"`
-	Seeds     []map[string]interface{} `yaml:"seeds,omitempty"`
+// yamlTargetSpec represents target configuration
+type yamlTargetSpec struct {
+	Reference string `yaml:"-"` // For string form
+	Name      string `yaml:"name,omitempty"`
+	Type      string `yaml:"type,omitempty"`
 }
 
 // UnmarshalYAML implements custom YAML unmarshaling for target
-func (t *yamlTargetWithSeeds) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (t *yamlTargetSpec) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	// Try as string reference first
 	var str string
 	if err := unmarshal(&str); err == nil {
@@ -106,40 +71,34 @@ func (t *yamlTargetWithSeeds) UnmarshalYAML(unmarshal func(interface{}) error) e
 	}
 
 	// Otherwise unmarshal as object
-	type rawTarget yamlTargetWithSeeds
+	type rawTarget yamlTargetSpec
 	var raw rawTarget
 	if err := unmarshal(&raw); err != nil {
 		return err
 	}
-	*t = yamlTargetWithSeeds(raw)
+	*t = yamlTargetSpec(raw)
 	return nil
-}
-
-// yamlNodeWithPosition wraps a node definition with its YAML position
-type yamlNodeWithPosition struct {
-	yamlNode *yaml.Node
-	data     *yamlNodeData
 }
 
 // yamlNodeData represents a single node definition with all possible fields
 type yamlNodeData struct {
-	ID          string                 `yaml:"id"`
-	Type        string                 `yaml:"type"`
-	Name        string                 `yaml:"name"`
-	Description string                 `yaml:"description"`
-	DependsOn   []string               `yaml:"depends_on,omitempty"`
-	Timeout     string                 `yaml:"timeout,omitempty"`
-	Retry       *yamlRetryData         `yaml:"retry,omitempty"`
-	Agent       string                 `yaml:"agent,omitempty"`
-	Task        map[string]interface{} `yaml:"task,omitempty"`
-	Tool        string                 `yaml:"tool,omitempty"`
-	Input       map[string]interface{} `yaml:"input,omitempty"`
-	Plugin      string                 `yaml:"plugin,omitempty"`
-	Method      string                 `yaml:"method,omitempty"`
-	Params      map[string]interface{} `yaml:"params,omitempty"`
-	Condition   *yamlConditionData     `yaml:"condition,omitempty"`
-	SubNodes    []yamlNodeData         `yaml:"sub_nodes,omitempty"`
-	Metadata    map[string]interface{} `yaml:"metadata,omitempty"`
+	ID           string                 `yaml:"id"`
+	Type         string                 `yaml:"type"`
+	Name         string                 `yaml:"name"`
+	Description  string                 `yaml:"description"`
+	DependsOn    []string               `yaml:"depends_on,omitempty"`
+	Timeout      string                 `yaml:"timeout,omitempty"`
+	Retry        *yamlRetryData         `yaml:"retry,omitempty"`
+	Agent        string                 `yaml:"agent,omitempty"`
+	Task         map[string]interface{} `yaml:"task,omitempty"`
+	Tool         string                 `yaml:"tool,omitempty"`
+	Input        map[string]interface{} `yaml:"input,omitempty"`
+	Plugin       string                 `yaml:"plugin,omitempty"`
+	Method       string                 `yaml:"method,omitempty"`
+	Params       map[string]interface{} `yaml:"params,omitempty"`
+	Condition    *yamlConditionData     `yaml:"condition,omitempty"`
+	SubNodes     []yamlNodeData         `yaml:"sub_nodes,omitempty"`
+	Metadata     map[string]interface{} `yaml:"metadata,omitempty"`
 }
 
 // yamlRetryData represents retry policy configuration
@@ -158,20 +117,19 @@ type yamlConditionData struct {
 	FalseBranch []string `yaml:"false_branch,omitempty"`
 }
 
-// ParseWorkflowYAML parses a workflow definition from a YAML file.
-// It reads the file from disk and converts it into a ParsedWorkflow structure
-// with comprehensive error reporting including line numbers.
+// ParseDefinition parses a mission definition from a YAML file.
+// It supports both mission.yaml (new) and workflow.yaml (legacy) file names.
 //
 // Parameters:
-//   - path: File system path to the YAML workflow file
+//   - path: File system path to the YAML mission file
 //
 // Returns:
-//   - *ParsedWorkflow: The parsed workflow ready for execution
+//   - *MissionDefinition: The parsed mission definition
 //   - error: Detailed parse error with line numbers, or nil on success
 //
 // Example usage:
 //
-//	wf, err := ParseWorkflowYAML("workflows/recon.yaml")
+//	def, err := ParseDefinition("missions/recon.yaml")
 //	if err != nil {
 //	    var parseErr *ParseError
 //	    if errors.As(err, &parseErr) {
@@ -179,27 +137,25 @@ type yamlConditionData struct {
 //	    }
 //	    return err
 //	}
-func ParseWorkflowYAML(path string) (*ParsedWorkflow, error) {
+func ParseDefinition(path string) (*MissionDefinition, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &ParseError{
-			Message: fmt.Sprintf("failed to read workflow file: %v", err),
+			Message: fmt.Sprintf("failed to read mission file: %v", err),
 			Err:     err,
 		}
 	}
 
-	parsed, err := ParseWorkflowYAMLFromBytes(data)
+	def, err := ParseDefinitionFromBytes(data)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set source file for debugging
-	parsed.SourceFile = path
-	return parsed, nil
+	return def, nil
 }
 
-// ParseWorkflowYAMLFromBytes parses a workflow definition from raw YAML bytes.
-// This function is useful for testing and for parsing workflow definitions
+// ParseDefinitionFromBytes parses a mission definition from raw YAML bytes.
+// This function is useful for testing and for parsing mission definitions
 // that are generated dynamically or stored in databases.
 //
 // The parser performs comprehensive validation including:
@@ -208,26 +164,25 @@ func ParseWorkflowYAML(path string) (*ParsedWorkflow, error) {
 //   - Dependency graph validity (no dangling references)
 //   - Duration format validation
 //   - Retry policy validation
-//   - DAG structure validation (entry/exit points)
 //
 // Parameters:
-//   - data: Raw YAML bytes containing the workflow definition
+//   - data: Raw YAML bytes containing the mission definition
 //
 // Returns:
-//   - *ParsedWorkflow: The parsed workflow structure
+//   - *MissionDefinition: The parsed mission definition structure
 //   - error: Detailed parse error with line numbers, or nil on success
 //
 // Example usage:
 //
 //	yamlData := []byte(`
-//	name: Test Workflow
+//	name: Test Mission
 //	nodes:
 //	  - id: node1
 //	    type: agent
 //	    agent: test-agent
 //	`)
-//	wf, err := ParseWorkflowYAMLFromBytes(yamlData)
-func ParseWorkflowYAMLFromBytes(data []byte) (*ParsedWorkflow, error) {
+//	def, err := ParseDefinitionFromBytes(yamlData)
+func ParseDefinitionFromBytes(data []byte) (*MissionDefinition, error) {
 	// First pass: unmarshal into a yaml.Node to preserve position information
 	var rootNode yaml.Node
 	if err := yaml.Unmarshal(data, &rootNode); err != nil {
@@ -238,46 +193,54 @@ func ParseWorkflowYAMLFromBytes(data []byte) (*ParsedWorkflow, error) {
 	}
 
 	// Second pass: unmarshal into our data structure
-	var wfData yamlWorkflowData
-	if err := yaml.Unmarshal(data, &wfData); err != nil {
+	var missionData yamlMissionData
+	if err := yaml.Unmarshal(data, &missionData); err != nil {
 		return nil, &ParseError{
-			Message: "failed to parse workflow structure",
+			Message: "failed to parse mission structure",
 			Err:     err,
 		}
 	}
 
 	// Validate required fields
-	if wfData.Name == "" {
+	if missionData.Name == "" {
 		return nil, &ParseError{
-			Message: "workflow 'name' field is required",
+			Message: "mission 'name' field is required",
 			Line:    getFieldLine(&rootNode, "name"),
 		}
 	}
 
-	if len(wfData.Nodes) == 0 {
-		return nil, &ParseError{
-			Message: "workflow must contain at least one node",
-			Line:    getFieldLine(&rootNode, "nodes"),
-		}
-	}
-
-	// Create parsed workflow structure
-	parsed := &ParsedWorkflow{
-		Name:        wfData.Name,
-		Description: wfData.Description,
-		Version:     wfData.Version,
-		Config:      wfData.Config,
-		Nodes:       make(map[string]*WorkflowNode),
-		Edges:       []WorkflowEdge{},
-		ParsedAt:    time.Now(),
+	// Create mission definition structure
+	def := &MissionDefinition{
+		ID:           types.NewID(),
+		Name:         missionData.Name,
+		Description:  missionData.Description,
+		Version:      missionData.Version,
+		Nodes:        make(map[string]*MissionNode),
+		Edges:        []MissionEdge{},
+		Metadata:     missionData.Metadata,
+		Dependencies: missionData.Dependencies,
+		CreatedAt:    time.Now(),
 	}
 
 	// Extract target reference
-	if wfData.Target != nil {
-		if wfData.Target.Reference != "" {
-			parsed.TargetRef = wfData.Target.Reference
-		} else if wfData.Target.Name != "" {
-			parsed.TargetRef = wfData.Target.Name
+	if missionData.Target != nil {
+		if missionData.Target.Reference != "" {
+			def.TargetRef = missionData.Target.Reference
+		} else if missionData.Target.Name != "" {
+			def.TargetRef = missionData.Target.Name
+		}
+	}
+
+	// Parse nodes - handle both array and map formats
+	nodesArray, err := parseNodesField(&missionData.Nodes, &rootNode)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nodesArray) == 0 {
+		return nil, &ParseError{
+			Message: "mission must contain at least one node",
+			Line:    getFieldLine(&rootNode, "nodes"),
 		}
 	}
 
@@ -285,29 +248,29 @@ func ParseWorkflowYAMLFromBytes(data []byte) (*ParsedWorkflow, error) {
 	nodeIDs := make(map[string]bool)
 	nodeLines := make(map[string]int)
 
-	for i, nodeData := range wfData.Nodes {
+	for i, nodeData := range nodesArray {
 		if nodeData.ID == "" {
 			return nil, &ParseError{
 				Message: "node 'id' field is required",
-				Line:    getNodeLine(&rootNode, i),
+				Line:    getNodeLineFromArray(&rootNode, i),
 			}
 		}
 
 		if nodeIDs[nodeData.ID] {
 			return nil, &ParseError{
-				Message:  fmt.Sprintf("duplicate node ID: %s", nodeData.ID),
-				Line:     getNodeLine(&rootNode, i),
-				NodeID:   nodeData.ID,
+				Message: fmt.Sprintf("duplicate node ID: %s", nodeData.ID),
+				Line:    getNodeLineFromArray(&rootNode, i),
+				NodeID:  nodeData.ID,
 			}
 		}
 
 		nodeIDs[nodeData.ID] = true
-		nodeLines[nodeData.ID] = getNodeLine(&rootNode, i)
+		nodeLines[nodeData.ID] = getNodeLineFromArray(&rootNode, i)
 	}
 
 	// Parse all nodes
-	for i, nodeData := range wfData.Nodes {
-		node, err := parseNode(&nodeData, getNodeLine(&rootNode, i))
+	for i, nodeData := range nodesArray {
+		node, err := parseNode(&nodeData, getNodeLineFromArray(&rootNode, i))
 		if err != nil {
 			if parseErr, ok := err.(*ParseError); ok {
 				parseErr.NodeID = nodeData.ID
@@ -315,17 +278,17 @@ func ParseWorkflowYAMLFromBytes(data []byte) (*ParsedWorkflow, error) {
 			}
 			return nil, &ParseError{
 				Message: err.Error(),
-				Line:    getNodeLine(&rootNode, i),
+				Line:    getNodeLineFromArray(&rootNode, i),
 				NodeID:  nodeData.ID,
 				Err:     err,
 			}
 		}
 
-		parsed.Nodes[node.ID] = node
+		def.Nodes[node.ID] = node
 	}
 
 	// Build edges from dependencies and validate references
-	for _, nodeData := range wfData.Nodes {
+	for _, nodeData := range nodesArray {
 		for _, depID := range nodeData.DependsOn {
 			if !nodeIDs[depID] {
 				return nil, &ParseError{
@@ -335,7 +298,7 @@ func ParseWorkflowYAMLFromBytes(data []byte) (*ParsedWorkflow, error) {
 				}
 			}
 
-			parsed.Edges = append(parsed.Edges, WorkflowEdge{
+			def.Edges = append(def.Edges, MissionEdge{
 				From: depID,
 				To:   nodeData.ID,
 			})
@@ -343,14 +306,66 @@ func ParseWorkflowYAMLFromBytes(data []byte) (*ParsedWorkflow, error) {
 	}
 
 	// Calculate entry and exit points
-	parsed.EntryPoints = calculateParsedEntryPoints(parsed)
-	parsed.ExitPoints = calculateParsedExitPoints(parsed)
+	def.EntryPoints = calculateEntryPoints(def)
+	def.ExitPoints = calculateExitPoints(def)
 
-	return parsed, nil
+	return def, nil
 }
 
-// parseNode converts a YAML node definition to a WorkflowNode
-func parseNode(nodeData *yamlNodeData, line int) (*WorkflowNode, error) {
+// parseNodesField handles both array and map node formats
+func parseNodesField(nodesNode *yaml.Node, rootNode *yaml.Node) ([]yamlNodeData, error) {
+	if nodesNode.Kind == 0 {
+		// Nodes field not present
+		return nil, &ParseError{
+			Message: "mission must contain 'nodes' field",
+			Line:    1,
+		}
+	}
+
+	// Handle array format: nodes: [...]
+	if nodesNode.Kind == yaml.SequenceNode {
+		var nodesArray []yamlNodeData
+		if err := nodesNode.Decode(&nodesArray); err != nil {
+			return nil, &ParseError{
+				Message: "failed to parse nodes array",
+				Line:    nodesNode.Line,
+				Err:     err,
+			}
+		}
+		return nodesArray, nil
+	}
+
+	// Handle map format: nodes: {id1: {...}, id2: {...}}
+	if nodesNode.Kind == yaml.MappingNode {
+		var nodesMap map[string]yamlNodeData
+		if err := nodesNode.Decode(&nodesMap); err != nil {
+			return nil, &ParseError{
+				Message: "failed to parse nodes map",
+				Line:    nodesNode.Line,
+				Err:     err,
+			}
+		}
+
+		// Convert map to array, filling in IDs
+		nodesArray := make([]yamlNodeData, 0, len(nodesMap))
+		for id, node := range nodesMap {
+			// Set ID from map key if not already set
+			if node.ID == "" {
+				node.ID = id
+			}
+			nodesArray = append(nodesArray, node)
+		}
+		return nodesArray, nil
+	}
+
+	return nil, &ParseError{
+		Message: "nodes field must be an array or map",
+		Line:    nodesNode.Line,
+	}
+}
+
+// parseNode converts a YAML node definition to a MissionNode
+func parseNode(nodeData *yamlNodeData, line int) (*MissionNode, error) {
 	if nodeData.Type == "" {
 		return nil, &ParseError{
 			Message: "node 'type' field is required",
@@ -358,7 +373,7 @@ func parseNode(nodeData *yamlNodeData, line int) (*WorkflowNode, error) {
 		}
 	}
 
-	node := &WorkflowNode{
+	node := &MissionNode{
 		ID:           nodeData.ID,
 		Name:         nodeData.Name,
 		Description:  nodeData.Description,
@@ -390,7 +405,7 @@ func parseNode(nodeData *yamlNodeData, line int) (*WorkflowNode, error) {
 
 	// Parse node type-specific fields
 	var err error
-	switch nodeData.Type {
+	switch strings.ToLower(nodeData.Type) {
 	case "agent":
 		err = parseAgentNode(nodeData, node, line)
 		node.Type = NodeTypeAgent
@@ -423,7 +438,7 @@ func parseNode(nodeData *yamlNodeData, line int) (*WorkflowNode, error) {
 }
 
 // parseAgentNode parses agent-specific fields
-func parseAgentNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error {
+func parseAgentNode(nodeData *yamlNodeData, node *MissionNode, line int) error {
 	if nodeData.Agent == "" {
 		return &ParseError{
 			Message: "agent nodes require 'agent' field",
@@ -480,7 +495,7 @@ func parseAgentNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error 
 }
 
 // parseToolNode parses tool-specific fields
-func parseToolNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error {
+func parseToolNode(nodeData *yamlNodeData, node *MissionNode, line int) error {
 	if nodeData.Tool == "" {
 		return &ParseError{
 			Message: "tool nodes require 'tool' field",
@@ -494,7 +509,7 @@ func parseToolNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error {
 }
 
 // parsePluginNode parses plugin-specific fields
-func parsePluginNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error {
+func parsePluginNode(nodeData *yamlNodeData, node *MissionNode, line int) error {
 	if nodeData.Plugin == "" {
 		return &ParseError{
 			Message: "plugin nodes require 'plugin' field",
@@ -515,7 +530,7 @@ func parsePluginNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error
 }
 
 // parseConditionNode parses condition-specific fields
-func parseConditionNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error {
+func parseConditionNode(nodeData *yamlNodeData, node *MissionNode, line int) error {
 	if nodeData.Condition == nil {
 		return &ParseError{
 			Message: "condition nodes require 'condition' field",
@@ -539,7 +554,7 @@ func parseConditionNode(nodeData *yamlNodeData, node *WorkflowNode, line int) er
 }
 
 // parseParallelNode parses parallel-specific fields
-func parseParallelNode(nodeData *yamlNodeData, node *WorkflowNode, line int) error {
+func parseParallelNode(nodeData *yamlNodeData, node *MissionNode, line int) error {
 	if len(nodeData.SubNodes) == 0 {
 		return &ParseError{
 			Message: "parallel nodes must contain at least one sub_node",
@@ -547,7 +562,7 @@ func parseParallelNode(nodeData *yamlNodeData, node *WorkflowNode, line int) err
 		}
 	}
 
-	subNodes := make([]*WorkflowNode, 0, len(nodeData.SubNodes))
+	subNodes := make([]*MissionNode, 0, len(nodeData.SubNodes))
 	for i, subNodeData := range nodeData.SubNodes {
 		// Auto-generate sub-node IDs if not provided
 		if subNodeData.ID == "" {
@@ -589,7 +604,7 @@ func parseRetryPolicy(retryData *yamlRetryData, line int) (*RetryPolicy, error) 
 	}
 
 	// Parse backoff strategy
-	switch retryData.Backoff {
+	switch strings.ToLower(retryData.Backoff) {
 	case "constant":
 		policy.BackoffStrategy = BackoffConstant
 	case "linear":
@@ -648,15 +663,15 @@ func parseRetryPolicy(retryData *yamlRetryData, line int) (*RetryPolicy, error) 
 	return policy, nil
 }
 
-// calculateParsedEntryPoints identifies nodes with no incoming edges
-func calculateParsedEntryPoints(parsed *ParsedWorkflow) []string {
+// calculateEntryPoints identifies nodes with no incoming edges
+func calculateEntryPoints(def *MissionDefinition) []string {
 	hasIncoming := make(map[string]bool)
-	for _, edge := range parsed.Edges {
+	for _, edge := range def.Edges {
 		hasIncoming[edge.To] = true
 	}
 
 	entryPoints := []string{}
-	for id := range parsed.Nodes {
+	for id := range def.Nodes {
 		if !hasIncoming[id] {
 			entryPoints = append(entryPoints, id)
 		}
@@ -665,15 +680,15 @@ func calculateParsedEntryPoints(parsed *ParsedWorkflow) []string {
 	return entryPoints
 }
 
-// calculateParsedExitPoints identifies nodes with no outgoing edges
-func calculateParsedExitPoints(parsed *ParsedWorkflow) []string {
+// calculateExitPoints identifies nodes with no outgoing edges
+func calculateExitPoints(def *MissionDefinition) []string {
 	hasOutgoing := make(map[string]bool)
-	for _, edge := range parsed.Edges {
+	for _, edge := range def.Edges {
 		hasOutgoing[edge.From] = true
 	}
 
 	// Handle condition nodes
-	for id, node := range parsed.Nodes {
+	for id, node := range def.Nodes {
 		if node.Type == NodeTypeCondition && node.Condition != nil {
 			if len(node.Condition.TrueBranch) > 0 || len(node.Condition.FalseBranch) > 0 {
 				hasOutgoing[id] = true
@@ -682,7 +697,7 @@ func calculateParsedExitPoints(parsed *ParsedWorkflow) []string {
 	}
 
 	exitPoints := []string{}
-	for id := range parsed.Nodes {
+	for id := range def.Nodes {
 		if !hasOutgoing[id] {
 			exitPoints = append(exitPoints, id)
 		}
@@ -705,8 +720,8 @@ func getFieldLine(node *yaml.Node, fieldName string) int {
 	return findFieldInMapping(node.Content[0], fieldName)
 }
 
-// getNodeLine attempts to find the line number of a node in the nodes array
-func getNodeLine(rootNode *yaml.Node, index int) int {
+// getNodeLineFromArray attempts to find the line number of a node in the nodes array
+func getNodeLineFromArray(rootNode *yaml.Node, index int) int {
 	if rootNode == nil || rootNode.Kind != yaml.DocumentNode {
 		return 0
 	}
@@ -725,9 +740,20 @@ func getNodeLine(rootNode *yaml.Node, index int) int {
 		key := mappingNode.Content[i]
 		value := mappingNode.Content[i+1]
 
-		if key.Value == "nodes" && value.Kind == yaml.SequenceNode {
-			if index < len(value.Content) {
-				return value.Content[index].Line
+		if key.Value == "nodes" {
+			// Handle array format
+			if value.Kind == yaml.SequenceNode {
+				if index < len(value.Content) {
+					return value.Content[index].Line
+				}
+			}
+			// Handle map format
+			if value.Kind == yaml.MappingNode {
+				// For maps, get the line of the nth key-value pair
+				pairIndex := index * 2
+				if pairIndex < len(value.Content) {
+					return value.Content[pairIndex].Line
+				}
 			}
 		}
 	}
@@ -751,19 +777,48 @@ func findFieldInMapping(node *yaml.Node, fieldName string) int {
 	return 0
 }
 
-// ToWorkflow converts a ParsedWorkflow to a Workflow structure for execution.
-// This is used when transitioning from the parsing phase to the execution phase.
-func (p *ParsedWorkflow) ToWorkflow() *Workflow {
-	return &Workflow{
-		ID:          types.NewID(),
-		Name:        p.Name,
-		Description: p.Description,
-		TargetRef:   p.TargetRef,
-		Nodes:       p.Nodes,
-		Edges:       p.Edges,
-		EntryPoints: p.EntryPoints,
-		ExitPoints:  p.ExitPoints,
-		Metadata:    p.Config,
-		CreatedAt:   p.ParsedAt,
+// LoadMissionFromFileOrName is a convenience function that tries to load a mission
+// definition from multiple sources in priority order:
+// 1. If path is an absolute or relative file path that exists, load from file
+// 2. If path looks like a file name, check for mission.yaml and workflow.yaml
+// 3. Otherwise, assume it's a mission name and look in ~/.gibson/missions/{name}/
+//
+// This function supports both the new mission.yaml format and legacy workflow.yaml.
+func LoadMissionFromFileOrName(pathOrName string) (*MissionDefinition, error) {
+	// Check if it's a file path that exists
+	if _, err := os.Stat(pathOrName); err == nil {
+		return ParseDefinition(pathOrName)
 	}
+
+	// Check for mission.yaml or workflow.yaml in current directory
+	if !filepath.IsAbs(pathOrName) && !strings.Contains(pathOrName, string(filepath.Separator)) {
+		// Try mission.yaml first (new format)
+		if _, err := os.Stat("mission.yaml"); err == nil {
+			return ParseDefinition("mission.yaml")
+		}
+		// Fall back to workflow.yaml (legacy)
+		if _, err := os.Stat("workflow.yaml"); err == nil {
+			return ParseDefinition("workflow.yaml")
+		}
+	}
+
+	// Try to load from ~/.gibson/missions/{name}/
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user home directory: %w", err)
+	}
+
+	// Try mission.yaml first
+	missionPath := filepath.Join(homeDir, ".gibson", "missions", pathOrName, "mission.yaml")
+	if _, err := os.Stat(missionPath); err == nil {
+		return ParseDefinition(missionPath)
+	}
+
+	// Fall back to workflow.yaml for backward compatibility
+	workflowPath := filepath.Join(homeDir, ".gibson", "missions", pathOrName, "workflow.yaml")
+	if _, err := os.Stat(workflowPath); err == nil {
+		return ParseDefinition(workflowPath)
+	}
+
+	return nil, fmt.Errorf("mission not found: %s (checked file paths and ~/.gibson/missions/)", pathOrName)
 }

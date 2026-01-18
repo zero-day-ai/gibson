@@ -1,14 +1,11 @@
 package component
 
 import (
-	"bufio"
 	"fmt"
-	"io"
-	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/cmd/gibson/core"
-	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
+	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 )
 
 // newLogsCommand creates a logs command for the specified component type.
@@ -39,81 +36,63 @@ Use --lines (-n) to specify the number of lines to show.`,
 // runLogs executes the logs command for a component.
 func runLogs(cmd *cobra.Command, args []string, cfg Config, flags *LogsFlags) error {
 	componentName := args[0]
+	ctx := cmd.Context()
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
-	defer internal.CloseWithLog(cc, nil, "gRPC connection")
+
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
 
 	// Build logs options
-	opts := core.LogsOptions{
+	opts := daemonclient.LogsOptions{
 		Follow: flags.Follow,
 		Lines:  flags.Lines,
 	}
 
-	// Call core function
-	result, err := core.ComponentLogs(cc, cfg.Kind, componentName, opts)
+	// Call appropriate method based on component kind
+	var logChan <-chan daemonclient.LogEntry
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		logChan, err = client.GetAgentLogs(ctx, componentName, opts)
+	case "tool":
+		logChan, err = client.GetToolLogs(ctx, componentName, opts)
+	case "plugin":
+		logChan, err = client.GetPluginLogs(ctx, componentName, opts)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
 	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
 		return err
 	}
 
-	// Extract result data
-	data, ok := result.Data.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("unexpected result type")
+	// Stream logs from channel
+	if flags.Follow {
+		cmd.Printf("Following logs for %s '%s' (Ctrl+C to stop)...\n\n", cfg.DisplayName, componentName)
 	}
 
-	// Check if this is follow mode
-	if follow, _ := data["follow"].(bool); follow {
-		logPath, _ := data["log_path"].(string)
-		// Open log file for following
-		file, err := os.Open(logPath)
-		if err != nil {
-			return fmt.Errorf("failed to open log file: %w", err)
+	for entry := range logChan {
+		// Format log entry
+		timestamp := entry.Timestamp.Format("2006-01-02 15:04:05")
+		if entry.Level != "" {
+			cmd.Printf("[%s] %s: %s\n", timestamp, strings.ToUpper(entry.Level), entry.Message)
+		} else {
+			cmd.Printf("[%s] %s\n", timestamp, entry.Message)
 		}
-		defer internal.CloseWithLog(file, nil, "component log file")
-		return followLogs(cmd, file, logPath)
-	}
-
-	// Display lines
-	lines, ok := data["lines"].([]string)
-	if !ok {
-		return fmt.Errorf("unexpected lines type")
-	}
-
-	for _, line := range lines {
-		cmd.Println(line)
 	}
 
 	return nil
-}
-
-// followLogs streams log output in real-time (like tail -f).
-func followLogs(cmd *cobra.Command, file *os.File, logPath string) error {
-	// Seek to end of file
-	_, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return fmt.Errorf("failed to seek to end of file: %w", err)
-	}
-
-	cmd.Printf("Following logs for %s (Ctrl+C to stop)...\n\n", logPath)
-
-	reader := bufio.NewReader(file)
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				// No new data, wait and try again
-				// In a real implementation, we'd use fsnotify or similar
-				continue
-			}
-			return fmt.Errorf("failed to read log: %w", err)
-		}
-
-		// Print the line without adding another newline
-		cmd.Print(line)
-	}
 }

@@ -1,5 +1,8 @@
 FROM kalilinux/kali-rolling
 
+# ONNX Runtime version for native embedder
+ARG ONNX_VERSION=1.21.0
+
 # System dependencies and security tools
 RUN apt-get update && apt-get install -y \
     golang-go git build-essential curl wget \
@@ -17,6 +20,22 @@ RUN apt-get update && apt-get install -y \
     libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
     libgbm1 libpango-1.0-0 libcairo2 libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
+
+# Install ONNX Runtime for native embedder (GraphRAG semantic search)
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        ONNX_ARCH="linux-x64"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        ONNX_ARCH="linux-aarch64"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    curl -fSL "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-${ONNX_ARCH}-${ONNX_VERSION}.tgz" \
+        -o /tmp/onnxruntime.tgz && \
+    tar -xzf /tmp/onnxruntime.tgz -C /tmp && \
+    cp /tmp/onnxruntime-${ONNX_ARCH}-${ONNX_VERSION}/lib/libonnxruntime.so* /usr/local/lib/ && \
+    ldconfig && \
+    rm -rf /tmp/onnxruntime*
 
 # Install rclone from official script (not in Kali repos)
 RUN curl https://rclone.org/install.sh | bash || true

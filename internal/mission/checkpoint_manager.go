@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 )
 
 // CheckpointManager manages the lifecycle of mission checkpoints for pause/resume capability.
@@ -17,10 +16,10 @@ import (
 // and manage checkpoint integrity through cryptographic checksums.
 type CheckpointManager interface {
 	// Capture creates a checkpoint from current execution state.
-	// The state parameter contains the current workflow execution state including
+	// The state parameter contains the current mission execution state including
 	// node statuses, results, and execution order.
 	// Returns the created checkpoint with a unique ID, version, and integrity checksum.
-	Capture(ctx context.Context, missionID types.ID, state *workflow.WorkflowState) (*MissionCheckpoint, error)
+	Capture(ctx context.Context, missionID types.ID, state *MissionState) (*MissionCheckpoint, error)
 
 	// Restore loads the latest checkpoint for a mission.
 	// Returns nil if no checkpoint exists for the mission.
@@ -53,12 +52,12 @@ func NewCheckpointManager(store MissionStore) CheckpointManager {
 	}
 }
 
-// Capture creates a checkpoint from the current workflow execution state.
-// It serializes the workflow state, computes a SHA256 checksum for integrity,
+// Capture creates a checkpoint from the current mission execution state.
+// It serializes the mission state, computes a SHA256 checksum for integrity,
 // and persists the checkpoint through the mission store.
-func (m *DefaultCheckpointManager) Capture(ctx context.Context, missionID types.ID, state *workflow.WorkflowState) (*MissionCheckpoint, error) {
+func (m *DefaultCheckpointManager) Capture(ctx context.Context, missionID types.ID, state *MissionState) (*MissionCheckpoint, error) {
 	if state == nil {
-		return nil, fmt.Errorf("workflow state cannot be nil")
+		return nil, fmt.Errorf("mission state cannot be nil")
 	}
 
 	// Get the mission to capture metrics snapshot
@@ -67,14 +66,14 @@ func (m *DefaultCheckpointManager) Capture(ctx context.Context, missionID types.
 		return nil, fmt.Errorf("failed to get mission for checkpoint: %w", err)
 	}
 
-	// Extract completed and pending nodes from workflow state
+	// Extract completed and pending nodes from mission state
 	completedNodes := make([]string, 0)
 	pendingNodes := state.GetPendingNodes()
 
 	// Collect completed nodes and their results
 	nodeResults := make(map[string]any)
 	for nodeID, nodeState := range state.NodeStates {
-		if nodeState.Status == workflow.NodeStatusCompleted {
+		if nodeState.Status == NodeStatusCompleted {
 			completedNodes = append(completedNodes, nodeID)
 
 			// Store node result if available
@@ -94,10 +93,10 @@ func (m *DefaultCheckpointManager) Capture(ctx context.Context, missionID types.
 		}
 	}
 
-	// Serialize workflow state for storage
-	workflowStateData, err := m.serializeWorkflowState(state)
+	// Serialize mission state for storage
+	missionStateData, err := m.serializeMissionState(state)
 	if err != nil {
-		return nil, fmt.Errorf("failed to serialize workflow state: %w", err)
+		return nil, fmt.Errorf("failed to serialize mission state: %w", err)
 	}
 
 	// Collect finding IDs from mission
@@ -109,7 +108,7 @@ func (m *DefaultCheckpointManager) Capture(ctx context.Context, missionID types.
 	checkpoint := &MissionCheckpoint{
 		ID:              types.NewID(),
 		Version:         1, // Current checkpoint format version
-		WorkflowState:   workflowStateData,
+		WorkflowState:   missionStateData,
 		CompletedNodes:  completedNodes,
 		PendingNodes:    pendingNodes,
 		NodeResults:     nodeResults,
@@ -205,13 +204,13 @@ func (m *DefaultCheckpointManager) GetAutoCheckpointInterval() time.Duration {
 	return m.autoCheckpointInterval
 }
 
-// serializeWorkflowState serializes the workflow state to a map for storage.
+// serializeMissionState serializes the mission state to a map for storage.
 // This captures the essential state information needed to resume execution.
-func (m *DefaultCheckpointManager) serializeWorkflowState(state *workflow.WorkflowState) (map[string]any, error) {
+func (m *DefaultCheckpointManager) serializeMissionState(state *MissionState) (map[string]any, error) {
 	stateData := make(map[string]any)
 
-	// Store basic workflow information
-	stateData["workflow_id"] = state.WorkflowID.String()
+	// Store basic mission information
+	stateData["mission_id"] = state.MissionID.String()
 	stateData["status"] = string(state.Status)
 	stateData["started_at"] = state.StartedAt.Format(time.RFC3339)
 	if state.CompletedAt != nil {

@@ -15,41 +15,28 @@ import (
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
 
-// mockComponentDAO implements database.ComponentDAO for testing
-type mockComponentDAO struct {
-	components     []*component.Component
-	createFn       func(ctx context.Context, comp *component.Component) error
-	getByIDFn      func(ctx context.Context, id int64) (*component.Component, error)
-	getByNameFn    func(ctx context.Context, kind component.ComponentKind, name string) (*component.Component, error)
-	listFn         func(ctx context.Context, kind component.ComponentKind) ([]*component.Component, error)
-	listAllFn      func(ctx context.Context) (map[component.ComponentKind][]*component.Component, error)
-	updateFn       func(ctx context.Context, comp *component.Component) error
-	updateStatusFn func(ctx context.Context, id int64, status component.ComponentStatus, pid, port int) error
-	deleteFn       func(ctx context.Context, kind component.ComponentKind, name string) error
+// mockComponentStore implements component.ComponentStore for testing.
+// Components are now stored in etcd, not SQLite.
+type mockComponentStore struct {
+	components    []*component.Component
+	createFn      func(ctx context.Context, comp *component.Component) error
+	getByNameFn   func(ctx context.Context, kind component.ComponentKind, name string) (*component.Component, error)
+	listFn        func(ctx context.Context, kind component.ComponentKind) ([]*component.Component, error)
+	listAllFn     func(ctx context.Context) (map[component.ComponentKind][]*component.Component, error)
+	updateFn      func(ctx context.Context, comp *component.Component) error
+	deleteFn      func(ctx context.Context, kind component.ComponentKind, name string) error
+	listInstances func(ctx context.Context, kind component.ComponentKind, name string) ([]sdkregistry.ServiceInfo, error)
 }
 
-func (m *mockComponentDAO) Create(ctx context.Context, comp *component.Component) error {
+func (m *mockComponentStore) Create(ctx context.Context, comp *component.Component) error {
 	if m.createFn != nil {
 		return m.createFn(ctx, comp)
 	}
-	comp.ID = int64(len(m.components) + 1)
 	m.components = append(m.components, comp)
 	return nil
 }
 
-func (m *mockComponentDAO) GetByID(ctx context.Context, id int64) (*component.Component, error) {
-	if m.getByIDFn != nil {
-		return m.getByIDFn(ctx, id)
-	}
-	for _, comp := range m.components {
-		if comp.ID == id {
-			return comp, nil
-		}
-	}
-	return nil, nil
-}
-
-func (m *mockComponentDAO) GetByName(ctx context.Context, kind component.ComponentKind, name string) (*component.Component, error) {
+func (m *mockComponentStore) GetByName(ctx context.Context, kind component.ComponentKind, name string) (*component.Component, error) {
 	if m.getByNameFn != nil {
 		return m.getByNameFn(ctx, kind, name)
 	}
@@ -61,7 +48,7 @@ func (m *mockComponentDAO) GetByName(ctx context.Context, kind component.Compone
 	return nil, nil
 }
 
-func (m *mockComponentDAO) List(ctx context.Context, kind component.ComponentKind) ([]*component.Component, error) {
+func (m *mockComponentStore) List(ctx context.Context, kind component.ComponentKind) ([]*component.Component, error) {
 	if m.listFn != nil {
 		return m.listFn(ctx, kind)
 	}
@@ -74,7 +61,7 @@ func (m *mockComponentDAO) List(ctx context.Context, kind component.ComponentKin
 	return filtered, nil
 }
 
-func (m *mockComponentDAO) ListAll(ctx context.Context) (map[component.ComponentKind][]*component.Component, error) {
+func (m *mockComponentStore) ListAll(ctx context.Context) (map[component.ComponentKind][]*component.Component, error) {
 	if m.listAllFn != nil {
 		return m.listAllFn(ctx)
 	}
@@ -85,12 +72,12 @@ func (m *mockComponentDAO) ListAll(ctx context.Context) (map[component.Component
 	return result, nil
 }
 
-func (m *mockComponentDAO) Update(ctx context.Context, comp *component.Component) error {
+func (m *mockComponentStore) Update(ctx context.Context, comp *component.Component) error {
 	if m.updateFn != nil {
 		return m.updateFn(ctx, comp)
 	}
 	for i, existing := range m.components {
-		if existing.ID == comp.ID {
+		if existing.Kind == comp.Kind && existing.Name == comp.Name {
 			m.components[i] = comp
 			return nil
 		}
@@ -98,22 +85,7 @@ func (m *mockComponentDAO) Update(ctx context.Context, comp *component.Component
 	return errors.New("component not found")
 }
 
-func (m *mockComponentDAO) UpdateStatus(ctx context.Context, id int64, status component.ComponentStatus, pid, port int) error {
-	if m.updateStatusFn != nil {
-		return m.updateStatusFn(ctx, id, status, pid, port)
-	}
-	for _, comp := range m.components {
-		if comp.ID == id {
-			comp.Status = status
-			comp.PID = pid
-			comp.Port = port
-			return nil
-		}
-	}
-	return errors.New("component not found")
-}
-
-func (m *mockComponentDAO) Delete(ctx context.Context, kind component.ComponentKind, name string) error {
+func (m *mockComponentStore) Delete(ctx context.Context, kind component.ComponentKind, name string) error {
 	if m.deleteFn != nil {
 		return m.deleteFn(ctx, kind, name)
 	}
@@ -124,6 +96,13 @@ func (m *mockComponentDAO) Delete(ctx context.Context, kind component.ComponentK
 		}
 	}
 	return errors.New("component not found")
+}
+
+func (m *mockComponentStore) ListInstances(ctx context.Context, kind component.ComponentKind, name string) ([]sdkregistry.ServiceInfo, error) {
+	if m.listInstances != nil {
+		return m.listInstances(ctx, kind, name)
+	}
+	return []sdkregistry.ServiceInfo{}, nil
 }
 
 // mockInstaller implements component.Installer for testing
@@ -272,7 +251,7 @@ func TestComponentList(t *testing.T) {
 		name      string
 		kind      component.ComponentKind
 		opts      ListOptions
-		setupMock func(*mockComponentDAO)
+		setupMock func(*mockComponentStore)
 		wantErr   bool
 		wantCount int
 	}{
@@ -280,10 +259,9 @@ func TestComponentList(t *testing.T) {
 			name: "list all agents",
 			kind: component.ComponentKindAgent,
 			opts: ListOptions{},
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:        1,
 						Kind:      component.ComponentKindAgent,
 						Name:      "agent1",
 						Version:   "1.0.0",
@@ -292,7 +270,6 @@ func TestComponentList(t *testing.T) {
 						UpdatedAt: now,
 					},
 					{
-						ID:        2,
 						Kind:      component.ComponentKindAgent,
 						Name:      "agent2",
 						Version:   "1.0.0",
@@ -308,10 +285,9 @@ func TestComponentList(t *testing.T) {
 			name: "list local only",
 			kind: component.ComponentKindAgent,
 			opts: ListOptions{Local: true},
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:        1,
 						Kind:      component.ComponentKindAgent,
 						Name:      "agent1",
 						Version:   "1.0.0",
@@ -320,7 +296,6 @@ func TestComponentList(t *testing.T) {
 						UpdatedAt: now,
 					},
 					{
-						ID:        2,
 						Kind:      component.ComponentKindAgent,
 						Name:      "agent2",
 						Version:   "1.0.0",
@@ -336,10 +311,9 @@ func TestComponentList(t *testing.T) {
 			name: "list remote only",
 			kind: component.ComponentKindAgent,
 			opts: ListOptions{Remote: true},
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:        1,
 						Kind:      component.ComponentKindAgent,
 						Name:      "agent1",
 						Version:   "1.0.0",
@@ -348,7 +322,6 @@ func TestComponentList(t *testing.T) {
 						UpdatedAt: now,
 					},
 					{
-						ID:        2,
 						Kind:      component.ComponentKindAgent,
 						Name:      "agent2",
 						Version:   "1.0.0",
@@ -364,7 +337,7 @@ func TestComponentList(t *testing.T) {
 			name: "both local and remote flags",
 			kind: component.ComponentKindAgent,
 			opts: ListOptions{Local: true, Remote: true},
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{}
 			},
 			wantErr: true,
@@ -373,7 +346,7 @@ func TestComponentList(t *testing.T) {
 			name: "empty list",
 			kind: component.ComponentKindTool,
 			opts: ListOptions{},
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{}
 			},
 			wantCount: 0,
@@ -382,14 +355,14 @@ func TestComponentList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dao := &mockComponentDAO{}
+			store := &mockComponentStore{}
 			if tt.setupMock != nil {
-				tt.setupMock(dao)
+				tt.setupMock(store)
 			}
 
 			cc := &CommandContext{
-				Ctx: context.Background(),
-				DAO: dao,
+				Ctx:            context.Background(),
+				ComponentStore: store,
 			}
 
 			result, err := ComponentList(cc, tt.kind, tt.opts)
@@ -428,7 +401,7 @@ func TestComponentShow(t *testing.T) {
 		name          string
 		kind          component.ComponentKind
 		componentName string
-		setupMock     func(*mockComponentDAO)
+		setupMock     func(*mockComponentStore)
 		wantErr       bool
 		wantErrMsg    string
 	}{
@@ -436,10 +409,9 @@ func TestComponentShow(t *testing.T) {
 			name:          "existing component",
 			kind:          component.ComponentKindAgent,
 			componentName: "test-agent",
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:        1,
 						Kind:      component.ComponentKindAgent,
 						Name:      "test-agent",
 						Version:   "1.0.0",
@@ -454,7 +426,7 @@ func TestComponentShow(t *testing.T) {
 			name:          "non-existing component",
 			kind:          component.ComponentKindAgent,
 			componentName: "non-existing",
-			setupMock:     func(m *mockComponentDAO) {},
+			setupMock:     func(m *mockComponentStore) {},
 			wantErr:       true,
 			wantErrMsg:    "component 'non-existing' not found",
 		},
@@ -462,14 +434,14 @@ func TestComponentShow(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dao := &mockComponentDAO{}
+			store := &mockComponentStore{}
 			if tt.setupMock != nil {
-				tt.setupMock(dao)
+				tt.setupMock(store)
 			}
 
 			cc := &CommandContext{
-				Ctx: context.Background(),
-				DAO: dao,
+				Ctx:            context.Background(),
+				ComponentStore: store,
 			}
 
 			result, err := ComponentShow(cc, tt.kind, tt.componentName)
@@ -688,7 +660,7 @@ func TestComponentUninstall(t *testing.T) {
 		kind           component.ComponentKind
 		componentName  string
 		opts           UninstallOptions
-		setupDAO       func(*mockComponentDAO)
+		setupStore     func(*mockComponentStore)
 		setupInstaller func(*mockInstaller)
 		wantErr        bool
 		wantErrMsg     string
@@ -698,10 +670,9 @@ func TestComponentUninstall(t *testing.T) {
 			kind:          component.ComponentKindAgent,
 			componentName: "test-agent",
 			opts:          UninstallOptions{},
-			setupDAO: func(m *mockComponentDAO) {
+			setupStore: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:        1,
 						Kind:      component.ComponentKindAgent,
 						Name:      "test-agent",
 						Version:   "1.0.0",
@@ -717,7 +688,7 @@ func TestComponentUninstall(t *testing.T) {
 			kind:           component.ComponentKindAgent,
 			componentName:  "non-existing",
 			opts:           UninstallOptions{},
-			setupDAO:       func(m *mockComponentDAO) {},
+			setupStore:     func(m *mockComponentStore) {},
 			setupInstaller: func(m *mockInstaller) {},
 			wantErr:        true,
 			wantErrMsg:     "component 'non-existing' not found",
@@ -726,19 +697,19 @@ func TestComponentUninstall(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dao := &mockComponentDAO{}
+			store := &mockComponentStore{}
 			installer := &mockInstaller{}
-			if tt.setupDAO != nil {
-				tt.setupDAO(dao)
+			if tt.setupStore != nil {
+				tt.setupStore(store)
 			}
 			if tt.setupInstaller != nil {
 				tt.setupInstaller(installer)
 			}
 
 			cc := &CommandContext{
-				Ctx:       context.Background(),
-				DAO:       dao,
-				Installer: installer,
+				Ctx:            context.Background(),
+				ComponentStore: store,
+				Installer:      installer,
 			}
 
 			result, err := ComponentUninstall(cc, tt.kind, tt.componentName, tt.opts)
@@ -771,7 +742,7 @@ func TestComponentUpdate(t *testing.T) {
 		kind           component.ComponentKind
 		componentName  string
 		opts           UpdateOptions
-		setupDAO       func(*mockComponentDAO)
+		setupStore     func(*mockComponentStore)
 		setupInstaller func(*mockInstaller)
 		wantErr        bool
 		wantErrMsg     string
@@ -781,10 +752,9 @@ func TestComponentUpdate(t *testing.T) {
 			kind:          component.ComponentKindAgent,
 			componentName: "test-agent",
 			opts:          UpdateOptions{},
-			setupDAO: func(m *mockComponentDAO) {
+			setupStore: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:        1,
 						Kind:      component.ComponentKindAgent,
 						Name:      "test-agent",
 						Version:   "1.0.0",
@@ -800,7 +770,7 @@ func TestComponentUpdate(t *testing.T) {
 			kind:           component.ComponentKindAgent,
 			componentName:  "non-existing",
 			opts:           UpdateOptions{},
-			setupDAO:       func(m *mockComponentDAO) {},
+			setupStore:     func(m *mockComponentStore) {},
 			setupInstaller: func(m *mockInstaller) {},
 			wantErr:        true,
 			wantErrMsg:     "component 'non-existing' not found",
@@ -809,19 +779,19 @@ func TestComponentUpdate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dao := &mockComponentDAO{}
+			store := &mockComponentStore{}
 			installer := &mockInstaller{}
-			if tt.setupDAO != nil {
-				tt.setupDAO(dao)
+			if tt.setupStore != nil {
+				tt.setupStore(store)
 			}
 			if tt.setupInstaller != nil {
 				tt.setupInstaller(installer)
 			}
 
 			cc := &CommandContext{
-				Ctx:       context.Background(),
-				DAO:       dao,
-				Installer: installer,
+				Ctx:            context.Background(),
+				ComponentStore: store,
+				Installer:      installer,
 			}
 
 			result, err := ComponentUpdate(cc, tt.kind, tt.componentName, tt.opts)
@@ -853,7 +823,7 @@ func TestComponentBuild(t *testing.T) {
 		name          string
 		kind          component.ComponentKind
 		componentName string
-		setupMock     func(*mockComponentDAO)
+		setupMock     func(*mockComponentStore)
 		wantErr       bool
 		wantErrMsg    string
 	}{
@@ -861,7 +831,7 @@ func TestComponentBuild(t *testing.T) {
 			name:          "component not found",
 			kind:          component.ComponentKindAgent,
 			componentName: "non-existing",
-			setupMock:     func(m *mockComponentDAO) {},
+			setupMock:     func(m *mockComponentStore) {},
 			wantErr:       true,
 			wantErrMsg:    "component 'non-existing' not found",
 		},
@@ -869,10 +839,9 @@ func TestComponentBuild(t *testing.T) {
 			name:          "component without manifest",
 			kind:          component.ComponentKindAgent,
 			componentName: "no-manifest",
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:        1,
 						Kind:      component.ComponentKindAgent,
 						Name:      "no-manifest",
 						Version:   "1.0.0",
@@ -889,10 +858,9 @@ func TestComponentBuild(t *testing.T) {
 			name:          "component without repo path",
 			kind:          component.ComponentKindAgent,
 			componentName: "no-repo-path",
-			setupMock: func(m *mockComponentDAO) {
+			setupMock: func(m *mockComponentStore) {
 				m.components = []*component.Component{
 					{
-						ID:      1,
 						Kind:    component.ComponentKindAgent,
 						Name:    "no-repo-path",
 						Version: "1.0.0",
@@ -912,14 +880,14 @@ func TestComponentBuild(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dao := &mockComponentDAO{}
+			store := &mockComponentStore{}
 			if tt.setupMock != nil {
-				tt.setupMock(dao)
+				tt.setupMock(store)
 			}
 
 			cc := &CommandContext{
-				Ctx: context.Background(),
-				DAO: dao,
+				Ctx:            context.Background(),
+				ComponentStore: store,
 			}
 
 			result, err := ComponentBuild(cc, tt.kind, tt.componentName)

@@ -190,6 +190,27 @@ func (m *mockMissionStore) IncrementRunNumber(ctx context.Context, name string) 
 	return 0, nil
 }
 
+// Mission definition methods (stubs for testing)
+func (m *mockMissionStore) CreateDefinition(ctx context.Context, def *MissionDefinition) error {
+	return nil
+}
+
+func (m *mockMissionStore) GetDefinition(ctx context.Context, name string) (*MissionDefinition, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) ListDefinitions(ctx context.Context) ([]*MissionDefinition, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) UpdateDefinition(ctx context.Context, def *MissionDefinition) error {
+	return nil
+}
+
+func (m *mockMissionStore) DeleteDefinition(ctx context.Context, name string) error {
+	return nil
+}
+
 type mockMissionOrchestrator struct {
 	executeResult *MissionResult
 	executeError  error

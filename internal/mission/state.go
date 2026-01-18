@@ -1,14 +1,57 @@
-package workflow
+package mission
 
 import (
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// NodeState tracks the execution state of a single workflow node.
+// NodeStatus represents the execution status of a mission node
+type NodeStatus string
+
+const (
+	NodeStatusPending   NodeStatus = "pending"
+	NodeStatusRunning   NodeStatus = "running"
+	NodeStatusCompleted NodeStatus = "completed"
+	NodeStatusFailed    NodeStatus = "failed"
+	NodeStatusSkipped   NodeStatus = "skipped"
+	NodeStatusCancelled NodeStatus = "cancelled"
+)
+
+// NodeError represents an error that occurred during node execution
+type NodeError struct {
+	Code    string         `json:"code"`
+	Message string         `json:"message"`
+	Details map[string]any `json:"details,omitempty"`
+	Cause   error          `json:"-"`
+}
+
+// Error implements the error interface for NodeError
+func (e *NodeError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %s (caused by: %v)", e.Code, e.Message, e.Cause)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+// NodeResult represents the execution result of a single mission node
+type NodeResult struct {
+	NodeID      string          `json:"node_id"`
+	Status      NodeStatus      `json:"status"`
+	Output      map[string]any  `json:"output,omitempty"`
+	Error       *NodeError      `json:"error,omitempty"`
+	Findings    []agent.Finding `json:"findings,omitempty"`
+	Duration    time.Duration   `json:"duration"`
+	RetryCount  int             `json:"retry_count"`
+	StartedAt   time.Time       `json:"started_at"`
+	CompletedAt time.Time       `json:"completed_at"`
+	Metadata    map[string]any  `json:"metadata,omitempty"`
+}
+
+// NodeState tracks the execution state of a single mission node.
 type NodeState struct {
 	// NodeID is the unique identifier for the node
 	NodeID string
@@ -32,18 +75,23 @@ type NodeState struct {
 	Error error
 }
 
-// WorkflowState manages the runtime execution state of a workflow.
+// MissionState manages the runtime execution state of a mission.
 // It tracks the status of all nodes, their results, and provides thread-safe
-// access to state information during workflow execution.
-type WorkflowState struct {
-	// WorkflowID is the unique identifier for this workflow execution
-	WorkflowID types.ID
+// access to state information during mission execution.
+//
+// Note: MissionState is used for runtime execution tracking. It differs from
+// the Mission struct which represents the persisted mission record. A Mission
+// may have multiple MissionState instances across checkpoints and retries.
+type MissionState struct {
+	// MissionID is the unique identifier for this mission execution
+	MissionID types.ID
 
-	// Workflow is a reference to the workflow definition being executed
-	Workflow *Workflow
+	// Definition is a reference to the mission definition being executed
+	// This field will be populated from MissionDefinition once definition.go is created
+	Definition any // TODO: Change to *MissionDefinition in task 1.1
 
-	// Status is the current execution status of the workflow
-	Status WorkflowStatus
+	// Status is the current execution status of the mission
+	Status MissionStatus
 
 	// NodeStates tracks the execution state of each node, indexed by node ID
 	NodeStates map[string]*NodeState
@@ -54,23 +102,26 @@ type WorkflowState struct {
 	// ExecutionOrder defines the custom order for executing pending nodes
 	ExecutionOrder []string
 
-	// StartedAt is the timestamp when workflow execution began
+	// StartedAt is the timestamp when mission execution began
 	StartedAt time.Time
 
-	// CompletedAt is the timestamp when workflow execution completed (nil if still running)
+	// CompletedAt is the timestamp when mission execution completed (nil if still running)
 	CompletedAt *time.Time
 
-	// mu provides thread-safe access to the workflow state
+	// mu provides thread-safe access to the mission state
 	mu sync.RWMutex
 }
 
-// NewWorkflowState creates a new WorkflowState instance initialized with all nodes
-// in pending status. This prepares the state for workflow execution.
-func NewWorkflowState(workflow *Workflow) *WorkflowState {
-	nodeStates := make(map[string]*NodeState, len(workflow.Nodes))
+// NewMissionState creates a new MissionState instance initialized with all nodes
+// in pending status. This prepares the state for mission execution.
+//
+// Note: The nodes parameter will change to use MissionDefinition.Nodes once definition.go
+// is created in task 1.1. For now, it accepts a generic map.
+func NewMissionState(missionID types.ID, nodes map[string]any) *MissionState {
+	nodeStates := make(map[string]*NodeState, len(nodes))
 
 	// Initialize all nodes to pending status
-	for nodeID := range workflow.Nodes {
+	for nodeID := range nodes {
 		nodeStates[nodeID] = &NodeState{
 			NodeID:     nodeID,
 			Status:     NodeStatusPending,
@@ -78,10 +129,9 @@ func NewWorkflowState(workflow *Workflow) *WorkflowState {
 		}
 	}
 
-	return &WorkflowState{
-		WorkflowID: workflow.ID,
-		Workflow:   workflow,
-		Status:     WorkflowStatusPending,
+	return &MissionState{
+		MissionID:  missionID,
+		Status:     MissionStatusPending,
 		NodeStates: nodeStates,
 		Results:    make(map[string]*NodeResult),
 		StartedAt:  time.Now(),
@@ -94,28 +144,24 @@ func NewWorkflowState(workflow *Workflow) *WorkflowState {
 //   - All of its dependencies have completed successfully
 //
 // This method is thread-safe and uses a read lock.
-func (ws *WorkflowState) GetReadyNodes() []*WorkflowNode {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
+//
+// Note: This method signature will change once MissionDefinition is available.
+// For now, it returns a generic interface slice.
+func (ms *MissionState) GetReadyNodes() []any {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 
-	var readyNodes []*WorkflowNode
+	var readyNodes []any
 
-	for nodeID, nodeState := range ws.NodeStates {
+	for nodeID, nodeState := range ms.NodeStates {
 		// Skip if node is not pending
 		if nodeState.Status != NodeStatusPending {
 			continue
 		}
 
-		// Get the node definition from the workflow
-		node := ws.Workflow.GetNode(nodeID)
-		if node == nil {
-			continue
-		}
-
-		// Check if all dependencies are completed
-		if ws.areDependenciesCompleted(node.Dependencies) {
-			readyNodes = append(readyNodes, node)
-		}
+		// TODO: Once MissionDefinition is available, implement proper dependency checking
+		// For now, we return all pending nodes
+		readyNodes = append(readyNodes, nodeID)
 	}
 
 	return readyNodes
@@ -123,13 +169,13 @@ func (ws *WorkflowState) GetReadyNodes() []*WorkflowNode {
 
 // areDependenciesCompleted checks if all dependencies for a node have completed successfully.
 // This is an internal helper method that must be called with a lock held.
-func (ws *WorkflowState) areDependenciesCompleted(dependencies []string) bool {
+func (ms *MissionState) areDependenciesCompleted(dependencies []string) bool {
 	if len(dependencies) == 0 {
 		return true
 	}
 
 	for _, depID := range dependencies {
-		depState, exists := ws.NodeStates[depID]
+		depState, exists := ms.NodeStates[depID]
 		if !exists {
 			return false
 		}
@@ -145,11 +191,11 @@ func (ws *WorkflowState) areDependenciesCompleted(dependencies []string) bool {
 
 // MarkNodeStarted marks a node as started and sets the StartedAt timestamp.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) MarkNodeStarted(nodeID string) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) MarkNodeStarted(nodeID string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
-	if nodeState, exists := ws.NodeStates[nodeID]; exists {
+	if nodeState, exists := ms.NodeStates[nodeID]; exists {
 		nodeState.Status = NodeStatusRunning
 		now := time.Now()
 		nodeState.StartedAt = &now
@@ -159,29 +205,29 @@ func (ws *WorkflowState) MarkNodeStarted(nodeID string) {
 // MarkNodeCompleted marks a node as successfully completed, stores its result,
 // and sets the CompletedAt timestamp.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) MarkNodeCompleted(nodeID string, result *NodeResult) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) MarkNodeCompleted(nodeID string, result *NodeResult) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
-	if nodeState, exists := ws.NodeStates[nodeID]; exists {
+	if nodeState, exists := ms.NodeStates[nodeID]; exists {
 		nodeState.Status = NodeStatusCompleted
 		now := time.Now()
 		nodeState.CompletedAt = &now
 
 		// Store the result
 		if result != nil {
-			ws.Results[nodeID] = result
+			ms.Results[nodeID] = result
 		}
 	}
 }
 
 // MarkNodeFailed marks a node as failed and stores the error that caused the failure.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) MarkNodeFailed(nodeID string, err error) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) MarkNodeFailed(nodeID string, err error) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
-	if nodeState, exists := ws.NodeStates[nodeID]; exists {
+	if nodeState, exists := ms.NodeStates[nodeID]; exists {
 		nodeState.Status = NodeStatusFailed
 		nodeState.Error = err
 		now := time.Now()
@@ -191,17 +237,17 @@ func (ws *WorkflowState) MarkNodeFailed(nodeID string, err error) {
 
 // MarkNodeSkipped marks a node as skipped with a reason.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) MarkNodeSkipped(nodeID string, reason string) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) MarkNodeSkipped(nodeID string, reason string) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
-	if nodeState, exists := ws.NodeStates[nodeID]; exists {
+	if nodeState, exists := ms.NodeStates[nodeID]; exists {
 		nodeState.Status = NodeStatusSkipped
 		now := time.Now()
 		nodeState.CompletedAt = &now
 
 		// Store the skip reason as a result for tracking purposes
-		ws.Results[nodeID] = &NodeResult{
+		ms.Results[nodeID] = &NodeResult{
 			NodeID:      nodeID,
 			Status:      NodeStatusSkipped,
 			Metadata:    map[string]any{"skip_reason": reason},
@@ -213,30 +259,30 @@ func (ws *WorkflowState) MarkNodeSkipped(nodeID string, reason string) {
 // StoreResult stores a node result. This is useful for storing results from failed
 // nodes so we can extract error output details later.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) StoreResult(nodeID string, result *NodeResult) {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) StoreResult(nodeID string, result *NodeResult) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
 	if result != nil {
-		ws.Results[nodeID] = result
+		ms.Results[nodeID] = result
 	}
 }
 
-// IsComplete returns true if all nodes in the workflow have reached a terminal status
+// IsComplete returns true if all nodes in the mission have reached a terminal status
 // (completed, failed, or skipped).
 // This method is thread-safe and uses a read lock.
-func (ws *WorkflowState) IsComplete() bool {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
+func (ms *MissionState) IsComplete() bool {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 
-	for _, nodeState := range ws.NodeStates {
+	for _, nodeState := range ms.NodeStates {
 		// Check if node has reached a terminal status
 		switch nodeState.Status {
 		case NodeStatusCompleted, NodeStatusFailed, NodeStatusSkipped, NodeStatusCancelled:
 			// Terminal status - continue checking other nodes
 			continue
 		default:
-			// Non-terminal status found - workflow is not complete
+			// Non-terminal status found - mission is not complete
 			return false
 		}
 	}
@@ -247,21 +293,21 @@ func (ws *WorkflowState) IsComplete() bool {
 // GetResult returns the execution result for a specific node.
 // Returns nil if no result exists for the node.
 // This method is thread-safe and uses a read lock.
-func (ws *WorkflowState) GetResult(nodeID string) *NodeResult {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
+func (ms *MissionState) GetResult(nodeID string) *NodeResult {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 
-	return ws.Results[nodeID]
+	return ms.Results[nodeID]
 }
 
 // GetNodeStatus returns the current status of a specific node.
 // Returns an empty NodeStatus if the node doesn't exist in the state.
 // This method is thread-safe and uses a read lock.
-func (ws *WorkflowState) GetNodeStatus(nodeID string) NodeStatus {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
+func (ms *MissionState) GetNodeStatus(nodeID string) NodeStatus {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 
-	if nodeState, exists := ws.NodeStates[nodeID]; exists {
+	if nodeState, exists := ms.NodeStates[nodeID]; exists {
 		return nodeState.Status
 	}
 
@@ -271,13 +317,13 @@ func (ws *WorkflowState) GetNodeStatus(nodeID string) NodeStatus {
 // GetPendingNodes returns all node IDs that are in pending status.
 // Returns an empty slice (not nil) when no pending nodes exist.
 // This method is thread-safe and uses a read lock.
-func (ws *WorkflowState) GetPendingNodes() []string {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
+func (ms *MissionState) GetPendingNodes() []string {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 
 	pendingNodes := make([]string, 0)
 
-	for nodeID, nodeState := range ws.NodeStates {
+	for nodeID, nodeState := range ms.NodeStates {
 		if nodeState.Status == NodeStatusPending {
 			pendingNodes = append(pendingNodes, nodeID)
 		}
@@ -290,92 +336,92 @@ func (ws *WorkflowState) GetPendingNodes() []string {
 // If a custom order has been set via SetExecutionOrder, it returns that order.
 // Otherwise, it returns nodes in dependency order (topological sort).
 // This method is thread-safe and uses a read lock.
-func (ws *WorkflowState) GetExecutionOrder() []string {
-	ws.mu.RLock()
-	defer ws.mu.RUnlock()
+func (ms *MissionState) GetExecutionOrder() []string {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
 
 	// If custom order is set, return it
-	if len(ws.ExecutionOrder) > 0 {
-		return ws.ExecutionOrder
+	if len(ms.ExecutionOrder) > 0 {
+		return ms.ExecutionOrder
 	}
 
 	// Otherwise, return pending nodes in dependency order
-	return ws.getPendingInDependencyOrder()
+	return ms.getPendingInDependencyOrder()
 }
 
 // SetExecutionOrder sets a custom execution order for pending nodes.
 // It validates that:
-//   - All nodes in the order exist in the workflow
+//   - All nodes in the order exist in the mission
 //   - All nodes in the order are currently pending
 //   - The order respects dependency constraints
 //
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) SetExecutionOrder(order []string) error {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) SetExecutionOrder(order []string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
 	// Validate all nodes exist
 	for _, nodeID := range order {
-		if _, exists := ws.Workflow.Nodes[nodeID]; !exists {
-			return fmt.Errorf("node %s not found in workflow", nodeID)
+		if _, exists := ms.NodeStates[nodeID]; !exists {
+			return fmt.Errorf("node %s not found in mission", nodeID)
 		}
 	}
 
 	// Validate all nodes are pending
 	for _, nodeID := range order {
-		nodeState, exists := ws.NodeStates[nodeID]
+		nodeState, exists := ms.NodeStates[nodeID]
 		if !exists || nodeState.Status != NodeStatusPending {
 			return fmt.Errorf("node %s is not pending", nodeID)
 		}
 	}
 
-	// Validate dependency order
-	if err := ws.validateDependencyOrder(order); err != nil {
-		return err
-	}
+	// TODO: Validate dependency order once MissionDefinition is available
+	// if err := ms.validateDependencyOrder(order); err != nil {
+	//     return err
+	// }
 
-	ws.ExecutionOrder = order
+	ms.ExecutionOrder = order
 	return nil
 }
 
 // ReorderRemaining allows reordering of remaining pending nodes during execution.
 // It validates the new order respects dependencies and only includes pending nodes.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) ReorderRemaining(order []string) error {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) ReorderRemaining(order []string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
 	// Validate all nodes are pending
 	for _, nodeID := range order {
-		nodeState, exists := ws.NodeStates[nodeID]
+		nodeState, exists := ms.NodeStates[nodeID]
 		if !exists {
-			return fmt.Errorf("node %s not found in workflow", nodeID)
+			return fmt.Errorf("node %s not found in mission", nodeID)
 		}
 		if nodeState.Status != NodeStatusPending {
 			return fmt.Errorf("node %s is not pending", nodeID)
 		}
 	}
 
-	// Validate dependency order
-	if err := ws.validateDependencyOrder(order); err != nil {
-		return err
-	}
+	// TODO: Validate dependency order once MissionDefinition is available
+	// if err := ms.validateDependencyOrder(order); err != nil {
+	//     return err
+	// }
 
-	ws.ExecutionOrder = order
+	ms.ExecutionOrder = order
 	return nil
 }
 
 // SkipNode marks a node as skipped with a reason and removes it from the execution order.
 // The node must be in pending status.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) SkipNode(nodeID string, reason string) error {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) SkipNode(nodeID string, reason string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
 	// Validate node exists
-	nodeState, exists := ws.NodeStates[nodeID]
+	nodeState, exists := ms.NodeStates[nodeID]
 	if !exists {
-		return fmt.Errorf("node %s not found in workflow", nodeID)
+		return fmt.Errorf("node %s not found in mission", nodeID)
 	}
 
 	// Validate node is pending
@@ -389,7 +435,7 @@ func (ws *WorkflowState) SkipNode(nodeID string, reason string) error {
 	nodeState.CompletedAt = &now
 
 	// Store the skip reason as a result
-	ws.Results[nodeID] = &NodeResult{
+	ms.Results[nodeID] = &NodeResult{
 		NodeID:      nodeID,
 		Status:      NodeStatusSkipped,
 		Metadata:    map[string]any{"skip_reason": reason},
@@ -397,14 +443,14 @@ func (ws *WorkflowState) SkipNode(nodeID string, reason string) error {
 	}
 
 	// Remove from execution order if present
-	if len(ws.ExecutionOrder) > 0 {
-		newOrder := make([]string, 0, len(ws.ExecutionOrder)-1)
-		for _, id := range ws.ExecutionOrder {
+	if len(ms.ExecutionOrder) > 0 {
+		newOrder := make([]string, 0, len(ms.ExecutionOrder)-1)
+		for _, id := range ms.ExecutionOrder {
 			if id != nodeID {
 				newOrder = append(newOrder, id)
 			}
 		}
-		ws.ExecutionOrder = newOrder
+		ms.ExecutionOrder = newOrder
 	}
 
 	return nil
@@ -413,14 +459,14 @@ func (ws *WorkflowState) SkipNode(nodeID string, reason string) error {
 // ResetForRetry resets a failed node back to pending status for retry.
 // It increments the retry count and optionally updates node parameters.
 // This method is thread-safe and uses a write lock.
-func (ws *WorkflowState) ResetForRetry(nodeID string, newParams map[string]any) error {
-	ws.mu.Lock()
-	defer ws.mu.Unlock()
+func (ms *MissionState) ResetForRetry(nodeID string, newParams map[string]any) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 
 	// Validate node exists
-	nodeState, exists := ws.NodeStates[nodeID]
+	nodeState, exists := ms.NodeStates[nodeID]
 	if !exists {
-		return fmt.Errorf("node %s not found in workflow", nodeID)
+		return fmt.Errorf("node %s not found in mission", nodeID)
 	}
 
 	// Validate node is failed
@@ -437,7 +483,7 @@ func (ws *WorkflowState) ResetForRetry(nodeID string, newParams map[string]any) 
 	nodeState.RetryParams = newParams
 
 	// Remove result
-	delete(ws.Results, nodeID)
+	delete(ms.Results, nodeID)
 
 	return nil
 }
@@ -445,103 +491,25 @@ func (ws *WorkflowState) ResetForRetry(nodeID string, newParams map[string]any) 
 // validateDependencyOrder validates that the given node order respects dependency constraints.
 // For each node, all its dependencies must appear earlier in the order.
 // This is an internal helper that must be called with a lock held.
-func (ws *WorkflowState) validateDependencyOrder(order []string) error {
-	// Build position map for quick lookups
-	position := make(map[string]int, len(order))
-	for i, nodeID := range order {
-		position[nodeID] = i
-	}
-
-	// Check each node's dependencies
-	for i, nodeID := range order {
-		node := ws.Workflow.GetNode(nodeID)
-		if node == nil {
-			continue
-		}
-
-		// Check all dependencies appear before this node
-		for _, depID := range node.Dependencies {
-			depPos, depInOrder := position[depID]
-			if !depInOrder {
-				// Dependency not in order - might be already completed
-				// Check if dependency is completed
-				if depState, exists := ws.NodeStates[depID]; exists {
-					if depState.Status != NodeStatusCompleted && depState.Status != NodeStatusSkipped {
-						return fmt.Errorf("node %s depends on %s which is not in execution order and not completed", nodeID, depID)
-					}
-				}
-			} else if depPos >= i {
-				return fmt.Errorf("node %s appears before its dependency %s", nodeID, depID)
-			}
-		}
-	}
-
+//
+// TODO: This method will be fully implemented once MissionDefinition is available in task 1.1
+func (ms *MissionState) validateDependencyOrder(order []string) error {
+	// Placeholder implementation until MissionDefinition is available
 	return nil
 }
 
 // getPendingInDependencyOrder returns pending nodes in topological order (respecting dependencies).
 // This is an internal helper that must be called with a lock held.
-func (ws *WorkflowState) getPendingInDependencyOrder() []string {
-	// Get all pending nodes
-	pending := make(map[string]bool)
-	for nodeID, nodeState := range ws.NodeStates {
+//
+// TODO: This method will be fully implemented once MissionDefinition is available in task 1.1
+func (ms *MissionState) getPendingInDependencyOrder() []string {
+	// Placeholder implementation until MissionDefinition is available
+	// For now, just return all pending nodes
+	pending := make([]string, 0)
+	for nodeID, nodeState := range ms.NodeStates {
 		if nodeState.Status == NodeStatusPending {
-			pending[nodeID] = true
+			pending = append(pending, nodeID)
 		}
 	}
-
-	if len(pending) == 0 {
-		return []string{}
-	}
-
-	// Topological sort using Kahn's algorithm
-	inDegree := make(map[string]int)
-	adjacency := make(map[string][]string)
-
-	// Build graph for pending nodes only
-	for nodeID := range pending {
-		node := ws.Workflow.GetNode(nodeID)
-		if node == nil {
-			continue
-		}
-
-		if _, exists := inDegree[nodeID]; !exists {
-			inDegree[nodeID] = 0
-		}
-
-		// Count dependencies that are still pending
-		for _, depID := range node.Dependencies {
-			if pending[depID] {
-				inDegree[nodeID]++
-				adjacency[depID] = append(adjacency[depID], nodeID)
-			}
-		}
-	}
-
-	// Find nodes with no pending dependencies
-	queue := make([]string, 0)
-	for nodeID := range pending {
-		if inDegree[nodeID] == 0 {
-			queue = append(queue, nodeID)
-		}
-	}
-
-	// Process queue
-	result := make([]string, 0, len(pending))
-	for len(queue) > 0 {
-		// Pop from queue
-		nodeID := queue[0]
-		queue = queue[1:]
-		result = append(result, nodeID)
-
-		// Update neighbors
-		for _, neighbor := range adjacency[nodeID] {
-			inDegree[neighbor]--
-			if inDegree[neighbor] == 0 {
-				queue = append(queue, neighbor)
-			}
-		}
-	}
-
-	return result
+	return pending
 }

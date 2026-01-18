@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -16,8 +15,8 @@ import (
 // This is an internal type used by the MissionClient to encapsulate
 // all the information needed to create a mission.
 type CreateMissionRequest struct {
-	// Workflow is the workflow definition to execute.
-	Workflow *workflow.Workflow
+	// Definition is the mission definition to execute.
+	Definition *MissionDefinition
 
 	// TargetID is the ID of the target to test.
 	TargetID types.ID
@@ -141,16 +140,16 @@ func (c *MissionClient) Create(ctx context.Context, req *CreateMissionRequest) (
 	// Generate mission ID
 	missionID := types.NewID()
 
-	// Generate workflow ID if not set
-	if req.Workflow.ID.IsZero() {
-		req.Workflow.ID = types.NewID()
+	// Generate definition ID if not set
+	if req.Definition.ID.IsZero() {
+		req.Definition.ID = types.NewID()
 	}
 
 	// Generate mission name if not provided
 	name := req.Name
 	if name == "" {
-		if req.Workflow.Name != "" {
-			name = req.Workflow.Name
+		if req.Definition.Name != "" {
+			name = req.Definition.Name
 		} else {
 			// Use first 8 characters of the ID for a shorter name
 			idStr := missionID.String()
@@ -163,17 +162,17 @@ func (c *MissionClient) Create(ctx context.Context, req *CreateMissionRequest) (
 
 	// Generate description if not provided
 	description := req.Description
-	if description == "" && req.Workflow.Description != "" {
-		description = req.Workflow.Description
+	if description == "" && req.Definition.Description != "" {
+		description = req.Definition.Description
 	}
 
-	// Serialize workflow to JSON for storage
-	workflowJSON, err := c.serializeWorkflow(req.Workflow)
+	// Serialize definition to JSON for storage
+	definitionJSON, err := c.serializeDefinition(req.Definition)
 	if err != nil {
-		c.logger.ErrorContext(ctx, "failed to serialize workflow",
-			slog.String("workflow_id", req.Workflow.ID.String()),
+		c.logger.ErrorContext(ctx, "failed to serialize definition",
+			slog.String("definition_id", req.Definition.ID.String()),
 			slog.String("error", err.Error()))
-		return nil, fmt.Errorf("failed to serialize workflow: %w", err)
+		return nil, fmt.Errorf("failed to serialize definition: %w", err)
 	}
 
 	// Calculate mission depth for lineage tracking
@@ -190,8 +189,8 @@ func (c *MissionClient) Create(ctx context.Context, req *CreateMissionRequest) (
 		Description:      description,
 		Status:           MissionStatusPending,
 		TargetID:         req.TargetID,
-		WorkflowID:       req.Workflow.ID,
-		WorkflowJSON:     workflowJSON,
+		WorkflowID:       req.Definition.ID,
+		WorkflowJSON:     definitionJSON,
 		Constraints:      req.Constraints,
 		Metadata:         req.Metadata,
 		ParentMissionID:  req.ParentMissionID,
@@ -223,7 +222,7 @@ func (c *MissionClient) Create(ctx context.Context, req *CreateMissionRequest) (
 		slog.String("mission_id", missionID.String()),
 		slog.String("mission_name", name),
 		slog.String("target_id", req.TargetID.String()),
-		slog.String("workflow_id", req.Workflow.ID.String()),
+		slog.String("definition_id", req.Definition.ID.String()),
 		slog.Int("depth", depth),
 		slog.String("parent_mission_id", func() string {
 			if req.ParentMissionID != nil {
@@ -241,17 +240,17 @@ func (c *MissionClient) validateCreateRequest(req *CreateMissionRequest) error {
 		return fmt.Errorf("request cannot be nil")
 	}
 
-	if req.Workflow == nil {
-		return fmt.Errorf("workflow cannot be nil")
+	if req.Definition == nil {
+		return fmt.Errorf("definition cannot be nil")
 	}
 
 	if req.TargetID.IsZero() {
 		return fmt.Errorf("target ID is required")
 	}
 
-	// Validate workflow has nodes
-	if len(req.Workflow.Nodes) == 0 {
-		return fmt.Errorf("workflow must contain at least one node")
+	// Validate definition has nodes
+	if len(req.Definition.Nodes) == 0 {
+		return fmt.Errorf("definition must contain at least one node")
 	}
 
 	// Validate constraints if provided
@@ -272,11 +271,11 @@ func (c *MissionClient) validateCreateRequest(req *CreateMissionRequest) error {
 	return nil
 }
 
-// serializeWorkflow converts a workflow to JSON for storage.
-func (c *MissionClient) serializeWorkflow(wf *workflow.Workflow) (string, error) {
-	data, err := json.Marshal(wf)
+// serializeDefinition converts a mission definition to JSON for storage.
+func (c *MissionClient) serializeDefinition(def *MissionDefinition) (string, error) {
+	data, err := json.Marshal(def)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal workflow: %w", err)
+		return "", fmt.Errorf("failed to marshal definition: %w", err)
 	}
 	return string(data), nil
 }

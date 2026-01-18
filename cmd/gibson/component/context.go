@@ -15,7 +15,17 @@ import (
 )
 
 // buildCommandContext creates a CommandContext from the cobra command context.
-// This helper centralizes the construction of CommandContext for all component commands.
+//
+// DEPRECATED: This function should NOT be used for client-mode CLI commands.
+// Client-mode commands (install, uninstall, update, build, show, logs, status) should use
+// GetDaemonClient() to communicate with the daemon via gRPC instead.
+//
+// This function is only kept for daemon-mode commands that need direct access to the
+// component registry and store (e.g., runListWithDatabase fallback when daemon unavailable).
+//
+// For new commands:
+//   - If the command requires daemon: Use GetDaemonClient() and call daemon client methods
+//   - If the command is a daemon-internal operation: Use this function carefully
 func buildCommandContext(cmd *cobra.Command) (*core.CommandContext, error) {
 	ctx := cmd.Context()
 

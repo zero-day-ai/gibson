@@ -1,4 +1,0 @@
-# Invalid workflow - no nodes defined
-name: Empty Workflow
-description: This workflow has no nodes and should be rejected
-nodes: []

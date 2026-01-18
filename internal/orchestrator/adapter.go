@@ -11,7 +11,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 )
 
 // SOTAMissionOrchestrator adapts the SOTA orchestrator to the mission.MissionOrchestrator interface.
@@ -25,11 +24,11 @@ type SOTAMissionOrchestrator struct {
 	pauseRequested   map[types.ID]bool
 }
 
-// WorkflowGraphLoader defines the interface for storing workflows in Neo4j.
-// This matches the workflow.GraphLoader interface used by mission_manager.
-type WorkflowGraphLoader interface {
-	// LoadWorkflow stores a workflow in the graph and returns the mission ID
-	LoadWorkflow(ctx context.Context, wf *workflow.Workflow) (string, error)
+// MissionGraphLoader defines the interface for storing mission definitions in Neo4j.
+// This is used to track mission execution state in the graph.
+type MissionGraphLoader interface {
+	// LoadMission stores a mission definition in the graph and returns the mission ID
+	LoadMission(ctx context.Context, def *mission.MissionDefinition) (string, error)
 }
 
 // Execute implements mission.MissionOrchestrator interface.
@@ -55,45 +54,45 @@ func (s *SOTAMissionOrchestrator) Execute(ctx context.Context, m *mission.Missio
 		}
 	}
 
-	// Parse workflow from mission
-	var wf *workflow.Workflow
+	// Parse mission definition from mission
+	var def *mission.MissionDefinition
 	var err error
 
 	if m.WorkflowJSON != "" {
-		// Parse workflow from inline JSON/YAML
-		wf, err = workflow.ParseWorkflow([]byte(m.WorkflowJSON))
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse workflow: %w", err)
+		// Parse mission definition from inline JSON
+		def = &mission.MissionDefinition{}
+		if err = json.Unmarshal([]byte(m.WorkflowJSON), def); err != nil {
+			return nil, fmt.Errorf("failed to parse mission definition: %w", err)
 		}
 	} else if m.WorkflowID != "" {
-		// For now, we need the workflow JSON to be present
-		// In a future enhancement, we could load from the workflow store
-		return nil, fmt.Errorf("workflow loading from WorkflowID not yet implemented in SOTA adapter")
+		// For now, we need the definition JSON to be present
+		// In a future enhancement, we could load from the mission definition store
+		return nil, fmt.Errorf("mission definition loading from WorkflowID not yet implemented in SOTA adapter")
 	} else {
-		return nil, fmt.Errorf("no workflow definition available (neither WorkflowID nor WorkflowJSON)")
+		return nil, fmt.Errorf("no mission definition available (neither WorkflowID nor WorkflowJSON)")
 	}
 
-	// Store workflow in Neo4j graph for state tracking
+	// Store mission definition in Neo4j graph for state tracking
 	if s.config.GraphLoader != nil {
-		graphMissionID, err := s.config.GraphLoader.LoadWorkflow(ctx, wf)
+		graphMissionID, err := s.config.GraphLoader.LoadMission(ctx, def)
 		if err != nil {
 			// Log warning but continue - graph storage is optional
-			s.config.Logger.Warn("failed to store workflow in GraphRAG",
+			s.config.Logger.Warn("failed to store mission definition in GraphRAG",
 				"error", err,
 				"mission_id", m.ID,
-				"workflow_name", wf.Name,
+				"definition_name", def.Name,
 			)
 		} else {
-			s.config.Logger.Info("workflow stored in GraphRAG",
+			s.config.Logger.Info("mission definition stored in GraphRAG",
 				"graph_mission_id", graphMissionID,
 				"mission_id", m.ID,
-				"workflow_name", wf.Name,
+				"definition_name", def.Name,
 			)
 		}
 	}
 
 	// Create SOTA orchestrator for this mission execution
-	orchestrator, err := s.createOrchestrator(ctx, m, wf)
+	orchestrator, err := s.createOrchestrator(ctx, m, def)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
 	}
@@ -111,7 +110,7 @@ func (s *SOTAMissionOrchestrator) Execute(ctx context.Context, m *mission.Missio
 
 // createOrchestrator creates a SOTA orchestrator instance for a specific mission execution.
 // It creates the harness, adapters, and all orchestrator components (Observer, Thinker, Actor).
-func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mission.Mission, wf *workflow.Workflow) (*Orchestrator, error) {
+func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mission.Mission, def *mission.MissionDefinition) (*Orchestrator, error) {
 	// Validate GraphRAG client
 	if s.config.GraphRAGClient == nil {
 		return nil, fmt.Errorf("GraphRAGClient not configured")
@@ -133,11 +132,11 @@ func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mis
 	// For now, we use a simplified approach
 	targetInfo := harness.NewTargetInfo(m.TargetID, "mission-target", "", "")
 
-	// Get first agent name from workflow
+	// Get first agent name from definition
 	agentName := "orchestrator" // Default agent name
-	if len(wf.Nodes) > 0 {
-		for _, node := range wf.Nodes {
-			if node.Type == workflow.NodeTypeAgent && node.AgentName != "" {
+	if len(def.Nodes) > 0 {
+		for _, node := range def.Nodes {
+			if node.Type == mission.NodeTypeAgent && node.AgentName != "" {
 				agentName = node.AgentName
 				break
 			}

@@ -4290,6 +4290,1756 @@ func (x *RelationshipMapping) GetProperties() []*PropertyMapping {
 	return nil
 }
 
+// InstallComponentRequest requests installing a component from a Git repository.
+type InstallComponentRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is the component kind ("agent", "tool", "plugin")
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// url is the Git repository URL to clone
+	Url string `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	// branch is the Git branch to checkout (optional)
+	Branch string `protobuf:"bytes,3,opt,name=branch,proto3" json:"branch,omitempty"`
+	// tag is the Git tag to checkout (optional)
+	Tag string `protobuf:"bytes,4,opt,name=tag,proto3" json:"tag,omitempty"`
+	// force indicates whether to reinstall if already exists
+	Force bool `protobuf:"varint,5,opt,name=force,proto3" json:"force,omitempty"`
+	// skip_build skips the build step after cloning
+	SkipBuild bool `protobuf:"varint,6,opt,name=skip_build,json=skipBuild,proto3" json:"skip_build,omitempty"`
+	// verbose enables detailed build output streaming
+	Verbose       bool `protobuf:"varint,7,opt,name=verbose,proto3" json:"verbose,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstallComponentRequest) Reset() {
+	*x = InstallComponentRequest{}
+	mi := &file_daemon_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallComponentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallComponentRequest) ProtoMessage() {}
+
+func (x *InstallComponentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallComponentRequest.ProtoReflect.Descriptor instead.
+func (*InstallComponentRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *InstallComponentRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *InstallComponentRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *InstallComponentRequest) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *InstallComponentRequest) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+func (x *InstallComponentRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+func (x *InstallComponentRequest) GetSkipBuild() bool {
+	if x != nil {
+		return x.SkipBuild
+	}
+	return false
+}
+
+func (x *InstallComponentRequest) GetVerbose() bool {
+	if x != nil {
+		return x.Verbose
+	}
+	return false
+}
+
+// InstallComponentResponse returns the result of installing a component.
+type InstallComponentResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the component was installed successfully
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// name is the installed component name
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// version is the installed component version
+	Version string `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	// repo_path is the local repository path
+	RepoPath string `protobuf:"bytes,4,opt,name=repo_path,json=repoPath,proto3" json:"repo_path,omitempty"`
+	// bin_path is the path to the built binary (if built)
+	BinPath string `protobuf:"bytes,5,opt,name=bin_path,json=binPath,proto3" json:"bin_path,omitempty"`
+	// build_output contains build stdout/stderr (if verbose)
+	BuildOutput string `protobuf:"bytes,6,opt,name=build_output,json=buildOutput,proto3" json:"build_output,omitempty"`
+	// duration_ms is the total install time in milliseconds
+	DurationMs int64 `protobuf:"varint,7,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,8,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstallComponentResponse) Reset() {
+	*x = InstallComponentResponse{}
+	mi := &file_daemon_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallComponentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallComponentResponse) ProtoMessage() {}
+
+func (x *InstallComponentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallComponentResponse.ProtoReflect.Descriptor instead.
+func (*InstallComponentResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *InstallComponentResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *InstallComponentResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *InstallComponentResponse) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *InstallComponentResponse) GetRepoPath() string {
+	if x != nil {
+		return x.RepoPath
+	}
+	return ""
+}
+
+func (x *InstallComponentResponse) GetBinPath() string {
+	if x != nil {
+		return x.BinPath
+	}
+	return ""
+}
+
+func (x *InstallComponentResponse) GetBuildOutput() string {
+	if x != nil {
+		return x.BuildOutput
+	}
+	return ""
+}
+
+func (x *InstallComponentResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *InstallComponentResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// UninstallComponentRequest requests removing a component.
+type UninstallComponentRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is the component kind ("agent", "tool", "plugin")
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// name is the component name to uninstall
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// force indicates whether to uninstall even if running
+	Force         bool `protobuf:"varint,3,opt,name=force,proto3" json:"force,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UninstallComponentRequest) Reset() {
+	*x = UninstallComponentRequest{}
+	mi := &file_daemon_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UninstallComponentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UninstallComponentRequest) ProtoMessage() {}
+
+func (x *UninstallComponentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UninstallComponentRequest.ProtoReflect.Descriptor instead.
+func (*UninstallComponentRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *UninstallComponentRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *UninstallComponentRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UninstallComponentRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+// UninstallComponentResponse returns the result of uninstalling a component.
+type UninstallComponentResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the component was uninstalled successfully
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UninstallComponentResponse) Reset() {
+	*x = UninstallComponentResponse{}
+	mi := &file_daemon_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UninstallComponentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UninstallComponentResponse) ProtoMessage() {}
+
+func (x *UninstallComponentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UninstallComponentResponse.ProtoReflect.Descriptor instead.
+func (*UninstallComponentResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *UninstallComponentResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *UninstallComponentResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// UpdateComponentRequest requests updating a component to the latest version.
+type UpdateComponentRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is the component kind ("agent", "tool", "plugin")
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// name is the component name to update
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// restart indicates whether to restart if running
+	Restart bool `protobuf:"varint,3,opt,name=restart,proto3" json:"restart,omitempty"`
+	// skip_build skips the rebuild step after pulling
+	SkipBuild bool `protobuf:"varint,4,opt,name=skip_build,json=skipBuild,proto3" json:"skip_build,omitempty"`
+	// verbose enables detailed build output streaming
+	Verbose       bool `protobuf:"varint,5,opt,name=verbose,proto3" json:"verbose,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateComponentRequest) Reset() {
+	*x = UpdateComponentRequest{}
+	mi := &file_daemon_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateComponentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateComponentRequest) ProtoMessage() {}
+
+func (x *UpdateComponentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateComponentRequest.ProtoReflect.Descriptor instead.
+func (*UpdateComponentRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *UpdateComponentRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *UpdateComponentRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateComponentRequest) GetRestart() bool {
+	if x != nil {
+		return x.Restart
+	}
+	return false
+}
+
+func (x *UpdateComponentRequest) GetSkipBuild() bool {
+	if x != nil {
+		return x.SkipBuild
+	}
+	return false
+}
+
+func (x *UpdateComponentRequest) GetVerbose() bool {
+	if x != nil {
+		return x.Verbose
+	}
+	return false
+}
+
+// UpdateComponentResponse returns the result of updating a component.
+type UpdateComponentResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the component was updated successfully
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// updated indicates if there were actually changes (false if already latest)
+	Updated bool `protobuf:"varint,2,opt,name=updated,proto3" json:"updated,omitempty"`
+	// old_version is the previous version
+	OldVersion string `protobuf:"bytes,3,opt,name=old_version,json=oldVersion,proto3" json:"old_version,omitempty"`
+	// new_version is the new version after update
+	NewVersion string `protobuf:"bytes,4,opt,name=new_version,json=newVersion,proto3" json:"new_version,omitempty"`
+	// build_output contains build stdout/stderr (if verbose)
+	BuildOutput string `protobuf:"bytes,5,opt,name=build_output,json=buildOutput,proto3" json:"build_output,omitempty"`
+	// duration_ms is the total update time in milliseconds
+	DurationMs int64 `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateComponentResponse) Reset() {
+	*x = UpdateComponentResponse{}
+	mi := &file_daemon_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateComponentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateComponentResponse) ProtoMessage() {}
+
+func (x *UpdateComponentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateComponentResponse.ProtoReflect.Descriptor instead.
+func (*UpdateComponentResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *UpdateComponentResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *UpdateComponentResponse) GetUpdated() bool {
+	if x != nil {
+		return x.Updated
+	}
+	return false
+}
+
+func (x *UpdateComponentResponse) GetOldVersion() string {
+	if x != nil {
+		return x.OldVersion
+	}
+	return ""
+}
+
+func (x *UpdateComponentResponse) GetNewVersion() string {
+	if x != nil {
+		return x.NewVersion
+	}
+	return ""
+}
+
+func (x *UpdateComponentResponse) GetBuildOutput() string {
+	if x != nil {
+		return x.BuildOutput
+	}
+	return ""
+}
+
+func (x *UpdateComponentResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *UpdateComponentResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// BuildComponentRequest requests rebuilding a component from source.
+type BuildComponentRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is the component kind ("agent", "tool", "plugin")
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// name is the component name to build
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BuildComponentRequest) Reset() {
+	*x = BuildComponentRequest{}
+	mi := &file_daemon_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuildComponentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuildComponentRequest) ProtoMessage() {}
+
+func (x *BuildComponentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuildComponentRequest.ProtoReflect.Descriptor instead.
+func (*BuildComponentRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *BuildComponentRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *BuildComponentRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// BuildComponentResponse returns the result of building a component.
+type BuildComponentResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the build was successful
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// stdout contains the build standard output
+	Stdout string `protobuf:"bytes,2,opt,name=stdout,proto3" json:"stdout,omitempty"`
+	// stderr contains the build standard error
+	Stderr string `protobuf:"bytes,3,opt,name=stderr,proto3" json:"stderr,omitempty"`
+	// duration_ms is the build time in milliseconds
+	DurationMs int64 `protobuf:"varint,4,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BuildComponentResponse) Reset() {
+	*x = BuildComponentResponse{}
+	mi := &file_daemon_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuildComponentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuildComponentResponse) ProtoMessage() {}
+
+func (x *BuildComponentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuildComponentResponse.ProtoReflect.Descriptor instead.
+func (*BuildComponentResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{64}
+}
+
+func (x *BuildComponentResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *BuildComponentResponse) GetStdout() string {
+	if x != nil {
+		return x.Stdout
+	}
+	return ""
+}
+
+func (x *BuildComponentResponse) GetStderr() string {
+	if x != nil {
+		return x.Stderr
+	}
+	return ""
+}
+
+func (x *BuildComponentResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *BuildComponentResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// ShowComponentRequest requests detailed information about a component.
+type ShowComponentRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is the component kind ("agent", "tool", "plugin")
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// name is the component name to show
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShowComponentRequest) Reset() {
+	*x = ShowComponentRequest{}
+	mi := &file_daemon_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShowComponentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShowComponentRequest) ProtoMessage() {}
+
+func (x *ShowComponentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShowComponentRequest.ProtoReflect.Descriptor instead.
+func (*ShowComponentRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *ShowComponentRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ShowComponentRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+// ShowComponentResponse returns detailed component information.
+type ShowComponentResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the component was found
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// name is the component name
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// version is the component version
+	Version string `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	// kind is the component kind
+	Kind string `protobuf:"bytes,4,opt,name=kind,proto3" json:"kind,omitempty"`
+	// status is the component status (installed, running, stopped)
+	Status string `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`
+	// source is the Git repository URL
+	Source string `protobuf:"bytes,6,opt,name=source,proto3" json:"source,omitempty"`
+	// repo_path is the local repository path
+	RepoPath string `protobuf:"bytes,7,opt,name=repo_path,json=repoPath,proto3" json:"repo_path,omitempty"`
+	// bin_path is the path to the binary
+	BinPath string `protobuf:"bytes,8,opt,name=bin_path,json=binPath,proto3" json:"bin_path,omitempty"`
+	// port is the listening port (if running)
+	Port int32 `protobuf:"varint,9,opt,name=port,proto3" json:"port,omitempty"`
+	// pid is the process ID (if running)
+	Pid int32 `protobuf:"varint,10,opt,name=pid,proto3" json:"pid,omitempty"`
+	// created_at is when the component was installed (Unix timestamp)
+	CreatedAt int64 `protobuf:"varint,11,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// updated_at is when the component was last updated (Unix timestamp)
+	UpdatedAt int64 `protobuf:"varint,12,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// started_at is when the component was started (Unix timestamp, 0 if not running)
+	StartedAt int64 `protobuf:"varint,13,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	// stopped_at is when the component was stopped (Unix timestamp, 0 if never stopped)
+	StoppedAt int64 `protobuf:"varint,14,opt,name=stopped_at,json=stoppedAt,proto3" json:"stopped_at,omitempty"`
+	// manifest_info contains manifest details (JSON-encoded)
+	ManifestInfo string `protobuf:"bytes,15,opt,name=manifest_info,json=manifestInfo,proto3" json:"manifest_info,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,16,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ShowComponentResponse) Reset() {
+	*x = ShowComponentResponse{}
+	mi := &file_daemon_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ShowComponentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ShowComponentResponse) ProtoMessage() {}
+
+func (x *ShowComponentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ShowComponentResponse.ProtoReflect.Descriptor instead.
+func (*ShowComponentResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *ShowComponentResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ShowComponentResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetRepoPath() string {
+	if x != nil {
+		return x.RepoPath
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetBinPath() string {
+	if x != nil {
+		return x.BinPath
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *ShowComponentResponse) GetPid() int32 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *ShowComponentResponse) GetCreatedAt() int64 {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return 0
+}
+
+func (x *ShowComponentResponse) GetUpdatedAt() int64 {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return 0
+}
+
+func (x *ShowComponentResponse) GetStartedAt() int64 {
+	if x != nil {
+		return x.StartedAt
+	}
+	return 0
+}
+
+func (x *ShowComponentResponse) GetStoppedAt() int64 {
+	if x != nil {
+		return x.StoppedAt
+	}
+	return 0
+}
+
+func (x *ShowComponentResponse) GetManifestInfo() string {
+	if x != nil {
+		return x.ManifestInfo
+	}
+	return ""
+}
+
+func (x *ShowComponentResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// GetComponentLogsRequest requests log entries for a component.
+type GetComponentLogsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is the component kind ("agent", "tool", "plugin")
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// name is the component name to get logs for
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// follow indicates whether to stream logs continuously
+	Follow bool `protobuf:"varint,3,opt,name=follow,proto3" json:"follow,omitempty"`
+	// lines is the number of lines to return (0 = all, default 50)
+	Lines         int32 `protobuf:"varint,4,opt,name=lines,proto3" json:"lines,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetComponentLogsRequest) Reset() {
+	*x = GetComponentLogsRequest{}
+	mi := &file_daemon_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetComponentLogsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetComponentLogsRequest) ProtoMessage() {}
+
+func (x *GetComponentLogsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetComponentLogsRequest.ProtoReflect.Descriptor instead.
+func (*GetComponentLogsRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *GetComponentLogsRequest) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *GetComponentLogsRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *GetComponentLogsRequest) GetFollow() bool {
+	if x != nil {
+		return x.Follow
+	}
+	return false
+}
+
+func (x *GetComponentLogsRequest) GetLines() int32 {
+	if x != nil {
+		return x.Lines
+	}
+	return 0
+}
+
+// LogEntry represents a single log entry from a component.
+type LogEntry struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// timestamp is when the log entry was created (Unix timestamp)
+	Timestamp int64 `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// level is the log level (debug, info, warn, error)
+	Level string `protobuf:"bytes,2,opt,name=level,proto3" json:"level,omitempty"`
+	// message is the log message
+	Message string `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	// fields contains additional structured log fields (JSON-encoded)
+	Fields        string `protobuf:"bytes,4,opt,name=fields,proto3" json:"fields,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogEntry) Reset() {
+	*x = LogEntry{}
+	mi := &file_daemon_proto_msgTypes[68]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogEntry) ProtoMessage() {}
+
+func (x *LogEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[68]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
+func (*LogEntry) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{68}
+}
+
+func (x *LogEntry) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *LogEntry) GetLevel() string {
+	if x != nil {
+		return x.Level
+	}
+	return ""
+}
+
+func (x *LogEntry) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *LogEntry) GetFields() string {
+	if x != nil {
+		return x.Fields
+	}
+	return ""
+}
+
+// InstallMissionRequest requests installing a mission from a Git repository.
+type InstallMissionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// url is the Git repository URL to clone
+	Url string `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
+	// branch is the Git branch to checkout (optional)
+	Branch string `protobuf:"bytes,2,opt,name=branch,proto3" json:"branch,omitempty"`
+	// tag is the Git tag to checkout (optional)
+	Tag string `protobuf:"bytes,3,opt,name=tag,proto3" json:"tag,omitempty"`
+	// force indicates whether to reinstall if already exists
+	Force bool `protobuf:"varint,4,opt,name=force,proto3" json:"force,omitempty"`
+	// yes auto-confirms dependency installation prompts
+	Yes bool `protobuf:"varint,5,opt,name=yes,proto3" json:"yes,omitempty"`
+	// timeout_ms is the installation timeout in milliseconds (0 = default 5 minutes)
+	TimeoutMs     int64 `protobuf:"varint,6,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstallMissionRequest) Reset() {
+	*x = InstallMissionRequest{}
+	mi := &file_daemon_proto_msgTypes[69]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallMissionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallMissionRequest) ProtoMessage() {}
+
+func (x *InstallMissionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[69]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallMissionRequest.ProtoReflect.Descriptor instead.
+func (*InstallMissionRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{69}
+}
+
+func (x *InstallMissionRequest) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *InstallMissionRequest) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *InstallMissionRequest) GetTag() string {
+	if x != nil {
+		return x.Tag
+	}
+	return ""
+}
+
+func (x *InstallMissionRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+func (x *InstallMissionRequest) GetYes() bool {
+	if x != nil {
+		return x.Yes
+	}
+	return false
+}
+
+func (x *InstallMissionRequest) GetTimeoutMs() int64 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+// InstallMissionResponse returns the result of installing a mission.
+type InstallMissionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the mission was installed successfully
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// name is the installed mission name
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// version is the installed mission version
+	Version string `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	// path is the local installation path
+	Path string `protobuf:"bytes,4,opt,name=path,proto3" json:"path,omitempty"`
+	// dependencies contains information about installed dependencies
+	Dependencies []*InstalledDependency `protobuf:"bytes,5,rep,name=dependencies,proto3" json:"dependencies,omitempty"`
+	// duration_ms is the total install time in milliseconds
+	DurationMs int64 `protobuf:"varint,6,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,7,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstallMissionResponse) Reset() {
+	*x = InstallMissionResponse{}
+	mi := &file_daemon_proto_msgTypes[70]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstallMissionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstallMissionResponse) ProtoMessage() {}
+
+func (x *InstallMissionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[70]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstallMissionResponse.ProtoReflect.Descriptor instead.
+func (*InstallMissionResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{70}
+}
+
+func (x *InstallMissionResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *InstallMissionResponse) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *InstallMissionResponse) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *InstallMissionResponse) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *InstallMissionResponse) GetDependencies() []*InstalledDependency {
+	if x != nil {
+		return x.Dependencies
+	}
+	return nil
+}
+
+func (x *InstallMissionResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *InstallMissionResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// InstalledDependency represents a dependency that was installed.
+type InstalledDependency struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// type is the dependency type (agent, tool, plugin)
+	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	// name is the dependency name
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// already_installed indicates if it was already installed
+	AlreadyInstalled bool `protobuf:"varint,3,opt,name=already_installed,json=alreadyInstalled,proto3" json:"already_installed,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *InstalledDependency) Reset() {
+	*x = InstalledDependency{}
+	mi := &file_daemon_proto_msgTypes[71]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstalledDependency) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstalledDependency) ProtoMessage() {}
+
+func (x *InstalledDependency) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[71]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstalledDependency.ProtoReflect.Descriptor instead.
+func (*InstalledDependency) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{71}
+}
+
+func (x *InstalledDependency) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *InstalledDependency) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *InstalledDependency) GetAlreadyInstalled() bool {
+	if x != nil {
+		return x.AlreadyInstalled
+	}
+	return false
+}
+
+// UninstallMissionRequest requests removing an installed mission.
+type UninstallMissionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the mission name to uninstall
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// force indicates whether to skip confirmation
+	Force         bool `protobuf:"varint,2,opt,name=force,proto3" json:"force,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UninstallMissionRequest) Reset() {
+	*x = UninstallMissionRequest{}
+	mi := &file_daemon_proto_msgTypes[72]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UninstallMissionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UninstallMissionRequest) ProtoMessage() {}
+
+func (x *UninstallMissionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[72]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UninstallMissionRequest.ProtoReflect.Descriptor instead.
+func (*UninstallMissionRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{72}
+}
+
+func (x *UninstallMissionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UninstallMissionRequest) GetForce() bool {
+	if x != nil {
+		return x.Force
+	}
+	return false
+}
+
+// UninstallMissionResponse returns the result of uninstalling a mission.
+type UninstallMissionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the mission was uninstalled successfully
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UninstallMissionResponse) Reset() {
+	*x = UninstallMissionResponse{}
+	mi := &file_daemon_proto_msgTypes[73]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UninstallMissionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UninstallMissionResponse) ProtoMessage() {}
+
+func (x *UninstallMissionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[73]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UninstallMissionResponse.ProtoReflect.Descriptor instead.
+func (*UninstallMissionResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{73}
+}
+
+func (x *UninstallMissionResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *UninstallMissionResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// ListMissionDefinitionsRequest queries installed mission definitions.
+type ListMissionDefinitionsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// limit restricts the number of results (0 = all)
+	Limit int32 `protobuf:"varint,1,opt,name=limit,proto3" json:"limit,omitempty"`
+	// offset is the pagination offset
+	Offset        int32 `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListMissionDefinitionsRequest) Reset() {
+	*x = ListMissionDefinitionsRequest{}
+	mi := &file_daemon_proto_msgTypes[74]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMissionDefinitionsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMissionDefinitionsRequest) ProtoMessage() {}
+
+func (x *ListMissionDefinitionsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[74]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMissionDefinitionsRequest.ProtoReflect.Descriptor instead.
+func (*ListMissionDefinitionsRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{74}
+}
+
+func (x *ListMissionDefinitionsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *ListMissionDefinitionsRequest) GetOffset() int32 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+// ListMissionDefinitionsResponse returns installed mission definitions.
+type ListMissionDefinitionsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// missions is the list of installed mission definitions
+	Missions []*MissionDefinitionInfo `protobuf:"bytes,1,rep,name=missions,proto3" json:"missions,omitempty"`
+	// total is the total count of mission definitions (for pagination)
+	Total         int32 `protobuf:"varint,2,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListMissionDefinitionsResponse) Reset() {
+	*x = ListMissionDefinitionsResponse{}
+	mi := &file_daemon_proto_msgTypes[75]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListMissionDefinitionsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListMissionDefinitionsResponse) ProtoMessage() {}
+
+func (x *ListMissionDefinitionsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[75]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListMissionDefinitionsResponse.ProtoReflect.Descriptor instead.
+func (*ListMissionDefinitionsResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{75}
+}
+
+func (x *ListMissionDefinitionsResponse) GetMissions() []*MissionDefinitionInfo {
+	if x != nil {
+		return x.Missions
+	}
+	return nil
+}
+
+func (x *ListMissionDefinitionsResponse) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+// MissionDefinitionInfo describes an installed mission definition.
+type MissionDefinitionInfo struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the mission name
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// version is the mission version
+	Version string `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	// description is the mission description
+	Description string `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	// source is the Git repository URL
+	Source string `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"`
+	// installed_at is when the mission was installed (Unix timestamp)
+	InstalledAt int64 `protobuf:"varint,5,opt,name=installed_at,json=installedAt,proto3" json:"installed_at,omitempty"`
+	// updated_at is when the mission was last updated (Unix timestamp)
+	UpdatedAt int64 `protobuf:"varint,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// node_count is the number of nodes in the mission
+	NodeCount     int32 `protobuf:"varint,7,opt,name=node_count,json=nodeCount,proto3" json:"node_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MissionDefinitionInfo) Reset() {
+	*x = MissionDefinitionInfo{}
+	mi := &file_daemon_proto_msgTypes[76]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MissionDefinitionInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MissionDefinitionInfo) ProtoMessage() {}
+
+func (x *MissionDefinitionInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[76]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MissionDefinitionInfo.ProtoReflect.Descriptor instead.
+func (*MissionDefinitionInfo) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{76}
+}
+
+func (x *MissionDefinitionInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *MissionDefinitionInfo) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *MissionDefinitionInfo) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *MissionDefinitionInfo) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *MissionDefinitionInfo) GetInstalledAt() int64 {
+	if x != nil {
+		return x.InstalledAt
+	}
+	return 0
+}
+
+func (x *MissionDefinitionInfo) GetUpdatedAt() int64 {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return 0
+}
+
+func (x *MissionDefinitionInfo) GetNodeCount() int32 {
+	if x != nil {
+		return x.NodeCount
+	}
+	return 0
+}
+
+// UpdateMissionRequest requests updating a mission to the latest version.
+type UpdateMissionRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is the mission name to update
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// timeout_ms is the update timeout in milliseconds (0 = default 5 minutes)
+	TimeoutMs     int64 `protobuf:"varint,2,opt,name=timeout_ms,json=timeoutMs,proto3" json:"timeout_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateMissionRequest) Reset() {
+	*x = UpdateMissionRequest{}
+	mi := &file_daemon_proto_msgTypes[77]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateMissionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateMissionRequest) ProtoMessage() {}
+
+func (x *UpdateMissionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[77]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateMissionRequest.ProtoReflect.Descriptor instead.
+func (*UpdateMissionRequest) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{77}
+}
+
+func (x *UpdateMissionRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *UpdateMissionRequest) GetTimeoutMs() int64 {
+	if x != nil {
+		return x.TimeoutMs
+	}
+	return 0
+}
+
+// UpdateMissionResponse returns the result of updating a mission.
+type UpdateMissionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// success indicates if the mission was updated successfully
+	Success bool `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	// updated indicates if there were actually changes (false if already latest)
+	Updated bool `protobuf:"varint,2,opt,name=updated,proto3" json:"updated,omitempty"`
+	// old_version is the previous version
+	OldVersion string `protobuf:"bytes,3,opt,name=old_version,json=oldVersion,proto3" json:"old_version,omitempty"`
+	// new_version is the new version after update
+	NewVersion string `protobuf:"bytes,4,opt,name=new_version,json=newVersion,proto3" json:"new_version,omitempty"`
+	// duration_ms is the total update time in milliseconds
+	DurationMs int64 `protobuf:"varint,5,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	// message provides additional context or error information
+	Message       string `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateMissionResponse) Reset() {
+	*x = UpdateMissionResponse{}
+	mi := &file_daemon_proto_msgTypes[78]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateMissionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateMissionResponse) ProtoMessage() {}
+
+func (x *UpdateMissionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_daemon_proto_msgTypes[78]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateMissionResponse.ProtoReflect.Descriptor instead.
+func (*UpdateMissionResponse) Descriptor() ([]byte, []int) {
+	return file_daemon_proto_rawDescGZIP(), []int{78}
+}
+
+func (x *UpdateMissionResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *UpdateMissionResponse) GetUpdated() bool {
+	if x != nil {
+		return x.Updated
+	}
+	return false
+}
+
+func (x *UpdateMissionResponse) GetOldVersion() string {
+	if x != nil {
+		return x.OldVersion
+	}
+	return ""
+}
+
+func (x *UpdateMissionResponse) GetNewVersion() string {
+	if x != nil {
+		return x.NewVersion
+	}
+	return ""
+}
+
+func (x *UpdateMissionResponse) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *UpdateMissionResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_daemon_proto protoreflect.FileDescriptor
 
 const file_daemon_proto_rawDesc = "" +
@@ -4657,7 +6407,153 @@ const file_daemon_proto_rawDesc = "" +
 	"\tcondition\x18\x04 \x01(\tR\tcondition\x12A\n" +
 	"\n" +
 	"properties\x18\x05 \x03(\v2!.gibson.daemon.v1.PropertyMappingR\n" +
-	"properties2\x9d\x0f\n" +
+	"properties\"\xb8\x01\n" +
+	"\x17InstallComponentRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x10\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12\x16\n" +
+	"\x06branch\x18\x03 \x01(\tR\x06branch\x12\x10\n" +
+	"\x03tag\x18\x04 \x01(\tR\x03tag\x12\x14\n" +
+	"\x05force\x18\x05 \x01(\bR\x05force\x12\x1d\n" +
+	"\n" +
+	"skip_build\x18\x06 \x01(\bR\tskipBuild\x12\x18\n" +
+	"\averbose\x18\a \x01(\bR\averbose\"\xf8\x01\n" +
+	"\x18InstallComponentResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\tR\aversion\x12\x1b\n" +
+	"\trepo_path\x18\x04 \x01(\tR\brepoPath\x12\x19\n" +
+	"\bbin_path\x18\x05 \x01(\tR\abinPath\x12!\n" +
+	"\fbuild_output\x18\x06 \x01(\tR\vbuildOutput\x12\x1f\n" +
+	"\vduration_ms\x18\a \x01(\x03R\n" +
+	"durationMs\x12\x18\n" +
+	"\amessage\x18\b \x01(\tR\amessage\"Y\n" +
+	"\x19UninstallComponentRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x14\n" +
+	"\x05force\x18\x03 \x01(\bR\x05force\"P\n" +
+	"\x1aUninstallComponentResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x93\x01\n" +
+	"\x16UpdateComponentRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\arestart\x18\x03 \x01(\bR\arestart\x12\x1d\n" +
+	"\n" +
+	"skip_build\x18\x04 \x01(\bR\tskipBuild\x12\x18\n" +
+	"\averbose\x18\x05 \x01(\bR\averbose\"\xed\x01\n" +
+	"\x17UpdateComponentResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\aupdated\x18\x02 \x01(\bR\aupdated\x12\x1f\n" +
+	"\vold_version\x18\x03 \x01(\tR\n" +
+	"oldVersion\x12\x1f\n" +
+	"\vnew_version\x18\x04 \x01(\tR\n" +
+	"newVersion\x12!\n" +
+	"\fbuild_output\x18\x05 \x01(\tR\vbuildOutput\x12\x1f\n" +
+	"\vduration_ms\x18\x06 \x01(\x03R\n" +
+	"durationMs\x12\x18\n" +
+	"\amessage\x18\a \x01(\tR\amessage\"?\n" +
+	"\x15BuildComponentRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x9d\x01\n" +
+	"\x16BuildComponentResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x16\n" +
+	"\x06stdout\x18\x02 \x01(\tR\x06stdout\x12\x16\n" +
+	"\x06stderr\x18\x03 \x01(\tR\x06stderr\x12\x1f\n" +
+	"\vduration_ms\x18\x04 \x01(\x03R\n" +
+	"durationMs\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\">\n" +
+	"\x14ShowComponentRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\xbc\x03\n" +
+	"\x15ShowComponentResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\tR\aversion\x12\x12\n" +
+	"\x04kind\x18\x04 \x01(\tR\x04kind\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x16\n" +
+	"\x06source\x18\x06 \x01(\tR\x06source\x12\x1b\n" +
+	"\trepo_path\x18\a \x01(\tR\brepoPath\x12\x19\n" +
+	"\bbin_path\x18\b \x01(\tR\abinPath\x12\x12\n" +
+	"\x04port\x18\t \x01(\x05R\x04port\x12\x10\n" +
+	"\x03pid\x18\n" +
+	" \x01(\x05R\x03pid\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\v \x01(\x03R\tcreatedAt\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\f \x01(\x03R\tupdatedAt\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\r \x01(\x03R\tstartedAt\x12\x1d\n" +
+	"\n" +
+	"stopped_at\x18\x0e \x01(\x03R\tstoppedAt\x12#\n" +
+	"\rmanifest_info\x18\x0f \x01(\tR\fmanifestInfo\x12\x18\n" +
+	"\amessage\x18\x10 \x01(\tR\amessage\"o\n" +
+	"\x17GetComponentLogsRequest\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06follow\x18\x03 \x01(\bR\x06follow\x12\x14\n" +
+	"\x05lines\x18\x04 \x01(\x05R\x05lines\"p\n" +
+	"\bLogEntry\x12\x1c\n" +
+	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x12\x14\n" +
+	"\x05level\x18\x02 \x01(\tR\x05level\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12\x16\n" +
+	"\x06fields\x18\x04 \x01(\tR\x06fields\"\x9a\x01\n" +
+	"\x15InstallMissionRequest\x12\x10\n" +
+	"\x03url\x18\x01 \x01(\tR\x03url\x12\x16\n" +
+	"\x06branch\x18\x02 \x01(\tR\x06branch\x12\x10\n" +
+	"\x03tag\x18\x03 \x01(\tR\x03tag\x12\x14\n" +
+	"\x05force\x18\x04 \x01(\bR\x05force\x12\x10\n" +
+	"\x03yes\x18\x05 \x01(\bR\x03yes\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x06 \x01(\x03R\ttimeoutMs\"\xfa\x01\n" +
+	"\x16InstallMissionResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\tR\aversion\x12\x12\n" +
+	"\x04path\x18\x04 \x01(\tR\x04path\x12I\n" +
+	"\fdependencies\x18\x05 \x03(\v2%.gibson.daemon.v1.InstalledDependencyR\fdependencies\x12\x1f\n" +
+	"\vduration_ms\x18\x06 \x01(\x03R\n" +
+	"durationMs\x12\x18\n" +
+	"\amessage\x18\a \x01(\tR\amessage\"j\n" +
+	"\x13InstalledDependency\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
+	"\x11already_installed\x18\x03 \x01(\bR\x10alreadyInstalled\"C\n" +
+	"\x17UninstallMissionRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05force\x18\x02 \x01(\bR\x05force\"N\n" +
+	"\x18UninstallMissionResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"M\n" +
+	"\x1dListMissionDefinitionsRequest\x12\x14\n" +
+	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x05R\x06offset\"{\n" +
+	"\x1eListMissionDefinitionsResponse\x12C\n" +
+	"\bmissions\x18\x01 \x03(\v2'.gibson.daemon.v1.MissionDefinitionInfoR\bmissions\x12\x14\n" +
+	"\x05total\x18\x02 \x01(\x05R\x05total\"\xe0\x01\n" +
+	"\x15MissionDefinitionInfo\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
+	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\x12!\n" +
+	"\finstalled_at\x18\x05 \x01(\x03R\vinstalledAt\x12\x1d\n" +
+	"\n" +
+	"updated_at\x18\x06 \x01(\x03R\tupdatedAt\x12\x1d\n" +
+	"\n" +
+	"node_count\x18\a \x01(\x05R\tnodeCount\"I\n" +
+	"\x14UpdateMissionRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"timeout_ms\x18\x02 \x01(\x03R\ttimeoutMs\"\xc8\x01\n" +
+	"\x15UpdateMissionResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\aupdated\x18\x02 \x01(\bR\aupdated\x12\x1f\n" +
+	"\vold_version\x18\x03 \x01(\tR\n" +
+	"oldVersion\x12\x1f\n" +
+	"\vnew_version\x18\x04 \x01(\tR\n" +
+	"newVersion\x12\x1f\n" +
+	"\vduration_ms\x18\x05 \x01(\x03R\n" +
+	"durationMs\x12\x18\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage2\xb4\x17\n" +
 	"\rDaemonService\x12N\n" +
 	"\aConnect\x12 .gibson.daemon.v1.ConnectRequest\x1a!.gibson.daemon.v1.ConnectResponse\x12E\n" +
 	"\x04Ping\x12\x1d.gibson.daemon.v1.PingRequest\x1a\x1e.gibson.daemon.v1.PingResponse\x12K\n" +
@@ -4681,7 +6577,17 @@ const file_daemon_proto_rawDesc = "" +
 	"\x11GetMissionHistory\x12*.gibson.daemon.v1.GetMissionHistoryRequest\x1a+.gibson.daemon.v1.GetMissionHistoryResponse\x12x\n" +
 	"\x15GetMissionCheckpoints\x12..gibson.daemon.v1.GetMissionCheckpointsRequest\x1a/.gibson.daemon.v1.GetMissionCheckpointsResponse\x12Z\n" +
 	"\vExecuteTool\x12$.gibson.daemon.v1.ExecuteToolRequest\x1a%.gibson.daemon.v1.ExecuteToolResponse\x12l\n" +
-	"\x11GetAvailableTools\x12*.gibson.daemon.v1.GetAvailableToolsRequest\x1a+.gibson.daemon.v1.GetAvailableToolsResponseB7Z5github.com/zero-day-ai/gibson/internal/daemon/api;apib\x06proto3"
+	"\x11GetAvailableTools\x12*.gibson.daemon.v1.GetAvailableToolsRequest\x1a+.gibson.daemon.v1.GetAvailableToolsResponse\x12i\n" +
+	"\x10InstallComponent\x12).gibson.daemon.v1.InstallComponentRequest\x1a*.gibson.daemon.v1.InstallComponentResponse\x12o\n" +
+	"\x12UninstallComponent\x12+.gibson.daemon.v1.UninstallComponentRequest\x1a,.gibson.daemon.v1.UninstallComponentResponse\x12f\n" +
+	"\x0fUpdateComponent\x12(.gibson.daemon.v1.UpdateComponentRequest\x1a).gibson.daemon.v1.UpdateComponentResponse\x12c\n" +
+	"\x0eBuildComponent\x12'.gibson.daemon.v1.BuildComponentRequest\x1a(.gibson.daemon.v1.BuildComponentResponse\x12`\n" +
+	"\rShowComponent\x12&.gibson.daemon.v1.ShowComponentRequest\x1a'.gibson.daemon.v1.ShowComponentResponse\x12[\n" +
+	"\x10GetComponentLogs\x12).gibson.daemon.v1.GetComponentLogsRequest\x1a\x1a.gibson.daemon.v1.LogEntry0\x01\x12c\n" +
+	"\x0eInstallMission\x12'.gibson.daemon.v1.InstallMissionRequest\x1a(.gibson.daemon.v1.InstallMissionResponse\x12i\n" +
+	"\x10UninstallMission\x12).gibson.daemon.v1.UninstallMissionRequest\x1a*.gibson.daemon.v1.UninstallMissionResponse\x12{\n" +
+	"\x16ListMissionDefinitions\x12/.gibson.daemon.v1.ListMissionDefinitionsRequest\x1a0.gibson.daemon.v1.ListMissionDefinitionsResponse\x12`\n" +
+	"\rUpdateMission\x12&.gibson.daemon.v1.UpdateMissionRequest\x1a'.gibson.daemon.v1.UpdateMissionResponseB7Z5github.com/zero-day-ai/gibson/internal/daemon/api;apib\x06proto3"
 
 var (
 	file_daemon_proto_rawDescOnce sync.Once
@@ -4695,78 +6601,100 @@ func file_daemon_proto_rawDescGZIP() []byte {
 	return file_daemon_proto_rawDescData
 }
 
-var file_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 60)
+var file_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 82)
 var file_daemon_proto_goTypes = []any{
-	(*ConnectRequest)(nil),                // 0: gibson.daemon.v1.ConnectRequest
-	(*ConnectResponse)(nil),               // 1: gibson.daemon.v1.ConnectResponse
-	(*PingRequest)(nil),                   // 2: gibson.daemon.v1.PingRequest
-	(*PingResponse)(nil),                  // 3: gibson.daemon.v1.PingResponse
-	(*StatusRequest)(nil),                 // 4: gibson.daemon.v1.StatusRequest
-	(*StatusResponse)(nil),                // 5: gibson.daemon.v1.StatusResponse
-	(*RunMissionRequest)(nil),             // 6: gibson.daemon.v1.RunMissionRequest
-	(*MissionEvent)(nil),                  // 7: gibson.daemon.v1.MissionEvent
-	(*StopMissionRequest)(nil),            // 8: gibson.daemon.v1.StopMissionRequest
-	(*StopMissionResponse)(nil),           // 9: gibson.daemon.v1.StopMissionResponse
-	(*ListMissionsRequest)(nil),           // 10: gibson.daemon.v1.ListMissionsRequest
-	(*ListMissionsResponse)(nil),          // 11: gibson.daemon.v1.ListMissionsResponse
-	(*MissionInfo)(nil),                   // 12: gibson.daemon.v1.MissionInfo
-	(*ListAgentsRequest)(nil),             // 13: gibson.daemon.v1.ListAgentsRequest
-	(*ListAgentsResponse)(nil),            // 14: gibson.daemon.v1.ListAgentsResponse
-	(*AgentInfo)(nil),                     // 15: gibson.daemon.v1.AgentInfo
-	(*GetAgentStatusRequest)(nil),         // 16: gibson.daemon.v1.GetAgentStatusRequest
-	(*AgentStatusResponse)(nil),           // 17: gibson.daemon.v1.AgentStatusResponse
-	(*ListToolsRequest)(nil),              // 18: gibson.daemon.v1.ListToolsRequest
-	(*ListToolsResponse)(nil),             // 19: gibson.daemon.v1.ListToolsResponse
-	(*ToolInfo)(nil),                      // 20: gibson.daemon.v1.ToolInfo
-	(*ListPluginsRequest)(nil),            // 21: gibson.daemon.v1.ListPluginsRequest
-	(*ListPluginsResponse)(nil),           // 22: gibson.daemon.v1.ListPluginsResponse
-	(*PluginInfo)(nil),                    // 23: gibson.daemon.v1.PluginInfo
-	(*QueryPluginRequest)(nil),            // 24: gibson.daemon.v1.QueryPluginRequest
-	(*QueryPluginResponse)(nil),           // 25: gibson.daemon.v1.QueryPluginResponse
-	(*RunAttackRequest)(nil),              // 26: gibson.daemon.v1.RunAttackRequest
-	(*AttackEvent)(nil),                   // 27: gibson.daemon.v1.AttackEvent
-	(*FindingInfo)(nil),                   // 28: gibson.daemon.v1.FindingInfo
-	(*SubscribeRequest)(nil),              // 29: gibson.daemon.v1.SubscribeRequest
-	(*Event)(nil),                         // 30: gibson.daemon.v1.Event
-	(*AgentEvent)(nil),                    // 31: gibson.daemon.v1.AgentEvent
-	(*FindingEvent)(nil),                  // 32: gibson.daemon.v1.FindingEvent
-	(*StartComponentRequest)(nil),         // 33: gibson.daemon.v1.StartComponentRequest
-	(*StartComponentResponse)(nil),        // 34: gibson.daemon.v1.StartComponentResponse
-	(*StopComponentRequest)(nil),          // 35: gibson.daemon.v1.StopComponentRequest
-	(*StopComponentResponse)(nil),         // 36: gibson.daemon.v1.StopComponentResponse
-	(*OperationResult)(nil),               // 37: gibson.daemon.v1.OperationResult
-	(*PauseMissionRequest)(nil),           // 38: gibson.daemon.v1.PauseMissionRequest
-	(*PauseMissionResponse)(nil),          // 39: gibson.daemon.v1.PauseMissionResponse
-	(*ResumeMissionRequest)(nil),          // 40: gibson.daemon.v1.ResumeMissionRequest
-	(*GetMissionHistoryRequest)(nil),      // 41: gibson.daemon.v1.GetMissionHistoryRequest
-	(*GetMissionHistoryResponse)(nil),     // 42: gibson.daemon.v1.GetMissionHistoryResponse
-	(*MissionRun)(nil),                    // 43: gibson.daemon.v1.MissionRun
-	(*GetMissionCheckpointsRequest)(nil),  // 44: gibson.daemon.v1.GetMissionCheckpointsRequest
-	(*GetMissionCheckpointsResponse)(nil), // 45: gibson.daemon.v1.GetMissionCheckpointsResponse
-	(*CheckpointInfo)(nil),                // 46: gibson.daemon.v1.CheckpointInfo
-	(*ExecuteToolRequest)(nil),            // 47: gibson.daemon.v1.ExecuteToolRequest
-	(*ExecuteToolResponse)(nil),           // 48: gibson.daemon.v1.ExecuteToolResponse
-	(*GetAvailableToolsRequest)(nil),      // 49: gibson.daemon.v1.GetAvailableToolsRequest
-	(*GetAvailableToolsResponse)(nil),     // 50: gibson.daemon.v1.GetAvailableToolsResponse
-	(*AvailableToolInfo)(nil),             // 51: gibson.daemon.v1.AvailableToolInfo
-	(*ToolExecutionMetrics)(nil),          // 52: gibson.daemon.v1.ToolExecutionMetrics
-	(*JSONSchemaNode)(nil),                // 53: gibson.daemon.v1.JSONSchemaNode
-	(*TaxonomyMapping)(nil),               // 54: gibson.daemon.v1.TaxonomyMapping
-	(*PropertyMapping)(nil),               // 55: gibson.daemon.v1.PropertyMapping
-	(*RelationshipMapping)(nil),           // 56: gibson.daemon.v1.RelationshipMapping
-	nil,                                   // 57: gibson.daemon.v1.RunMissionRequest.VariablesEntry
-	nil,                                   // 58: gibson.daemon.v1.RunAttackRequest.OptionsEntry
-	nil,                                   // 59: gibson.daemon.v1.JSONSchemaNode.PropertiesEntry
+	(*ConnectRequest)(nil),                 // 0: gibson.daemon.v1.ConnectRequest
+	(*ConnectResponse)(nil),                // 1: gibson.daemon.v1.ConnectResponse
+	(*PingRequest)(nil),                    // 2: gibson.daemon.v1.PingRequest
+	(*PingResponse)(nil),                   // 3: gibson.daemon.v1.PingResponse
+	(*StatusRequest)(nil),                  // 4: gibson.daemon.v1.StatusRequest
+	(*StatusResponse)(nil),                 // 5: gibson.daemon.v1.StatusResponse
+	(*RunMissionRequest)(nil),              // 6: gibson.daemon.v1.RunMissionRequest
+	(*MissionEvent)(nil),                   // 7: gibson.daemon.v1.MissionEvent
+	(*StopMissionRequest)(nil),             // 8: gibson.daemon.v1.StopMissionRequest
+	(*StopMissionResponse)(nil),            // 9: gibson.daemon.v1.StopMissionResponse
+	(*ListMissionsRequest)(nil),            // 10: gibson.daemon.v1.ListMissionsRequest
+	(*ListMissionsResponse)(nil),           // 11: gibson.daemon.v1.ListMissionsResponse
+	(*MissionInfo)(nil),                    // 12: gibson.daemon.v1.MissionInfo
+	(*ListAgentsRequest)(nil),              // 13: gibson.daemon.v1.ListAgentsRequest
+	(*ListAgentsResponse)(nil),             // 14: gibson.daemon.v1.ListAgentsResponse
+	(*AgentInfo)(nil),                      // 15: gibson.daemon.v1.AgentInfo
+	(*GetAgentStatusRequest)(nil),          // 16: gibson.daemon.v1.GetAgentStatusRequest
+	(*AgentStatusResponse)(nil),            // 17: gibson.daemon.v1.AgentStatusResponse
+	(*ListToolsRequest)(nil),               // 18: gibson.daemon.v1.ListToolsRequest
+	(*ListToolsResponse)(nil),              // 19: gibson.daemon.v1.ListToolsResponse
+	(*ToolInfo)(nil),                       // 20: gibson.daemon.v1.ToolInfo
+	(*ListPluginsRequest)(nil),             // 21: gibson.daemon.v1.ListPluginsRequest
+	(*ListPluginsResponse)(nil),            // 22: gibson.daemon.v1.ListPluginsResponse
+	(*PluginInfo)(nil),                     // 23: gibson.daemon.v1.PluginInfo
+	(*QueryPluginRequest)(nil),             // 24: gibson.daemon.v1.QueryPluginRequest
+	(*QueryPluginResponse)(nil),            // 25: gibson.daemon.v1.QueryPluginResponse
+	(*RunAttackRequest)(nil),               // 26: gibson.daemon.v1.RunAttackRequest
+	(*AttackEvent)(nil),                    // 27: gibson.daemon.v1.AttackEvent
+	(*FindingInfo)(nil),                    // 28: gibson.daemon.v1.FindingInfo
+	(*SubscribeRequest)(nil),               // 29: gibson.daemon.v1.SubscribeRequest
+	(*Event)(nil),                          // 30: gibson.daemon.v1.Event
+	(*AgentEvent)(nil),                     // 31: gibson.daemon.v1.AgentEvent
+	(*FindingEvent)(nil),                   // 32: gibson.daemon.v1.FindingEvent
+	(*StartComponentRequest)(nil),          // 33: gibson.daemon.v1.StartComponentRequest
+	(*StartComponentResponse)(nil),         // 34: gibson.daemon.v1.StartComponentResponse
+	(*StopComponentRequest)(nil),           // 35: gibson.daemon.v1.StopComponentRequest
+	(*StopComponentResponse)(nil),          // 36: gibson.daemon.v1.StopComponentResponse
+	(*OperationResult)(nil),                // 37: gibson.daemon.v1.OperationResult
+	(*PauseMissionRequest)(nil),            // 38: gibson.daemon.v1.PauseMissionRequest
+	(*PauseMissionResponse)(nil),           // 39: gibson.daemon.v1.PauseMissionResponse
+	(*ResumeMissionRequest)(nil),           // 40: gibson.daemon.v1.ResumeMissionRequest
+	(*GetMissionHistoryRequest)(nil),       // 41: gibson.daemon.v1.GetMissionHistoryRequest
+	(*GetMissionHistoryResponse)(nil),      // 42: gibson.daemon.v1.GetMissionHistoryResponse
+	(*MissionRun)(nil),                     // 43: gibson.daemon.v1.MissionRun
+	(*GetMissionCheckpointsRequest)(nil),   // 44: gibson.daemon.v1.GetMissionCheckpointsRequest
+	(*GetMissionCheckpointsResponse)(nil),  // 45: gibson.daemon.v1.GetMissionCheckpointsResponse
+	(*CheckpointInfo)(nil),                 // 46: gibson.daemon.v1.CheckpointInfo
+	(*ExecuteToolRequest)(nil),             // 47: gibson.daemon.v1.ExecuteToolRequest
+	(*ExecuteToolResponse)(nil),            // 48: gibson.daemon.v1.ExecuteToolResponse
+	(*GetAvailableToolsRequest)(nil),       // 49: gibson.daemon.v1.GetAvailableToolsRequest
+	(*GetAvailableToolsResponse)(nil),      // 50: gibson.daemon.v1.GetAvailableToolsResponse
+	(*AvailableToolInfo)(nil),              // 51: gibson.daemon.v1.AvailableToolInfo
+	(*ToolExecutionMetrics)(nil),           // 52: gibson.daemon.v1.ToolExecutionMetrics
+	(*JSONSchemaNode)(nil),                 // 53: gibson.daemon.v1.JSONSchemaNode
+	(*TaxonomyMapping)(nil),                // 54: gibson.daemon.v1.TaxonomyMapping
+	(*PropertyMapping)(nil),                // 55: gibson.daemon.v1.PropertyMapping
+	(*RelationshipMapping)(nil),            // 56: gibson.daemon.v1.RelationshipMapping
+	(*InstallComponentRequest)(nil),        // 57: gibson.daemon.v1.InstallComponentRequest
+	(*InstallComponentResponse)(nil),       // 58: gibson.daemon.v1.InstallComponentResponse
+	(*UninstallComponentRequest)(nil),      // 59: gibson.daemon.v1.UninstallComponentRequest
+	(*UninstallComponentResponse)(nil),     // 60: gibson.daemon.v1.UninstallComponentResponse
+	(*UpdateComponentRequest)(nil),         // 61: gibson.daemon.v1.UpdateComponentRequest
+	(*UpdateComponentResponse)(nil),        // 62: gibson.daemon.v1.UpdateComponentResponse
+	(*BuildComponentRequest)(nil),          // 63: gibson.daemon.v1.BuildComponentRequest
+	(*BuildComponentResponse)(nil),         // 64: gibson.daemon.v1.BuildComponentResponse
+	(*ShowComponentRequest)(nil),           // 65: gibson.daemon.v1.ShowComponentRequest
+	(*ShowComponentResponse)(nil),          // 66: gibson.daemon.v1.ShowComponentResponse
+	(*GetComponentLogsRequest)(nil),        // 67: gibson.daemon.v1.GetComponentLogsRequest
+	(*LogEntry)(nil),                       // 68: gibson.daemon.v1.LogEntry
+	(*InstallMissionRequest)(nil),          // 69: gibson.daemon.v1.InstallMissionRequest
+	(*InstallMissionResponse)(nil),         // 70: gibson.daemon.v1.InstallMissionResponse
+	(*InstalledDependency)(nil),            // 71: gibson.daemon.v1.InstalledDependency
+	(*UninstallMissionRequest)(nil),        // 72: gibson.daemon.v1.UninstallMissionRequest
+	(*UninstallMissionResponse)(nil),       // 73: gibson.daemon.v1.UninstallMissionResponse
+	(*ListMissionDefinitionsRequest)(nil),  // 74: gibson.daemon.v1.ListMissionDefinitionsRequest
+	(*ListMissionDefinitionsResponse)(nil), // 75: gibson.daemon.v1.ListMissionDefinitionsResponse
+	(*MissionDefinitionInfo)(nil),          // 76: gibson.daemon.v1.MissionDefinitionInfo
+	(*UpdateMissionRequest)(nil),           // 77: gibson.daemon.v1.UpdateMissionRequest
+	(*UpdateMissionResponse)(nil),          // 78: gibson.daemon.v1.UpdateMissionResponse
+	nil,                                    // 79: gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	nil,                                    // 80: gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	nil,                                    // 81: gibson.daemon.v1.JSONSchemaNode.PropertiesEntry
 }
 var file_daemon_proto_depIdxs = []int32{
-	57, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
+	79, // 0: gibson.daemon.v1.RunMissionRequest.variables:type_name -> gibson.daemon.v1.RunMissionRequest.VariablesEntry
 	37, // 1: gibson.daemon.v1.MissionEvent.result:type_name -> gibson.daemon.v1.OperationResult
 	12, // 2: gibson.daemon.v1.ListMissionsResponse.missions:type_name -> gibson.daemon.v1.MissionInfo
 	15, // 3: gibson.daemon.v1.ListAgentsResponse.agents:type_name -> gibson.daemon.v1.AgentInfo
 	15, // 4: gibson.daemon.v1.AgentStatusResponse.agent:type_name -> gibson.daemon.v1.AgentInfo
 	20, // 5: gibson.daemon.v1.ListToolsResponse.tools:type_name -> gibson.daemon.v1.ToolInfo
 	23, // 6: gibson.daemon.v1.ListPluginsResponse.plugins:type_name -> gibson.daemon.v1.PluginInfo
-	58, // 7: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
+	80, // 7: gibson.daemon.v1.RunAttackRequest.options:type_name -> gibson.daemon.v1.RunAttackRequest.OptionsEntry
 	28, // 8: gibson.daemon.v1.AttackEvent.finding:type_name -> gibson.daemon.v1.FindingInfo
 	37, // 9: gibson.daemon.v1.AttackEvent.result:type_name -> gibson.daemon.v1.OperationResult
 	7,  // 10: gibson.daemon.v1.Event.mission_event:type_name -> gibson.daemon.v1.MissionEvent
@@ -4780,60 +6708,82 @@ var file_daemon_proto_depIdxs = []int32{
 	52, // 18: gibson.daemon.v1.AvailableToolInfo.metrics:type_name -> gibson.daemon.v1.ToolExecutionMetrics
 	53, // 19: gibson.daemon.v1.AvailableToolInfo.input_schema:type_name -> gibson.daemon.v1.JSONSchemaNode
 	53, // 20: gibson.daemon.v1.AvailableToolInfo.output_schema:type_name -> gibson.daemon.v1.JSONSchemaNode
-	59, // 21: gibson.daemon.v1.JSONSchemaNode.properties:type_name -> gibson.daemon.v1.JSONSchemaNode.PropertiesEntry
+	81, // 21: gibson.daemon.v1.JSONSchemaNode.properties:type_name -> gibson.daemon.v1.JSONSchemaNode.PropertiesEntry
 	53, // 22: gibson.daemon.v1.JSONSchemaNode.items:type_name -> gibson.daemon.v1.JSONSchemaNode
 	54, // 23: gibson.daemon.v1.JSONSchemaNode.taxonomy:type_name -> gibson.daemon.v1.TaxonomyMapping
 	55, // 24: gibson.daemon.v1.TaxonomyMapping.properties:type_name -> gibson.daemon.v1.PropertyMapping
 	56, // 25: gibson.daemon.v1.TaxonomyMapping.relationships:type_name -> gibson.daemon.v1.RelationshipMapping
 	55, // 26: gibson.daemon.v1.RelationshipMapping.properties:type_name -> gibson.daemon.v1.PropertyMapping
-	53, // 27: gibson.daemon.v1.JSONSchemaNode.PropertiesEntry.value:type_name -> gibson.daemon.v1.JSONSchemaNode
-	0,  // 28: gibson.daemon.v1.DaemonService.Connect:input_type -> gibson.daemon.v1.ConnectRequest
-	2,  // 29: gibson.daemon.v1.DaemonService.Ping:input_type -> gibson.daemon.v1.PingRequest
-	4,  // 30: gibson.daemon.v1.DaemonService.Status:input_type -> gibson.daemon.v1.StatusRequest
-	6,  // 31: gibson.daemon.v1.DaemonService.RunMission:input_type -> gibson.daemon.v1.RunMissionRequest
-	8,  // 32: gibson.daemon.v1.DaemonService.StopMission:input_type -> gibson.daemon.v1.StopMissionRequest
-	10, // 33: gibson.daemon.v1.DaemonService.ListMissions:input_type -> gibson.daemon.v1.ListMissionsRequest
-	13, // 34: gibson.daemon.v1.DaemonService.ListAgents:input_type -> gibson.daemon.v1.ListAgentsRequest
-	16, // 35: gibson.daemon.v1.DaemonService.GetAgentStatus:input_type -> gibson.daemon.v1.GetAgentStatusRequest
-	18, // 36: gibson.daemon.v1.DaemonService.ListTools:input_type -> gibson.daemon.v1.ListToolsRequest
-	21, // 37: gibson.daemon.v1.DaemonService.ListPlugins:input_type -> gibson.daemon.v1.ListPluginsRequest
-	24, // 38: gibson.daemon.v1.DaemonService.QueryPlugin:input_type -> gibson.daemon.v1.QueryPluginRequest
-	26, // 39: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
-	29, // 40: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
-	33, // 41: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
-	35, // 42: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
-	38, // 43: gibson.daemon.v1.DaemonService.PauseMission:input_type -> gibson.daemon.v1.PauseMissionRequest
-	40, // 44: gibson.daemon.v1.DaemonService.ResumeMission:input_type -> gibson.daemon.v1.ResumeMissionRequest
-	41, // 45: gibson.daemon.v1.DaemonService.GetMissionHistory:input_type -> gibson.daemon.v1.GetMissionHistoryRequest
-	44, // 46: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:input_type -> gibson.daemon.v1.GetMissionCheckpointsRequest
-	47, // 47: gibson.daemon.v1.DaemonService.ExecuteTool:input_type -> gibson.daemon.v1.ExecuteToolRequest
-	49, // 48: gibson.daemon.v1.DaemonService.GetAvailableTools:input_type -> gibson.daemon.v1.GetAvailableToolsRequest
-	1,  // 49: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
-	3,  // 50: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
-	5,  // 51: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
-	7,  // 52: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
-	9,  // 53: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
-	11, // 54: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
-	14, // 55: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
-	17, // 56: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
-	19, // 57: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
-	22, // 58: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
-	25, // 59: gibson.daemon.v1.DaemonService.QueryPlugin:output_type -> gibson.daemon.v1.QueryPluginResponse
-	27, // 60: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
-	30, // 61: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
-	34, // 62: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
-	36, // 63: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
-	39, // 64: gibson.daemon.v1.DaemonService.PauseMission:output_type -> gibson.daemon.v1.PauseMissionResponse
-	7,  // 65: gibson.daemon.v1.DaemonService.ResumeMission:output_type -> gibson.daemon.v1.MissionEvent
-	42, // 66: gibson.daemon.v1.DaemonService.GetMissionHistory:output_type -> gibson.daemon.v1.GetMissionHistoryResponse
-	45, // 67: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:output_type -> gibson.daemon.v1.GetMissionCheckpointsResponse
-	48, // 68: gibson.daemon.v1.DaemonService.ExecuteTool:output_type -> gibson.daemon.v1.ExecuteToolResponse
-	50, // 69: gibson.daemon.v1.DaemonService.GetAvailableTools:output_type -> gibson.daemon.v1.GetAvailableToolsResponse
-	49, // [49:70] is the sub-list for method output_type
-	28, // [28:49] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	71, // 27: gibson.daemon.v1.InstallMissionResponse.dependencies:type_name -> gibson.daemon.v1.InstalledDependency
+	76, // 28: gibson.daemon.v1.ListMissionDefinitionsResponse.missions:type_name -> gibson.daemon.v1.MissionDefinitionInfo
+	53, // 29: gibson.daemon.v1.JSONSchemaNode.PropertiesEntry.value:type_name -> gibson.daemon.v1.JSONSchemaNode
+	0,  // 30: gibson.daemon.v1.DaemonService.Connect:input_type -> gibson.daemon.v1.ConnectRequest
+	2,  // 31: gibson.daemon.v1.DaemonService.Ping:input_type -> gibson.daemon.v1.PingRequest
+	4,  // 32: gibson.daemon.v1.DaemonService.Status:input_type -> gibson.daemon.v1.StatusRequest
+	6,  // 33: gibson.daemon.v1.DaemonService.RunMission:input_type -> gibson.daemon.v1.RunMissionRequest
+	8,  // 34: gibson.daemon.v1.DaemonService.StopMission:input_type -> gibson.daemon.v1.StopMissionRequest
+	10, // 35: gibson.daemon.v1.DaemonService.ListMissions:input_type -> gibson.daemon.v1.ListMissionsRequest
+	13, // 36: gibson.daemon.v1.DaemonService.ListAgents:input_type -> gibson.daemon.v1.ListAgentsRequest
+	16, // 37: gibson.daemon.v1.DaemonService.GetAgentStatus:input_type -> gibson.daemon.v1.GetAgentStatusRequest
+	18, // 38: gibson.daemon.v1.DaemonService.ListTools:input_type -> gibson.daemon.v1.ListToolsRequest
+	21, // 39: gibson.daemon.v1.DaemonService.ListPlugins:input_type -> gibson.daemon.v1.ListPluginsRequest
+	24, // 40: gibson.daemon.v1.DaemonService.QueryPlugin:input_type -> gibson.daemon.v1.QueryPluginRequest
+	26, // 41: gibson.daemon.v1.DaemonService.RunAttack:input_type -> gibson.daemon.v1.RunAttackRequest
+	29, // 42: gibson.daemon.v1.DaemonService.Subscribe:input_type -> gibson.daemon.v1.SubscribeRequest
+	33, // 43: gibson.daemon.v1.DaemonService.StartComponent:input_type -> gibson.daemon.v1.StartComponentRequest
+	35, // 44: gibson.daemon.v1.DaemonService.StopComponent:input_type -> gibson.daemon.v1.StopComponentRequest
+	38, // 45: gibson.daemon.v1.DaemonService.PauseMission:input_type -> gibson.daemon.v1.PauseMissionRequest
+	40, // 46: gibson.daemon.v1.DaemonService.ResumeMission:input_type -> gibson.daemon.v1.ResumeMissionRequest
+	41, // 47: gibson.daemon.v1.DaemonService.GetMissionHistory:input_type -> gibson.daemon.v1.GetMissionHistoryRequest
+	44, // 48: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:input_type -> gibson.daemon.v1.GetMissionCheckpointsRequest
+	47, // 49: gibson.daemon.v1.DaemonService.ExecuteTool:input_type -> gibson.daemon.v1.ExecuteToolRequest
+	49, // 50: gibson.daemon.v1.DaemonService.GetAvailableTools:input_type -> gibson.daemon.v1.GetAvailableToolsRequest
+	57, // 51: gibson.daemon.v1.DaemonService.InstallComponent:input_type -> gibson.daemon.v1.InstallComponentRequest
+	59, // 52: gibson.daemon.v1.DaemonService.UninstallComponent:input_type -> gibson.daemon.v1.UninstallComponentRequest
+	61, // 53: gibson.daemon.v1.DaemonService.UpdateComponent:input_type -> gibson.daemon.v1.UpdateComponentRequest
+	63, // 54: gibson.daemon.v1.DaemonService.BuildComponent:input_type -> gibson.daemon.v1.BuildComponentRequest
+	65, // 55: gibson.daemon.v1.DaemonService.ShowComponent:input_type -> gibson.daemon.v1.ShowComponentRequest
+	67, // 56: gibson.daemon.v1.DaemonService.GetComponentLogs:input_type -> gibson.daemon.v1.GetComponentLogsRequest
+	69, // 57: gibson.daemon.v1.DaemonService.InstallMission:input_type -> gibson.daemon.v1.InstallMissionRequest
+	72, // 58: gibson.daemon.v1.DaemonService.UninstallMission:input_type -> gibson.daemon.v1.UninstallMissionRequest
+	74, // 59: gibson.daemon.v1.DaemonService.ListMissionDefinitions:input_type -> gibson.daemon.v1.ListMissionDefinitionsRequest
+	77, // 60: gibson.daemon.v1.DaemonService.UpdateMission:input_type -> gibson.daemon.v1.UpdateMissionRequest
+	1,  // 61: gibson.daemon.v1.DaemonService.Connect:output_type -> gibson.daemon.v1.ConnectResponse
+	3,  // 62: gibson.daemon.v1.DaemonService.Ping:output_type -> gibson.daemon.v1.PingResponse
+	5,  // 63: gibson.daemon.v1.DaemonService.Status:output_type -> gibson.daemon.v1.StatusResponse
+	7,  // 64: gibson.daemon.v1.DaemonService.RunMission:output_type -> gibson.daemon.v1.MissionEvent
+	9,  // 65: gibson.daemon.v1.DaemonService.StopMission:output_type -> gibson.daemon.v1.StopMissionResponse
+	11, // 66: gibson.daemon.v1.DaemonService.ListMissions:output_type -> gibson.daemon.v1.ListMissionsResponse
+	14, // 67: gibson.daemon.v1.DaemonService.ListAgents:output_type -> gibson.daemon.v1.ListAgentsResponse
+	17, // 68: gibson.daemon.v1.DaemonService.GetAgentStatus:output_type -> gibson.daemon.v1.AgentStatusResponse
+	19, // 69: gibson.daemon.v1.DaemonService.ListTools:output_type -> gibson.daemon.v1.ListToolsResponse
+	22, // 70: gibson.daemon.v1.DaemonService.ListPlugins:output_type -> gibson.daemon.v1.ListPluginsResponse
+	25, // 71: gibson.daemon.v1.DaemonService.QueryPlugin:output_type -> gibson.daemon.v1.QueryPluginResponse
+	27, // 72: gibson.daemon.v1.DaemonService.RunAttack:output_type -> gibson.daemon.v1.AttackEvent
+	30, // 73: gibson.daemon.v1.DaemonService.Subscribe:output_type -> gibson.daemon.v1.Event
+	34, // 74: gibson.daemon.v1.DaemonService.StartComponent:output_type -> gibson.daemon.v1.StartComponentResponse
+	36, // 75: gibson.daemon.v1.DaemonService.StopComponent:output_type -> gibson.daemon.v1.StopComponentResponse
+	39, // 76: gibson.daemon.v1.DaemonService.PauseMission:output_type -> gibson.daemon.v1.PauseMissionResponse
+	7,  // 77: gibson.daemon.v1.DaemonService.ResumeMission:output_type -> gibson.daemon.v1.MissionEvent
+	42, // 78: gibson.daemon.v1.DaemonService.GetMissionHistory:output_type -> gibson.daemon.v1.GetMissionHistoryResponse
+	45, // 79: gibson.daemon.v1.DaemonService.GetMissionCheckpoints:output_type -> gibson.daemon.v1.GetMissionCheckpointsResponse
+	48, // 80: gibson.daemon.v1.DaemonService.ExecuteTool:output_type -> gibson.daemon.v1.ExecuteToolResponse
+	50, // 81: gibson.daemon.v1.DaemonService.GetAvailableTools:output_type -> gibson.daemon.v1.GetAvailableToolsResponse
+	58, // 82: gibson.daemon.v1.DaemonService.InstallComponent:output_type -> gibson.daemon.v1.InstallComponentResponse
+	60, // 83: gibson.daemon.v1.DaemonService.UninstallComponent:output_type -> gibson.daemon.v1.UninstallComponentResponse
+	62, // 84: gibson.daemon.v1.DaemonService.UpdateComponent:output_type -> gibson.daemon.v1.UpdateComponentResponse
+	64, // 85: gibson.daemon.v1.DaemonService.BuildComponent:output_type -> gibson.daemon.v1.BuildComponentResponse
+	66, // 86: gibson.daemon.v1.DaemonService.ShowComponent:output_type -> gibson.daemon.v1.ShowComponentResponse
+	68, // 87: gibson.daemon.v1.DaemonService.GetComponentLogs:output_type -> gibson.daemon.v1.LogEntry
+	70, // 88: gibson.daemon.v1.DaemonService.InstallMission:output_type -> gibson.daemon.v1.InstallMissionResponse
+	73, // 89: gibson.daemon.v1.DaemonService.UninstallMission:output_type -> gibson.daemon.v1.UninstallMissionResponse
+	75, // 90: gibson.daemon.v1.DaemonService.ListMissionDefinitions:output_type -> gibson.daemon.v1.ListMissionDefinitionsResponse
+	78, // 91: gibson.daemon.v1.DaemonService.UpdateMission:output_type -> gibson.daemon.v1.UpdateMissionResponse
+	61, // [61:92] is the sub-list for method output_type
+	30, // [30:61] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_daemon_proto_init() }
@@ -4853,7 +6803,7 @@ func file_daemon_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_daemon_proto_rawDesc), len(file_daemon_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   60,
+			NumMessages:   82,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

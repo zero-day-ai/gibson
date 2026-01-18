@@ -5,8 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
+
+	clientv3 "go.etcd.io/etcd/client/v3"
 
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -14,6 +17,8 @@ import (
 
 // MissionStore provides persistence for Mission entities.
 type MissionStore interface {
+	// Mission instance methods (SQLite-backed)
+
 	// Save persists a new mission to the database
 	Save(ctx context.Context, mission *Mission) error
 
@@ -61,6 +66,27 @@ type MissionStore interface {
 
 	// IncrementRunNumber atomically increments and returns the next run number for a mission name
 	IncrementRunNumber(ctx context.Context, name string) (int, error)
+
+	// Mission definition methods (etcd-backed)
+
+	// CreateDefinition stores a new mission definition in etcd.
+	// Returns error if a definition with the same name already exists.
+	CreateDefinition(ctx context.Context, def *MissionDefinition) error
+
+	// GetDefinition retrieves a mission definition by name from etcd.
+	// Returns nil, nil if not found.
+	GetDefinition(ctx context.Context, name string) (*MissionDefinition, error)
+
+	// ListDefinitions returns all installed mission definitions from etcd.
+	ListDefinitions(ctx context.Context) ([]*MissionDefinition, error)
+
+	// UpdateDefinition updates an existing mission definition in etcd.
+	// Returns error if the definition does not exist.
+	UpdateDefinition(ctx context.Context, def *MissionDefinition) error
+
+	// DeleteDefinition removes a mission definition from etcd.
+	// Returns error if the definition does not exist.
+	DeleteDefinition(ctx context.Context, name string) error
 }
 
 // MissionFilter provides filtering options for mission queries.
@@ -130,14 +156,31 @@ func (f *MissionFilter) WithPagination(limit, offset int) *MissionFilter {
 	return f
 }
 
-// DBMissionStore implements MissionStore using a SQL database.
+// DBMissionStore implements MissionStore using a SQL database for mission instances
+// and etcd for mission definitions.
 type DBMissionStore struct {
-	db *database.DB
+	db        *database.DB
+	etcdClient *clientv3.Client
+	namespace  string
 }
 
 // NewDBMissionStore creates a new database-backed mission store.
+// The etcdClient parameter can be nil if mission definition storage is not needed.
 func NewDBMissionStore(db *database.DB) *DBMissionStore {
-	return &DBMissionStore{db: db}
+	return &DBMissionStore{
+		db:        db,
+		namespace: "gibson", // default namespace
+	}
+}
+
+// WithEtcd configures the etcd client for mission definition storage.
+// This must be called to enable CreateDefinition, GetDefinition, etc.
+func (s *DBMissionStore) WithEtcd(client *clientv3.Client, namespace string) *DBMissionStore {
+	s.etcdClient = client
+	if namespace != "" {
+		s.namespace = namespace
+	}
+	return s
 }
 
 // Save persists a new mission to the database.
@@ -1031,6 +1074,230 @@ func (s *DBMissionStore) IncrementRunNumber(ctx context.Context, name string) (i
 
 	// Next run number is max + 1
 	return maxRunNumber + 1, nil
+}
+
+// Mission Definition Storage (etcd-backed)
+// These methods implement storage for installable mission definitions (templates)
+// using etcd with the key pattern: /gibson/missions/definitions/{name}
+
+var (
+	// ErrEtcdNotConfigured is returned when etcd operations are attempted without configuration
+	ErrEtcdNotConfigured = fmt.Errorf("etcd client not configured")
+
+	// ErrDefinitionExists is returned when attempting to create a definition that already exists
+	ErrDefinitionExists = fmt.Errorf("mission definition already exists")
+
+	// ErrDefinitionNotFound is returned when a definition cannot be found
+	ErrDefinitionNotFound = fmt.Errorf("mission definition not found")
+)
+
+// definitionKey constructs the etcd key for a mission definition.
+// Format: /{namespace}/missions/definitions/{name}
+func (s *DBMissionStore) definitionKey(name string) string {
+	return filepath.Join("/", s.namespace, "missions", "definitions", name)
+}
+
+// definitionsPrefix constructs the etcd key prefix for all mission definitions.
+// Format: /{namespace}/missions/definitions/
+func (s *DBMissionStore) definitionsPrefix() string {
+	return filepath.Join("/", s.namespace, "missions", "definitions") + "/"
+}
+
+// CreateDefinition stores a new mission definition in etcd.
+// Returns ErrDefinitionExists if a definition with the same name already exists.
+// Returns ErrEtcdNotConfigured if etcd client is not configured.
+func (s *DBMissionStore) CreateDefinition(ctx context.Context, def *MissionDefinition) error {
+	if s.etcdClient == nil {
+		return ErrEtcdNotConfigured
+	}
+
+	if def == nil {
+		return fmt.Errorf("mission definition cannot be nil")
+	}
+
+	if def.Name == "" {
+		return fmt.Errorf("mission definition name is required")
+	}
+
+	key := s.definitionKey(def.Name)
+
+	// Set timestamps if not already set
+	now := time.Now()
+	if def.InstalledAt.IsZero() {
+		def.InstalledAt = now
+	}
+	if def.CreatedAt.IsZero() {
+		def.CreatedAt = now
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(def)
+	if err != nil {
+		return fmt.Errorf("failed to marshal mission definition: %w", err)
+	}
+
+	// Use transaction to create only if key doesn't exist
+	txn := s.etcdClient.Txn(ctx)
+	resp, err := txn.
+		If(clientv3.Compare(clientv3.Version(key), "=", 0)).
+		Then(clientv3.OpPut(key, string(data))).
+		Commit()
+
+	if err != nil {
+		return fmt.Errorf("failed to create mission definition: %w", err)
+	}
+
+	if !resp.Succeeded {
+		return ErrDefinitionExists
+	}
+
+	return nil
+}
+
+// GetDefinition retrieves a mission definition by name from etcd.
+// Returns nil, nil if not found.
+// Returns ErrEtcdNotConfigured if etcd client is not configured.
+func (s *DBMissionStore) GetDefinition(ctx context.Context, name string) (*MissionDefinition, error) {
+	if s.etcdClient == nil {
+		return nil, ErrEtcdNotConfigured
+	}
+
+	if name == "" {
+		return nil, fmt.Errorf("mission definition name is required")
+	}
+
+	key := s.definitionKey(name)
+
+	resp, err := s.etcdClient.Get(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get mission definition: %w", err)
+	}
+
+	if len(resp.Kvs) == 0 {
+		return nil, nil
+	}
+
+	var def MissionDefinition
+	if err := json.Unmarshal(resp.Kvs[0].Value, &def); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mission definition: %w", err)
+	}
+
+	return &def, nil
+}
+
+// ListDefinitions returns all installed mission definitions from etcd.
+// Returns an empty slice if no definitions are found.
+// Returns ErrEtcdNotConfigured if etcd client is not configured.
+func (s *DBMissionStore) ListDefinitions(ctx context.Context) ([]*MissionDefinition, error) {
+	if s.etcdClient == nil {
+		return nil, ErrEtcdNotConfigured
+	}
+
+	prefix := s.definitionsPrefix()
+
+	resp, err := s.etcdClient.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list mission definitions: %w", err)
+	}
+
+	definitions := make([]*MissionDefinition, 0, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		var def MissionDefinition
+		if err := json.Unmarshal(kv.Value, &def); err != nil {
+			// Log error but continue with other definitions
+			continue
+		}
+		definitions = append(definitions, &def)
+	}
+
+	return definitions, nil
+}
+
+// UpdateDefinition updates an existing mission definition in etcd.
+// Returns ErrDefinitionNotFound if the definition does not exist.
+// Returns ErrEtcdNotConfigured if etcd client is not configured.
+func (s *DBMissionStore) UpdateDefinition(ctx context.Context, def *MissionDefinition) error {
+	if s.etcdClient == nil {
+		return ErrEtcdNotConfigured
+	}
+
+	if def == nil {
+		return fmt.Errorf("mission definition cannot be nil")
+	}
+
+	if def.Name == "" {
+		return fmt.Errorf("mission definition name is required")
+	}
+
+	key := s.definitionKey(def.Name)
+
+	// Check if definition exists
+	resp, err := s.etcdClient.Get(ctx, key)
+	if err != nil {
+		return fmt.Errorf("failed to check mission definition: %w", err)
+	}
+
+	if len(resp.Kvs) == 0 {
+		return ErrDefinitionNotFound
+	}
+
+	// Preserve InstalledAt timestamp from existing record
+	var existing MissionDefinition
+	if err := json.Unmarshal(resp.Kvs[0].Value, &existing); err != nil {
+		return fmt.Errorf("failed to unmarshal existing definition: %w", err)
+	}
+
+	// Preserve original install time, update CreatedAt to reflect modification
+	if !existing.InstalledAt.IsZero() {
+		def.InstalledAt = existing.InstalledAt
+	}
+	def.CreatedAt = time.Now()
+
+	// Marshal to JSON
+	data, err := json.Marshal(def)
+	if err != nil {
+		return fmt.Errorf("failed to marshal mission definition: %w", err)
+	}
+
+	// Update the value
+	_, err = s.etcdClient.Put(ctx, key, string(data))
+	if err != nil {
+		return fmt.Errorf("failed to update mission definition: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteDefinition removes a mission definition from etcd.
+// Returns ErrDefinitionNotFound if the definition does not exist.
+// Returns ErrEtcdNotConfigured if etcd client is not configured.
+func (s *DBMissionStore) DeleteDefinition(ctx context.Context, name string) error {
+	if s.etcdClient == nil {
+		return ErrEtcdNotConfigured
+	}
+
+	if name == "" {
+		return fmt.Errorf("mission definition name is required")
+	}
+
+	key := s.definitionKey(name)
+
+	// Use transaction to delete only if key exists
+	txn := s.etcdClient.Txn(ctx)
+	resp, err := txn.
+		If(clientv3.Compare(clientv3.Version(key), ">", 0)).
+		Then(clientv3.OpDelete(key)).
+		Commit()
+
+	if err != nil {
+		return fmt.Errorf("failed to delete mission definition: %w", err)
+	}
+
+	if !resp.Succeeded {
+		return ErrDefinitionNotFound
+	}
+
+	return nil
 }
 
 // Ensure DBMissionStore implements MissionStore at compile time.

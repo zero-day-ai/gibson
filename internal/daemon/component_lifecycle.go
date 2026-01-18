@@ -58,12 +58,15 @@ func startComponentProcess(
 		return 0, 0, "", fmt.Errorf("failed to find available port: %w", err)
 	}
 
-	// Prepare command arguments
-	args := append([]string{}, comp.Manifest.Runtime.GetArgs()...)
+	// Prepare command arguments - start with runtime args if specified
+	var args []string
+	if comp.Manifest.Runtime != nil {
+		args = append(args, comp.Manifest.Runtime.GetArgs()...)
+	}
 	args = append(args, "--port", strconv.Itoa(port))
 
 	// Add health endpoint flag if specified in runtime config
-	if comp.Manifest.Runtime.HealthURL != "" {
+	if comp.Manifest.Runtime != nil && comp.Manifest.Runtime.HealthURL != "" {
 		args = append(args, "--health-endpoint", comp.Manifest.Runtime.HealthURL)
 	}
 
@@ -72,8 +75,10 @@ func startComponentProcess(
 
 	// Set environment variables
 	env := os.Environ()
-	for k, v := range comp.Manifest.Runtime.GetEnv() {
-		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	if comp.Manifest.Runtime != nil {
+		for k, v := range comp.Manifest.Runtime.GetEnv() {
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
+		}
 	}
 
 	// Add plugin-specific config as environment variables

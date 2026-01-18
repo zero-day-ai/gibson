@@ -303,7 +303,6 @@ The attack package integrates with existing Gibson infrastructure:
   - internal/payload: Attack payload registry and filtering
   - internal/finding: Vulnerability finding storage
   - internal/types: Common types and target definitions
-  - internal/workflow: Workflow node and edge definitions
 
 # Testing
 

@@ -18,7 +18,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -197,7 +196,8 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 	var orch mission.MissionOrchestrator
 	if graphRAGClient != nil {
 		// Use SOTA orchestrator
-		graphLoader := workflow.NewGraphLoader(graphRAGClient)
+		// TODO: Create MissionGraphLoader adapter
+		// graphLoader := workflow.NewGraphLoader(graphRAGClient)
 
 		sotaConfig := orchestrator.SOTAOrchestratorConfig{
 			GraphRAGClient:     graphRAGClient,
@@ -208,7 +208,7 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 			MaxConcurrent:      10,
 			ThinkerMaxRetries:  3,
 			ThinkerTemperature: 0.2,
-			GraphLoader:        graphLoader,
+			GraphLoader:        nil, // TODO: Implement MissionGraphLoader adapter
 		}
 
 		orch, err = orchestrator.NewSOTAMissionOrchestrator(sotaConfig)

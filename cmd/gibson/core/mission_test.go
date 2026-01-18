@@ -229,6 +229,26 @@ func (m *mockMissionStore) IncrementRunNumber(ctx context.Context, name string) 
 	return maxRun + 1, nil
 }
 
+// Mission definition methods (stubs for testing)
+func (m *mockMissionStore) CreateDefinition(ctx context.Context, def *mission.MissionDefinition) error {
+	return nil
+}
+
+func (m *mockMissionStore) GetDefinition(ctx context.Context, name string) (*mission.MissionDefinition, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) ListDefinitions(ctx context.Context) ([]*mission.MissionDefinition, error) {
+	return nil, nil
+}
+
+func (m *mockMissionStore) UpdateDefinition(ctx context.Context, def *mission.MissionDefinition) error {
+	return nil
+}
+
+func (m *mockMissionStore) DeleteDefinition(ctx context.Context, name string) error {
+	return nil
+}
 
 func TestMissionList(t *testing.T) {
 	now := time.Now()

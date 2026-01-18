@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/component"
+	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 )
 
 // newInstallCommand creates the install cobra.Command for a component type.
@@ -85,46 +86,62 @@ component types (tools, agents, plugins).`,
 // runInstall executes the install command logic.
 func runInstall(cmd *cobra.Command, args []string, cfg Config, flags *InstallFlags) error {
 	repoURL := args[0]
+	ctx := cmd.Context()
 
 	cmd.Printf("Installing %s from %s...\n", cfg.DisplayName, repoURL)
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
-	defer cc.Close()
+
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
 
 	// Build install options
-	opts := core.InstallOptions{
-		Branch:       flags.Branch,
-		Tag:          flags.Tag,
-		Force:        flags.Force,
-		SkipBuild:    flags.SkipBuild,
-		SkipRegister: flags.SkipRegister,
-		Verbose:      flags.Verbose,
+	opts := daemonclient.InstallOptions{
+		Branch:    flags.Branch,
+		Tag:       flags.Tag,
+		Force:     flags.Force,
+		SkipBuild: flags.SkipBuild,
+		Verbose:   flags.Verbose,
 	}
 
-	// Call core function
-	result, err := core.ComponentInstall(cc, cfg.Kind, repoURL, opts)
+	// Call appropriate method based on component kind
+	var result *daemonclient.InstallResult
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		result, err = client.InstallAgent(ctx, repoURL, opts)
+	case "tool":
+		result, err = client.InstallTool(ctx, repoURL, opts)
+	case "plugin":
+		result, err = client.InstallPlugin(ctx, repoURL, opts)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
 	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
 		return FormatInstallError(cmd, err)
-	}
-
-	// Extract install result
-	installResult, ok := result.Data.(*component.InstallResult)
-	if !ok {
-		return fmt.Errorf("unexpected result type")
 	}
 
 	cmd.Printf("%s '%s' installed successfully (v%s) in %v\n",
 		titleCaser.String(cfg.DisplayName),
-		installResult.Component.Name,
-		installResult.Component.Version,
+		result.Name,
+		result.Version,
 		result.Duration)
 
-	if installResult.BuildOutput != "" && !flags.SkipBuild {
-		cmd.Printf("\nBuild output:\n%s\n", installResult.BuildOutput)
+	if result.BuildOutput != "" && !flags.SkipBuild {
+		cmd.Printf("\nBuild output:\n%s\n", result.BuildOutput)
 	}
 
 	return nil

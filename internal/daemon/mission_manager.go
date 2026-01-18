@@ -20,7 +20,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/orchestrator"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -46,7 +45,10 @@ type missionManager struct {
 	targetStore     targetStoreLookup
 	runLinker       mission.MissionRunLinker
 	infrastructure  *Infrastructure
-	graphLoader     *workflow.GraphLoader // GraphLoader for storing workflows in Neo4j
+	// TODO(workflow-migration): Re-enable GraphRAG storage for mission definitions
+	// graphLoader will store mission definitions in Neo4j for cross-mission analysis
+	// Currently disabled during workflow -> mission migration
+	// graphLoader     *MissionGraphLoader
 
 	// Track active missions with their contexts and event channels
 	mu             sync.RWMutex
@@ -60,7 +62,7 @@ type activeMission struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	eventChan     chan api.MissionEventData
-	workflowState *workflow.WorkflowState
+	missionState *mission.MissionState
 	startTime     time.Time
 }
 
@@ -78,12 +80,13 @@ func newMissionManager(
 	runLinker mission.MissionRunLinker,
 	infrastructure *Infrastructure,
 ) *missionManager {
-	// Create GraphLoader if Neo4j client is available
-	var graphLoader *workflow.GraphLoader
-	if infrastructure != nil && infrastructure.graphRAGClient != nil {
-		graphLoader = workflow.NewGraphLoader(infrastructure.graphRAGClient)
-		logger.Info("initialized GraphLoader for workflow persistence to Neo4j")
-	}
+	// TODO(workflow-migration): Re-enable GraphRAG storage for mission definitions
+	// GraphLoader initialization disabled during workflow -> mission migration
+	// Will be replaced with MissionGraphLoader that works with mission.MissionDefinition
+	// if infrastructure != nil && infrastructure.graphRAGClient != nil {
+	//     graphLoader = mission.NewGraphLoader(infrastructure.graphRAGClient)
+	//     logger.Info("initialized GraphLoader for mission persistence to Neo4j")
+	// }
 
 	return &missionManager{
 		config:          cfg,
@@ -97,7 +100,6 @@ func newMissionManager(
 		targetStore:     targetStore,
 		runLinker:       runLinker,
 		infrastructure:  infrastructure,
-		graphLoader:     graphLoader,
 		activeMissions:  make(map[string]*activeMission),
 	}
 }
@@ -116,16 +118,16 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 		"memory_continuity", memoryContinuity,
 	)
 
-	// Load workflow from YAML file
-	wf, err := workflow.ParseWorkflowFile(workflowPath)
+	// Load mission definition from YAML file
+	def, err := mission.ParseDefinition(workflowPath)
 	if err != nil {
-		m.logger.Error("failed to load workflow", "error", err, "path", workflowPath)
-		return nil, fmt.Errorf("failed to load workflow from %s: %w", workflowPath, err)
+		m.logger.Error("failed to load mission definition", "error", err, "path", workflowPath)
+		return nil, fmt.Errorf("failed to load mission definition from %s: %w", workflowPath, err)
 	}
 
-	m.logger.Debug("workflow loaded",
-		"workflow_name", wf.Name,
-		"node_count", len(wf.Nodes),
+	m.logger.Debug("mission definition loaded",
+		"mission_name", def.Name,
+		"node_count", len(def.Nodes),
 	)
 
 	// Generate mission ID if not provided
@@ -133,37 +135,36 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 		missionID = types.NewID().String()
 	}
 
-	// IMPORTANT: Set workflow ID to match mission ID
-	// This ensures the GraphLoader creates the Mission node with the same ID
-	// that will be used in subsequent events (mission.started, agent.started, etc.)
-	// Without this, we'd have two different Mission nodes with different IDs.
+	// Parse mission ID
 	missionIDTyped, err := types.ParseID(missionID)
 	if err != nil {
 		m.logger.Error("invalid mission ID format", "error", err, "mission_id", missionID)
 		return nil, fmt.Errorf("invalid mission ID format: %w", err)
 	}
-	wf.ID = missionIDTyped
+	def.ID = missionIDTyped
 
-	// Store workflow in Neo4j GraphRAG for state tracking and cross-mission analysis
-	if m.graphLoader != nil {
-		graphMissionID, err := m.graphLoader.LoadWorkflow(ctx, wf)
-		if err != nil {
-			// Log warning but continue - graph storage is optional for execution
-			m.logger.Warn("failed to store workflow in GraphRAG, continuing without graph persistence",
-				"error", err,
-				"mission_id", missionID,
-				"workflow_name", wf.Name,
-			)
-		} else {
-			m.logger.Info("workflow stored in GraphRAG",
-				"graph_mission_id", graphMissionID,
-				"mission_id", missionID,
-				"workflow_name", wf.Name,
-				"node_count", len(wf.Nodes),
-				"edge_count", len(wf.Edges),
-			)
-		}
-	}
+	// TODO(workflow-migration): Re-enable GraphRAG storage for mission definitions
+	// GraphRAG storage is currently disabled during the workflow -> mission migration
+	// This will be re-enabled once MissionGraphLoader is implemented
+	// The GraphRAG storage is optional for mission execution, so this is safe to skip
+	// if m.graphLoader != nil {
+	//     graphMissionID, err := m.graphLoader.LoadMission(ctx, def)
+	//     if err != nil {
+	//         m.logger.Warn("failed to store mission in GraphRAG, continuing without graph persistence",
+	//             "error", err,
+	//             "mission_id", missionID,
+	//             "mission_name", def.Name,
+	//         )
+	//     } else {
+	//         m.logger.Info("mission stored in GraphRAG",
+	//             "graph_mission_id", graphMissionID,
+	//             "mission_id", missionID,
+	//             "mission_name", def.Name,
+	//             "node_count", len(def.Nodes),
+	//             "edge_count", len(def.Edges),
+	//         )
+	//     }
+	// }
 
 	// Check if mission ID already exists
 	m.mu.RLock()
@@ -173,22 +174,22 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	}
 	m.mu.RUnlock()
 
-	// Resolve target from workflow
+	// Resolve target from mission definition
 	var targetID types.ID
-	if wf.TargetRef != "" {
+	if def.TargetRef != "" {
 		if m.targetStore == nil {
-			return nil, fmt.Errorf("target '%s' specified but target store not available", wf.TargetRef)
+			return nil, fmt.Errorf("target '%s' specified but target store not available", def.TargetRef)
 		}
-		target, err := m.targetStore.GetByName(ctx, wf.TargetRef)
+		target, err := m.targetStore.GetByName(ctx, def.TargetRef)
 		if err != nil {
-			m.logger.Error("failed to lookup target", "error", err, "target_ref", wf.TargetRef)
-			return nil, fmt.Errorf("failed to lookup target '%s': %w", wf.TargetRef, err)
+			m.logger.Error("failed to lookup target", "error", err, "target_ref", def.TargetRef)
+			return nil, fmt.Errorf("failed to lookup target '%s': %w", def.TargetRef, err)
 		}
 		if target == nil {
-			return nil, fmt.Errorf("target '%s' not found", wf.TargetRef)
+			return nil, fmt.Errorf("target '%s' not found", def.TargetRef)
 		}
 		targetID = target.ID
-		m.logger.Debug("resolved target", "target_ref", wf.TargetRef, "target_id", targetID)
+		m.logger.Debug("resolved target", "target_ref", def.TargetRef, "target_id", targetID)
 	} else {
 		// No target specified - use a synthetic "discovery" target ID
 		// This allows orchestration/discovery missions that don't target a specific system
@@ -197,27 +198,27 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 		m.logger.Debug("no target specified, using discovery target", "target_id", targetID)
 	}
 
-	// Serialize workflow to JSON for orchestrator
-	workflowJSON, err := json.Marshal(wf)
+	// Serialize mission definition to JSON for storage
+	definitionJSON, err := json.Marshal(def)
 	if err != nil {
-		m.logger.Error("failed to serialize workflow", "error", err)
-		return nil, fmt.Errorf("failed to serialize workflow: %w", err)
+		m.logger.Error("failed to serialize mission definition", "error", err)
+		return nil, fmt.Errorf("failed to serialize mission definition: %w", err)
 	}
 
 	// Create mission record with Pending status (orchestrator will transition to Running)
 	missionRecord := &mission.Mission{
 		ID:               types.ID(missionID),
-		Name:             wf.Name,
-		Description:      wf.Description,
+		Name:             def.Name,
+		Description:      def.Description,
 		Status:           mission.MissionStatusPending,
-		WorkflowID:       wf.ID,
-		WorkflowJSON:     string(workflowJSON),
+		WorkflowID:       def.ID,
+		WorkflowJSON:     string(definitionJSON),
 		TargetID:         targetID,
 		MemoryContinuity: memoryContinuity,
 		CreatedAt:        time.Now(),
 		FindingsCount:    0,
 		Metrics: &mission.MissionMetrics{
-			TotalNodes:     len(wf.Nodes),
+			TotalNodes:     len(def.Nodes),
 			CompletedNodes: 0,
 		},
 		Metadata: make(map[string]any),
@@ -230,16 +231,16 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 
 	// Save mission to store using run linker if available
 	if m.runLinker != nil {
-		if err := m.runLinker.CreateRun(ctx, wf.Name, missionRecord); err != nil {
+		if err := m.runLinker.CreateRun(ctx, def.Name, missionRecord); err != nil {
 			// Check if error is about active mission
 			if activeErr, ok := err.(error); ok && activeErr != nil {
 				errStr := activeErr.Error()
 				if containsStr(errStr, "active run exists") {
 					m.logger.Error("cannot start mission: active run already exists",
-						"workflow_name", wf.Name,
+						"mission_name", def.Name,
 						"error", err,
 					)
-					return nil, fmt.Errorf("cannot start mission '%s': %w. Use 'gibson mission list' to see active missions or 'gibson mission pause <id>' to pause the active mission", wf.Name, err)
+					return nil, fmt.Errorf("cannot start mission '%s': %w. Use 'gibson mission list' to see active missions or 'gibson mission pause <id>' to pause the active mission", def.Name, err)
 				}
 			}
 			m.logger.Warn("failed to create mission run", "error", err)
@@ -282,15 +283,15 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	})
 
 	// Launch mission executor in goroutine
-	go m.executeMission(missionCtx, missionID, wf, eventChan)
+	go m.executeMission(missionCtx, missionID, def, eventChan)
 
 	return eventChan, nil
 }
 
-// executeMission runs the workflow execution using the SOTA orchestrator.
+// executeMission runs the mission execution using the SOTA orchestrator.
 // This handles the full mission lifecycle including setup, execution via
 // the Observe → Think → Act loop, and cleanup.
-func (m *missionManager) executeMission(ctx context.Context, missionID string, wf *workflow.Workflow, eventChan chan api.MissionEventData) {
+func (m *missionManager) executeMission(ctx context.Context, missionID string, def *mission.MissionDefinition, eventChan chan api.MissionEventData) {
 	defer close(eventChan)
 	defer m.cleanupMission(missionID)
 
@@ -301,13 +302,13 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 		ctx, span = tracer.Start(ctx, observability.SpanMissionExecute,
 			trace.WithAttributes(
 				attribute.String(observability.GibsonMissionID, missionID),
-				attribute.String(observability.GibsonWorkflowName, wf.Name),
+				attribute.String(observability.GibsonWorkflowName, def.Name),
 			),
 		)
 		defer span.End()
 	}
 
-	m.logger.Info("executing mission workflow with SOTA orchestrator", "mission_id", missionID)
+	m.logger.Info("executing mission with SOTA orchestrator", "mission_id", missionID)
 
 	// Get active mission
 	m.mu.RLock()
@@ -694,16 +695,16 @@ func (m *missionManager) Resume(ctx context.Context, missionID string) (<-chan a
 		return nil, fmt.Errorf("cannot resume mission %s: status is %s (expected paused)", missionID, missionRecord.Status)
 	}
 
-	// Parse workflow from mission
-	var wf *workflow.Workflow
+	// Parse mission definition from stored JSON
+	var def *mission.MissionDefinition
 	if missionRecord.WorkflowJSON != "" {
-		wf, err = workflow.ParseWorkflow([]byte(missionRecord.WorkflowJSON))
+		def, err = mission.ParseDefinitionFromBytes([]byte(missionRecord.WorkflowJSON))
 		if err != nil {
-			m.logger.Error("failed to parse workflow", "error", err)
-			return nil, fmt.Errorf("failed to parse workflow: %w", err)
+			m.logger.Error("failed to parse mission definition", "error", err)
+			return nil, fmt.Errorf("failed to parse mission definition: %w", err)
 		}
 	} else {
-		return nil, fmt.Errorf("mission %s has no workflow definition", missionID)
+		return nil, fmt.Errorf("mission %s has no definition", missionID)
 	}
 
 	// Create event channel for mission updates
@@ -746,7 +747,7 @@ func (m *missionManager) Resume(ctx context.Context, missionID string) (<-chan a
 	// Launch mission executor in goroutine
 	// Note: This will execute from the beginning - checkpoint restoration would be handled
 	// by the orchestrator if ExecuteFromCheckpoint were implemented
-	go m.executeMission(missionCtx, missionID, wf, eventChan)
+	go m.executeMission(missionCtx, missionID, def, eventChan)
 
 	return eventChan, nil
 }

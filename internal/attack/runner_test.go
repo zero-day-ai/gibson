@@ -223,6 +223,38 @@ func (m *MockMissionStore) IncrementRunNumber(ctx context.Context, name string) 
 	return args.Int(0), args.Error(1)
 }
 
+// Mission definition methods (stubs for testing)
+func (m *MockMissionStore) CreateDefinition(ctx context.Context, def *mission.MissionDefinition) error {
+	args := m.Called(ctx, def)
+	return args.Error(0)
+}
+
+func (m *MockMissionStore) GetDefinition(ctx context.Context, name string) (*mission.MissionDefinition, error) {
+	args := m.Called(ctx, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*mission.MissionDefinition), args.Error(1)
+}
+
+func (m *MockMissionStore) ListDefinitions(ctx context.Context) ([]*mission.MissionDefinition, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*mission.MissionDefinition), args.Error(1)
+}
+
+func (m *MockMissionStore) UpdateDefinition(ctx context.Context, def *mission.MissionDefinition) error {
+	args := m.Called(ctx, def)
+	return args.Error(0)
+}
+
+func (m *MockMissionStore) DeleteDefinition(ctx context.Context, name string) error {
+	args := m.Called(ctx, name)
+	return args.Error(0)
+}
+
 type MockFindingStore struct {
 	mock.Mock
 }

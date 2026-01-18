@@ -1,9 +1,0 @@
-# Invalid workflow - missing required 'name' field
-description: This workflow has no name field
-nodes:
-  - id: node1
-    type: agent
-    name: Test Node
-    agent: test-agent
-    task:
-      action: test

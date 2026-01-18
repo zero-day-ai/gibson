@@ -1,16 +1,20 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/attack"
 	"github.com/zero-day-ai/gibson/internal/component"
+	"github.com/zero-day-ai/gibson/internal/component/build"
 	"github.com/zero-day-ai/gibson/internal/daemon/api"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -75,45 +79,63 @@ func (d *daemonImpl) Status() (api.DaemonStatus, error) {
 	}, nil
 }
 
-// ListAgents returns all registered agents from the registry.
+// ListAgents returns all installed agents from the component store.
 func (d *daemonImpl) ListAgents(ctx context.Context, kind string) ([]api.AgentInfoInternal, error) {
 	d.logger.Debug("ListAgents called", "kind", kind)
 
-	// Query registry for all agents
-	agents, err := d.registryAdapter.ListAgents(ctx)
+	if d.componentStore == nil {
+		return nil, fmt.Errorf("component store not available")
+	}
+
+	// Query component store for installed agents
+	agents, err := d.componentStore.List(ctx, component.ComponentKindAgent)
 	if err != nil {
-		d.logger.Error("failed to list agents from registry", "error", err)
+		d.logger.Error("failed to list agents from component store", "error", err)
 		return nil, fmt.Errorf("failed to list agents: %w", err)
 	}
 
-	// Convert registry.AgentInfo to api.AgentInfoInternal
-	result := make([]api.AgentInfoInternal, len(agents))
-	for i, agent := range agents {
-		// Use first endpoint if available, empty string otherwise
-		endpoint := ""
-		if len(agent.Endpoints) > 0 {
-			endpoint = agent.Endpoints[0]
-		}
-
-		// Determine health status - if agent has instances, it's healthy
-		health := "healthy"
-		if agent.Instances == 0 {
-			health = "unknown"
-		}
-
-		result[i] = api.AgentInfoInternal{
-			ID:           agent.Name, // Use name as ID
-			Name:         agent.Name,
-			Kind:         "agent", // Default kind, could be enhanced with metadata
-			Version:      agent.Version,
-			Endpoint:     endpoint,
-			Capabilities: agent.Capabilities,
-			Health:       health,
-			LastSeen:     time.Now(), // TODO: Track actual last seen time in registry
+	// Query registry to check which agents are running
+	runningAgents := make(map[string]bool)
+	runningEndpoints := make(map[string]string)
+	if d.registryAdapter != nil {
+		running, err := d.registryAdapter.ListAgents(ctx)
+		if err == nil {
+			for _, r := range running {
+				runningAgents[r.Name] = true
+				if len(r.Endpoints) > 0 {
+					runningEndpoints[r.Name] = r.Endpoints[0]
+				}
+			}
 		}
 	}
 
-	d.logger.Debug("listed agents from registry", "count", len(result))
+	// Convert component.Component to api.AgentInfoInternal
+	result := make([]api.AgentInfoInternal, len(agents))
+	for i, agent := range agents {
+		// Determine health status based on whether agent is running
+		health := "stopped"
+		endpoint := ""
+		if runningAgents[agent.Name] {
+			health = "running"
+			endpoint = runningEndpoints[agent.Name]
+		}
+
+		// TODO: Extract capabilities from manifest when Capabilities field is added
+		var capabilities []string
+
+		result[i] = api.AgentInfoInternal{
+			ID:           agent.Name,
+			Name:         agent.Name,
+			Kind:         "agent",
+			Version:      agent.Version,
+			Endpoint:     endpoint,
+			Capabilities: capabilities,
+			Health:       health,
+			LastSeen:     agent.UpdatedAt,
+		}
+	}
+
+	d.logger.Debug("listed installed agents", "count", len(result))
 	return result, nil
 }
 
@@ -173,85 +195,127 @@ func (d *daemonImpl) GetAgentStatus(ctx context.Context, agentID string) (api.Ag
 	return api.AgentStatusInternal{}, fmt.Errorf("agent not found: %s", agentID)
 }
 
-// ListTools returns all registered tools from the registry.
+// ListTools returns all installed tools from the component store.
 func (d *daemonImpl) ListTools(ctx context.Context) ([]api.ToolInfoInternal, error) {
 	d.logger.Debug("ListTools called")
 
-	// Query registry for all tools
-	tools, err := d.registryAdapter.ListTools(ctx)
+	if d.componentStore == nil {
+		return nil, fmt.Errorf("component store not available")
+	}
+
+	// Query component store for installed tools
+	tools, err := d.componentStore.List(ctx, component.ComponentKindTool)
 	if err != nil {
-		d.logger.Error("failed to list tools from registry", "error", err)
+		d.logger.Error("failed to list tools from component store", "error", err)
 		return nil, fmt.Errorf("failed to list tools: %w", err)
 	}
 
-	// Convert registry.ToolInfo to api.ToolInfoInternal
+	// Query registry to check which tools are running
+	runningTools := make(map[string]bool)
+	runningEndpoints := make(map[string]string)
+	if d.registryAdapter != nil {
+		running, err := d.registryAdapter.ListTools(ctx)
+		if err == nil {
+			for _, r := range running {
+				runningTools[r.Name] = true
+				if len(r.Endpoints) > 0 {
+					runningEndpoints[r.Name] = r.Endpoints[0]
+				}
+			}
+		}
+	}
+
+	// Convert component.Component to api.ToolInfoInternal
 	result := make([]api.ToolInfoInternal, len(tools))
 	for i, tool := range tools {
-		// Use first endpoint if available
+		// Determine health status based on whether tool is running
+		health := "stopped"
 		endpoint := ""
-		if len(tool.Endpoints) > 0 {
-			endpoint = tool.Endpoints[0]
+		if runningTools[tool.Name] {
+			health = "running"
+			endpoint = runningEndpoints[tool.Name]
 		}
 
-		// Determine health status
-		health := "healthy"
-		if tool.Instances == 0 {
-			health = "unknown"
+		// Extract description from manifest if available
+		description := ""
+		if tool.Manifest != nil {
+			description = tool.Manifest.Description
 		}
 
 		result[i] = api.ToolInfoInternal{
-			ID:          tool.Name, // Use name as ID
+			ID:          tool.Name,
 			Name:        tool.Name,
 			Version:     tool.Version,
 			Endpoint:    endpoint,
-			Description: tool.Description,
+			Description: description,
 			Health:      health,
-			LastSeen:    time.Now(), // TODO: Track actual last seen time
+			LastSeen:    tool.UpdatedAt,
 		}
 	}
 
-	d.logger.Debug("listed tools from registry", "count", len(result))
+	d.logger.Debug("listed installed tools", "count", len(result))
 	return result, nil
 }
 
-// ListPlugins returns all registered plugins from the registry.
+// ListPlugins returns all installed plugins from the component store.
 func (d *daemonImpl) ListPlugins(ctx context.Context) ([]api.PluginInfoInternal, error) {
 	d.logger.Debug("ListPlugins called")
 
-	// Query registry for all plugins
-	plugins, err := d.registryAdapter.ListPlugins(ctx)
+	if d.componentStore == nil {
+		return nil, fmt.Errorf("component store not available")
+	}
+
+	// Query component store for installed plugins
+	plugins, err := d.componentStore.List(ctx, component.ComponentKindPlugin)
 	if err != nil {
-		d.logger.Error("failed to list plugins from registry", "error", err)
+		d.logger.Error("failed to list plugins from component store", "error", err)
 		return nil, fmt.Errorf("failed to list plugins: %w", err)
 	}
 
-	// Convert registry.PluginInfo to api.PluginInfoInternal
-	result := make([]api.PluginInfoInternal, len(plugins))
-	for i, plugin := range plugins {
-		// Use first endpoint if available
-		endpoint := ""
-		if len(plugin.Endpoints) > 0 {
-			endpoint = plugin.Endpoints[0]
-		}
-
-		// Determine health status
-		health := "healthy"
-		if plugin.Instances == 0 {
-			health = "unknown"
-		}
-
-		result[i] = api.PluginInfoInternal{
-			ID:          plugin.Name, // Use name as ID
-			Name:        plugin.Name,
-			Version:     plugin.Version,
-			Endpoint:    endpoint,
-			Description: plugin.Description,
-			Health:      health,
-			LastSeen:    time.Now(), // TODO: Track actual last seen time
+	// Query registry to check which plugins are running
+	runningPlugins := make(map[string]bool)
+	runningEndpoints := make(map[string]string)
+	if d.registryAdapter != nil {
+		running, err := d.registryAdapter.ListPlugins(ctx)
+		if err == nil {
+			for _, r := range running {
+				runningPlugins[r.Name] = true
+				if len(r.Endpoints) > 0 {
+					runningEndpoints[r.Name] = r.Endpoints[0]
+				}
+			}
 		}
 	}
 
-	d.logger.Debug("listed plugins from registry", "count", len(result))
+	// Convert component.Component to api.PluginInfoInternal
+	result := make([]api.PluginInfoInternal, len(plugins))
+	for i, plugin := range plugins {
+		// Determine health status based on whether plugin is running
+		health := "stopped"
+		endpoint := ""
+		if runningPlugins[plugin.Name] {
+			health = "running"
+			endpoint = runningEndpoints[plugin.Name]
+		}
+
+		// Extract description from manifest if available
+		description := ""
+		if plugin.Manifest != nil {
+			description = plugin.Manifest.Description
+		}
+
+		result[i] = api.PluginInfoInternal{
+			ID:          plugin.Name,
+			Name:        plugin.Name,
+			Version:     plugin.Version,
+			Endpoint:    endpoint,
+			Description: description,
+			Health:      health,
+			LastSeen:    plugin.UpdatedAt,
+		}
+	}
+
+	d.logger.Debug("listed installed plugins", "count", len(result))
 	return result, nil
 }
 
@@ -1037,4 +1101,596 @@ func (d *daemonImpl) GetAvailableTools(ctx context.Context) ([]api.AvailableTool
 
 	d.logger.Debug("available tools retrieved", "count", len(result))
 	return result, nil
+}
+
+// InstallComponent installs a component from a git repository.
+func (d *daemonImpl) InstallComponent(ctx context.Context, kind string, url string, branch string, tag string, force bool, skipBuild bool, verbose bool) (api.InstallComponentResult, error) {
+	d.logger.Info("InstallComponent called", "kind", kind, "url", url, "force", force)
+
+	// Validate kind
+	var componentKind component.ComponentKind
+	switch kind {
+	case "agent":
+		componentKind = component.ComponentKindAgent
+	case "tool":
+		componentKind = component.ComponentKindTool
+	case "plugin":
+		componentKind = component.ComponentKindPlugin
+	default:
+		return api.InstallComponentResult{}, fmt.Errorf("invalid component kind: %s", kind)
+	}
+
+	// Check if installer is available
+	if d.componentInstaller == nil {
+		d.logger.Error("component installer not available")
+		return api.InstallComponentResult{}, fmt.Errorf("component installer not available")
+	}
+
+	// Build install options
+	opts := component.InstallOptions{
+		Branch:    branch,
+		Tag:       tag,
+		Force:     force,
+		SkipBuild: skipBuild,
+		Verbose:   verbose,
+	}
+
+	// Execute installation
+	result, err := d.componentInstaller.Install(ctx, url, componentKind, opts)
+	if err != nil {
+		d.logger.Error("failed to install component", "error", err, "kind", kind, "url", url)
+		return api.InstallComponentResult{}, fmt.Errorf("failed to install component: %w", err)
+	}
+
+	d.logger.Info("component installed successfully", "kind", kind, "name", result.Component.Name, "version", result.Component.Version)
+
+	return api.InstallComponentResult{
+		Name:        result.Component.Name,
+		Version:     result.Component.Version,
+		RepoPath:    result.Component.RepoPath,
+		BinPath:     result.Component.BinPath,
+		BuildOutput: result.BuildOutput,
+		DurationMs:  result.Duration.Milliseconds(),
+	}, nil
+}
+
+// UninstallComponent uninstalls a component by kind and name.
+func (d *daemonImpl) UninstallComponent(ctx context.Context, kind string, name string, force bool) error {
+	d.logger.Info("UninstallComponent called", "kind", kind, "name", name, "force", force)
+
+	// Validate kind
+	var componentKind component.ComponentKind
+	switch kind {
+	case "agent":
+		componentKind = component.ComponentKindAgent
+	case "tool":
+		componentKind = component.ComponentKindTool
+	case "plugin":
+		componentKind = component.ComponentKindPlugin
+	default:
+		return fmt.Errorf("invalid component kind: %s", kind)
+	}
+
+	// Check if component is running (unless force is set)
+	if !force && d.componentStore != nil {
+		comp, err := d.componentStore.GetByName(ctx, componentKind, name)
+		if err != nil {
+			d.logger.Error("failed to get component", "error", err, "kind", kind, "name", name)
+			return fmt.Errorf("failed to get component: %w", err)
+		}
+		if comp == nil {
+			d.logger.Warn("component not found", "kind", kind, "name", name)
+			return fmt.Errorf("component '%s' not found", name)
+		}
+
+		// Check if running
+		if comp.IsRunning() {
+			d.logger.Warn("component is running", "kind", kind, "name", name)
+			return fmt.Errorf("component '%s' is running. Stop it first or use --force", name)
+		}
+	}
+
+	// Check if installer is available
+	if d.componentInstaller == nil {
+		d.logger.Error("component installer not available")
+		return fmt.Errorf("component installer not available")
+	}
+
+	// Execute uninstallation
+	_, err := d.componentInstaller.Uninstall(ctx, componentKind, name)
+	if err != nil {
+		d.logger.Error("failed to uninstall component", "error", err, "kind", kind, "name", name)
+		return fmt.Errorf("failed to uninstall component: %w", err)
+	}
+
+	d.logger.Info("component uninstalled successfully", "kind", kind, "name", name)
+	return nil
+}
+
+// UpdateComponent updates a component to the latest version.
+func (d *daemonImpl) UpdateComponent(ctx context.Context, kind string, name string, restart bool, skipBuild bool, verbose bool) (api.UpdateComponentResult, error) {
+	d.logger.Info("UpdateComponent called", "kind", kind, "name", name, "restart", restart)
+
+	// Validate kind
+	var componentKind component.ComponentKind
+	switch kind {
+	case "agent":
+		componentKind = component.ComponentKindAgent
+	case "tool":
+		componentKind = component.ComponentKindTool
+	case "plugin":
+		componentKind = component.ComponentKindPlugin
+	default:
+		return api.UpdateComponentResult{}, fmt.Errorf("invalid component kind: %s", kind)
+	}
+
+	// Check if installer is available
+	if d.componentInstaller == nil {
+		d.logger.Error("component installer not available")
+		return api.UpdateComponentResult{}, fmt.Errorf("component installer not available")
+	}
+
+	// Build update options
+	opts := component.UpdateOptions{
+		Restart:   restart,
+		SkipBuild: skipBuild,
+		Verbose:   verbose,
+	}
+
+	// Execute update
+	result, err := d.componentInstaller.Update(ctx, componentKind, name, opts)
+	if err != nil {
+		d.logger.Error("failed to update component", "error", err, "kind", kind, "name", name)
+		return api.UpdateComponentResult{}, fmt.Errorf("failed to update component: %w", err)
+	}
+
+	// TODO: Handle restart if requested and component was running
+	// This requires the lifecycle manager to be integrated
+
+	d.logger.Info("component updated successfully", "kind", kind, "name", name, "updated", result.Updated)
+
+	return api.UpdateComponentResult{
+		Updated:     result.Updated,
+		OldVersion:  result.OldVersion,
+		NewVersion:  result.NewVersion,
+		BuildOutput: result.BuildOutput,
+		DurationMs:  result.Duration.Milliseconds(),
+	}, nil
+}
+
+// BuildComponent rebuilds a component from source.
+func (d *daemonImpl) BuildComponent(ctx context.Context, kind string, name string) (api.BuildComponentResult, error) {
+	d.logger.Info("BuildComponent called", "kind", kind, "name", name)
+
+	// Validate kind
+	var componentKind component.ComponentKind
+	switch kind {
+	case "agent":
+		componentKind = component.ComponentKindAgent
+	case "tool":
+		componentKind = component.ComponentKindTool
+	case "plugin":
+		componentKind = component.ComponentKindPlugin
+	default:
+		return api.BuildComponentResult{}, fmt.Errorf("invalid component kind: %s", kind)
+	}
+
+	// Get component from store
+	if d.componentStore == nil {
+		d.logger.Error("component store not available")
+		return api.BuildComponentResult{}, fmt.Errorf("component store not available")
+	}
+
+	comp, err := d.componentStore.GetByName(ctx, componentKind, name)
+	if err != nil {
+		d.logger.Error("failed to get component", "error", err, "kind", kind, "name", name)
+		return api.BuildComponentResult{}, fmt.Errorf("failed to get component: %w", err)
+	}
+	if comp == nil {
+		d.logger.Warn("component not found", "kind", kind, "name", name)
+		return api.BuildComponentResult{}, fmt.Errorf("component '%s' not found", name)
+	}
+
+	// Check if build executor is available
+	if d.componentBuildExecutor == nil {
+		d.logger.Error("build executor not available")
+		return api.BuildComponentResult{}, fmt.Errorf("build executor not available")
+	}
+
+	// Prepare build configuration from manifest
+	if comp.Manifest == nil || comp.Manifest.Build == nil {
+		d.logger.Warn("component has no build configuration", "kind", kind, "name", name)
+		return api.BuildComponentResult{}, fmt.Errorf("component '%s' has no build configuration", name)
+	}
+
+	buildCfg := comp.Manifest.Build
+
+	// Parse build command string into command and args
+	command := "make"
+	args := []string{"build"}
+	if buildCfg.Command != "" {
+		parts := strings.Fields(buildCfg.Command)
+		if len(parts) > 0 {
+			command = parts[0]
+			if len(parts) > 1 {
+				args = parts[1:]
+			} else {
+				args = []string{}
+			}
+		}
+	}
+
+	// Determine working directory
+	workDir := comp.RepoPath
+	if buildCfg.WorkDir != "" {
+		workDir = filepath.Join(comp.RepoPath, buildCfg.WorkDir)
+	}
+
+	// Import the build package types
+	buildConfig := build.BuildConfig{
+		WorkDir:    workDir,
+		Command:    command,
+		Args:       args,
+		OutputPath: "",
+		Env:        buildCfg.GetEnv(),
+		Verbose:    true,
+	}
+
+	// Execute build with timeout
+	buildCtx, cancel := context.WithTimeout(ctx, component.DefaultBuildTimeout)
+	defer cancel()
+
+	startTime := time.Now()
+	buildResult, err := d.componentBuildExecutor.Build(buildCtx, buildConfig, comp.Name, comp.Version, "dev")
+	duration := time.Since(startTime)
+
+	if err != nil {
+		d.logger.Error("build failed", "error", err, "kind", kind, "name", name, "duration_ms", duration.Milliseconds())
+		errorMsg := fmt.Sprintf("build failed: %v", err)
+		if buildResult != nil {
+			return api.BuildComponentResult{
+				Success:    false,
+				Stdout:     buildResult.Stdout,
+				Stderr:     buildResult.Stderr,
+				DurationMs: duration.Milliseconds(),
+			}, nil // Return nil error since we're reporting the error in the result
+		}
+		return api.BuildComponentResult{
+			Success:    false,
+			Stdout:     "",
+			Stderr:     errorMsg,
+			DurationMs: duration.Milliseconds(),
+		}, nil
+	}
+
+	d.logger.Info("component built successfully", "kind", kind, "name", name, "duration_ms", duration.Milliseconds())
+
+	return api.BuildComponentResult{
+		Success:    true,
+		Stdout:     buildResult.Stdout,
+		Stderr:     buildResult.Stderr,
+		DurationMs: duration.Milliseconds(),
+	}, nil
+}
+
+// ShowComponent returns detailed information about a component.
+func (d *daemonImpl) ShowComponent(ctx context.Context, kind string, name string) (api.ComponentInfoInternal, error) {
+	d.logger.Debug("ShowComponent called", "kind", kind, "name", name)
+
+	// Validate kind
+	var componentKind component.ComponentKind
+	switch kind {
+	case "agent":
+		componentKind = component.ComponentKindAgent
+	case "tool":
+		componentKind = component.ComponentKindTool
+	case "plugin":
+		componentKind = component.ComponentKindPlugin
+	default:
+		return api.ComponentInfoInternal{}, fmt.Errorf("invalid component kind: %s", kind)
+	}
+
+	// Get component from store
+	if d.componentStore == nil {
+		d.logger.Error("component store not available")
+		return api.ComponentInfoInternal{}, fmt.Errorf("component store not available")
+	}
+
+	comp, err := d.componentStore.GetByName(ctx, componentKind, name)
+	if err != nil {
+		d.logger.Error("failed to get component", "error", err, "kind", kind, "name", name)
+		return api.ComponentInfoInternal{}, fmt.Errorf("failed to get component: %w", err)
+	}
+	if comp == nil {
+		d.logger.Warn("component not found", "kind", kind, "name", name)
+		return api.ComponentInfoInternal{}, fmt.Errorf("component '%s' not found", name)
+	}
+
+	d.logger.Debug("component details retrieved", "kind", kind, "name", name, "version", comp.Version)
+
+	// Convert to API format
+	return api.ComponentInfoInternal{
+		Name:      comp.Name,
+		Version:   comp.Version,
+		Kind:      kind,
+		Status:    comp.Status.String(),
+		Source:    comp.Source.String(),
+		RepoPath:  comp.RepoPath,
+		BinPath:   comp.BinPath,
+		Port:      comp.Port,
+		PID:       comp.PID,
+		CreatedAt: comp.CreatedAt,
+		UpdatedAt: comp.UpdatedAt,
+	}, nil
+}
+
+// GetComponentLogs streams log entries for a component.
+func (d *daemonImpl) GetComponentLogs(ctx context.Context, kind string, name string, follow bool, lines int) (<-chan api.LogEntryData, error) {
+	d.logger.Debug("GetComponentLogs called", "kind", kind, "name", name, "follow", follow, "lines", lines)
+
+	// Validate kind
+	var componentKind component.ComponentKind
+	switch kind {
+	case "agent":
+		componentKind = component.ComponentKindAgent
+	case "tool":
+		componentKind = component.ComponentKindTool
+	case "plugin":
+		componentKind = component.ComponentKindPlugin
+	default:
+		return nil, fmt.Errorf("invalid component kind: %s", kind)
+	}
+
+	// Get component from store to verify it exists
+	if d.componentStore == nil {
+		d.logger.Error("component store not available")
+		return nil, fmt.Errorf("component store not available")
+	}
+
+	comp, err := d.componentStore.GetByName(ctx, componentKind, name)
+	if err != nil {
+		d.logger.Error("failed to get component", "error", err, "kind", kind, "name", name)
+		return nil, fmt.Errorf("failed to get component: %w", err)
+	}
+	if comp == nil {
+		d.logger.Warn("component not found", "kind", kind, "name", name)
+		return nil, fmt.Errorf("component '%s' not found", name)
+	}
+
+	// Construct log file path
+	// Logs are written to ~/.gibson/logs/<component-name>.log
+	logDir := filepath.Join(d.config.Core.HomeDir, "logs")
+	logFilePath := filepath.Join(logDir, fmt.Sprintf("%s.log", name))
+
+	// Check if log file exists
+	if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
+		d.logger.Warn("log file does not exist", "path", logFilePath)
+		return nil, fmt.Errorf("log file not found for component '%s'", name)
+	}
+
+	// Create channel for streaming logs
+	logChan := make(chan api.LogEntryData, 100)
+
+	// Start goroutine to read and stream logs
+	go func() {
+		defer close(logChan)
+
+		// Open log file
+		file, err := os.Open(logFilePath)
+		if err != nil {
+			d.logger.Error("failed to open log file", "error", err, "path", logFilePath)
+			return
+		}
+		defer file.Close()
+
+		// If lines limit is specified, seek to the end and read last N lines
+		// For simplicity, we'll read the entire file and send the last N lines
+		scanner := bufio.NewScanner(file)
+		var logLines []string
+
+		// Read all lines
+		for scanner.Scan() {
+			logLines = append(logLines, scanner.Text())
+		}
+
+		if err := scanner.Err(); err != nil {
+			d.logger.Error("error reading log file", "error", err, "path", logFilePath)
+			return
+		}
+
+		// Determine which lines to send based on lines parameter
+		startIdx := 0
+		if lines > 0 && len(logLines) > lines {
+			startIdx = len(logLines) - lines
+		}
+
+		// Send initial lines
+		for i := startIdx; i < len(logLines); i++ {
+			select {
+			case <-ctx.Done():
+				return
+			case logChan <- api.LogEntryData{
+				Timestamp: time.Now().Unix(),
+				Level:     "info",
+				Message:   logLines[i],
+			}:
+			}
+		}
+
+		// If follow mode, tail the file
+		if follow {
+			// TODO: Implement file tailing using fsnotify or similar
+			// For now, poll the file periodically
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+
+			lastSize := int64(0)
+			fileInfo, err := os.Stat(logFilePath)
+			if err == nil {
+				lastSize = fileInfo.Size()
+			}
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					// Check if file has grown
+					fileInfo, err := os.Stat(logFilePath)
+					if err != nil {
+						d.logger.Error("error checking log file", "error", err)
+						return
+					}
+
+					currentSize := fileInfo.Size()
+					if currentSize > lastSize {
+						// Read new content
+						file.Seek(lastSize, 0)
+						scanner := bufio.NewScanner(file)
+						for scanner.Scan() {
+							select {
+							case <-ctx.Done():
+								return
+							case logChan <- api.LogEntryData{
+								Timestamp: time.Now().Unix(),
+								Level:     "info",
+								Message:   scanner.Text(),
+							}:
+							}
+						}
+						lastSize = currentSize
+					}
+				}
+			}
+		}
+	}()
+
+	return logChan, nil
+}
+
+// InstallMission installs a mission from a git repository.
+func (d *daemonImpl) InstallMission(ctx context.Context, url string, branch string, tag string, force bool, yes bool, timeoutMs int64) (api.InstallMissionResult, error) {
+	d.logger.Info("InstallMission called", "url", url, "force", force)
+
+	// Check if mission installer is available
+	if d.missionInstaller == nil {
+		d.logger.Error("mission installer not available")
+		return api.InstallMissionResult{}, fmt.Errorf("mission installer not available")
+	}
+
+	// Build install options
+	opts := mission.InstallOptions{
+		Branch:  branch,
+		Tag:     tag,
+		Force:   force,
+		Yes:     yes,
+		Timeout: 0, // Will be set from timeoutMs below
+	}
+
+	// Set timeout if specified
+	if timeoutMs > 0 {
+		opts.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	// Execute installation
+	result, err := d.missionInstaller.Install(ctx, url, opts)
+	if err != nil {
+		d.logger.Error("failed to install mission", "error", err, "url", url)
+		return api.InstallMissionResult{}, fmt.Errorf("failed to install mission: %w", err)
+	}
+
+	d.logger.Info("mission installed successfully", "name", result.Name, "version", result.Version)
+
+	// Convert dependencies to API format
+	apiDeps := make([]api.InstalledDependencyData, len(result.Dependencies))
+	for i, dep := range result.Dependencies {
+		apiDeps[i] = api.InstalledDependencyData{
+			Type:             dep.Type,
+			Name:             dep.Name,
+			AlreadyInstalled: dep.AlreadyInstalled,
+		}
+	}
+
+	return api.InstallMissionResult{
+		Name:         result.Name,
+		Version:      result.Version,
+		Path:         result.Path,
+		Dependencies: apiDeps,
+		DurationMs:   result.Duration.Milliseconds(),
+	}, nil
+}
+
+// UninstallMission removes an installed mission.
+func (d *daemonImpl) UninstallMission(ctx context.Context, name string, force bool) error {
+	d.logger.Info("UninstallMission called", "name", name, "force", force)
+
+	// Check if mission installer is available
+	if d.missionInstaller == nil {
+		d.logger.Error("mission installer not available")
+		return fmt.Errorf("mission installer not available")
+	}
+
+	// Build uninstall options
+	opts := mission.UninstallOptions{
+		Force: force,
+	}
+
+	// Execute uninstallation
+	err := d.missionInstaller.Uninstall(ctx, name, opts)
+	if err != nil {
+		d.logger.Error("failed to uninstall mission", "error", err, "name", name)
+		return fmt.Errorf("failed to uninstall mission: %w", err)
+	}
+
+	d.logger.Info("mission uninstalled successfully", "name", name)
+	return nil
+}
+
+// ListMissionDefinitions returns all installed mission definitions.
+func (d *daemonImpl) ListMissionDefinitions(ctx context.Context, limit int, offset int) ([]api.MissionDefinitionData, int, error) {
+	d.logger.Debug("ListMissionDefinitions called", "limit", limit, "offset", offset)
+
+	// For now, return empty list as the MissionStore doesn't have ListDefinitions yet
+	// This will be implemented in task 3.1/3.2 when the store is extended
+	// TODO: Implement once MissionStore has ListDefinitions method
+
+	d.logger.Debug("listed mission definitions", "count", 0, "total", 0)
+	return []api.MissionDefinitionData{}, 0, nil
+}
+
+// UpdateMission updates an installed mission to the latest version.
+func (d *daemonImpl) UpdateMission(ctx context.Context, name string, timeoutMs int64) (api.UpdateMissionResult, error) {
+	d.logger.Info("UpdateMission called", "name", name)
+
+	// Check if mission installer is available
+	if d.missionInstaller == nil {
+		d.logger.Error("mission installer not available")
+		return api.UpdateMissionResult{}, fmt.Errorf("mission installer not available")
+	}
+
+	// Build update options
+	opts := mission.UpdateOptions{
+		Timeout: 0, // Will be set from timeoutMs below
+	}
+
+	// Set timeout if specified
+	if timeoutMs > 0 {
+		opts.Timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	// Execute update
+	result, err := d.missionInstaller.Update(ctx, name, opts)
+	if err != nil {
+		d.logger.Error("failed to update mission", "error", err, "name", name)
+		return api.UpdateMissionResult{}, fmt.Errorf("failed to update mission: %w", err)
+	}
+
+	d.logger.Info("mission updated successfully", "name", name, "updated", result.Updated)
+
+	return api.UpdateMissionResult{
+		Updated:    result.Updated,
+		OldVersion: result.OldVersion,
+		NewVersion: result.NewVersion,
+		DurationMs: result.Duration.Milliseconds(),
+	}, nil
 }

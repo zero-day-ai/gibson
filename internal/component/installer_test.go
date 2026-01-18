@@ -14,6 +14,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/component/build"
 	"github.com/zero-day-ai/gibson/internal/component/git"
+	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
 
 // MockGitOperations is a mock implementation of git.GitOperations
@@ -73,19 +74,20 @@ func (m *MockBuildExecutor) Test(ctx context.Context, workDir string) (*build.Te
 	return args.Get(0).(*build.TestResult), args.Error(1)
 }
 
-// MockComponentDAO is a mock implementation of ComponentDAO for testing
-type MockComponentDAO struct {
+// MockComponentStore is a mock implementation of ComponentStore for testing.
+// Components are now stored in etcd, not SQLite.
+type MockComponentStore struct {
 	mock.Mock
 	components map[string]*Component
 }
 
-func NewMockComponentDAO() *MockComponentDAO {
-	return &MockComponentDAO{
+func NewMockComponentStore() *MockComponentStore {
+	return &MockComponentStore{
 		components: make(map[string]*Component),
 	}
 }
 
-func (m *MockComponentDAO) Create(ctx context.Context, comp *Component) error {
+func (m *MockComponentStore) Create(ctx context.Context, comp *Component) error {
 	args := m.Called(ctx, comp)
 	if args.Error(0) == nil {
 		key := fmt.Sprintf("%s:%s", comp.Kind, comp.Name)
@@ -94,15 +96,7 @@ func (m *MockComponentDAO) Create(ctx context.Context, comp *Component) error {
 	return args.Error(0)
 }
 
-func (m *MockComponentDAO) GetByID(ctx context.Context, id int64) (*Component, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*Component), args.Error(1)
-}
-
-func (m *MockComponentDAO) GetByName(ctx context.Context, kind ComponentKind, name string) (*Component, error) {
+func (m *MockComponentStore) GetByName(ctx context.Context, kind ComponentKind, name string) (*Component, error) {
 	args := m.Called(ctx, kind, name)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -110,7 +104,7 @@ func (m *MockComponentDAO) GetByName(ctx context.Context, kind ComponentKind, na
 	return args.Get(0).(*Component), args.Error(1)
 }
 
-func (m *MockComponentDAO) List(ctx context.Context, kind ComponentKind) ([]*Component, error) {
+func (m *MockComponentStore) List(ctx context.Context, kind ComponentKind) ([]*Component, error) {
 	args := m.Called(ctx, kind)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -118,7 +112,7 @@ func (m *MockComponentDAO) List(ctx context.Context, kind ComponentKind) ([]*Com
 	return args.Get(0).([]*Component), args.Error(1)
 }
 
-func (m *MockComponentDAO) ListAll(ctx context.Context) (map[ComponentKind][]*Component, error) {
+func (m *MockComponentStore) ListAll(ctx context.Context) (map[ComponentKind][]*Component, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -126,15 +120,7 @@ func (m *MockComponentDAO) ListAll(ctx context.Context) (map[ComponentKind][]*Co
 	return args.Get(0).(map[ComponentKind][]*Component), args.Error(1)
 }
 
-func (m *MockComponentDAO) ListByStatus(ctx context.Context, kind ComponentKind, status ComponentStatus) ([]*Component, error) {
-	args := m.Called(ctx, kind, status)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*Component), args.Error(1)
-}
-
-func (m *MockComponentDAO) Update(ctx context.Context, comp *Component) error {
+func (m *MockComponentStore) Update(ctx context.Context, comp *Component) error {
 	args := m.Called(ctx, comp)
 	if args.Error(0) == nil {
 		key := fmt.Sprintf("%s:%s", comp.Kind, comp.Name)
@@ -143,18 +129,21 @@ func (m *MockComponentDAO) Update(ctx context.Context, comp *Component) error {
 	return args.Error(0)
 }
 
-func (m *MockComponentDAO) UpdateStatus(ctx context.Context, id int64, status ComponentStatus, pid, port int) error {
-	args := m.Called(ctx, id, status, pid, port)
-	return args.Error(0)
-}
-
-func (m *MockComponentDAO) Delete(ctx context.Context, kind ComponentKind, name string) error {
+func (m *MockComponentStore) Delete(ctx context.Context, kind ComponentKind, name string) error {
 	args := m.Called(ctx, kind, name)
 	if args.Error(0) == nil {
 		key := fmt.Sprintf("%s:%s", kind, name)
 		delete(m.components, key)
 	}
 	return args.Error(0)
+}
+
+func (m *MockComponentStore) ListInstances(ctx context.Context, kind ComponentKind, name string) ([]sdkregistry.ServiceInfo, error) {
+	args := m.Called(ctx, kind, name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]sdkregistry.ServiceInfo), args.Error(1)
 }
 
 // MockLifecycleManager is a mock implementation of LifecycleManager for testing
@@ -193,19 +182,19 @@ func (m *MockLifecycleManager) IsRunning(name string) bool {
 
 // Helper functions for tests
 
-func setupTestInstaller(t *testing.T) (*DefaultInstaller, *MockGitOperations, *MockBuildExecutor, *MockComponentDAO, string) {
+func setupTestInstaller(t *testing.T) (*DefaultInstaller, *MockGitOperations, *MockBuildExecutor, *MockComponentStore, string) {
 	mockGit := new(MockGitOperations)
 	mockBuilder := new(MockBuildExecutor)
-	mockDAO := NewMockComponentDAO()
+	mockStore := NewMockComponentStore()
 	mockLifecycle := NewMockLifecycleManager()
 
 	// Create temporary home directory
 	tmpDir := t.TempDir()
 
-	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO, mockLifecycle)
+	installer := NewDefaultInstaller(mockGit, mockBuilder, mockStore, mockLifecycle)
 	installer.homeDir = tmpDir
 
-	return installer, mockGit, mockBuilder, mockDAO, tmpDir
+	return installer, mockGit, mockBuilder, mockStore, tmpDir
 }
 
 func createTestManifest(t *testing.T, dir string, manifest *Manifest) {
@@ -471,15 +460,15 @@ func TestUninstall_Success(t *testing.T) {
 func TestNewDefaultInstaller(t *testing.T) {
 	mockGit := new(MockGitOperations)
 	mockBuilder := new(MockBuildExecutor)
-	mockDAO := NewMockComponentDAO()
+	mockStore := NewMockComponentStore()
 	mockLifecycle := NewMockLifecycleManager()
 
-	installer := NewDefaultInstaller(mockGit, mockBuilder, mockDAO, mockLifecycle)
+	installer := NewDefaultInstaller(mockGit, mockBuilder, mockStore, mockLifecycle)
 
 	assert.NotNil(t, installer)
 	assert.Equal(t, mockGit, installer.git)
 	assert.Equal(t, mockBuilder, installer.builder)
-	assert.Equal(t, mockDAO, installer.dao)
+	assert.Equal(t, mockStore, installer.store)
 	assert.NotEmpty(t, installer.homeDir)
 }
 
@@ -719,12 +708,12 @@ func TestInstallContext_Rollback(t *testing.T) {
 		componentName:   "test",
 	}
 
-	// Create mock DAO
-	mockDAO := NewMockComponentDAO()
-	mockDAO.On("Delete", mock.Anything, ComponentKindAgent, "test").Return(nil)
+	// Create mock store
+	mockStore := NewMockComponentStore()
+	mockStore.On("Delete", mock.Anything, ComponentKindAgent, "test").Return(nil)
 
 	// Perform rollback
-	installCtx.rollback(mockDAO, context.Background())
+	installCtx.rollback(mockStore, context.Background())
 
 	// Verify files are removed
 	_, err = os.Stat(file1Path)
@@ -739,7 +728,7 @@ func TestInstallContext_Rollback(t *testing.T) {
 // - k8skiller subdirectory contains the actual code
 // - Build artifacts are created in the workdir subdirectory
 func TestInstallRepository_WithWorkdir(t *testing.T) {
-	installer, mockGit, mockBuilder, mockDAO, tmpDir := setupTestInstaller(t)
+	installer, mockGit, mockBuilder, mockStore, tmpDir := setupTestInstaller(t)
 
 	// Create temporary directory structure mimicking the k8skiller mono-repo
 	repoDir := t.TempDir()
@@ -800,8 +789,8 @@ runtime:
 	}, nil)
 
 	// Mock DAO operations
-	mockDAO.On("GetByName", mock.Anything, ComponentKindAgent, "k8skiller").Return(nil, nil)
-	mockDAO.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	mockStore.On("GetByName", mock.Anything, ComponentKindAgent, "k8skiller").Return(nil, nil)
+	mockStore.On("Create", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		comp := args.Get(1).(*Component)
 		// Verify the component has the correct paths
 		assert.Equal(t, "k8skiller", comp.Name)
@@ -831,7 +820,7 @@ runtime:
 	// Verify mocks
 	mockGit.AssertExpectations(t)
 	mockBuilder.AssertExpectations(t)
-	mockDAO.AssertExpectations(t)
+	mockStore.AssertExpectations(t)
 }
 
 // TestInstallRepository_SkipsExistingComponent tests that already-installed components are skipped correctly.
@@ -840,7 +829,7 @@ runtime:
 // - The component should be skipped with SkipReasonAlreadyInstalled
 // - The component should NOT be in Failed or Successful lists
 func TestInstallRepository_SkipsExistingComponent(t *testing.T) {
-	installer, mockGit, _, mockDAO, tmpDir := setupTestInstaller(t)
+	installer, mockGit, _, mockStore, tmpDir := setupTestInstaller(t)
 
 	// Create temporary directory structure for a mono-repo
 	repoDir := t.TempDir()
@@ -900,7 +889,7 @@ runtime:
 		BinPath: existingBinPath, // Points to the existing binary we created
 		Status:  ComponentStatusAvailable,
 	}
-	mockDAO.On("GetByName", mock.Anything, ComponentKindAgent, "test-agent").Return(existingComponent, nil)
+	mockStore.On("GetByName", mock.Anything, ComponentKindAgent, "test-agent").Return(existingComponent, nil)
 
 	// Execute InstallAll - this will call installRepository internally
 	opts := InstallOptions{}
@@ -922,5 +911,5 @@ runtime:
 
 	// Verify mocks - note that for a skipped component, Create should NOT be called
 	mockGit.AssertExpectations(t)
-	mockDAO.AssertExpectations(t)
+	mockStore.AssertExpectations(t)
 }

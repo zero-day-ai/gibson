@@ -611,6 +611,24 @@ func (m *mockDaemonServiceClient) GetAvailableTools(ctx context.Context, req *ap
 func (m *mockDaemonServiceClient) QueryPlugin(ctx context.Context, req *api.QueryPluginRequest, opts ...grpc.CallOption) (*api.QueryPluginResponse, error) {
 	return nil, nil
 }
+func (m *mockDaemonServiceClient) InstallComponent(ctx context.Context, req *api.InstallComponentRequest, opts ...grpc.CallOption) (*api.InstallComponentResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) UninstallComponent(ctx context.Context, req *api.UninstallComponentRequest, opts ...grpc.CallOption) (*api.UninstallComponentResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) UpdateComponent(ctx context.Context, req *api.UpdateComponentRequest, opts ...grpc.CallOption) (*api.UpdateComponentResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) BuildComponent(ctx context.Context, req *api.BuildComponentRequest, opts ...grpc.CallOption) (*api.BuildComponentResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) ShowComponent(ctx context.Context, req *api.ShowComponentRequest, opts ...grpc.CallOption) (*api.ShowComponentResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) GetComponentLogs(ctx context.Context, req *api.GetComponentLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[api.LogEntry], error) {
+	return nil, nil
+}
 
 // TestClient_Ping tests the Ping method with mock client.
 func TestClient_Ping(t *testing.T) {
@@ -1191,4 +1209,944 @@ func TestGetGibsonHome(t *testing.T) {
 			}
 		})
 	}
+}
+
+// mockDaemonClientForComponents extends the mock with component management responses
+type mockDaemonClientForComponents struct {
+	mockDaemonServiceClient
+	installResponse   *api.InstallComponentResponse
+	installError      error
+	uninstallResponse *api.UninstallComponentResponse
+	uninstallError    error
+	updateResponse    *api.UpdateComponentResponse
+	updateError       error
+	buildResponse     *api.BuildComponentResponse
+	buildError        error
+	showResponse      *api.ShowComponentResponse
+	showError         error
+}
+
+func (m *mockDaemonClientForComponents) InstallComponent(ctx context.Context, req *api.InstallComponentRequest, opts ...grpc.CallOption) (*api.InstallComponentResponse, error) {
+	return m.installResponse, m.installError
+}
+
+func (m *mockDaemonClientForComponents) UninstallComponent(ctx context.Context, req *api.UninstallComponentRequest, opts ...grpc.CallOption) (*api.UninstallComponentResponse, error) {
+	return m.uninstallResponse, m.uninstallError
+}
+
+func (m *mockDaemonClientForComponents) UpdateComponent(ctx context.Context, req *api.UpdateComponentRequest, opts ...grpc.CallOption) (*api.UpdateComponentResponse, error) {
+	return m.updateResponse, m.updateError
+}
+
+func (m *mockDaemonClientForComponents) BuildComponent(ctx context.Context, req *api.BuildComponentRequest, opts ...grpc.CallOption) (*api.BuildComponentResponse, error) {
+	return m.buildResponse, m.buildError
+}
+
+func (m *mockDaemonClientForComponents) ShowComponent(ctx context.Context, req *api.ShowComponentRequest, opts ...grpc.CallOption) (*api.ShowComponentResponse, error) {
+	return m.showResponse, m.showError
+}
+
+// TestClient_InstallAgent tests the InstallAgent method
+func TestClient_InstallAgent(t *testing.T) {
+	tests := []struct {
+		name          string
+		url           string
+		opts          InstallOptions
+		mockResponse  *api.InstallComponentResponse
+		mockError     error
+		expectedError string
+	}{
+		{
+			name: "successful install",
+			url:  "https://github.com/zero-day-ai/test-agent",
+			opts: InstallOptions{},
+			mockResponse: &api.InstallComponentResponse{
+				Success:     true,
+				Name:        "test-agent",
+				Version:     "1.0.0",
+				RepoPath:    "/home/user/.gibson/components/agents/test-agent",
+				BinPath:     "/home/user/.gibson/components/agents/test-agent/test-agent",
+				BuildOutput: "Build successful",
+				DurationMs:  5000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name: "install with branch",
+			url:  "https://github.com/zero-day-ai/test-agent",
+			opts: InstallOptions{Branch: "dev"},
+			mockResponse: &api.InstallComponentResponse{
+				Success:    true,
+				Name:       "test-agent",
+				Version:    "1.0.0-dev",
+				RepoPath:   "/home/user/.gibson/components/agents/test-agent",
+				DurationMs: 5000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:          "already exists error",
+			url:           "https://github.com/zero-day-ai/test-agent",
+			opts:          InstallOptions{},
+			mockResponse:  nil,
+			mockError:     status.Error(codes.AlreadyExists, "component already exists"),
+			expectedError: "component already exists (use --force to reinstall)",
+		},
+		{
+			name:          "not found error",
+			url:           "https://github.com/zero-day-ai/nonexistent",
+			opts:          InstallOptions{},
+			mockResponse:  nil,
+			mockError:     status.Error(codes.NotFound, "repository not found"),
+			expectedError: "repository not found",
+		},
+		{
+			name:          "daemon unavailable",
+			url:           "https://github.com/zero-day-ai/test-agent",
+			opts:          InstallOptions{},
+			mockResponse:  nil,
+			mockError:     status.Error(codes.Unavailable, "connection refused"),
+			expectedError: "daemon not responding (is it running?)",
+		},
+		{
+			name: "install failure response",
+			url:  "https://github.com/zero-day-ai/test-agent",
+			opts: InstallOptions{},
+			mockResponse: &api.InstallComponentResponse{
+				Success: false,
+				Message: "build failed: compilation error",
+			},
+			mockError:     nil,
+			expectedError: "failed to install component: build failed: compilation error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockDaemonClientForComponents{
+				installResponse: tt.mockResponse,
+				installError:    tt.mockError,
+			}
+
+			client := &Client{
+				daemon: mock,
+			}
+
+			ctx := context.Background()
+			result, err := client.InstallAgent(ctx, tt.url, tt.opts)
+
+			if tt.expectedError == "" {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.mockResponse.Name, result.Name)
+				assert.Equal(t, tt.mockResponse.Version, result.Version)
+				assert.Equal(t, "agent", result.Kind)
+				assert.Equal(t, time.Duration(tt.mockResponse.DurationMs)*time.Millisecond, result.Duration)
+			} else {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+// TestClient_InstallTool tests the InstallTool method
+func TestClient_InstallTool(t *testing.T) {
+	tests := []struct {
+		name          string
+		mockResponse  *api.InstallComponentResponse
+		mockError     error
+		expectedError string
+	}{
+		{
+			name: "successful tool install",
+			mockResponse: &api.InstallComponentResponse{
+				Success:    true,
+				Name:       "nmap-tool",
+				Version:    "1.0.0",
+				RepoPath:   "/home/user/.gibson/components/tools/nmap-tool",
+				DurationMs: 3000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:          "invalid argument error",
+			mockResponse:  nil,
+			mockError:     status.Error(codes.InvalidArgument, "invalid URL format"),
+			expectedError: "invalid component URL or options: invalid URL format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockDaemonClientForComponents{
+				installResponse: tt.mockResponse,
+				installError:    tt.mockError,
+			}
+
+			client := &Client{
+				daemon: mock,
+			}
+
+			ctx := context.Background()
+			result, err := client.InstallTool(ctx, "https://github.com/zero-day-ai/nmap-tool", InstallOptions{})
+
+			if tt.expectedError == "" {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, "tool", result.Kind)
+			} else {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+// TestClient_InstallPlugin tests the InstallPlugin method
+func TestClient_InstallPlugin(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		installResponse: &api.InstallComponentResponse{
+			Success:    true,
+			Name:       "mitre-plugin",
+			Version:    "2.0.0",
+			RepoPath:   "/home/user/.gibson/components/plugins/mitre-plugin",
+			DurationMs: 2000,
+		},
+		installError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	result, err := client.InstallPlugin(ctx, "https://github.com/zero-day-ai/mitre-plugin", InstallOptions{})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "plugin", result.Kind)
+	assert.Equal(t, "mitre-plugin", result.Name)
+}
+
+// TestClient_UninstallAgent tests the UninstallAgent method
+func TestClient_UninstallAgent(t *testing.T) {
+	tests := []struct {
+		name          string
+		agentName     string
+		force         bool
+		mockResponse  *api.UninstallComponentResponse
+		mockError     error
+		expectedError string
+	}{
+		{
+			name:      "successful uninstall",
+			agentName: "test-agent",
+			force:     false,
+			mockResponse: &api.UninstallComponentResponse{
+				Success: true,
+				Message: "Component uninstalled successfully",
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:      "force uninstall",
+			agentName: "running-agent",
+			force:     true,
+			mockResponse: &api.UninstallComponentResponse{
+				Success: true,
+				Message: "Component force-uninstalled",
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:          "not found error",
+			agentName:     "nonexistent-agent",
+			force:         false,
+			mockResponse:  nil,
+			mockError:     status.Error(codes.NotFound, "component not found"),
+			expectedError: "component 'nonexistent-agent' not found",
+		},
+		{
+			name:          "failed precondition - component running",
+			agentName:     "running-agent",
+			force:         false,
+			mockResponse:  nil,
+			mockError:     status.Error(codes.FailedPrecondition, "component is running"),
+			expectedError: "component 'running-agent' is running (stop it first or use --force)",
+		},
+		{
+			name:          "daemon unavailable",
+			agentName:     "test-agent",
+			force:         false,
+			mockResponse:  nil,
+			mockError:     status.Error(codes.Unavailable, "connection refused"),
+			expectedError: "daemon not responding (is it running?)",
+		},
+		{
+			name:      "uninstall failure response",
+			agentName: "test-agent",
+			force:     false,
+			mockResponse: &api.UninstallComponentResponse{
+				Success: false,
+				Message: "failed to remove files: permission denied",
+			},
+			mockError:     nil,
+			expectedError: "failed to uninstall component: failed to remove files: permission denied",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockDaemonClientForComponents{
+				uninstallResponse: tt.mockResponse,
+				uninstallError:    tt.mockError,
+			}
+
+			client := &Client{
+				daemon: mock,
+			}
+
+			ctx := context.Background()
+			err := client.UninstallAgent(ctx, tt.agentName, tt.force)
+
+			if tt.expectedError == "" {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+// TestClient_UninstallTool tests the UninstallTool method
+func TestClient_UninstallTool(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		uninstallResponse: &api.UninstallComponentResponse{
+			Success: true,
+			Message: "Tool uninstalled",
+		},
+		uninstallError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	err := client.UninstallTool(ctx, "nmap-tool", false)
+
+	assert.NoError(t, err)
+}
+
+// TestClient_UninstallPlugin tests the UninstallPlugin method
+func TestClient_UninstallPlugin(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		uninstallResponse: &api.UninstallComponentResponse{
+			Success: true,
+			Message: "Plugin uninstalled",
+		},
+		uninstallError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	err := client.UninstallPlugin(ctx, "mitre-plugin", false)
+
+	assert.NoError(t, err)
+}
+
+// TestClient_UpdateAgent tests the UpdateAgent method
+func TestClient_UpdateAgent(t *testing.T) {
+	tests := []struct {
+		name          string
+		agentName     string
+		opts          UpdateOptions
+		mockResponse  *api.UpdateComponentResponse
+		mockError     error
+		expectedError string
+	}{
+		{
+			name:      "successful update with changes",
+			agentName: "test-agent",
+			opts:      UpdateOptions{},
+			mockResponse: &api.UpdateComponentResponse{
+				Success:     true,
+				Updated:     true,
+				OldVersion:  "1.0.0",
+				NewVersion:  "1.1.0",
+				BuildOutput: "Build successful",
+				DurationMs:  4000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:      "already up to date",
+			agentName: "test-agent",
+			opts:      UpdateOptions{},
+			mockResponse: &api.UpdateComponentResponse{
+				Success:     true,
+				Updated:     false,
+				OldVersion:  "1.0.0",
+				NewVersion:  "1.0.0",
+				BuildOutput: "",
+				DurationMs:  100,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:      "update with restart",
+			agentName: "test-agent",
+			opts:      UpdateOptions{Restart: true},
+			mockResponse: &api.UpdateComponentResponse{
+				Success:     true,
+				Updated:     true,
+				OldVersion:  "1.0.0",
+				NewVersion:  "1.1.0",
+				BuildOutput: "Build and restart successful",
+				DurationMs:  5000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:          "not found error",
+			agentName:     "nonexistent-agent",
+			opts:          UpdateOptions{},
+			mockResponse:  nil,
+			mockError:     status.Error(codes.NotFound, "component not found"),
+			expectedError: "component 'nonexistent-agent' not found",
+		},
+		{
+			name:          "daemon unavailable",
+			agentName:     "test-agent",
+			opts:          UpdateOptions{},
+			mockResponse:  nil,
+			mockError:     status.Error(codes.Unavailable, "connection refused"),
+			expectedError: "daemon not responding (is it running?)",
+		},
+		{
+			name:      "update failure response",
+			agentName: "test-agent",
+			opts:      UpdateOptions{},
+			mockResponse: &api.UpdateComponentResponse{
+				Success: false,
+				Message: "git pull failed: network error",
+			},
+			mockError:     nil,
+			expectedError: "failed to update component: git pull failed: network error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockDaemonClientForComponents{
+				updateResponse: tt.mockResponse,
+				updateError:    tt.mockError,
+			}
+
+			client := &Client{
+				daemon: mock,
+			}
+
+			ctx := context.Background()
+			result, err := client.UpdateAgent(ctx, tt.agentName, tt.opts)
+
+			if tt.expectedError == "" {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.mockResponse.Updated, result.Updated)
+				assert.Equal(t, tt.mockResponse.OldVersion, result.OldVersion)
+				assert.Equal(t, tt.mockResponse.NewVersion, result.NewVersion)
+				assert.Equal(t, time.Duration(tt.mockResponse.DurationMs)*time.Millisecond, result.Duration)
+			} else {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+// TestClient_UpdateTool tests the UpdateTool method
+func TestClient_UpdateTool(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		updateResponse: &api.UpdateComponentResponse{
+			Success:    true,
+			Updated:    true,
+			OldVersion: "1.0.0",
+			NewVersion: "1.1.0",
+			DurationMs: 3000,
+		},
+		updateError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	result, err := client.UpdateTool(ctx, "nmap-tool", UpdateOptions{})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Updated)
+}
+
+// TestClient_UpdatePlugin tests the UpdatePlugin method
+func TestClient_UpdatePlugin(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		updateResponse: &api.UpdateComponentResponse{
+			Success:    true,
+			Updated:    false,
+			OldVersion: "2.0.0",
+			NewVersion: "2.0.0",
+			DurationMs: 100,
+		},
+		updateError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	result, err := client.UpdatePlugin(ctx, "mitre-plugin", UpdateOptions{})
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.False(t, result.Updated)
+}
+
+// TestClient_BuildAgent tests the BuildAgent method
+func TestClient_BuildAgent(t *testing.T) {
+	tests := []struct {
+		name          string
+		agentName     string
+		mockResponse  *api.BuildComponentResponse
+		mockError     error
+		expectedError string
+	}{
+		{
+			name:      "successful build",
+			agentName: "test-agent",
+			mockResponse: &api.BuildComponentResponse{
+				Success:    true,
+				Stdout:     "go build -o test-agent\nBuild complete",
+				Stderr:     "",
+				DurationMs: 3000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:      "build with warnings",
+			agentName: "test-agent",
+			mockResponse: &api.BuildComponentResponse{
+				Success:    true,
+				Stdout:     "go build -o test-agent\nBuild complete",
+				Stderr:     "warning: unused variable",
+				DurationMs: 3000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:      "build failure",
+			agentName: "test-agent",
+			mockResponse: &api.BuildComponentResponse{
+				Success:    false,
+				Stdout:     "go build -o test-agent",
+				Stderr:     "compilation error: syntax error",
+				DurationMs: 1000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:          "not found error",
+			agentName:     "nonexistent-agent",
+			mockResponse:  nil,
+			mockError:     status.Error(codes.NotFound, "component not found"),
+			expectedError: "component 'nonexistent-agent' not found",
+		},
+		{
+			name:          "daemon unavailable",
+			agentName:     "test-agent",
+			mockResponse:  nil,
+			mockError:     status.Error(codes.Unavailable, "connection refused"),
+			expectedError: "daemon not responding (is it running?)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockDaemonClientForComponents{
+				buildResponse: tt.mockResponse,
+				buildError:    tt.mockError,
+			}
+
+			client := &Client{
+				daemon: mock,
+			}
+
+			ctx := context.Background()
+			result, err := client.BuildAgent(ctx, tt.agentName)
+
+			if tt.expectedError == "" {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.mockResponse.Success, result.Success)
+				assert.Equal(t, tt.mockResponse.Stdout, result.Stdout)
+				assert.Equal(t, tt.mockResponse.Stderr, result.Stderr)
+				assert.Equal(t, time.Duration(tt.mockResponse.DurationMs)*time.Millisecond, result.Duration)
+			} else {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+// TestClient_BuildTool tests the BuildTool method
+func TestClient_BuildTool(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		buildResponse: &api.BuildComponentResponse{
+			Success:    true,
+			Stdout:     "Build successful",
+			Stderr:     "",
+			DurationMs: 2000,
+		},
+		buildError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	result, err := client.BuildTool(ctx, "nmap-tool")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+}
+
+// TestClient_BuildPlugin tests the BuildPlugin method
+func TestClient_BuildPlugin(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		buildResponse: &api.BuildComponentResponse{
+			Success:    true,
+			Stdout:     "npm run build\nBuild complete",
+			Stderr:     "",
+			DurationMs: 5000,
+		},
+		buildError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	result, err := client.BuildPlugin(ctx, "mitre-plugin")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+}
+
+// TestClient_ShowAgent tests the ShowAgent method
+func TestClient_ShowAgent(t *testing.T) {
+	tests := []struct {
+		name          string
+		agentName     string
+		mockResponse  *api.ShowComponentResponse
+		mockError     error
+		expectedError string
+	}{
+		{
+			name:      "successful show with running agent",
+			agentName: "test-agent",
+			mockResponse: &api.ShowComponentResponse{
+				Success:      true,
+				Name:         "test-agent",
+				Version:      "1.0.0",
+				Kind:         "agent",
+				Status:       "running",
+				Source:       "https://github.com/zero-day-ai/test-agent",
+				RepoPath:     "/home/user/.gibson/components/agents/test-agent",
+				BinPath:      "/home/user/.gibson/components/agents/test-agent/test-agent",
+				Port:         50100,
+				Pid:          12345,
+				CreatedAt:    1640000000,
+				UpdatedAt:    1640001000,
+				StartedAt:    1640001000,
+				StoppedAt:    0,
+				ManifestInfo: `{"name":"test-agent","version":"1.0.0"}`,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:      "show stopped agent",
+			agentName: "stopped-agent",
+			mockResponse: &api.ShowComponentResponse{
+				Success:    true,
+				Name:       "stopped-agent",
+				Version:    "1.0.0",
+				Kind:       "agent",
+				Status:     "stopped",
+				Source:     "https://github.com/zero-day-ai/stopped-agent",
+				RepoPath:   "/home/user/.gibson/components/agents/stopped-agent",
+				BinPath:    "/home/user/.gibson/components/agents/stopped-agent/stopped-agent",
+				Port:       0,
+				Pid:        0,
+				CreatedAt:  1640000000,
+				UpdatedAt:  1640001000,
+				StartedAt:  1640001000,
+				StoppedAt:  1640002000,
+			},
+			mockError:     nil,
+			expectedError: "",
+		},
+		{
+			name:          "not found error",
+			agentName:     "nonexistent-agent",
+			mockResponse:  nil,
+			mockError:     status.Error(codes.NotFound, "component not found"),
+			expectedError: "component 'nonexistent-agent' not found",
+		},
+		{
+			name:          "daemon unavailable",
+			agentName:     "test-agent",
+			mockResponse:  nil,
+			mockError:     status.Error(codes.Unavailable, "connection refused"),
+			expectedError: "daemon not responding (is it running?)",
+		},
+		{
+			name:      "show failure response",
+			agentName: "test-agent",
+			mockResponse: &api.ShowComponentResponse{
+				Success: false,
+				Message: "failed to read component metadata",
+			},
+			mockError:     nil,
+			expectedError: "failed to get component info: failed to read component metadata",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockDaemonClientForComponents{
+				showResponse: tt.mockResponse,
+				showError:    tt.mockError,
+			}
+
+			client := &Client{
+				daemon: mock,
+			}
+
+			ctx := context.Background()
+			result, err := client.ShowAgent(ctx, tt.agentName)
+
+			if tt.expectedError == "" {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.mockResponse.Name, result.Name)
+				assert.Equal(t, tt.mockResponse.Version, result.Version)
+				assert.Equal(t, tt.mockResponse.Kind, result.Kind)
+				assert.Equal(t, tt.mockResponse.Status, result.Status)
+				assert.Equal(t, int(tt.mockResponse.Port), result.Port)
+				assert.Equal(t, int(tt.mockResponse.Pid), result.PID)
+				assert.Equal(t, time.Unix(tt.mockResponse.CreatedAt, 0), result.CreatedAt)
+				assert.Equal(t, time.Unix(tt.mockResponse.UpdatedAt, 0), result.UpdatedAt)
+
+				if tt.mockResponse.StartedAt > 0 {
+					assert.NotNil(t, result.StartedAt)
+					assert.Equal(t, time.Unix(tt.mockResponse.StartedAt, 0), *result.StartedAt)
+				}
+				if tt.mockResponse.StoppedAt > 0 {
+					assert.NotNil(t, result.StoppedAt)
+					assert.Equal(t, time.Unix(tt.mockResponse.StoppedAt, 0), *result.StoppedAt)
+				}
+			} else {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			}
+		})
+	}
+}
+
+// TestClient_ShowTool tests the ShowTool method
+func TestClient_ShowTool(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		showResponse: &api.ShowComponentResponse{
+			Success:   true,
+			Name:      "nmap-tool",
+			Version:   "1.0.0",
+			Kind:      "tool",
+			Status:    "ready",
+			Source:    "https://github.com/zero-day-ai/nmap-tool",
+			RepoPath:  "/home/user/.gibson/components/tools/nmap-tool",
+			CreatedAt: 1640000000,
+			UpdatedAt: 1640001000,
+		},
+		showError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	result, err := client.ShowTool(ctx, "nmap-tool")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "tool", result.Kind)
+}
+
+// TestClient_ShowPlugin tests the ShowPlugin method
+func TestClient_ShowPlugin(t *testing.T) {
+	mock := &mockDaemonClientForComponents{
+		showResponse: &api.ShowComponentResponse{
+			Success:   true,
+			Name:      "mitre-plugin",
+			Version:   "2.0.0",
+			Kind:      "plugin",
+			Status:    "running",
+			Source:    "https://github.com/zero-day-ai/mitre-plugin",
+			RepoPath:  "/home/user/.gibson/components/plugins/mitre-plugin",
+			Port:      50300,
+			Pid:       54321,
+			CreatedAt: 1640000000,
+			UpdatedAt: 1640001000,
+			StartedAt: 1640001000,
+		},
+		showError: nil,
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	result, err := client.ShowPlugin(ctx, "mitre-plugin")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.Equal(t, "plugin", result.Kind)
+	assert.Equal(t, int(50300), result.Port)
+}
+
+// mockLogsClient extends the mock to handle GetComponentLogs
+type mockLogsClient struct {
+	mockDaemonClientForComponents
+	logsError error
+}
+
+func (m *mockLogsClient) GetComponentLogs(ctx context.Context, req *api.GetComponentLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[api.LogEntry], error) {
+	return nil, m.logsError
+}
+
+// TestClient_GetAgentLogs tests the GetAgentLogs method
+func TestClient_GetAgentLogs(t *testing.T) {
+	// Note: GetComponentLogs returns a streaming channel, so we primarily test error cases
+	// Full streaming tests would require a more complex mock with stream implementation
+	tests := []struct {
+		name          string
+		agentName     string
+		opts          LogsOptions
+		mockError     error
+		expectedError string
+	}{
+		{
+			name:          "not found error",
+			agentName:     "nonexistent-agent",
+			opts:          LogsOptions{Follow: false, Lines: 50},
+			mockError:     status.Error(codes.NotFound, "component not found"),
+			expectedError: "component 'nonexistent-agent' not found or no logs available",
+		},
+		{
+			name:          "daemon unavailable",
+			agentName:     "test-agent",
+			opts:          LogsOptions{Follow: false, Lines: 50},
+			mockError:     status.Error(codes.Unavailable, "connection refused"),
+			expectedError: "daemon not responding (is it running?)",
+		},
+		{
+			name:          "invalid argument error",
+			agentName:     "test-agent",
+			opts:          LogsOptions{Follow: false, Lines: -1},
+			mockError:     status.Error(codes.InvalidArgument, "invalid lines parameter"),
+			expectedError: "invalid component kind or name: invalid lines parameter",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockLogsClient{
+				logsError: tt.mockError,
+			}
+
+			client := &Client{
+				daemon: mock,
+			}
+
+			ctx := context.Background()
+			_, err := client.GetAgentLogs(ctx, tt.agentName, tt.opts)
+
+			assert.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedError)
+		})
+	}
+}
+
+// TestClient_GetToolLogs tests the GetToolLogs method
+func TestClient_GetToolLogs(t *testing.T) {
+	mock := &mockLogsClient{
+		logsError: status.Error(codes.NotFound, "tool not found"),
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	_, err := client.GetToolLogs(ctx, "nmap-tool", LogsOptions{Lines: 100})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+// TestClient_GetPluginLogs tests the GetPluginLogs method
+func TestClient_GetPluginLogs(t *testing.T) {
+	mock := &mockLogsClient{
+		logsError: status.Error(codes.Unavailable, "daemon not available"),
+	}
+
+	client := &Client{
+		daemon: mock,
+	}
+
+	ctx := context.Background()
+	_, err := client.GetPluginLogs(ctx, "mitre-plugin", LogsOptions{Follow: true})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "daemon not responding")
 }

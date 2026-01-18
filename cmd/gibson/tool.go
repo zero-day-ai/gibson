@@ -20,14 +20,6 @@ var toolCmd = &cobra.Command{
 	Long:  `Install, manage, and invoke tools for agent capabilities`,
 }
 
-var toolTestCmd = &cobra.Command{
-	Use:   "test NAME",
-	Short: "Run a tool's test suite",
-	Long:  `Execute the test suite for a tool`,
-	Args:  cobra.ExactArgs(1),
-	RunE:  runToolTest,
-}
-
 var toolInvokeCmd = &cobra.Command{
 	Use:   "invoke NAME",
 	Short: "Invoke a tool with JSON input",
@@ -80,27 +72,8 @@ func init() {
 	toolInvokeCmd.Flags().Int64Var(&toolInvokeTimeout, "timeout", 0, "Execution timeout in milliseconds (0 = daemon default)")
 
 	// Add tool-specific subcommands
-	toolCmd.AddCommand(toolTestCmd)
 	toolCmd.AddCommand(toolInvokeCmd)
 	toolCmd.AddCommand(toolAvailableCmd)
-}
-
-// runToolTest executes the tool test command
-// NOTE: This command is deprecated as component data is now stored in etcd
-func runToolTest(cmd *cobra.Command, args []string) error {
-	toolName := args[0]
-
-	cmd.Printf("Running tests for tool '%s'...\n", toolName)
-
-	// Component data is now stored in etcd, not SQLite
-	// This legacy command is no longer supported
-	_, _, err := getComponentDAO()
-	if err != nil {
-		return fmt.Errorf("tool test command is no longer supported: %w", err)
-	}
-
-	// Unreachable
-	return nil
 }
 
 // runToolInvoke executes the tool invoke command via the daemon's Tool Executor Service

@@ -1070,6 +1070,446 @@ func (c *Client) stopComponent(ctx context.Context, kind, name string, force boo
 	}, nil
 }
 
+// InstallOptions contains options for installing a component.
+type InstallOptions struct {
+	Branch    string // Git branch to install
+	Tag       string // Git tag to install
+	Force     bool   // Force reinstall if exists
+	SkipBuild bool   // Skip building after clone
+	Verbose   bool   // Stream build output
+}
+
+// InstallResult represents the result of installing a component.
+type InstallResult struct {
+	Name        string        // Component name
+	Version     string        // Component version
+	Kind        string        // Component kind
+	RepoPath    string        // Local repository path
+	BinPath     string        // Binary path (if built)
+	BuildOutput string        // Build stdout (if verbose)
+	Duration    time.Duration // Total install time
+}
+
+// InstallAgent installs an agent from a Git repository.
+func (c *Client) InstallAgent(ctx context.Context, url string, opts InstallOptions) (*InstallResult, error) {
+	return c.installComponent(ctx, "agent", url, opts)
+}
+
+// InstallTool installs a tool from a Git repository.
+func (c *Client) InstallTool(ctx context.Context, url string, opts InstallOptions) (*InstallResult, error) {
+	return c.installComponent(ctx, "tool", url, opts)
+}
+
+// InstallPlugin installs a plugin from a Git repository.
+func (c *Client) InstallPlugin(ctx context.Context, url string, opts InstallOptions) (*InstallResult, error) {
+	return c.installComponent(ctx, "plugin", url, opts)
+}
+
+// installComponent is the internal method that installs a component via the daemon.
+func (c *Client) installComponent(ctx context.Context, kind, url string, opts InstallOptions) (*InstallResult, error) {
+	resp, err := c.daemon.InstallComponent(ctx, &api.InstallComponentRequest{
+		Kind:      kind,
+		Url:       url,
+		Branch:    opts.Branch,
+		Tag:       opts.Tag,
+		Force:     opts.Force,
+		SkipBuild: opts.SkipBuild,
+		Verbose:   opts.Verbose,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.AlreadyExists:
+				return nil, fmt.Errorf("component already exists (use --force to reinstall)")
+			case codes.InvalidArgument:
+				return nil, fmt.Errorf("invalid component URL or options: %s", st.Message())
+			case codes.NotFound:
+				return nil, fmt.Errorf("repository not found: %s", url)
+			default:
+				return nil, fmt.Errorf("failed to install component: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to install component: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("failed to install component: %s", resp.Message)
+	}
+
+	return &InstallResult{
+		Name:        resp.Name,
+		Version:     resp.Version,
+		Kind:        kind,
+		RepoPath:    resp.RepoPath,
+		BinPath:     resp.BinPath,
+		BuildOutput: resp.BuildOutput,
+		Duration:    time.Duration(resp.DurationMs) * time.Millisecond,
+	}, nil
+}
+
+// UninstallAgent uninstalls an agent by name.
+func (c *Client) UninstallAgent(ctx context.Context, name string, force bool) error {
+	return c.uninstallComponent(ctx, "agent", name, force)
+}
+
+// UninstallTool uninstalls a tool by name.
+func (c *Client) UninstallTool(ctx context.Context, name string, force bool) error {
+	return c.uninstallComponent(ctx, "tool", name, force)
+}
+
+// UninstallPlugin uninstalls a plugin by name.
+func (c *Client) UninstallPlugin(ctx context.Context, name string, force bool) error {
+	return c.uninstallComponent(ctx, "plugin", name, force)
+}
+
+// uninstallComponent is the internal method that uninstalls a component via the daemon.
+func (c *Client) uninstallComponent(ctx context.Context, kind, name string, force bool) error {
+	resp, err := c.daemon.UninstallComponent(ctx, &api.UninstallComponentRequest{
+		Kind:  kind,
+		Name:  name,
+		Force: force,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return fmt.Errorf("component '%s' not found", name)
+			case codes.FailedPrecondition:
+				return fmt.Errorf("component '%s' is running (stop it first or use --force)", name)
+			case codes.InvalidArgument:
+				return fmt.Errorf("invalid component kind or name: %s", st.Message())
+			default:
+				return fmt.Errorf("failed to uninstall component: %s", st.Message())
+			}
+		}
+		return fmt.Errorf("failed to uninstall component: %w", err)
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("failed to uninstall component: %s", resp.Message)
+	}
+
+	return nil
+}
+
+// UpdateOptions contains options for updating a component.
+type UpdateOptions struct {
+	Restart   bool // Restart after update if running
+	SkipBuild bool // Skip rebuild
+	Verbose   bool // Stream build output
+}
+
+// UpdateResult represents the result of updating a component.
+type UpdateResult struct {
+	Updated     bool          // True if updated, false if already latest
+	OldVersion  string        // Previous version
+	NewVersion  string        // New version
+	BuildOutput string        // Build stdout (if verbose)
+	Duration    time.Duration // Total update time
+}
+
+// UpdateAgent updates an agent to the latest version.
+func (c *Client) UpdateAgent(ctx context.Context, name string, opts UpdateOptions) (*UpdateResult, error) {
+	return c.updateComponent(ctx, "agent", name, opts)
+}
+
+// UpdateTool updates a tool to the latest version.
+func (c *Client) UpdateTool(ctx context.Context, name string, opts UpdateOptions) (*UpdateResult, error) {
+	return c.updateComponent(ctx, "tool", name, opts)
+}
+
+// UpdatePlugin updates a plugin to the latest version.
+func (c *Client) UpdatePlugin(ctx context.Context, name string, opts UpdateOptions) (*UpdateResult, error) {
+	return c.updateComponent(ctx, "plugin", name, opts)
+}
+
+// updateComponent is the internal method that updates a component via the daemon.
+func (c *Client) updateComponent(ctx context.Context, kind, name string, opts UpdateOptions) (*UpdateResult, error) {
+	resp, err := c.daemon.UpdateComponent(ctx, &api.UpdateComponentRequest{
+		Kind:      kind,
+		Name:      name,
+		Restart:   opts.Restart,
+		SkipBuild: opts.SkipBuild,
+		Verbose:   opts.Verbose,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return nil, fmt.Errorf("component '%s' not found", name)
+			case codes.InvalidArgument:
+				return nil, fmt.Errorf("invalid component kind or name: %s", st.Message())
+			default:
+				return nil, fmt.Errorf("failed to update component: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to update component: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("failed to update component: %s", resp.Message)
+	}
+
+	return &UpdateResult{
+		Updated:     resp.Updated,
+		OldVersion:  resp.OldVersion,
+		NewVersion:  resp.NewVersion,
+		BuildOutput: resp.BuildOutput,
+		Duration:    time.Duration(resp.DurationMs) * time.Millisecond,
+	}, nil
+}
+
+// BuildResult represents the result of building a component.
+type BuildResult struct {
+	Success  bool          // Build success
+	Stdout   string        // Build stdout
+	Stderr   string        // Build stderr
+	Duration time.Duration // Build time
+}
+
+// BuildAgent rebuilds an agent from source.
+func (c *Client) BuildAgent(ctx context.Context, name string) (*BuildResult, error) {
+	return c.buildComponent(ctx, "agent", name)
+}
+
+// BuildTool rebuilds a tool from source.
+func (c *Client) BuildTool(ctx context.Context, name string) (*BuildResult, error) {
+	return c.buildComponent(ctx, "tool", name)
+}
+
+// BuildPlugin rebuilds a plugin from source.
+func (c *Client) BuildPlugin(ctx context.Context, name string) (*BuildResult, error) {
+	return c.buildComponent(ctx, "plugin", name)
+}
+
+// buildComponent is the internal method that builds a component via the daemon.
+func (c *Client) buildComponent(ctx context.Context, kind, name string) (*BuildResult, error) {
+	resp, err := c.daemon.BuildComponent(ctx, &api.BuildComponentRequest{
+		Kind: kind,
+		Name: name,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return nil, fmt.Errorf("component '%s' not found", name)
+			case codes.InvalidArgument:
+				return nil, fmt.Errorf("invalid component kind or name: %s", st.Message())
+			default:
+				return nil, fmt.Errorf("failed to build component: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to build component: %w", err)
+	}
+
+	return &BuildResult{
+		Success:  resp.Success,
+		Stdout:   resp.Stdout,
+		Stderr:   resp.Stderr,
+		Duration: time.Duration(resp.DurationMs) * time.Millisecond,
+	}, nil
+}
+
+// ComponentInfo represents detailed information about a component.
+type ComponentInfo struct {
+	Name        string
+	Version     string
+	Kind        string
+	Status      string
+	Source      string
+	RepoPath    string
+	BinPath     string
+	Port        int
+	PID         int
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	StartedAt   *time.Time
+	StoppedAt   *time.Time
+	Manifest    string // JSON-encoded manifest info
+}
+
+// ShowAgent retrieves detailed information about an agent.
+func (c *Client) ShowAgent(ctx context.Context, name string) (*ComponentInfo, error) {
+	return c.showComponent(ctx, "agent", name)
+}
+
+// ShowTool retrieves detailed information about a tool.
+func (c *Client) ShowTool(ctx context.Context, name string) (*ComponentInfo, error) {
+	return c.showComponent(ctx, "tool", name)
+}
+
+// ShowPlugin retrieves detailed information about a plugin.
+func (c *Client) ShowPlugin(ctx context.Context, name string) (*ComponentInfo, error) {
+	return c.showComponent(ctx, "plugin", name)
+}
+
+// showComponent is the internal method that retrieves component details via the daemon.
+func (c *Client) showComponent(ctx context.Context, kind, name string) (*ComponentInfo, error) {
+	resp, err := c.daemon.ShowComponent(ctx, &api.ShowComponentRequest{
+		Kind: kind,
+		Name: name,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return nil, fmt.Errorf("component '%s' not found", name)
+			case codes.InvalidArgument:
+				return nil, fmt.Errorf("invalid component kind or name: %s", st.Message())
+			default:
+				return nil, fmt.Errorf("failed to get component info: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to get component info: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("failed to get component info: %s", resp.Message)
+	}
+
+	info := &ComponentInfo{
+		Name:      resp.Name,
+		Version:   resp.Version,
+		Kind:      resp.Kind,
+		Status:    resp.Status,
+		Source:    resp.Source,
+		RepoPath:  resp.RepoPath,
+		BinPath:   resp.BinPath,
+		Port:      int(resp.Port),
+		PID:       int(resp.Pid),
+		CreatedAt: time.Unix(resp.CreatedAt, 0),
+		UpdatedAt: time.Unix(resp.UpdatedAt, 0),
+		Manifest:  resp.ManifestInfo,
+	}
+
+	// Handle optional timestamps
+	if resp.StartedAt > 0 {
+		t := time.Unix(resp.StartedAt, 0)
+		info.StartedAt = &t
+	}
+	if resp.StoppedAt > 0 {
+		t := time.Unix(resp.StoppedAt, 0)
+		info.StoppedAt = &t
+	}
+
+	return info, nil
+}
+
+// LogsOptions contains options for retrieving component logs.
+type LogsOptions struct {
+	Follow bool // Stream logs continuously
+	Lines  int  // Number of lines to return (default 50)
+}
+
+// LogEntry represents a single log entry from a component.
+type LogEntry struct {
+	Timestamp time.Time
+	Level     string
+	Message   string
+	Fields    map[string]string
+}
+
+// GetAgentLogs retrieves log entries for an agent.
+func (c *Client) GetAgentLogs(ctx context.Context, name string, opts LogsOptions) (<-chan LogEntry, error) {
+	return c.getComponentLogs(ctx, "agent", name, opts)
+}
+
+// GetToolLogs retrieves log entries for a tool.
+func (c *Client) GetToolLogs(ctx context.Context, name string, opts LogsOptions) (<-chan LogEntry, error) {
+	return c.getComponentLogs(ctx, "tool", name, opts)
+}
+
+// GetPluginLogs retrieves log entries for a plugin.
+func (c *Client) GetPluginLogs(ctx context.Context, name string, opts LogsOptions) (<-chan LogEntry, error) {
+	return c.getComponentLogs(ctx, "plugin", name, opts)
+}
+
+// getComponentLogs is the internal method that retrieves component logs via the daemon.
+func (c *Client) getComponentLogs(ctx context.Context, kind, name string, opts LogsOptions) (<-chan LogEntry, error) {
+	// Start streaming RPC
+	stream, err := c.daemon.GetComponentLogs(ctx, &api.GetComponentLogsRequest{
+		Kind:   kind,
+		Name:   name,
+		Follow: opts.Follow,
+		Lines:  int32(opts.Lines),
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.NotFound:
+				return nil, fmt.Errorf("component '%s' not found or no logs available", name)
+			case codes.InvalidArgument:
+				return nil, fmt.Errorf("invalid component kind or name: %s", st.Message())
+			default:
+				return nil, fmt.Errorf("failed to get component logs: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to get component logs: %w", err)
+	}
+
+	// Create log channel and spawn goroutine to read from stream
+	logChan := make(chan LogEntry, 50) // Buffer for high-frequency logs
+	go func() {
+		defer close(logChan)
+		for {
+			entry, err := stream.Recv()
+			if err == io.EOF {
+				// Stream completed normally
+				return
+			}
+			if err != nil {
+				// Check if context was cancelled
+				if ctx.Err() != nil {
+					return
+				}
+				// Stream error - exit
+				return
+			}
+
+			// Parse fields JSON if present
+			var fields map[string]string
+			if entry.Fields != "" {
+				if err := json.Unmarshal([]byte(entry.Fields), &fields); err != nil {
+					// If fields is not valid JSON, create a single field
+					fields = map[string]string{"raw": entry.Fields}
+				}
+			}
+
+			// Convert and send log entry
+			select {
+			case logChan <- LogEntry{
+				Timestamp: time.Unix(entry.Timestamp, 0),
+				Level:     entry.Level,
+				Message:   entry.Message,
+				Fields:    fields,
+			}:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return logChan, nil
+}
+
 // PauseMission pauses a running mission at the next clean checkpoint.
 //
 // This method triggers a graceful pause of the specified mission. The mission
@@ -1498,4 +1938,109 @@ func (c *Client) InvokeTool(ctx context.Context, name string, input map[string]a
 	}
 
 	return output, nil
+}
+
+// Mission installation and management types
+
+// MissionInstallOptions contains options for installing a mission
+type MissionInstallOptions struct {
+	Branch  string        // Git branch to install
+	Tag     string        // Git tag to install
+	Force   bool          // Force reinstall if exists
+	Yes     bool          // Auto-confirm dependency installation
+	Timeout time.Duration // Installation timeout
+}
+
+// MissionInstallResult represents the result of a mission installation
+type MissionInstallResult struct {
+	Name         string                 // Mission name
+	Version      string                 // Mission version
+	Duration     time.Duration          // Installation duration
+	Dependencies []MissionDependencyInstallResult // Installed dependencies
+}
+
+// MissionDependencyInstallResult represents an installed dependency
+type MissionDependencyInstallResult struct {
+	Type             string // agent, tool, or plugin
+	Name             string // Dependency name
+	AlreadyInstalled bool   // Was it already installed
+}
+
+// MissionUpdateOptions contains options for updating a mission
+type MissionUpdateOptions struct {
+	// Currently empty but here for future expansion
+}
+
+// MissionUpdateResult represents the result of a mission update
+type MissionUpdateResult struct {
+	Name       string        // Mission name
+	Updated    bool          // Was the mission actually updated
+	OldVersion string        // Version before update
+	NewVersion string        // Version after update
+	Duration   time.Duration // Update duration
+}
+
+// MissionDefinition represents an installed mission definition
+type MissionDefinition struct {
+	Name         string                   // Mission name
+	Version      string                   // Mission version
+	Description  string                   // Mission description
+	Source       string                   // Git URL source
+	InstalledAt  time.Time                // Installation timestamp
+	Dependencies *MissionDependencyList   // Required dependencies
+	Nodes        map[string]*MissionNode  // Mission nodes
+	Edges        []MissionEdge            // Mission edges
+	EntryPoints  []string                 // Entry point node IDs
+	ExitPoints   []string                 // Exit point node IDs
+}
+
+// MissionDependencyList contains lists of required dependencies
+type MissionDependencyList struct {
+	Agents  []string
+	Tools   []string
+	Plugins []string
+}
+
+// MissionNode represents a node in a mission DAG
+type MissionNode struct {
+	ID   string
+	Type string
+	Name string
+}
+
+// MissionEdge represents an edge in a mission DAG
+type MissionEdge struct {
+	From string
+	To   string
+}
+
+// InstallMission installs a mission from a git repository URL
+func (c *Client) InstallMission(ctx context.Context, url string, opts MissionInstallOptions) (*MissionInstallResult, error) {
+	// TODO: This will be implemented when the gRPC methods are added (task 7.1/7.2)
+	// For now, return an error indicating the feature is not yet available
+	return nil, fmt.Errorf("mission installation via daemon not yet implemented (requires gRPC methods from task 7.1/7.2)")
+}
+
+// UninstallMission uninstalls an installed mission
+func (c *Client) UninstallMission(ctx context.Context, name string, force bool) error {
+	// TODO: This will be implemented when the gRPC methods are added (task 7.1/7.2)
+	return fmt.Errorf("mission uninstallation via daemon not yet implemented (requires gRPC methods from task 7.1/7.2)")
+}
+
+// UpdateMission updates an installed mission to the latest version
+func (c *Client) UpdateMission(ctx context.Context, name string, opts MissionUpdateOptions) (*MissionUpdateResult, error) {
+	// TODO: This will be implemented when the gRPC methods are added (task 7.1/7.2)
+	return nil, fmt.Errorf("mission update via daemon not yet implemented (requires gRPC methods from task 7.1/7.2)")
+}
+
+// GetMissionDefinition retrieves an installed mission definition
+func (c *Client) GetMissionDefinition(ctx context.Context, name string) (*MissionDefinition, error) {
+	// TODO: This will be implemented when the gRPC methods are added (task 7.1/7.2)
+	return nil, fmt.Errorf("mission definition retrieval via daemon not yet implemented (requires gRPC methods from task 7.1/7.2)")
+}
+
+// ListMissionDefinitions lists all installed mission definitions
+func (c *Client) ListMissionDefinitions(ctx context.Context) ([]*MissionDefinition, error) {
+	// TODO: This will be implemented when the gRPC methods are added (task 7.1/7.2)
+	return nil, fmt.Errorf("mission definition listing via daemon not yet implemented (requires gRPC methods from task 7.1/7.2)")
 }

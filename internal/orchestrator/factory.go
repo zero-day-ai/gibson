@@ -53,8 +53,8 @@ type SOTAOrchestratorConfig struct {
 	// DecisionLogWriter for external observability (optional)
 	DecisionLogWriter DecisionLogWriter
 
-	// GraphLoader for storing workflows in Neo4j (optional)
-	GraphLoader WorkflowGraphLoader
+	// GraphLoader for storing mission definitions in Neo4j (optional)
+	GraphLoader MissionGraphLoader
 
 	// Registry for component discovery and validation (optional)
 	Registry registry.ComponentDiscovery

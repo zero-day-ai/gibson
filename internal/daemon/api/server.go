@@ -94,6 +94,36 @@ type DaemonInterface interface {
 
 	// GetAvailableTools returns all available tools from the Tool Executor Service
 	GetAvailableTools(ctx context.Context) ([]AvailableToolData, error)
+
+	// InstallComponent installs a component from a git repository
+	InstallComponent(ctx context.Context, kind string, url string, branch string, tag string, force bool, skipBuild bool, verbose bool) (InstallComponentResult, error)
+
+	// UninstallComponent uninstalls a component by kind and name
+	UninstallComponent(ctx context.Context, kind string, name string, force bool) error
+
+	// UpdateComponent updates a component to the latest version
+	UpdateComponent(ctx context.Context, kind string, name string, restart bool, skipBuild bool, verbose bool) (UpdateComponentResult, error)
+
+	// BuildComponent rebuilds a component from source
+	BuildComponent(ctx context.Context, kind string, name string) (BuildComponentResult, error)
+
+	// ShowComponent returns detailed information about a component
+	ShowComponent(ctx context.Context, kind string, name string) (ComponentInfoInternal, error)
+
+	// GetComponentLogs streams log entries for a component
+	GetComponentLogs(ctx context.Context, kind string, name string, follow bool, lines int) (<-chan LogEntryData, error)
+
+	// InstallMission installs a mission from a git repository
+	InstallMission(ctx context.Context, url string, branch string, tag string, force bool, yes bool, timeoutMs int64) (InstallMissionResult, error)
+
+	// UninstallMission removes an installed mission
+	UninstallMission(ctx context.Context, name string, force bool) error
+
+	// ListMissionDefinitions returns all installed mission definitions
+	ListMissionDefinitions(ctx context.Context, limit int, offset int) ([]MissionDefinitionData, int, error)
+
+	// UpdateMission updates an installed mission to the latest version
+	UpdateMission(ctx context.Context, name string, timeoutMs int64) (UpdateMissionResult, error)
 }
 
 // DaemonStatus represents daemon status information.
@@ -259,6 +289,55 @@ type StopComponentResult struct {
 	TotalCount   int
 }
 
+// InstallComponentResult represents the result of installing a component.
+type InstallComponentResult struct {
+	Name        string
+	Version     string
+	RepoPath    string
+	BinPath     string
+	BuildOutput string
+	DurationMs  int64
+}
+
+// UpdateComponentResult represents the result of updating a component.
+type UpdateComponentResult struct {
+	Updated     bool
+	OldVersion  string
+	NewVersion  string
+	BuildOutput string
+	DurationMs  int64
+}
+
+// BuildComponentResult represents the result of building a component.
+type BuildComponentResult struct {
+	Success    bool
+	Stdout     string
+	Stderr     string
+	DurationMs int64
+}
+
+// ComponentInfoInternal represents detailed component information.
+type ComponentInfoInternal struct {
+	Name      string
+	Version   string
+	Kind      string
+	Status    string
+	Source    string
+	RepoPath  string
+	BinPath   string
+	Port      int
+	PID       int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// LogEntryData represents a single log entry.
+type LogEntryData struct {
+	Timestamp int64
+	Level     string
+	Message   string
+}
+
 // MissionRunData represents a single execution instance of a mission.
 type MissionRunData struct {
 	MissionID     string
@@ -308,6 +387,41 @@ type ToolMetricsData struct {
 	FailedCalls    int64
 	AvgDurationMs  int64
 	LastExecutedAt int64
+}
+
+// InstallMissionResult represents the result of installing a mission.
+type InstallMissionResult struct {
+	Name         string
+	Version      string
+	Path         string
+	Dependencies []InstalledDependencyData
+	DurationMs   int64
+}
+
+// InstalledDependencyData represents a dependency that was installed.
+type InstalledDependencyData struct {
+	Type             string
+	Name             string
+	AlreadyInstalled bool
+}
+
+// UpdateMissionResult represents the result of updating a mission.
+type UpdateMissionResult struct {
+	Updated    bool
+	OldVersion string
+	NewVersion string
+	DurationMs int64
+}
+
+// MissionDefinitionData represents an installed mission definition.
+type MissionDefinitionData struct {
+	Name        string
+	Version     string
+	Description string
+	Source      string
+	InstalledAt time.Time
+	UpdatedAt   time.Time
+	NodeCount   int
 }
 
 // NewDaemonServer creates a new gRPC server that exposes daemon functionality.
@@ -1240,5 +1354,516 @@ func (s *DaemonServer) GetAvailableTools(ctx context.Context, req *GetAvailableT
 
 	return &GetAvailableToolsResponse{
 		Tools: protoTools,
+	}, nil
+}
+
+// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
+func (s *DaemonServer) InstallComponent(ctx context.Context, req *InstallComponentRequest) (*InstallComponentResponse, error) {
+	s.logger.Info("install component request received",
+		"kind", req.Kind,
+		"url", req.Url,
+		"branch", req.Branch,
+		"tag", req.Tag,
+		"force", req.Force,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Url == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component URL is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.InstallComponent(ctx, req.Kind, req.Url, req.Branch, req.Tag, req.Force, req.SkipBuild, req.Verbose)
+	if err != nil {
+		s.logger.Error("failed to install component", "error", err, "kind", req.Kind, "url", req.Url)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "already installed") {
+			return nil, status_grpc.Errorf(codes.AlreadyExists, "%v", err)
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "clone failed") {
+			return nil, status_grpc.Errorf(codes.NotFound, "%v", err)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to install component: %v", err)
+	}
+
+	s.logger.Info("component installed successfully",
+		"kind", req.Kind,
+		"name", result.Name,
+		"version", result.Version,
+	)
+
+	return &InstallComponentResponse{
+		Success:     true,
+		Name:        result.Name,
+		Version:     result.Version,
+		RepoPath:    result.RepoPath,
+		BinPath:     result.BinPath,
+		BuildOutput: result.BuildOutput,
+		DurationMs:  result.DurationMs,
+		Message:     fmt.Sprintf("Component '%s' installed successfully", result.Name),
+	}, nil
+}
+
+// UninstallComponent removes a component (agent, tool, or plugin) by kind and name.
+func (s *DaemonServer) UninstallComponent(ctx context.Context, req *UninstallComponentRequest) (*UninstallComponentResponse, error) {
+	s.logger.Info("uninstall component request received",
+		"kind", req.Kind,
+		"name", req.Name,
+		"force", req.Force,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component name is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	err := s.daemon.UninstallComponent(ctx, req.Kind, req.Name, req.Force)
+	if err != nil {
+		s.logger.Error("failed to uninstall component", "error", err, "kind", req.Kind, "name", req.Name)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "component '%s' not found", req.Name)
+		}
+		if strings.Contains(err.Error(), "running") && !req.Force {
+			return nil, status_grpc.Errorf(codes.FailedPrecondition, "component '%s' is running. Stop it first or use --force", req.Name)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to uninstall component: %v", err)
+	}
+
+	s.logger.Info("component uninstalled successfully",
+		"kind", req.Kind,
+		"name", req.Name,
+	)
+
+	return &UninstallComponentResponse{
+		Success: true,
+		Message: fmt.Sprintf("Component '%s' uninstalled successfully", req.Name),
+	}, nil
+}
+
+// UpdateComponent updates a component (agent, tool, or plugin) to the latest version.
+func (s *DaemonServer) UpdateComponent(ctx context.Context, req *UpdateComponentRequest) (*UpdateComponentResponse, error) {
+	s.logger.Info("update component request received",
+		"kind", req.Kind,
+		"name", req.Name,
+		"restart", req.Restart,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component name is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.UpdateComponent(ctx, req.Kind, req.Name, req.Restart, req.SkipBuild, req.Verbose)
+	if err != nil {
+		s.logger.Error("failed to update component", "error", err, "kind", req.Kind, "name", req.Name)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "component '%s' not found", req.Name)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to update component: %v", err)
+	}
+
+	s.logger.Info("component updated successfully",
+		"kind", req.Kind,
+		"name", req.Name,
+		"updated", result.Updated,
+		"old_version", result.OldVersion,
+		"new_version", result.NewVersion,
+	)
+
+	msg := fmt.Sprintf("Component '%s' updated successfully", req.Name)
+	if !result.Updated {
+		msg = fmt.Sprintf("Component '%s' is already at the latest version", req.Name)
+	}
+
+	return &UpdateComponentResponse{
+		Success:     true,
+		Updated:     result.Updated,
+		OldVersion:  result.OldVersion,
+		NewVersion:  result.NewVersion,
+		BuildOutput: result.BuildOutput,
+		DurationMs:  result.DurationMs,
+		Message:     msg,
+	}, nil
+}
+
+// BuildComponent rebuilds a component (agent, tool, or plugin) from source.
+func (s *DaemonServer) BuildComponent(ctx context.Context, req *BuildComponentRequest) (*BuildComponentResponse, error) {
+	s.logger.Info("build component request received",
+		"kind", req.Kind,
+		"name", req.Name,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component name is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.BuildComponent(ctx, req.Kind, req.Name)
+	if err != nil {
+		s.logger.Error("failed to build component", "error", err, "kind", req.Kind, "name", req.Name)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "component '%s' not found", req.Name)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to build component: %v", err)
+	}
+
+	s.logger.Info("component build completed",
+		"kind", req.Kind,
+		"name", req.Name,
+		"success", result.Success,
+	)
+
+	msg := fmt.Sprintf("Component '%s' built successfully", req.Name)
+	if !result.Success {
+		msg = fmt.Sprintf("Component '%s' build failed", req.Name)
+	}
+
+	return &BuildComponentResponse{
+		Success:    result.Success,
+		Stdout:     result.Stdout,
+		Stderr:     result.Stderr,
+		DurationMs: result.DurationMs,
+		Message:    msg,
+	}, nil
+}
+
+// ShowComponent returns detailed information about a component (agent, tool, or plugin).
+func (s *DaemonServer) ShowComponent(ctx context.Context, req *ShowComponentRequest) (*ShowComponentResponse, error) {
+	s.logger.Debug("show component request received",
+		"kind", req.Kind,
+		"name", req.Name,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component name is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	info, err := s.daemon.ShowComponent(ctx, req.Kind, req.Name)
+	if err != nil {
+		s.logger.Error("failed to show component", "error", err, "kind", req.Kind, "name", req.Name)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "component '%s' not found", req.Name)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to show component: %v", err)
+	}
+
+	s.logger.Debug("component info retrieved",
+		"kind", req.Kind,
+		"name", req.Name,
+	)
+
+	return &ShowComponentResponse{
+		Success:   true,
+		Name:      info.Name,
+		Version:   info.Version,
+		Kind:      info.Kind,
+		Status:    info.Status,
+		Source:    info.Source,
+		RepoPath:  info.RepoPath,
+		BinPath:   info.BinPath,
+		Port:      int32(info.Port),
+		Pid:       int32(info.PID),
+		CreatedAt: info.CreatedAt.Unix(),
+		UpdatedAt: info.UpdatedAt.Unix(),
+	}, nil
+}
+
+// GetComponentLogs streams log entries for a component (agent, tool, or plugin).
+func (s *DaemonServer) GetComponentLogs(req *GetComponentLogsRequest, stream grpc.ServerStreamingServer[LogEntry]) error {
+	s.logger.Info("get component logs request received",
+		"kind", req.Kind,
+		"name", req.Name,
+		"follow", req.Follow,
+		"lines", req.Lines,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Name == "" {
+		return status_grpc.Errorf(codes.InvalidArgument, "component name is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	logChan, err := s.daemon.GetComponentLogs(stream.Context(), req.Kind, req.Name, req.Follow, int(req.Lines))
+	if err != nil {
+		s.logger.Error("failed to get component logs", "error", err, "kind", req.Kind, "name", req.Name)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return status_grpc.Errorf(codes.NotFound, "component '%s' not found", req.Name)
+		}
+
+		return status_grpc.Errorf(codes.Internal, "failed to get component logs: %v", err)
+	}
+
+	// Stream log entries to client
+	for {
+		select {
+		case <-stream.Context().Done():
+			s.logger.Info("log stream cancelled", "kind", req.Kind, "name", req.Name)
+			return stream.Context().Err()
+
+		case entry, ok := <-logChan:
+			if !ok {
+				// Log channel closed
+				s.logger.Info("log stream completed", "kind", req.Kind, "name", req.Name)
+				return nil
+			}
+
+			// Convert to proto message
+			protoEntry := &LogEntry{
+				Timestamp: entry.Timestamp,
+				Level:     entry.Level,
+				Message:   entry.Message,
+			}
+
+			// Send to client
+			if err := stream.Send(protoEntry); err != nil {
+				s.logger.Error("failed to send log entry", "error", err)
+				return status_grpc.Errorf(codes.Internal, "failed to send log entry: %v", err)
+			}
+		}
+	}
+}
+
+// InstallMission installs a mission from a Git repository.
+func (s *DaemonServer) InstallMission(ctx context.Context, req *InstallMissionRequest) (*InstallMissionResponse, error) {
+	s.logger.Info("install mission request received",
+		"url", req.Url,
+		"branch", req.Branch,
+		"tag", req.Tag,
+		"force", req.Force,
+	)
+
+	// Validate request
+	if req.Url == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "mission URL is required")
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.InstallMission(ctx, req.Url, req.Branch, req.Tag, req.Force, req.Yes, req.TimeoutMs)
+	if err != nil {
+		s.logger.Error("failed to install mission", "error", err, "url", req.Url)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "already exists") {
+			return nil, status_grpc.Errorf(codes.AlreadyExists, "%v", err)
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "clone failed") {
+			return nil, status_grpc.Errorf(codes.NotFound, "%v", err)
+		}
+		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "validation") {
+			return nil, status_grpc.Errorf(codes.InvalidArgument, "%v", err)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to install mission: %v", err)
+	}
+
+	s.logger.Info("mission installed successfully",
+		"name", result.Name,
+		"version", result.Version,
+	)
+
+	// Convert dependencies to proto format
+	protoDeps := make([]*InstalledDependency, len(result.Dependencies))
+	for i, dep := range result.Dependencies {
+		protoDeps[i] = &InstalledDependency{
+			Type:             dep.Type,
+			Name:             dep.Name,
+			AlreadyInstalled: dep.AlreadyInstalled,
+		}
+	}
+
+	return &InstallMissionResponse{
+		Success:      true,
+		Name:         result.Name,
+		Version:      result.Version,
+		Path:         result.Path,
+		Dependencies: protoDeps,
+		DurationMs:   result.DurationMs,
+		Message:      fmt.Sprintf("Mission '%s' installed successfully", result.Name),
+	}, nil
+}
+
+// UninstallMission removes an installed mission.
+func (s *DaemonServer) UninstallMission(ctx context.Context, req *UninstallMissionRequest) (*UninstallMissionResponse, error) {
+	s.logger.Info("uninstall mission request received",
+		"name", req.Name,
+		"force", req.Force,
+	)
+
+	// Validate request
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "mission name is required")
+	}
+
+	// Call daemon implementation
+	err := s.daemon.UninstallMission(ctx, req.Name, req.Force)
+	if err != nil {
+		s.logger.Error("failed to uninstall mission", "error", err, "name", req.Name)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "%v", err)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to uninstall mission: %v", err)
+	}
+
+	s.logger.Info("mission uninstalled successfully", "name", req.Name)
+
+	return &UninstallMissionResponse{
+		Success: true,
+		Message: fmt.Sprintf("Mission '%s' uninstalled successfully", req.Name),
+	}, nil
+}
+
+// ListMissionDefinitions returns all installed mission definitions.
+func (s *DaemonServer) ListMissionDefinitions(ctx context.Context, req *ListMissionDefinitionsRequest) (*ListMissionDefinitionsResponse, error) {
+	s.logger.Debug("list mission definitions request received",
+		"limit", req.Limit,
+		"offset", req.Offset,
+	)
+
+	// Convert limit/offset to int (proto uses int32)
+	limit := int(req.Limit)
+	offset := int(req.Offset)
+
+	// Call daemon implementation
+	definitions, total, err := s.daemon.ListMissionDefinitions(ctx, limit, offset)
+	if err != nil {
+		s.logger.Error("failed to list mission definitions", "error", err)
+		return nil, status_grpc.Errorf(codes.Internal, "failed to list mission definitions: %v", err)
+	}
+
+	// Convert to proto format
+	protoDefinitions := make([]*MissionDefinitionInfo, len(definitions))
+	for i, def := range definitions {
+		protoDefinitions[i] = &MissionDefinitionInfo{
+			Name:        def.Name,
+			Version:     def.Version,
+			Description: def.Description,
+			Source:      def.Source,
+			InstalledAt: def.InstalledAt.Unix(),
+			UpdatedAt:   def.UpdatedAt.Unix(),
+			NodeCount:   int32(def.NodeCount),
+		}
+	}
+
+	s.logger.Debug("listed mission definitions", "count", len(definitions), "total", total)
+
+	return &ListMissionDefinitionsResponse{
+		Missions: protoDefinitions,
+		Total:    int32(total),
+	}, nil
+}
+
+// UpdateMission updates an installed mission to the latest version.
+func (s *DaemonServer) UpdateMission(ctx context.Context, req *UpdateMissionRequest) (*UpdateMissionResponse, error) {
+	s.logger.Info("update mission request received", "name", req.Name)
+
+	// Validate request
+	if req.Name == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "mission name is required")
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.UpdateMission(ctx, req.Name, req.TimeoutMs)
+	if err != nil {
+		s.logger.Error("failed to update mission", "error", err, "name", req.Name)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "%v", err)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to update mission: %v", err)
+	}
+
+	s.logger.Info("mission update completed",
+		"name", req.Name,
+		"updated", result.Updated,
+		"old_version", result.OldVersion,
+		"new_version", result.NewVersion,
+	)
+
+	message := fmt.Sprintf("Mission '%s' is already up to date (version %s)", req.Name, result.NewVersion)
+	if result.Updated {
+		message = fmt.Sprintf("Mission '%s' updated from %s to %s", req.Name, result.OldVersion, result.NewVersion)
+	}
+
+	return &UpdateMissionResponse{
+		Success:    true,
+		Updated:    result.Updated,
+		OldVersion: result.OldVersion,
+		NewVersion: result.NewVersion,
+		DurationMs: result.DurationMs,
+		Message:    message,
 	}, nil
 }

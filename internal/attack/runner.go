@@ -14,7 +14,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -347,11 +346,11 @@ func (r *DefaultAttackRunner) createEphemeralMission(
 	return missionObj, nil
 }
 
-// createSingleNodeWorkflow creates a workflow with a single agent node.
+// createSingleNodeWorkflow creates a mission definition with a single agent node.
 func (r *DefaultAttackRunner) createSingleNodeWorkflow(
 	opts *AttackOptions,
 	selectedAgent agent.Agent,
-) *workflow.Workflow {
+) *mission.MissionDefinition {
 	// Create agent node
 	nodeID := "attack-node-1"
 
@@ -371,9 +370,9 @@ func (r *DefaultAttackRunner) createSingleNodeWorkflow(
 		agentTask = agentTask.WithTimeout(opts.Timeout)
 	}
 
-	node := &workflow.WorkflowNode{
+	node := &mission.MissionNode{
 		ID:          nodeID,
-		Type:        workflow.NodeTypeAgent,
+		Type:        mission.NodeTypeAgent,
 		Name:        opts.AgentName,
 		Description: fmt.Sprintf("Execute %s agent", opts.AgentName),
 		AgentName:   opts.AgentName,
@@ -389,15 +388,15 @@ func (r *DefaultAttackRunner) createSingleNodeWorkflow(
 		node.Timeout = opts.Timeout
 	}
 
-	// Create workflow with single node
-	workflowObj := &workflow.Workflow{
+	// Create mission definition with single node
+	missionDef := &mission.MissionDefinition{
 		ID:          types.NewID(),
 		Name:        fmt.Sprintf("Attack Workflow: %s", opts.AgentName),
 		Description: "Ephemeral single-node workflow for attack command",
-		Nodes: map[string]*workflow.WorkflowNode{
+		Nodes: map[string]*mission.MissionNode{
 			nodeID: node,
 		},
-		Edges:       []workflow.WorkflowEdge{},
+		Edges:       []mission.MissionEdge{},
 		EntryPoints: []string{nodeID},
 		ExitPoints:  []string{nodeID},
 		Metadata: map[string]any{
@@ -407,7 +406,7 @@ func (r *DefaultAttackRunner) createSingleNodeWorkflow(
 		CreatedAt: time.Now(),
 	}
 
-	return workflowObj
+	return missionDef
 }
 
 // buildConstraints creates mission constraints from attack options.

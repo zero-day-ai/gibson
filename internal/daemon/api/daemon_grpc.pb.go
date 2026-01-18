@@ -19,27 +19,37 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DaemonService_Connect_FullMethodName               = "/gibson.daemon.v1.DaemonService/Connect"
-	DaemonService_Ping_FullMethodName                  = "/gibson.daemon.v1.DaemonService/Ping"
-	DaemonService_Status_FullMethodName                = "/gibson.daemon.v1.DaemonService/Status"
-	DaemonService_RunMission_FullMethodName            = "/gibson.daemon.v1.DaemonService/RunMission"
-	DaemonService_StopMission_FullMethodName           = "/gibson.daemon.v1.DaemonService/StopMission"
-	DaemonService_ListMissions_FullMethodName          = "/gibson.daemon.v1.DaemonService/ListMissions"
-	DaemonService_ListAgents_FullMethodName            = "/gibson.daemon.v1.DaemonService/ListAgents"
-	DaemonService_GetAgentStatus_FullMethodName        = "/gibson.daemon.v1.DaemonService/GetAgentStatus"
-	DaemonService_ListTools_FullMethodName             = "/gibson.daemon.v1.DaemonService/ListTools"
-	DaemonService_ListPlugins_FullMethodName           = "/gibson.daemon.v1.DaemonService/ListPlugins"
-	DaemonService_QueryPlugin_FullMethodName           = "/gibson.daemon.v1.DaemonService/QueryPlugin"
-	DaemonService_RunAttack_FullMethodName             = "/gibson.daemon.v1.DaemonService/RunAttack"
-	DaemonService_Subscribe_FullMethodName             = "/gibson.daemon.v1.DaemonService/Subscribe"
-	DaemonService_StartComponent_FullMethodName        = "/gibson.daemon.v1.DaemonService/StartComponent"
-	DaemonService_StopComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/StopComponent"
-	DaemonService_PauseMission_FullMethodName          = "/gibson.daemon.v1.DaemonService/PauseMission"
-	DaemonService_ResumeMission_FullMethodName         = "/gibson.daemon.v1.DaemonService/ResumeMission"
-	DaemonService_GetMissionHistory_FullMethodName     = "/gibson.daemon.v1.DaemonService/GetMissionHistory"
-	DaemonService_GetMissionCheckpoints_FullMethodName = "/gibson.daemon.v1.DaemonService/GetMissionCheckpoints"
-	DaemonService_ExecuteTool_FullMethodName           = "/gibson.daemon.v1.DaemonService/ExecuteTool"
-	DaemonService_GetAvailableTools_FullMethodName     = "/gibson.daemon.v1.DaemonService/GetAvailableTools"
+	DaemonService_Connect_FullMethodName                = "/gibson.daemon.v1.DaemonService/Connect"
+	DaemonService_Ping_FullMethodName                   = "/gibson.daemon.v1.DaemonService/Ping"
+	DaemonService_Status_FullMethodName                 = "/gibson.daemon.v1.DaemonService/Status"
+	DaemonService_RunMission_FullMethodName             = "/gibson.daemon.v1.DaemonService/RunMission"
+	DaemonService_StopMission_FullMethodName            = "/gibson.daemon.v1.DaemonService/StopMission"
+	DaemonService_ListMissions_FullMethodName           = "/gibson.daemon.v1.DaemonService/ListMissions"
+	DaemonService_ListAgents_FullMethodName             = "/gibson.daemon.v1.DaemonService/ListAgents"
+	DaemonService_GetAgentStatus_FullMethodName         = "/gibson.daemon.v1.DaemonService/GetAgentStatus"
+	DaemonService_ListTools_FullMethodName              = "/gibson.daemon.v1.DaemonService/ListTools"
+	DaemonService_ListPlugins_FullMethodName            = "/gibson.daemon.v1.DaemonService/ListPlugins"
+	DaemonService_QueryPlugin_FullMethodName            = "/gibson.daemon.v1.DaemonService/QueryPlugin"
+	DaemonService_RunAttack_FullMethodName              = "/gibson.daemon.v1.DaemonService/RunAttack"
+	DaemonService_Subscribe_FullMethodName              = "/gibson.daemon.v1.DaemonService/Subscribe"
+	DaemonService_StartComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/StartComponent"
+	DaemonService_StopComponent_FullMethodName          = "/gibson.daemon.v1.DaemonService/StopComponent"
+	DaemonService_PauseMission_FullMethodName           = "/gibson.daemon.v1.DaemonService/PauseMission"
+	DaemonService_ResumeMission_FullMethodName          = "/gibson.daemon.v1.DaemonService/ResumeMission"
+	DaemonService_GetMissionHistory_FullMethodName      = "/gibson.daemon.v1.DaemonService/GetMissionHistory"
+	DaemonService_GetMissionCheckpoints_FullMethodName  = "/gibson.daemon.v1.DaemonService/GetMissionCheckpoints"
+	DaemonService_ExecuteTool_FullMethodName            = "/gibson.daemon.v1.DaemonService/ExecuteTool"
+	DaemonService_GetAvailableTools_FullMethodName      = "/gibson.daemon.v1.DaemonService/GetAvailableTools"
+	DaemonService_InstallComponent_FullMethodName       = "/gibson.daemon.v1.DaemonService/InstallComponent"
+	DaemonService_UninstallComponent_FullMethodName     = "/gibson.daemon.v1.DaemonService/UninstallComponent"
+	DaemonService_UpdateComponent_FullMethodName        = "/gibson.daemon.v1.DaemonService/UpdateComponent"
+	DaemonService_BuildComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/BuildComponent"
+	DaemonService_ShowComponent_FullMethodName          = "/gibson.daemon.v1.DaemonService/ShowComponent"
+	DaemonService_GetComponentLogs_FullMethodName       = "/gibson.daemon.v1.DaemonService/GetComponentLogs"
+	DaemonService_InstallMission_FullMethodName         = "/gibson.daemon.v1.DaemonService/InstallMission"
+	DaemonService_UninstallMission_FullMethodName       = "/gibson.daemon.v1.DaemonService/UninstallMission"
+	DaemonService_ListMissionDefinitions_FullMethodName = "/gibson.daemon.v1.DaemonService/ListMissionDefinitions"
+	DaemonService_UpdateMission_FullMethodName          = "/gibson.daemon.v1.DaemonService/UpdateMission"
 )
 
 // DaemonServiceClient is the client API for DaemonService service.
@@ -110,6 +120,34 @@ type DaemonServiceClient interface {
 	// Provides detailed information about each tool including schemas, capabilities,
 	// and execution metrics.
 	GetAvailableTools(ctx context.Context, in *GetAvailableToolsRequest, opts ...grpc.CallOption) (*GetAvailableToolsResponse, error)
+	// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
+	// Clones the repository, builds the component, and registers it in the registry.
+	InstallComponent(ctx context.Context, in *InstallComponentRequest, opts ...grpc.CallOption) (*InstallComponentResponse, error)
+	// UninstallComponent removes a component (agent, tool, or plugin) from the system.
+	// Stops the component if running and removes it from the registry.
+	UninstallComponent(ctx context.Context, in *UninstallComponentRequest, opts ...grpc.CallOption) (*UninstallComponentResponse, error)
+	// UpdateComponent updates a component (agent, tool, or plugin) to the latest version.
+	// Pulls latest changes, rebuilds, and optionally restarts if it was running.
+	UpdateComponent(ctx context.Context, in *UpdateComponentRequest, opts ...grpc.CallOption) (*UpdateComponentResponse, error)
+	// BuildComponent rebuilds a component (agent, tool, or plugin) from source.
+	// Useful for rebuilding after manual code changes.
+	BuildComponent(ctx context.Context, in *BuildComponentRequest, opts ...grpc.CallOption) (*BuildComponentResponse, error)
+	// ShowComponent returns detailed information about a component.
+	// Includes manifest, status, paths, and lifecycle information.
+	ShowComponent(ctx context.Context, in *ShowComponentRequest, opts ...grpc.CallOption) (*ShowComponentResponse, error)
+	// GetComponentLogs streams log entries for a component.
+	// Supports follow mode for continuous streaming and line limits.
+	GetComponentLogs(ctx context.Context, in *GetComponentLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogEntry], error)
+	// InstallMission installs a mission from a Git repository.
+	// Clones the repository, validates mission.yaml, and registers it in the registry.
+	InstallMission(ctx context.Context, in *InstallMissionRequest, opts ...grpc.CallOption) (*InstallMissionResponse, error)
+	// UninstallMission removes an installed mission from the system.
+	UninstallMission(ctx context.Context, in *UninstallMissionRequest, opts ...grpc.CallOption) (*UninstallMissionResponse, error)
+	// ListMissionDefinitions returns all installed mission definitions.
+	ListMissionDefinitions(ctx context.Context, in *ListMissionDefinitionsRequest, opts ...grpc.CallOption) (*ListMissionDefinitionsResponse, error)
+	// UpdateMission updates an installed mission to the latest version.
+	// Pulls latest changes and rebuilds the mission definition.
+	UpdateMission(ctx context.Context, in *UpdateMissionRequest, opts ...grpc.CallOption) (*UpdateMissionResponse, error)
 }
 
 type daemonServiceClient struct {
@@ -366,6 +404,115 @@ func (c *daemonServiceClient) GetAvailableTools(ctx context.Context, in *GetAvai
 	return out, nil
 }
 
+func (c *daemonServiceClient) InstallComponent(ctx context.Context, in *InstallComponentRequest, opts ...grpc.CallOption) (*InstallComponentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InstallComponentResponse)
+	err := c.cc.Invoke(ctx, DaemonService_InstallComponent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) UninstallComponent(ctx context.Context, in *UninstallComponentRequest, opts ...grpc.CallOption) (*UninstallComponentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UninstallComponentResponse)
+	err := c.cc.Invoke(ctx, DaemonService_UninstallComponent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) UpdateComponent(ctx context.Context, in *UpdateComponentRequest, opts ...grpc.CallOption) (*UpdateComponentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateComponentResponse)
+	err := c.cc.Invoke(ctx, DaemonService_UpdateComponent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) BuildComponent(ctx context.Context, in *BuildComponentRequest, opts ...grpc.CallOption) (*BuildComponentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BuildComponentResponse)
+	err := c.cc.Invoke(ctx, DaemonService_BuildComponent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) ShowComponent(ctx context.Context, in *ShowComponentRequest, opts ...grpc.CallOption) (*ShowComponentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ShowComponentResponse)
+	err := c.cc.Invoke(ctx, DaemonService_ShowComponent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) GetComponentLogs(ctx context.Context, in *GetComponentLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogEntry], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &DaemonService_ServiceDesc.Streams[4], DaemonService_GetComponentLogs_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GetComponentLogsRequest, LogEntry]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DaemonService_GetComponentLogsClient = grpc.ServerStreamingClient[LogEntry]
+
+func (c *daemonServiceClient) InstallMission(ctx context.Context, in *InstallMissionRequest, opts ...grpc.CallOption) (*InstallMissionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InstallMissionResponse)
+	err := c.cc.Invoke(ctx, DaemonService_InstallMission_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) UninstallMission(ctx context.Context, in *UninstallMissionRequest, opts ...grpc.CallOption) (*UninstallMissionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UninstallMissionResponse)
+	err := c.cc.Invoke(ctx, DaemonService_UninstallMission_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) ListMissionDefinitions(ctx context.Context, in *ListMissionDefinitionsRequest, opts ...grpc.CallOption) (*ListMissionDefinitionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListMissionDefinitionsResponse)
+	err := c.cc.Invoke(ctx, DaemonService_ListMissionDefinitions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) UpdateMission(ctx context.Context, in *UpdateMissionRequest, opts ...grpc.CallOption) (*UpdateMissionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpdateMissionResponse)
+	err := c.cc.Invoke(ctx, DaemonService_UpdateMission_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DaemonServiceServer is the server API for DaemonService service.
 // All implementations must embed UnimplementedDaemonServiceServer
 // for forward compatibility.
@@ -434,6 +581,34 @@ type DaemonServiceServer interface {
 	// Provides detailed information about each tool including schemas, capabilities,
 	// and execution metrics.
 	GetAvailableTools(context.Context, *GetAvailableToolsRequest) (*GetAvailableToolsResponse, error)
+	// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
+	// Clones the repository, builds the component, and registers it in the registry.
+	InstallComponent(context.Context, *InstallComponentRequest) (*InstallComponentResponse, error)
+	// UninstallComponent removes a component (agent, tool, or plugin) from the system.
+	// Stops the component if running and removes it from the registry.
+	UninstallComponent(context.Context, *UninstallComponentRequest) (*UninstallComponentResponse, error)
+	// UpdateComponent updates a component (agent, tool, or plugin) to the latest version.
+	// Pulls latest changes, rebuilds, and optionally restarts if it was running.
+	UpdateComponent(context.Context, *UpdateComponentRequest) (*UpdateComponentResponse, error)
+	// BuildComponent rebuilds a component (agent, tool, or plugin) from source.
+	// Useful for rebuilding after manual code changes.
+	BuildComponent(context.Context, *BuildComponentRequest) (*BuildComponentResponse, error)
+	// ShowComponent returns detailed information about a component.
+	// Includes manifest, status, paths, and lifecycle information.
+	ShowComponent(context.Context, *ShowComponentRequest) (*ShowComponentResponse, error)
+	// GetComponentLogs streams log entries for a component.
+	// Supports follow mode for continuous streaming and line limits.
+	GetComponentLogs(*GetComponentLogsRequest, grpc.ServerStreamingServer[LogEntry]) error
+	// InstallMission installs a mission from a Git repository.
+	// Clones the repository, validates mission.yaml, and registers it in the registry.
+	InstallMission(context.Context, *InstallMissionRequest) (*InstallMissionResponse, error)
+	// UninstallMission removes an installed mission from the system.
+	UninstallMission(context.Context, *UninstallMissionRequest) (*UninstallMissionResponse, error)
+	// ListMissionDefinitions returns all installed mission definitions.
+	ListMissionDefinitions(context.Context, *ListMissionDefinitionsRequest) (*ListMissionDefinitionsResponse, error)
+	// UpdateMission updates an installed mission to the latest version.
+	// Pulls latest changes and rebuilds the mission definition.
+	UpdateMission(context.Context, *UpdateMissionRequest) (*UpdateMissionResponse, error)
 	mustEmbedUnimplementedDaemonServiceServer()
 }
 
@@ -506,6 +681,36 @@ func (UnimplementedDaemonServiceServer) ExecuteTool(context.Context, *ExecuteToo
 }
 func (UnimplementedDaemonServiceServer) GetAvailableTools(context.Context, *GetAvailableToolsRequest) (*GetAvailableToolsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetAvailableTools not implemented")
+}
+func (UnimplementedDaemonServiceServer) InstallComponent(context.Context, *InstallComponentRequest) (*InstallComponentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InstallComponent not implemented")
+}
+func (UnimplementedDaemonServiceServer) UninstallComponent(context.Context, *UninstallComponentRequest) (*UninstallComponentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UninstallComponent not implemented")
+}
+func (UnimplementedDaemonServiceServer) UpdateComponent(context.Context, *UpdateComponentRequest) (*UpdateComponentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateComponent not implemented")
+}
+func (UnimplementedDaemonServiceServer) BuildComponent(context.Context, *BuildComponentRequest) (*BuildComponentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BuildComponent not implemented")
+}
+func (UnimplementedDaemonServiceServer) ShowComponent(context.Context, *ShowComponentRequest) (*ShowComponentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ShowComponent not implemented")
+}
+func (UnimplementedDaemonServiceServer) GetComponentLogs(*GetComponentLogsRequest, grpc.ServerStreamingServer[LogEntry]) error {
+	return status.Error(codes.Unimplemented, "method GetComponentLogs not implemented")
+}
+func (UnimplementedDaemonServiceServer) InstallMission(context.Context, *InstallMissionRequest) (*InstallMissionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InstallMission not implemented")
+}
+func (UnimplementedDaemonServiceServer) UninstallMission(context.Context, *UninstallMissionRequest) (*UninstallMissionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UninstallMission not implemented")
+}
+func (UnimplementedDaemonServiceServer) ListMissionDefinitions(context.Context, *ListMissionDefinitionsRequest) (*ListMissionDefinitionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListMissionDefinitions not implemented")
+}
+func (UnimplementedDaemonServiceServer) UpdateMission(context.Context, *UpdateMissionRequest) (*UpdateMissionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateMission not implemented")
 }
 func (UnimplementedDaemonServiceServer) mustEmbedUnimplementedDaemonServiceServer() {}
 func (UnimplementedDaemonServiceServer) testEmbeddedByValue()                       {}
@@ -878,6 +1083,179 @@ func _DaemonService_GetAvailableTools_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DaemonService_InstallComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InstallComponentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).InstallComponent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_InstallComponent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).InstallComponent(ctx, req.(*InstallComponentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_UninstallComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UninstallComponentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).UninstallComponent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_UninstallComponent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).UninstallComponent(ctx, req.(*UninstallComponentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_UpdateComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateComponentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).UpdateComponent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_UpdateComponent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).UpdateComponent(ctx, req.(*UpdateComponentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_BuildComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BuildComponentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).BuildComponent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_BuildComponent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).BuildComponent(ctx, req.(*BuildComponentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_ShowComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ShowComponentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).ShowComponent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_ShowComponent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).ShowComponent(ctx, req.(*ShowComponentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_GetComponentLogs_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(GetComponentLogsRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(DaemonServiceServer).GetComponentLogs(m, &grpc.GenericServerStream[GetComponentLogsRequest, LogEntry]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type DaemonService_GetComponentLogsServer = grpc.ServerStreamingServer[LogEntry]
+
+func _DaemonService_InstallMission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InstallMissionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).InstallMission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_InstallMission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).InstallMission(ctx, req.(*InstallMissionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_UninstallMission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UninstallMissionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).UninstallMission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_UninstallMission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).UninstallMission(ctx, req.(*UninstallMissionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_ListMissionDefinitions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListMissionDefinitionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).ListMissionDefinitions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_ListMissionDefinitions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).ListMissionDefinitions(ctx, req.(*ListMissionDefinitionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_UpdateMission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateMissionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).UpdateMission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_UpdateMission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).UpdateMission(ctx, req.(*UpdateMissionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DaemonService_ServiceDesc is the grpc.ServiceDesc for DaemonService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -953,6 +1331,42 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "GetAvailableTools",
 			Handler:    _DaemonService_GetAvailableTools_Handler,
 		},
+		{
+			MethodName: "InstallComponent",
+			Handler:    _DaemonService_InstallComponent_Handler,
+		},
+		{
+			MethodName: "UninstallComponent",
+			Handler:    _DaemonService_UninstallComponent_Handler,
+		},
+		{
+			MethodName: "UpdateComponent",
+			Handler:    _DaemonService_UpdateComponent_Handler,
+		},
+		{
+			MethodName: "BuildComponent",
+			Handler:    _DaemonService_BuildComponent_Handler,
+		},
+		{
+			MethodName: "ShowComponent",
+			Handler:    _DaemonService_ShowComponent_Handler,
+		},
+		{
+			MethodName: "InstallMission",
+			Handler:    _DaemonService_InstallMission_Handler,
+		},
+		{
+			MethodName: "UninstallMission",
+			Handler:    _DaemonService_UninstallMission_Handler,
+		},
+		{
+			MethodName: "ListMissionDefinitions",
+			Handler:    _DaemonService_ListMissionDefinitions_Handler,
+		},
+		{
+			MethodName: "UpdateMission",
+			Handler:    _DaemonService_UpdateMission_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -973,6 +1387,11 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ResumeMission",
 			Handler:       _DaemonService_ResumeMission_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "GetComponentLogs",
+			Handler:       _DaemonService_GetComponentLogs_Handler,
 			ServerStreams: true,
 		},
 	},

@@ -20,6 +20,7 @@ type DirectoryConfig struct {
 //   - agents: Agent definitions and configurations
 //   - tools: Tool definitions and scripts
 //   - plugins: Plugin modules and extensions
+//   - missions: Mission definitions and workflows
 //   - payloads: Exploit payloads and attack vectors
 //   - reports: Generated reports and findings
 //   - logs: Application logs
@@ -33,6 +34,7 @@ func DefaultDirectories(homeDir string) DirectoryConfig {
 			"agents",
 			"tools",
 			"plugins",
+			"missions",
 			"payloads",
 			"reports",
 			"logs",

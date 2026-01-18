@@ -1,0 +1,989 @@
+# ==============================================================================
+# Gibson GraphRAG Taxonomy - Comprehensive Documentation
+# ==============================================================================
+# This document provides complete documentation of the Gibson taxonomy system,
+# including file structure, Neo4j integration, loading mechanisms, and extension guides.
+#
+# Version: 0.15.0 (tied to Gibson binary version)
+# Last Updated: 2026-01-18
+# ==============================================================================
+
+overview:
+  purpose: |
+    The Gibson Taxonomy is a YAML-driven, compile-time embedded system that provides
+    declarative configuration for GraphRAG node types, relationship types, attack
+    techniques, target types, capabilities, and execution event mappings.
+
+    The taxonomy enables:
+    - Consistent graph schema across all Gibson deployments
+    - Declarative event-to-graph mappings for audit trails
+    - Tool output parsing for automatic asset extraction
+    - MITRE ATT&CK and custom technique mappings
+    - Type-safe property definitions with validation
+
+  design_principles:
+    - yaml_driven: Human-readable YAML source files for easy editing
+    - compile_time_embedding: Embedded in binary using Go's embed.FS
+    - version_tied: Taxonomy version matches Gibson binary version
+    - additive_custom: Custom extensions add to, never override, bundled types
+    - thread_safe: Registry uses RWMutex for concurrent access
+    - graceful_degradation: Missing definitions log warnings, don't crash
+
+# ==============================================================================
+# FILE STRUCTURE
+# ==============================================================================
+
+file_structure:
+  root_directory: "internal/graphrag/taxonomy/"
+
+  yaml_files:
+    taxonomy.yaml:
+      purpose: "Root configuration file that orchestrates includes"
+      contains:
+        - version: "Taxonomy version (e.g., 0.15.0)"
+        - metadata: "Name, description, update timestamp"
+        - includes: "Ordered list of YAML files to load"
+      example: |
+        version: "0.15.0"
+        metadata:
+          name: "Gibson GraphRAG Taxonomy"
+          description: "Canonical node and relationship types..."
+        includes:
+          - "nodes/assets.yaml"
+          - "nodes/findings.yaml"
+          - "relationships/asset_hierarchy.yaml"
+          # ... more includes
+
+    nodes/:
+      assets.yaml:
+        purpose: "Asset node types discovered during reconnaissance"
+        node_types:
+          - domain: "Root domain entity (e.g., example.com)"
+          - subdomain: "Subdomain under a root domain"
+          - host: "IP address or hostname"
+          - port: "Open network port on a host"
+          - service: "Service running on a port"
+          - endpoint: "Web endpoint or URL"
+          - api: "Web API service with multiple endpoints"
+          - technology: "Detected software/framework"
+          - cloud_asset: "Cloud infrastructure resource"
+          - certificate: "TLS/SSL certificate"
+
+      findings.yaml:
+        purpose: "Security finding node types"
+        node_types:
+          - finding: "Security vulnerability or issue"
+          - evidence: "Supporting evidence for a finding"
+          - mitigation: "Security control or remediation"
+
+      execution.yaml:
+        purpose: "Execution tracking node types"
+        node_types:
+          - mission: "Top-level security assessment"
+          - agent_run: "Single execution run of an agent"
+          - tool_execution: "Execution of a security tool"
+          - llm_call: "Call to a large language model"
+          - intelligence: "LLM-generated analysis and insights"
+
+      attack.yaml:
+        purpose: "Attack pattern node types (if present)"
+
+    relationships/:
+      asset_hierarchy.yaml:
+        purpose: "Asset traversal relationships"
+        relationship_types:
+          - HAS_SUBDOMAIN: "domain -> subdomain"
+          - RESOLVES_TO: "subdomain|domain -> host"
+          - HAS_PORT: "host -> port"
+          - RUNS_SERVICE: "port -> service"
+          - HAS_ENDPOINT: "service -> endpoint"
+          - USES_TECHNOLOGY: "service|endpoint -> technology"
+          - SERVES_CERTIFICATE: "host -> certificate"
+          - HOSTS: "cloud_asset -> host|service"
+
+      finding_links.yaml:
+        purpose: "Finding analysis relationships"
+        relationship_types:
+          - AFFECTS: "finding -> asset"
+          - USES_TECHNIQUE: "finding -> technique"
+          - HAS_EVIDENCE: "finding -> evidence"
+          - LEADS_TO: "finding -> finding (attack chain)"
+          - MITIGATES: "mitigation -> finding"
+          - SIMILAR_TO: "finding <-> finding (bidirectional)"
+          - EXPLOITS: "finding -> technology|service"
+
+      execution_context.yaml:
+        purpose: "Provenance and audit trail relationships"
+        relationship_types:
+          - PART_OF: "agent_run -> mission"
+          - EXECUTED_BY: "tool_execution -> agent_run"
+          - MADE_CALL: "llm_call -> agent_run"
+          - DISCOVERED: "agent_run -> asset|finding"
+          - PRODUCED: "tool_execution -> finding"
+          - DELEGATED_TO: "agent_run -> agent_run"
+          - ANALYZES: "intelligence -> assets|findings"
+          - GENERATED_BY: "intelligence -> llm_call"
+          - PART_OF_MISSION: "intelligence -> mission"
+
+    techniques/:
+      mitre_enterprise.yaml:
+        purpose: "MITRE ATT&CK Enterprise technique mappings"
+
+      arcanum_pi.yaml:
+        purpose: "Arcanum PI framework technique mappings"
+
+    targets/:
+      targets.yaml:
+        purpose: "Target type definitions for testable systems"
+        target_types:
+          web:
+            - http_api: "RESTful or HTTP-based API"
+            - graphql: "GraphQL API endpoint"
+            - web_app: "Traditional web application"
+          ai:
+            - llm_chat: "LLM chat interface"
+            - llm_api: "LLM API endpoint"
+            - rag: "RAG system"
+            - ai_agent: "Autonomous AI agent"
+            - ai_copilot: "AI coding assistant"
+          infrastructure:
+            - kubernetes: "Kubernetes cluster"
+            - database: "Database server"
+            - network_service: "Generic network service"
+          cloud:
+            - cloud_service: "Cloud service endpoint"
+          blockchain:
+            - smart_contract: "Blockchain smart contract"
+
+    technique-types/:
+      technique-types.yaml:
+        purpose: "Technique type categories mapped to MITRE ATT&CK"
+        categories:
+          initial_access:
+            - ssrf: "Server-Side Request Forgery"
+            - sqli: "SQL Injection"
+            - xss: "Cross-Site Scripting"
+            - xxe: "XML External Entity"
+            - rce: "Remote Code Execution"
+            - lfi: "Local File Inclusion"
+            - rfi: "Remote File Inclusion"
+            - auth_bypass: "Authentication Bypass"
+            - idor: "Insecure Direct Object Reference"
+            - csrf: "Cross-Site Request Forgery"
+            - ssti: "Server-Side Template Injection"
+            - deserialization: "Insecure Deserialization"
+            - prompt_injection: "LLM Prompt Injection"
+            - jailbreak: "AI Jailbreak"
+          collection:
+            - data_extraction: "Data extraction from AI systems"
+          exfiltration:
+            - data_exfiltration: "Data exfiltration through AI"
+          impact:
+            - dos: "Denial of Service"
+          privilege_escalation:
+            - privesc: "Privilege Escalation"
+            - container_escape: "Container Escape"
+          lateral_movement:
+            - lateral_movement: "Lateral Movement"
+          credential_access:
+            - credential_theft: "Credential Theft"
+          discovery:
+            - cloud_metadata: "Cloud Metadata Access"
+
+    capabilities/:
+      capabilities.yaml:
+        purpose: "High-level testing capabilities bundling technique types"
+        capabilities:
+          - web_vulnerability_scanning: "Common web vulnerabilities"
+          - api_security_testing: "API-focused security testing"
+          - llm_security_testing: "LLM security testing"
+          - infrastructure_testing: "Infrastructure security"
+          - cloud_security_testing: "Cloud-specific testing"
+          - dos_testing: "Denial of service testing"
+
+    execution_events.yaml:
+      purpose: "Maps Gibson events to graph node/relationship creation"
+      event_types:
+        mission_lifecycle:
+          - mission.started: "Creates Mission node"
+          - mission.completed: "Updates Mission node status"
+          - mission.failed: "Updates Mission node with error"
+        agent_lifecycle:
+          - agent.started: "Creates AgentRun node, links to Mission"
+          - agent.completed: "Updates AgentRun status"
+          - agent.failed: "Updates AgentRun with error"
+          - agent.delegated: "Creates DELEGATED_TO relationship"
+          - agent.finding_submitted: "Creates DISCOVERED relationship"
+        llm_lifecycle:
+          - llm.request.started: "Creates LLMCall node"
+          - llm.request.completed: "Updates LLMCall with metrics"
+          - llm.request.failed: "Updates LLMCall with error"
+          - llm.stream.started: "Creates streaming LLMCall node"
+          - llm.stream.completed: "Updates streaming LLMCall"
+        tool_lifecycle:
+          - tool.call.started: "Creates ToolExecution node"
+          - tool.call.completed: "Updates ToolExecution"
+          - tool.call.failed: "Updates ToolExecution with error"
+        plugin_lifecycle:
+          - plugin.query.started: "Creates plugin query node"
+          - plugin.query.completed: "Updates plugin query"
+          - plugin.query.failed: "Updates plugin query with error"
+        finding_lifecycle:
+          - finding.discovered: "Creates PRODUCED relationship"
+
+    tool_outputs.yaml:
+      purpose: "Tool output parsing schemas for legacy/third-party tools"
+      note: |
+        Modern tools embed taxonomy using schema.TaxonomyMapping in their Go code.
+        These tools (nmap, subfinder, httpx, nuclei, amass, masscan) have their
+        schema loaded automatically from tool binaries via --schema flag.
+
+        This file is for tools that cannot be modified (third-party binaries)
+        or legacy tools not yet migrated to embedded taxonomy.
+
+  go_files:
+    types.go:
+      purpose: "Core type definitions"
+      key_types:
+        - Taxonomy: "Complete loaded taxonomy with all maps"
+        - TaxonomyMetadata: "Version and descriptive info"
+        - PropertyDefinition: "Property schema (name, type, required)"
+        - NodeTypeDefinition: "Node type with ID template and properties"
+        - RelationshipTypeDefinition: "Relationship with from/to constraints"
+        - TechniqueDefinition: "Attack technique (MITRE/Arcanum)"
+        - TargetTypeDefinition: "Target type with connection schema"
+        - TechniqueTypeDefinition: "Technique category mapped to MITRE"
+        - CapabilityDefinition: "High-level capability bundling techniques"
+        - TaxonomyError: "Typed error with field/value context"
+
+    types_events.go:
+      purpose: "Execution event type definitions"
+      key_types:
+        - ExecutionEventDefinition: "Event-to-graph mapping"
+        - EventNodeCreation: "Node creation specification"
+        - EventNodeUpdate: "Node update specification"
+        - EventRelationshipCreation: "Relationship creation spec"
+        - PropertyMapping: "Source -> target property mapping"
+        - ToolOutputSchema: "Tool output parsing rules"
+        - ToolOutputExtraction: "Item extraction from JSON"
+        - ToolOutputProperty: "JSON field -> node property"
+        - ToolOutputRelationship: "Extracted node linking"
+
+    embed.go:
+      purpose: "Embeds YAML files into binary at compile time"
+      mechanism: |
+        //go:embed *.yaml nodes/*.yaml relationships/*.yaml techniques/*.yaml targets/*.yaml technique-types/*.yaml capabilities/*.yaml
+        var taxonomyFS embed.FS
+
+    loader.go:
+      purpose: "Loads and parses taxonomy from embedded FS"
+      key_functions:
+        - LoadTaxonomy(): "Load embedded taxonomy"
+        - LoadTaxonomyWithCustom(path): "Load with custom extensions"
+        - parseNodeTypes(): "Parse nodes/*.yaml files"
+        - parseRelationshipTypes(): "Parse relationships/*.yaml files"
+        - parseTechniques(): "Parse techniques/*.yaml files"
+        - parseTargetTypes(): "Parse targets/*.yaml"
+        - parseTechniqueTypes(): "Parse technique-types/*.yaml"
+        - parseCapabilities(): "Parse capabilities/*.yaml"
+        - parseExecutionEvents(): "Parse execution_events.yaml"
+        - parseToolOutputs(): "Parse tool_outputs.yaml"
+        - validateEventAgainstTaxonomy(): "Ensure referenced types exist"
+        - validateToolSchemaAgainstTaxonomy(): "Ensure tool schemas valid"
+
+    registry.go:
+      purpose: "Thread-safe runtime access to taxonomy"
+      key_methods:
+        queries:
+          - Version(): "Get taxonomy version"
+          - NodeType(typeName): "Get node type by type field"
+          - RelationshipType(typeName): "Get relationship by type"
+          - Technique(id): "Get technique by ID"
+          - GetTargetType(typeName): "Get target type"
+          - GetTechniqueType(typeName): "Get technique type"
+          - GetCapability(id): "Get capability"
+          - GetExecutionEvent(eventType): "Get event definition"
+          - GetToolOutputSchema(toolName): "Get tool schema"
+        listings:
+          - NodeTypes(): "List all node types"
+          - RelationshipTypes(): "List all relationships"
+          - Techniques(source): "List techniques by source"
+          - ListTargetTypes(): "List all target types"
+          - ListTechniqueTypes(): "List all technique types"
+          - ListCapabilities(): "List all capabilities"
+          - ListExecutionEvents(): "List all event types"
+          - ListToolOutputSchemas(): "List all tool schemas"
+        validation:
+          - IsCanonicalNodeType(): "Check if type in taxonomy"
+          - IsCanonicalRelationType(): "Check if relationship canonical"
+          - ValidateNodeType(): "Validate with warning"
+          - ValidateRelationType(): "Validate with warning"
+          - ValidateTargetType(): "Check target type exists"
+          - ValidateTechniqueType(): "Check technique type exists"
+          - ValidateCapability(): "Check capability exists"
+        generation:
+          - GenerateNodeID(typeName, props): "Generate ID from template"
+        tool_loading:
+          - LoadToolSchemasFromBinaries(): "Load from tool --schema"
+          - IsSchemaBasedToolSchema(): "Check if from binary"
+
+    schema_loader.go:
+      purpose: "Loads taxonomy from tool binaries with embedded schemas"
+      mechanism: |
+        Tools that embed schema.TaxonomyMapping can be queried with --schema flag.
+        The loader executes the tool binary, parses JSON output, and converts
+        to ToolOutputSchema for the registry.
+
+# ==============================================================================
+# NEO4J INTEGRATION
+# ==============================================================================
+
+neo4j_integration:
+  overview: |
+    The taxonomy system integrates with Neo4j through the TaxonomyGraphEngine.
+    Events and tool outputs are processed according to taxonomy definitions,
+    creating nodes and relationships in Neo4j with consistent schemas.
+
+  graph_client:
+    location: "internal/graphrag/graph/neo4j.go"
+    features:
+      - connection_management: "Exponential backoff retry (5 attempts)"
+      - query_execution: "Auto-detects read vs write operations"
+      - node_operations: "CreateNode, DeleteNode with labels"
+      - relationship_operations: "CreateRelationship with type safety"
+      - health_checking: "5-second connectivity verification"
+
+  taxonomy_engine:
+    location: "internal/graphrag/engine/taxonomy_engine.go"
+
+    interface: |
+      type TaxonomyGraphEngine interface {
+          HandleEvent(ctx, eventType string, data map[string]any) error
+          HandleToolOutput(ctx, toolName string, output map[string]any, agentRunID string) error
+          HandleFinding(ctx, finding agent.Finding, missionID string) error
+          Health(ctx) HealthStatus
+      }
+
+    event_processing:
+      description: "Converts Gibson events to Neo4j operations"
+      flow:
+        1: "Event arrives (e.g., mission.started)"
+        2: "Lookup event definition in registry"
+        3: "If creates_node: MERGE node with ID template"
+        4: "If updates_node: MATCH + SET properties"
+        5: "For each relationship: MERGE relationship"
+
+      cypher_patterns:
+        create_node: |
+          MERGE (n:Mission {id: $id})
+          SET n += $props
+          RETURN n
+
+        update_node: |
+          MATCH (n:Mission {id: $id})
+          SET n += $props
+          RETURN n
+
+        create_relationship: |
+          MATCH (from {id: $from_id})
+          MATCH (to {id: $to_id})
+          MERGE (from)-[r:PART_OF]->(to)
+          SET r += $props
+          RETURN r
+
+    tool_output_processing:
+      description: "Extracts assets from tool JSON output"
+      flow:
+        1: "Tool completes execution with JSON output"
+        2: "Lookup tool output schema in registry"
+        3: "For each extraction rule:"
+        4: "  - Extract items using JSONPath"
+        5: "  - Create nodes with ID template"
+        6: "  - Create relationships to agent_run"
+
+    finding_processing:
+      description: "Creates Finding nodes with relationships"
+      operations:
+        - "MERGE Finding node with properties"
+        - "Create AFFECTS relationship to target"
+        - "Create USES_TECHNIQUE relationships for CWEs"
+        - "Create PART_OF relationship to mission"
+        - "Create PRODUCED relationship from tool_execution"
+
+  node_labels:
+    description: "Neo4j labels use PascalCase names from NodeTypeDefinition.Name"
+    mapping:
+      domain: "Domain"
+      subdomain: "Subdomain"
+      host: "Host"
+      port: "Port"
+      service: "Service"
+      endpoint: "Endpoint"
+      api: "API"
+      technology: "Technology"
+      cloud_asset: "CloudAsset"
+      certificate: "Certificate"
+      finding: "Finding"
+      evidence: "Evidence"
+      mitigation: "Mitigation"
+      mission: "Mission"
+      agent_run: "AgentRun"
+      tool_execution: "ToolExecution"
+      llm_call: "LLMCall"
+      intelligence: "Intelligence"
+
+  node_id_patterns:
+    description: "Gibson uses string IDs in 'id' property, not Neo4j elementId()"
+    templates:
+      domain: "domain:{name}"
+      subdomain: "subdomain:{name}"
+      host: "host:{ip}"
+      port: "port:{host_id}:{number}:{protocol}"
+      service: "service:{port_id}:{name}"
+      endpoint: "endpoint:{sha256(method:url)[:16]}"
+      api: "api:{base_url}"
+      technology: "technology:{name}:{version}"
+      cloud_asset: "cloud_asset:{provider}:{resource_type}:{arn_or_id}"
+      certificate: "certificate:{fingerprint}"
+      finding: "finding:{uuid}"
+      evidence: "evidence:{uuid}"
+      mitigation: "mitigation:{uuid}"
+      mission: "mission:{name}"
+      agent_run: "agent_run:{trace_id}:{span_id}"
+      tool_execution: "tool_execution:{trace_id}:{span_id}:{timestamp}"
+      llm_call: "llm_call:{trace_id}:{span_id}:{timestamp}"
+      intelligence: "intelligence:{mission_id}:{phase}:{timestamp}"
+
+  relationship_types:
+    description: "Uppercase relationship types for Neo4j"
+    asset_hierarchy:
+      - HAS_SUBDOMAIN
+      - RESOLVES_TO
+      - HAS_PORT
+      - RUNS_SERVICE
+      - HAS_ENDPOINT
+      - USES_TECHNOLOGY
+      - SERVES_CERTIFICATE
+      - HOSTS
+    finding_links:
+      - AFFECTS
+      - USES_TECHNIQUE
+      - HAS_EVIDENCE
+      - LEADS_TO
+      - MITIGATES
+      - SIMILAR_TO
+      - EXPLOITS
+    execution_context:
+      - PART_OF
+      - EXECUTED_BY
+      - MADE_CALL
+      - DISCOVERED
+      - PRODUCED
+      - DELEGATED_TO
+      - ANALYZES
+      - GENERATED_BY
+      - PART_OF_MISSION
+
+# ==============================================================================
+# LOADING MECHANISM
+# ==============================================================================
+
+loading_mechanism:
+  at_compile_time:
+    description: "YAML files are embedded into binary"
+    mechanism: |
+      Go's embed.FS directive compiles YAML files into the binary:
+
+      //go:embed *.yaml nodes/*.yaml relationships/*.yaml ...
+      var taxonomyFS embed.FS
+
+    benefits:
+      - "No external file dependencies at runtime"
+      - "Version consistency (taxonomy matches binary version)"
+      - "Secure (cannot be modified after build)"
+
+  at_runtime:
+    initialization:
+      location: "internal/init/taxonomy.go"
+      functions:
+        - InitTaxonomy(customPath): "Load at startup"
+        - GetTaxonomyRegistry(): "Get loaded registry"
+        - ValidateTaxonomyOnly(path): "CI validation mode"
+
+    standard_loading:
+      code: |
+        // Load embedded taxonomy only
+        registry, err := taxonomy.LoadAndValidateTaxonomy()
+
+        // Load with custom extensions
+        registry, err := taxonomy.LoadAndValidateTaxonomyWithCustom(customPath)
+
+        // Load with tool schemas from binaries
+        registry, err := taxonomy.LoadAndValidateTaxonomyWithTools(ctx, toolsDir, logger)
+
+    loading_flow:
+      1: "Read taxonomy.yaml for version and includes list"
+      2: "For each included file:"
+      3: "  - Detect file type from path (nodes/, relationships/, etc.)"
+      4: "  - Parse YAML into appropriate struct"
+      5: "  - Add definitions to taxonomy (checking for duplicates)"
+      6: "Build secondary indices (byID maps)"
+      7: "If custom path: merge custom definitions (additive only)"
+      8: "Validate all definitions"
+      9: "Create TaxonomyRegistry wrapper"
+
+  custom_taxonomy:
+    description: "Extend taxonomy with custom types"
+
+    structure: |
+      # ~/.gibson/custom-taxonomy/taxonomy.yaml
+      version: "1.0.0"
+      includes:
+        - "nodes/my-nodes.yaml"
+        - "relationships/my-rels.yaml"
+
+    rules:
+      - "Custom types are additive only"
+      - "Cannot override bundled types (error thrown)"
+      - "Cannot remove bundled types"
+      - "Must pass validation against bundled types"
+
+    usage: |
+      gibson daemon start --custom-taxonomy ~/.gibson/custom-taxonomy/taxonomy.yaml
+
+  tool_schema_loading:
+    description: "Load taxonomy from tool binaries at runtime"
+
+    mechanism: |
+      Tools that embed schema.TaxonomyMapping are queried at runtime:
+      1. Gibson scans tools directory for binaries
+      2. Each binary is executed with --schema flag
+      3. JSON output parsed as schema.TaxonomyMapping
+      4. Converted to ToolOutputSchema
+      5. Added to registry (takes precedence over YAML)
+
+    tools_with_embedded_schema:
+      - nmap
+      - subfinder
+      - httpx
+      - nuclei
+      - amass
+      - masscan
+
+# ==============================================================================
+# MAKING UPDATES
+# ==============================================================================
+
+making_updates:
+  adding_node_type:
+    steps:
+      1: "Create/edit appropriate file in nodes/ directory"
+      2: "Define node type following schema"
+      3: "Add to includes in taxonomy.yaml if new file"
+      4: "Run validation: make test"
+
+    example: |
+      # nodes/assets.yaml
+      node_types:
+        - id: node.asset.container
+          name: Container
+          type: container
+          category: asset
+          description: "Container instance in a cluster"
+          id_template: "container:{namespace}:{name}"
+          properties:
+            - name: name
+              type: string
+              required: true
+              description: "Container name"
+            - name: namespace
+              type: string
+              required: true
+              description: "Kubernetes namespace"
+            - name: image
+              type: string
+              required: false
+              description: "Container image reference"
+          examples:
+            - name: "my-app"
+              namespace: "production"
+              image: "myregistry/myapp:v1.2.3"
+
+  adding_relationship_type:
+    steps:
+      1: "Create/edit appropriate file in relationships/ directory"
+      2: "Define relationship with from_types and to_types"
+      3: "Ensure referenced node types exist"
+      4: "Run validation"
+
+    example: |
+      # relationships/asset_hierarchy.yaml
+      relationship_types:
+        - id: rel.asset.contains
+          name: CONTAINS
+          type: CONTAINS
+          category: asset_hierarchy
+          description: "Container runs inside a pod"
+          from_types: [pod]
+          to_types: [container]
+          bidirectional: false
+          properties:
+            - name: restart_count
+              type: int
+              required: false
+              description: "Number of container restarts"
+
+  adding_execution_event:
+    steps:
+      1: "Add event definition to execution_events.yaml"
+      2: "Ensure referenced node types exist in nodes/*.yaml"
+      3: "Ensure referenced relationship types exist in relationships/*.yaml"
+      4: "Run validation"
+
+    example: |
+      # execution_events.yaml
+      execution_events:
+        - event_type: custom.event.started
+          creates_node:
+            type: custom_execution
+            id_template: "custom:{trace_id}:{span_id}"
+            properties:
+              - source: custom_field
+                target: custom_property
+              - value: "custom_value"
+                target: status
+          creates_relationships:
+            - type: PART_OF
+              from_template: "custom:{trace_id}:{span_id}"
+              to_template: "{mission_id}"
+
+  adding_tool_output_schema:
+    recommended_approach: |
+      Embed taxonomy in the tool binary using schema.TaxonomyMapping.
+      See opensource/tools/ for examples.
+
+    legacy_approach: |
+      # tool_outputs.yaml
+      tool_outputs:
+        - tool: my-scanner
+          description: "Extract hosts from my-scanner output"
+          output_format: json
+          extracts:
+            - node_type: host
+              json_path: "results.hosts[*]"
+              id_template: "host:{ip}"
+              properties:
+                - json_path: "ip_address"
+                  target: "ip"
+                - json_path: "hostname"
+                  target: "hostname"
+              relationships:
+                - type: DISCOVERED
+                  to_template: "{_context.agent_run_id}"
+
+  adding_technique_type:
+    steps:
+      1: "Add to technique-types/technique-types.yaml"
+      2: "Map to MITRE ATT&CK IDs"
+      3: "Add to appropriate capability if applicable"
+
+    example: |
+      # technique-types/technique-types.yaml
+      technique_types:
+        - id: "technique.initial_access.graphql_injection"
+          type: "graphql_injection"
+          name: "GraphQL Injection"
+          category: "initial_access"
+          mitre_ids:
+            - "T1190"
+          description: "GraphQL injection allowing query manipulation"
+          default_severity: "high"
+
+  adding_capability:
+    steps:
+      1: "Add to capabilities/capabilities.yaml"
+      2: "Reference existing technique type IDs"
+
+    example: |
+      # capabilities/capabilities.yaml
+      capabilities:
+        - id: "capability.graphql_security_testing"
+          name: "GraphQL Security Testing"
+          description: "GraphQL-specific security testing"
+          technique_types:
+            - "graphql_injection"
+            - "idor"
+            - "auth_bypass"
+
+  adding_target_type:
+    steps:
+      1: "Add to targets/targets.yaml"
+      2: "Define connection schema with required/optional fields"
+
+    example: |
+      # targets/targets.yaml
+      target_types:
+        - id: "target.messaging.kafka"
+          type: "kafka"
+          name: "Apache Kafka"
+          category: "messaging"
+          description: "Apache Kafka message broker"
+          connection_schema:
+            required:
+              - "bootstrap_servers"
+            optional:
+              - "security_protocol"
+              - "sasl_mechanism"
+              - "username"
+              - "password"
+
+  version_bump:
+    when: "After significant taxonomy changes"
+    steps:
+      1: "Update version in taxonomy.yaml"
+      2: "Update Gibson version (they're tied)"
+      3: "Run full test suite"
+      4: "Update downstream consumers"
+
+# ==============================================================================
+# IMPROVING THE TAXONOMY
+# ==============================================================================
+
+improvement_guidelines:
+  when_to_add_types:
+    - "New asset category discovered in security testing"
+    - "New relationship pattern needed for attack chains"
+    - "New technique category not covered by existing types"
+    - "New target system type to support"
+
+  when_not_to_add_types:
+    - "One-off custom needs (use custom taxonomy instead)"
+    - "Temporary testing purposes"
+    - "Types that duplicate existing functionality"
+
+  best_practices:
+    node_types:
+      - "Use clear, domain-specific type names"
+      - "Include descriptive id_template for deterministic IDs"
+      - "Mark truly required properties as required: true"
+      - "Provide examples for documentation"
+      - "Group related types in the same file"
+
+    relationships:
+      - "Use uppercase SCREAMING_SNAKE_CASE names"
+      - "Clearly define from_types and to_types constraints"
+      - "Use bidirectional: true only when semantically appropriate"
+      - "Add relationship properties for timestamps and context"
+
+    id_templates:
+      - "Use deterministic templates for idempotent MERGE"
+      - "Include enough fields to ensure uniqueness"
+      - "Use sha256() for collision-prone combinations"
+      - "Use uuid for globally unique items (findings)"
+
+    event_mappings:
+      - "Map all relevant event data to node properties"
+      - "Mark optional fields as optional: true"
+      - "Create relationships to establish provenance"
+      - "Use MERGE for idempotent operations"
+
+  validation:
+    automatic:
+      - "Duplicate ID detection"
+      - "Duplicate Type detection"
+      - "Reference validation (nodes, relationships)"
+      - "Event schema validation"
+      - "Tool output schema validation"
+
+    manual_review:
+      - "Semantic correctness of relationships"
+      - "Appropriate property types"
+      - "Complete examples"
+      - "Documentation accuracy"
+
+# ==============================================================================
+# QUERYING THE TAXONOMY AT RUNTIME
+# ==============================================================================
+
+runtime_queries:
+  getting_registry:
+    code: |
+      import "github.com/zero-day-ai/gibson/internal/init"
+
+      // Get the loaded registry
+      registry := init.GetTaxonomyRegistry()
+
+  querying_node_types:
+    code: |
+      // Get specific node type
+      nodeDef, found := registry.NodeType("host")
+      if found {
+          fmt.Printf("ID Template: %s\n", nodeDef.IDTemplate)
+          fmt.Printf("Properties: %v\n", nodeDef.Properties)
+      }
+
+      // Check if type is canonical
+      if registry.IsCanonicalNodeType("my_custom_type") {
+          // It's in the official taxonomy
+      }
+
+      // List all node types
+      for _, nodeType := range registry.NodeTypes() {
+          fmt.Printf("%s: %s\n", nodeType.Type, nodeType.Description)
+      }
+
+  querying_relationships:
+    code: |
+      // Get specific relationship
+      relDef, found := registry.RelationshipType("HAS_PORT")
+      if found {
+          fmt.Printf("From: %v, To: %v\n", relDef.FromTypes, relDef.ToTypes)
+      }
+
+      // List all relationships
+      for _, relType := range registry.RelationshipTypes() {
+          fmt.Printf("%s: %s -> %s\n", relType.Type, relType.FromTypes, relType.ToTypes)
+      }
+
+  generating_node_ids:
+    code: |
+      // Generate deterministic node ID from template
+      nodeID, err := registry.GenerateNodeID("host", map[string]any{
+          "ip": "192.168.1.1",
+      })
+      // Result: "host:192.168.1.1"
+
+      // With hash function
+      nodeID, err := registry.GenerateNodeID("endpoint", map[string]any{
+          "method": "GET",
+          "url": "https://api.example.com/users",
+      })
+      // Result: "endpoint:a1b2c3d4e5f6..."
+
+  querying_techniques:
+    code: |
+      // Get MITRE technique
+      technique, found := registry.Technique("T1190")
+
+      // Get all techniques from a source
+      mitreTechniques := registry.Techniques("mitre")
+      arcanumTechniques := registry.Techniques("arcanum")
+      allTechniques := registry.Techniques("")
+
+  querying_capabilities:
+    code: |
+      // Get capability
+      cap, found := registry.GetCapability("capability.web_vulnerability_scanning")
+      if found {
+          fmt.Printf("Technique Types: %v\n", cap.TechniqueTypes)
+      }
+
+      // Get technique types for a capability
+      techniqueTypes := registry.GetTechniqueTypesForCapability("capability.llm_security_testing")
+
+  checking_event_support:
+    code: |
+      // Check if event type is supported
+      if registry.HasExecutionEvent("mission.started") {
+          eventDef := registry.GetExecutionEvent("mission.started")
+          // Process event definition
+      }
+
+      // List all supported events
+      eventTypes := registry.ListExecutionEvents()
+
+  checking_tool_schemas:
+    code: |
+      // Check if tool has output schema
+      if registry.HasToolOutputSchema("nmap") {
+          schema := registry.GetToolOutputSchema("nmap")
+          fmt.Printf("Extracts: %d rules\n", len(schema.Extracts))
+      }
+
+      // Check if schema came from binary
+      if registry.IsSchemaBasedToolSchema("nmap") {
+          // Schema was loaded from tool binary via --schema
+      }
+
+# ==============================================================================
+# TROUBLESHOOTING
+# ==============================================================================
+
+troubleshooting:
+  taxonomy_not_loading:
+    symptoms:
+      - "nil registry returned"
+      - "taxonomy validation failed"
+    solutions:
+      - "Check YAML syntax (run yamllint)"
+      - "Ensure all includes exist"
+      - "Check for duplicate IDs or types"
+      - "Verify reference targets exist"
+
+  custom_taxonomy_rejected:
+    symptoms:
+      - "conflicts with bundled taxonomy"
+    cause: "Attempting to override bundled types"
+    solution: "Custom types must have unique IDs and types"
+
+  event_not_creating_nodes:
+    symptoms:
+      - "event processed but no graph changes"
+    solutions:
+      - "Check event type matches execution_events.yaml"
+      - "Verify data contains required fields"
+      - "Check Neo4j connectivity"
+      - "Look for warnings in logs"
+
+  tool_schema_not_loaded:
+    symptoms:
+      - "tool output not extracted"
+    solutions:
+      - "Check if tool has embedded schema"
+      - "Verify tool binary is executable"
+      - "Check --schema flag output"
+      - "Add YAML schema for legacy tools"
+
+  neo4j_errors:
+    symptoms:
+      - "failed to create node/relationship"
+    solutions:
+      - "Check Neo4j connectivity"
+      - "Verify Cypher syntax in engine"
+      - "Check node ID uniqueness"
+      - "Verify referenced nodes exist"
+
+# ==============================================================================
+# REFERENCE
+# ==============================================================================
+
+reference:
+  property_types:
+    - string: "UTF-8 string"
+    - int: "64-bit integer"
+    - float64: "64-bit floating point"
+    - bool: "Boolean true/false"
+    - "[]string": "Array of strings"
+    - "map[string]any": "Arbitrary JSON object"
+
+  id_template_functions:
+    simple_substitution: "{field}"
+    uuid_generation: "{uuid}"
+    hash_generation: "{sha256(expr)}"
+    hash_truncation: "{sha256(expr)[:16]}"
+
+  event_property_mapping:
+    source_based: "source: field_name (from event data)"
+    static_value: "value: constant (fixed value)"
+    optional_flag: "optional: true (don't fail if missing)"
+
+  cypher_operations:
+    node_creation: "MERGE (n:Label {id: $id}) SET n += $props"
+    node_update: "MATCH (n:Label {id: $id}) SET n += $props"
+    relationship_creation: "MATCH ... MERGE (a)-[r:TYPE]->(b)"
+
+  api_endpoints:
+    gibson_commands:
+      - "gibson taxonomy validate [path]"
+      - "gibson taxonomy list-types"
+      - "gibson taxonomy show-type <type>"

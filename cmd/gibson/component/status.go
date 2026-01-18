@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/cmd/gibson/core"
-	"github.com/zero-day-ai/gibson/cmd/gibson/internal"
 	dclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
 )
@@ -79,48 +77,14 @@ func runStatus(cmd *cobra.Command, args []string, cfg Config, flags *StatusFlags
 		componentName = args[0]
 	}
 
-	// Check for daemon client first - prefer daemon registry for live status
+	// Check for daemon client - status command requires daemon for accurate component status
 	ctx := cmd.Context()
-	if daemonClient := GetDaemonClient(ctx); daemonClient != nil {
-		return queryComponentStatusViaDaemon(cmd, daemonClient, cfg, componentName, flags)
+	daemonClient := GetDaemonClient(ctx)
+	if daemonClient == nil {
+		return fmt.Errorf("daemon is not running - component status requires the daemon to be running\n\nPlease start the daemon first:\n  gibson daemon start")
 	}
 
-	// Fall back to local registry when daemon unavailable
-	fmt.Fprintln(os.Stderr, "[WARN] Daemon not running, showing local registry data")
-
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
-	}
-	defer internal.CloseWithLog(cc, nil, "gRPC connection")
-
-	// Build status options
-	opts := core.StatusOptions{
-		Watch:      flags.Watch,
-		Interval:   flags.Interval,
-		ErrorCount: flags.ErrorCount,
-		JSON:       flags.JSON,
-	}
-
-	// Call core function
-	result, err := core.ComponentStatus(cc, cfg.Kind, componentName, opts)
-	if err != nil {
-		return err
-	}
-
-	// Extract result data
-	data, ok := result.Data.(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("unexpected result type")
-	}
-
-	// Check if this is a specific component or all components
-	if componentName != "" {
-		return displayComponentInstances(cmd, cfg, flags, data)
-	}
-
-	return displayAllComponents(cmd, cfg, flags, data)
+	return queryComponentStatusViaDaemon(cmd, daemonClient, cfg, componentName, flags)
 }
 
 // displayAllComponents displays all registered components from the result data.

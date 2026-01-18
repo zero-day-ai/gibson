@@ -96,41 +96,33 @@ func getMigrations() []migration {
 		},
 		{
 			version: 8,
-			name:    "components_table",
-			up:      getComponentsTableSchema(),
+			name:    "mission_workflow_json",
+			up:      getMissionWorkflowJSONSchema(),
 			down:    getDownMigration8(),
 		},
 		{
 			version: 9,
-			name:    "mission_workflow_json",
-			up:      getMissionWorkflowJSONSchema(),
-			down:    getDownMigration9(),
-		},
-		// Migration 10 (remove_component_runtime_columns) was removed - it broke
-		// the component system by removing status/pid/port columns that the code requires.
-		{
-			version: 10,
 			name:    "mission_consolidation_columns",
 			up:      getMissionConsolidationColumnsSchema(),
-			down:    getDownMigration11(),
+			down:    getDownMigration9(),
+		},
+		{
+			version: 10,
+			name:    "resumable_mission_architecture",
+			up:      getResumableMissionArchitectureSchema(),
+			down:    getDownMigration10(),
 		},
 		{
 			version: 11,
-			name:    "resumable_mission_architecture",
-			up:      getResumableMissionArchitectureSchema(),
-			down:    getDownMigration12(),
+			name:    "add_target_connection",
+			up:      getTargetConnectionSchema(),
+			down:    getDownMigration11(),
 		},
 		{
 			version: 12,
-			name:    "add_target_connection",
-			up:      getTargetConnectionSchema(),
-			down:    getDownMigration13(),
-		},
-		{
-			version: 13,
 			name:    "mission_lineage",
 			up:      getMissionLineageSchema(),
-			down:    getDownMigration14(),
+			down:    getDownMigration12(),
 		},
 		// Future migrations will be added here
 	}
@@ -1259,244 +1251,33 @@ DROP TABLE IF EXISTS agent_sessions;
 `
 }
 
-// getComponentsTableSchema returns the schema for components table
-func getComponentsTableSchema() string {
-	return `
--- Migration 8: Components Table Schema
--- Creates table for storing component metadata (agents, tools, plugins)
-
--- ============================================================================
--- Components Table: Store all component types in a single table
--- ============================================================================
-CREATE TABLE IF NOT EXISTS components (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind TEXT NOT NULL CHECK(kind IN ('agent', 'tool', 'plugin')),
-    name TEXT NOT NULL,
-    version TEXT NOT NULL,
-
-    -- Path information
-    repo_path TEXT,                          -- Path to cloned source repository (_repos/)
-    bin_path TEXT,                           -- Path to installed binary (bin/)
-
-    -- Metadata
-    source TEXT NOT NULL DEFAULT 'external', -- 'built-in', 'external', 'custom'
-    status TEXT NOT NULL DEFAULT 'available',-- 'available', 'running', 'stopped', 'error'
-    manifest TEXT,                           -- JSON serialized component.yaml
-
-    -- Runtime state
-    pid INTEGER,                             -- Process ID when running
-    port INTEGER,                            -- Network port when running
-
-    -- Timestamps
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    started_at TIMESTAMP,                    -- Last start time
-    stopped_at TIMESTAMP,                    -- Last stop time
-
-    -- Unique constraint: one component per (kind, name)
-    UNIQUE(kind, name)
-);
-
--- ============================================================================
--- Components Indexes for Efficient Queries
--- ============================================================================
-
--- Index for listing by kind (agent, tool, plugin)
-CREATE INDEX IF NOT EXISTS idx_components_kind ON components(kind);
-
--- Index for filtering by kind and status
-CREATE INDEX IF NOT EXISTS idx_components_kind_status ON components(kind, status);
-
--- Partial index for finding running components efficiently
-CREATE INDEX IF NOT EXISTS idx_components_status ON components(status) WHERE status = 'running';
-
--- ============================================================================
--- Trigger to update updated_at timestamp on components
--- ============================================================================
-CREATE TRIGGER IF NOT EXISTS update_components_timestamp
-    AFTER UPDATE ON components
-    FOR EACH ROW
-    WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE components SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
-`
-}
-
-// getDownMigration8 returns the rollback SQL for migration 8
-func getDownMigration8() string {
-	return `
--- Rollback Migration 8: Components Table Schema
-
--- Drop trigger
-DROP TRIGGER IF EXISTS update_components_timestamp;
-
--- Drop indexes
-DROP INDEX IF EXISTS idx_components_status;
-DROP INDEX IF EXISTS idx_components_kind_status;
-DROP INDEX IF EXISTS idx_components_kind;
-
--- Drop table
-DROP TABLE IF EXISTS components;
-`
-}
-
 // getMissionWorkflowJSONSchema returns the schema for adding workflow_json column
 func getMissionWorkflowJSONSchema() string {
 	return `
--- Migration 9: Add workflow_json column to missions table
+-- Migration 8: Add workflow_json column to missions table
 -- Allows storing workflow definition inline with mission
 
 ALTER TABLE missions ADD COLUMN workflow_json TEXT;
 `
 }
 
-// getDownMigration9 returns the rollback SQL for migration 9
-func getDownMigration9() string {
+// getDownMigration8 returns the rollback SQL for migration 8
+func getDownMigration8() string {
 	return `
--- Rollback Migration 9: workflow_json column
+-- Rollback Migration 8: workflow_json column
 -- Note: SQLite doesn't support DROP COLUMN directly
 -- In production, this would require recreating the table
-`
-}
-
-// getRemoveComponentRuntimeColumnsSchema returns the schema for removing runtime columns
-func getRemoveComponentRuntimeColumnsSchema() string {
-	return `
--- Migration 10: Remove Component Runtime Columns
--- Remove pid, port, status, started_at, stopped_at from components table
--- These are now tracked via process checking instead of database
-
--- Step 1: Create new table without runtime columns
-CREATE TABLE components_new (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind TEXT NOT NULL CHECK(kind IN ('agent', 'tool', 'plugin')),
-    name TEXT NOT NULL,
-    version TEXT NOT NULL,
-
-    -- Path information
-    repo_path TEXT,
-    bin_path TEXT,
-
-    -- Metadata only (no runtime state)
-    source TEXT NOT NULL DEFAULT 'external',
-    manifest TEXT,
-
-    -- Timestamps
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    -- Unique constraint: one component per (kind, name)
-    UNIQUE(kind, name)
-);
-
--- Step 2: Copy data from old table to new table (excluding runtime columns)
-INSERT INTO components_new (
-    id, kind, name, version, repo_path, bin_path, source, manifest,
-    created_at, updated_at
-)
-SELECT
-    id, kind, name, version, repo_path, bin_path, source, manifest,
-    created_at, updated_at
-FROM components;
-
--- Step 3: Drop old table
-DROP TABLE components;
-
--- Step 4: Rename new table to original name
-ALTER TABLE components_new RENAME TO components;
-
--- Step 5: Recreate indexes
-CREATE INDEX IF NOT EXISTS idx_components_kind ON components(kind);
-CREATE INDEX IF NOT EXISTS idx_components_kind_source ON components(kind, source);
-
--- Step 6: Recreate trigger for updated_at
-CREATE TRIGGER IF NOT EXISTS update_components_timestamp
-    AFTER UPDATE ON components
-    FOR EACH ROW
-    WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE components SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
-`
-}
-
-// getDownMigration10 returns the rollback SQL for migration 10
-func getDownMigration10() string {
-	return `
--- Rollback Migration 10: Restore Component Runtime Columns
--- Add back runtime columns that were removed
-
--- Step 1: Create table with runtime columns
-CREATE TABLE components_new (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    kind TEXT NOT NULL CHECK(kind IN ('agent', 'tool', 'plugin')),
-    name TEXT NOT NULL,
-    version TEXT NOT NULL,
-
-    -- Path information
-    repo_path TEXT,
-    bin_path TEXT,
-
-    -- Metadata
-    source TEXT NOT NULL DEFAULT 'external',
-    status TEXT NOT NULL DEFAULT 'available',
-    manifest TEXT,
-
-    -- Runtime state (restored)
-    pid INTEGER,
-    port INTEGER,
-
-    -- Timestamps
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    started_at TIMESTAMP,
-    stopped_at TIMESTAMP,
-
-    -- Unique constraint
-    UNIQUE(kind, name)
-);
-
--- Step 2: Copy data from current table
-INSERT INTO components_new (
-    id, kind, name, version, repo_path, bin_path, source, manifest,
-    created_at, updated_at
-)
-SELECT
-    id, kind, name, version, repo_path, bin_path, source, manifest,
-    created_at, updated_at
-FROM components;
-
--- Step 3: Drop current table
-DROP TABLE components;
-
--- Step 4: Rename new table
-ALTER TABLE components_new RENAME TO components;
-
--- Step 5: Recreate indexes
-CREATE INDEX IF NOT EXISTS idx_components_kind ON components(kind);
-CREATE INDEX IF NOT EXISTS idx_components_kind_status ON components(kind, status);
-CREATE INDEX IF NOT EXISTS idx_components_status ON components(status) WHERE status = 'running';
-
--- Step 6: Recreate trigger
-CREATE TRIGGER IF NOT EXISTS update_components_timestamp
-    AFTER UPDATE ON components
-    FOR EACH ROW
-    WHEN NEW.updated_at = OLD.updated_at
-BEGIN
-    UPDATE components SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
-END;
 `
 }
 
 // getMissionConsolidationColumnsSchema returns the schema for mission consolidation
 // This migration ensures all columns from mission.Mission struct exist in the database.
 // Since SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN, and the columns
-// were already added in migrations 4, 6, and 9, this migration serves as documentation
+// were already added in migrations 4, 6, and 8, this migration serves as documentation
 // and verification that the schema is complete for mission consolidation.
 func getMissionConsolidationColumnsSchema() string {
 	return `
--- Migration 11: Mission Consolidation Columns
+-- Migration 9: Mission Consolidation Columns
 -- Ensures all columns from mission.Mission struct exist in the missions table.
 -- This migration documents the complete schema after consolidation.
 
@@ -1524,14 +1305,14 @@ func getMissionConsolidationColumnsSchema() string {
 --   - checkpoint TEXT                         ✓ MissionCheckpoint JSON
 --   - error TEXT                              ✓ error message string
 
--- From migration 9 (getMissionWorkflowJSONSchema):
+-- From migration 8 (getMissionWorkflowJSONSchema):
 --   - workflow_json TEXT                      ✓ WorkflowJSON field
 
 -- All required columns exist from previous migrations.
 -- This migration is a no-op that documents the consolidated schema.
 
 -- Verification: Create a view to document the expected schema
-CREATE TEMPORARY VIEW IF NOT EXISTS _mission_schema_v11 AS
+CREATE TEMPORARY VIEW IF NOT EXISTS _mission_schema_v9 AS
 SELECT
     'progress' as column_name, 'REAL' as type, 'Migration 4' as added_in
 UNION ALL SELECT 'findings_count', 'INTEGER', 'Migration 4'
@@ -1542,21 +1323,21 @@ UNION ALL SELECT 'constraints', 'TEXT', 'Migration 6'
 UNION ALL SELECT 'metrics', 'TEXT', 'Migration 6'
 UNION ALL SELECT 'checkpoint', 'TEXT', 'Migration 6'
 UNION ALL SELECT 'error', 'TEXT', 'Migration 6'
-UNION ALL SELECT 'workflow_json', 'TEXT', 'Migration 9';
+UNION ALL SELECT 'workflow_json', 'TEXT', 'Migration 8';
 
 -- Drop the documentation view
-DROP VIEW IF EXISTS _mission_schema_v11;
+DROP VIEW IF EXISTS _mission_schema_v9;
 
 -- Schema verification complete. All columns exist from previous migrations.
 `
 }
 
-// getDownMigration11 returns the rollback SQL for migration 11
-func getDownMigration11() string {
+// getDownMigration9 returns the rollback SQL for migration 9
+func getDownMigration9() string {
 	return `
--- Rollback Migration 11: Mission Consolidation Columns
+-- Rollback Migration 9: Mission Consolidation Columns
 -- This migration only verified existing columns, so rollback is a no-op.
--- All columns were added in previous migrations (4, 6, 9) and remain in place.
+-- All columns were added in previous migrations (4, 6, 8) and remain in place.
 
 -- No changes to rollback
 `
@@ -1565,7 +1346,7 @@ func getDownMigration11() string {
 // getResumableMissionArchitectureSchema returns the schema for resumable missions
 func getResumableMissionArchitectureSchema() string {
 	return `
--- Migration 11: Resumable Mission Architecture
+-- Migration 10: Resumable Mission Architecture
 -- Removes UNIQUE constraint on name, adds run linkage columns
 -- Creates mission_events table for event persistence
 
@@ -1666,10 +1447,10 @@ CREATE INDEX IF NOT EXISTS idx_mission_events_mission_type ON mission_events(mis
 `
 }
 
-// getDownMigration12 returns the rollback SQL for migration 11
-func getDownMigration12() string {
+// getDownMigration10 returns the rollback SQL for migration 10
+func getDownMigration10() string {
 	return `
--- Rollback Migration 11: Resumable Mission Architecture
+-- Rollback Migration 10: Resumable Mission Architecture
 
 -- Drop mission_events indexes
 DROP INDEX IF EXISTS idx_mission_events_mission_type;
@@ -1698,17 +1479,17 @@ DROP INDEX IF EXISTS idx_missions_name_status;
 // getTargetConnectionSchema returns the schema for adding connection column to targets
 func getTargetConnectionSchema() string {
 	return `
--- Migration 12: Add connection column to targets table
+-- Migration 11: Add connection column to targets table
 -- Stores schema-based connection parameters (CIDR, URLs, hosts, etc.)
 
 ALTER TABLE targets ADD COLUMN connection TEXT DEFAULT '{}';
 `
 }
 
-// getDownMigration13 returns the rollback SQL for migration 12
-func getDownMigration13() string {
+// getDownMigration11 returns the rollback SQL for migration 11
+func getDownMigration11() string {
 	return `
--- Rollback Migration 12: Target Connection Column
+-- Rollback Migration 11: Target Connection Column
 -- Note: SQLite doesn't support DROP COLUMN directly
 -- The connection column will remain in place during rollback
 `
@@ -1717,7 +1498,7 @@ func getDownMigration13() string {
 // getMissionLineageSchema returns the schema for adding parent mission tracking
 func getMissionLineageSchema() string {
 	return `
--- Migration 13: Mission Lineage Tracking
+-- Migration 12: Mission Lineage Tracking
 -- Adds parent_mission_id and depth columns to support mission hierarchy
 
 -- Add parent_mission_id column (nullable FK to missions table)
@@ -1734,10 +1515,10 @@ CREATE INDEX IF NOT EXISTS idx_missions_parent_status ON missions(parent_mission
 `
 }
 
-// getDownMigration14 returns the rollback SQL for migration 13
-func getDownMigration14() string {
+// getDownMigration12 returns the rollback SQL for migration 12
+func getDownMigration12() string {
 	return `
--- Rollback Migration 13: Mission Lineage Tracking
+-- Rollback Migration 12: Mission Lineage Tracking
 
 -- Drop indexes
 DROP INDEX IF EXISTS idx_missions_parent_status;

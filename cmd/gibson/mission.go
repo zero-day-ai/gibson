@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,7 +16,6 @@ import (
 	dclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/mission"
-	"github.com/zero-day-ai/gibson/internal/workflow"
 )
 
 var missionCmd = &cobra.Command{
@@ -27,8 +27,11 @@ var missionCmd = &cobra.Command{
 var missionListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all missions",
-	Long:  `List all missions with optional status filter`,
-	RunE:  runMissionList,
+	Long: `List all missions with optional status filter.
+
+By default, shows mission execution instances (running, paused, completed).
+Use --definitions to show installed mission templates instead.`,
+	RunE: runMissionList,
 }
 
 var missionShowCmd = &cobra.Command{
@@ -40,10 +43,24 @@ var missionShowCmd = &cobra.Command{
 }
 
 var missionRunCmd = &cobra.Command{
-	Use:   "run -f WORKFLOW_FILE",
-	Short: "Run a new mission from workflow YAML",
-	Long:  `Create and start a new mission from a workflow YAML definition file`,
-	RunE:  runMissionRun,
+	Use:   "run [NAME|FILE|URL]",
+	Short: "Run a new mission",
+	Long: `Run a mission from an installed definition, file path, or git URL.
+
+Auto-detection:
+  - If argument contains "://" or starts with "git@" -> treated as URL (temporary clone)
+  - If argument is a valid file path -> loads from file
+  - Otherwise -> loads from installed mission by name
+
+When using -f/--file flag, always loads from the specified file path.
+
+Examples:
+  gibson mission run my-recon-mission                           # Run installed mission
+  gibson mission run ./workflows/scan.yaml                      # Run from file
+  gibson mission run https://github.com/user/mission            # Run from URL (temporary)
+  gibson mission run -f scan.yaml                               # Run from file (explicit)
+  gibson mission run my-mission --target api.example.com        # Override target`,
+	RunE: runMissionRun,
 }
 
 var missionResumeCmd = &cobra.Command{
@@ -249,6 +266,70 @@ This is useful for:
 	RunE: runMissionContext,
 }
 
+var missionInstallCmd = &cobra.Command{
+	Use:   "install URL",
+	Short: "Install a mission from a git repository",
+	Long: `Install a mission definition from a git repository URL.
+
+Missions are reusable workflow templates that can be shared via git repositories.
+After installation, missions can be run by name without specifying a file path.
+
+Examples:
+  gibson mission install https://github.com/user/recon-mission
+  gibson mission install https://github.com/user/missions#subdirectory/advanced-scan
+  gibson mission install git@github.com:user/mission.git --branch dev
+  gibson mission install https://github.com/user/mission --tag v1.0.0`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMissionInstall,
+}
+
+var missionUninstallCmd = &cobra.Command{
+	Use:   "uninstall NAME",
+	Short: "Uninstall an installed mission",
+	Long: `Remove an installed mission definition from the system.
+
+This removes the mission from ~/.gibson/missions/ and the registry.
+Mission execution history and findings are preserved.
+
+Examples:
+  gibson mission uninstall recon-mission
+  gibson mission uninstall advanced-scan --force`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMissionUninstall,
+}
+
+var missionUpdateCmd = &cobra.Command{
+	Use:   "update NAME",
+	Short: "Update an installed mission to the latest version",
+	Long: `Update an installed mission by pulling the latest version from its source repository.
+
+The mission's git URL, branch, and tag are stored during installation and used
+for updates. This command fetches the latest changes and updates the local copy.
+
+Examples:
+  gibson mission update recon-mission
+  gibson mission update advanced-scan`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMissionUpdate,
+}
+
+var missionDefinitionShowCmd = &cobra.Command{
+	Use:   "definition NAME",
+	Short: "Show installed mission definition details",
+	Long: `Display details about an installed mission definition.
+
+Shows metadata including name, version, description, source URL, dependencies,
+and the mission workflow structure (nodes and edges).
+
+Use --yaml to output the raw mission.yaml file.
+
+Examples:
+  gibson mission definition recon-mission
+  gibson mission definition advanced-scan --yaml`,
+	Args: cobra.ExactArgs(1),
+	RunE: runMissionDefinitionShow,
+}
+
 // Flags
 var (
 	missionStatusFilter     string
@@ -258,6 +339,23 @@ var (
 	missionForcePause       bool
 	missionFromCheckpoint   string
 	missionMemoryContinuity string
+
+	// Mission install/update flags
+	missionInstallBranch  string
+	missionInstallTag     string
+	missionInstallForce   bool
+	missionInstallYes     bool
+	missionInstallTimeout time.Duration
+
+	// Mission uninstall flags
+	missionUninstallForce bool
+
+	// Mission definition show flags
+	missionDefinitionShowYAML bool
+
+	// Mission list flags
+	missionListDefinitions bool
+	missionListJSON        bool
 )
 
 // getHomeDirFromFlags returns the Gibson home directory from flags or environment
@@ -320,13 +418,18 @@ func init() {
 	missionCmd.AddCommand(missionPauseCmd)
 	missionCmd.AddCommand(missionHistoryCmd)
 	missionCmd.AddCommand(missionCheckpointsCmd)
+	missionCmd.AddCommand(missionInstallCmd)
+	missionCmd.AddCommand(missionUninstallCmd)
+	missionCmd.AddCommand(missionUpdateCmd)
+	missionCmd.AddCommand(missionDefinitionShowCmd)
 
 	// List flags
 	missionListCmd.Flags().StringVar(&missionStatusFilter, "status", "", "Filter by status (pending, running, paused, completed, failed)")
+	missionListCmd.Flags().BoolVar(&missionListDefinitions, "definitions", false, "List installed mission definitions instead of instances")
+	missionListCmd.Flags().BoolVar(&missionListJSON, "json", false, "Output in JSON format")
 
 	// Run flags
-	missionRunCmd.Flags().StringVarP(&missionWorkflowFile, "file", "f", "", "Workflow YAML file (required)")
-	missionRunCmd.MarkFlagRequired("file")
+	missionRunCmd.Flags().StringVarP(&missionWorkflowFile, "file", "f", "", "Workflow YAML file (overrides positional argument)")
 	missionRunCmd.Flags().StringVar(&missionTargetFlag, "target", "", "Target name or ID (overrides YAML target if specified)")
 	missionRunCmd.Flags().StringVar(&missionMemoryContinuity, "memory-continuity", "isolated", "Memory continuity mode: isolated (default), inherit, shared")
 
@@ -338,12 +441,31 @@ func init() {
 
 	// Resume flags
 	missionResumeCmd.Flags().StringVar(&missionFromCheckpoint, "from-checkpoint", "", "Resume from specific checkpoint ID (optional)")
+
+	// Install flags
+	missionInstallCmd.Flags().StringVar(&missionInstallBranch, "branch", "", "Git branch to install")
+	missionInstallCmd.Flags().StringVar(&missionInstallTag, "tag", "", "Git tag to install")
+	missionInstallCmd.Flags().BoolVar(&missionInstallForce, "force", false, "Force reinstall if mission exists")
+	missionInstallCmd.Flags().BoolVar(&missionInstallYes, "yes", false, "Auto-confirm dependency installation")
+	missionInstallCmd.Flags().DurationVar(&missionInstallTimeout, "timeout", 5*time.Minute, "Installation timeout")
+
+	// Uninstall flags
+	missionUninstallCmd.Flags().BoolVar(&missionUninstallForce, "force", false, "Skip confirmation prompt")
+
+	// Definition show flags
+	missionDefinitionShowCmd.Flags().BoolVar(&missionDefinitionShowYAML, "yaml", false, "Output raw YAML")
 }
 
 // runMissionList lists all missions with optional status filter
 func runMissionList(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 
+	// If --definitions flag is set, list installed mission definitions
+	if missionListDefinitions {
+		return runMissionListDefinitions(cmd, args)
+	}
+
+	// Otherwise, list mission execution instances (existing behavior)
 	// Try daemon first (optional - fall back to local if unavailable)
 	client := dclient.OptionalDaemon(ctx)
 	if client != nil {
@@ -389,6 +511,58 @@ func runMissionList(cmd *cobra.Command, args []string) error {
 
 	// Format output
 	return formatMissionListOutput(cmd, result)
+}
+
+// runMissionListDefinitions lists installed mission definitions
+func runMissionListDefinitions(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+
+	// Listing definitions requires daemon
+	client, err := dclient.RequireDaemon(ctx)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "mission definition listing requires daemon", err)
+	}
+	defer client.Close()
+
+	// Get mission definitions via daemon
+	definitions, err := client.ListMissionDefinitions(ctx)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "failed to list mission definitions", err)
+	}
+
+	// If --json flag is set, output JSON
+	if missionListJSON {
+		data, err := json.MarshalIndent(definitions, "", "  ")
+		if err != nil {
+			return internal.WrapError(internal.ExitError, "failed to marshal JSON", err)
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+
+	// Display formatted output
+	if len(definitions) == 0 {
+		fmt.Println("No installed mission definitions found")
+		fmt.Println("\nInstall missions with: gibson mission install <url>")
+		return nil
+	}
+
+	fmt.Printf("Found %d installed mission definition(s)\n\n", len(definitions))
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "NAME\tVERSION\tDESCRIPTION")
+
+	for _, def := range definitions {
+		// Truncate description if too long
+		desc := def.Description
+		if len(desc) > 60 {
+			desc = desc[:57] + "..."
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", def.Name, def.Version, desc)
+	}
+
+	w.Flush()
+	return nil
 }
 
 // runMissionShow shows detailed mission information
@@ -473,9 +647,33 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 
 	verbose := flags.IsVerbose()
 
+	// Determine the source: file flag, positional argument, or error
+	var source string
+	var sourceType string // "file", "url", or "name"
+
+	if missionWorkflowFile != "" {
+		// -f/--file flag takes precedence
+		source = missionWorkflowFile
+		sourceType = "file"
+	} else if len(args) > 0 {
+		// Use positional argument and auto-detect type
+		source = args[0]
+		sourceType = detectMissionSourceType(source)
+	} else {
+		return internal.WrapError(internal.ExitConfigError,
+			"mission source required: provide a mission name, file path, or use -f flag", nil)
+	}
+
 	// Verbose output
 	if verbose {
-		fmt.Printf("Loading workflow from %s\n", missionWorkflowFile)
+		switch sourceType {
+		case "url":
+			fmt.Printf("Loading mission from URL: %s\n", source)
+		case "file":
+			fmt.Printf("Loading mission from file: %s\n", source)
+		case "name":
+			fmt.Printf("Loading installed mission: %s\n", source)
+		}
 		if missionMemoryContinuity != "" && missionMemoryContinuity != "isolated" {
 			fmt.Printf("Memory continuity: %s\n", missionMemoryContinuity)
 		}
@@ -488,8 +686,16 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
+	// For URL and name sources, we need to resolve to a file path first
+	// This will be handled by the daemon when we add RunMissionFromSource method
+	// For now, we'll continue using the file-based approach
+	if sourceType != "file" {
+		return internal.WrapError(internal.ExitError,
+			fmt.Sprintf("mission source type '%s' not yet fully implemented (use file path with -f flag for now)", sourceType), nil)
+	}
+
 	// Start mission execution via daemon
-	eventChan, err := client.RunMission(ctx, missionWorkflowFile, missionMemoryContinuity)
+	eventChan, err := client.RunMission(ctx, source, missionMemoryContinuity)
 	if err != nil {
 		return internal.WrapError(internal.ExitError, "failed to start mission", err)
 	}
@@ -536,6 +742,28 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// detectMissionSourceType determines if a source string is a URL, file path, or mission name
+func detectMissionSourceType(source string) string {
+	// Check if it's a URL (contains :// or starts with git@)
+	if strings.Contains(source, "://") || strings.HasPrefix(source, "git@") {
+		return "url"
+	}
+
+	// Check if it's a valid file path
+	if _, err := os.Stat(source); err == nil {
+		return "file"
+	}
+
+	// Check common file path patterns
+	if strings.Contains(source, "/") || strings.Contains(source, "\\") ||
+		strings.HasSuffix(source, ".yaml") || strings.HasSuffix(source, ".yml") {
+		return "file"
+	}
+
+	// Otherwise, assume it's an installed mission name
+	return "name"
 }
 
 // getEventData extracts a string value from event data map
@@ -1038,14 +1266,14 @@ func formatMissionShowOutput(cmd *cobra.Command, result *core.CommandResult) err
 
 	// Show workflow details
 	if m.WorkflowJSON != "" {
-		var wf workflow.Workflow
-		if err := json.Unmarshal([]byte(m.WorkflowJSON), &wf); err == nil {
+		var def mission.MissionDefinition
+		if err := json.Unmarshal([]byte(m.WorkflowJSON), &def); err == nil {
 			fmt.Fprintln(tw, "")
-			fmt.Fprintf(tw, "WORKFLOW:\t%s\n", wf.Name)
+			fmt.Fprintf(tw, "WORKFLOW:\t%s\n", def.Name)
 			fmt.Fprintf(tw, "WORKFLOW ID:\t%s\n", m.WorkflowID)
-			fmt.Fprintf(tw, "NODES:\t%d\n", len(wf.Nodes))
-			fmt.Fprintf(tw, "ENTRY POINTS:\t%d\n", len(wf.EntryPoints))
-			fmt.Fprintf(tw, "EXIT POINTS:\t%d\n", len(wf.ExitPoints))
+			fmt.Fprintf(tw, "NODES:\t%d\n", len(def.Nodes))
+			fmt.Fprintf(tw, "ENTRY POINTS:\t%d\n", len(def.EntryPoints))
+			fmt.Fprintf(tw, "EXIT POINTS:\t%d\n", len(def.ExitPoints))
 		}
 	}
 
@@ -1092,7 +1320,7 @@ func formatMissionRunOutput(cmd *cobra.Command, result *core.CommandResult) erro
 	// Print success message
 	fmt.Printf("Mission '%s' started successfully\n", runResult.Mission.Name)
 	fmt.Printf("Mission ID: %s\n", runResult.Mission.ID)
-	fmt.Printf("Workflow: %s (%d nodes)\n", runResult.Workflow.Name, runResult.NodesCount)
+	fmt.Printf("Definition: %s (%d nodes)\n", runResult.Definition.Name, runResult.NodesCount)
 
 	return nil
 }
@@ -1223,4 +1451,203 @@ func formatTime(t time.Time) string {
 
 	// For older dates, show absolute date
 	return t.Format("2006-01-02")
+}
+
+// runMissionInstall installs a mission from a git repository
+func runMissionInstall(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	url := args[0]
+
+	fmt.Printf("Installing mission from %s...\n", url)
+
+	// Mission installation requires daemon
+	client, err := dclient.RequireDaemon(ctx)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "mission installation requires daemon", err)
+	}
+	defer client.Close()
+
+	// Build install options
+	opts := dclient.MissionInstallOptions{
+		Branch:  missionInstallBranch,
+		Tag:     missionInstallTag,
+		Force:   missionInstallForce,
+		Yes:     missionInstallYes,
+		Timeout: missionInstallTimeout,
+	}
+
+	// Install mission via daemon
+	result, err := client.InstallMission(ctx, url, opts)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "failed to install mission", err)
+	}
+
+	// Display success message
+	fmt.Printf("Mission '%s' installed successfully (v%s) in %v\n",
+		result.Name, result.Version, result.Duration)
+
+	// Display installed dependencies if any
+	if len(result.Dependencies) > 0 {
+		fmt.Printf("\nInstalled dependencies:\n")
+		for _, dep := range result.Dependencies {
+			status := "installed"
+			if dep.AlreadyInstalled {
+				status = "already installed"
+			}
+			fmt.Printf("  - %s (%s): %s\n", dep.Name, dep.Type, status)
+		}
+	}
+
+	return nil
+}
+
+// runMissionUninstall uninstalls an installed mission
+func runMissionUninstall(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	name := args[0]
+
+	// Confirmation prompt unless --force is set
+	if !missionUninstallForce {
+		fmt.Printf("Are you sure you want to uninstall mission '%s'?\n", name)
+		fmt.Print("Type 'yes' to confirm: ")
+
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return internal.WrapError(internal.ExitError, "failed to read confirmation", err)
+		}
+
+		response = strings.TrimSpace(strings.ToLower(response))
+		if response != "yes" {
+			fmt.Println("Uninstall cancelled")
+			return nil
+		}
+	}
+
+	// Mission uninstallation requires daemon
+	client, err := dclient.RequireDaemon(ctx)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "mission uninstallation requires daemon", err)
+	}
+	defer client.Close()
+
+	// Uninstall mission via daemon
+	if err := client.UninstallMission(ctx, name, missionUninstallForce); err != nil {
+		return internal.WrapError(internal.ExitError, "failed to uninstall mission", err)
+	}
+
+	fmt.Printf("Mission '%s' uninstalled successfully\n", name)
+	return nil
+}
+
+// runMissionUpdate updates an installed mission
+func runMissionUpdate(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	name := args[0]
+
+	fmt.Printf("Updating mission '%s'...\n", name)
+
+	// Mission update requires daemon
+	client, err := dclient.RequireDaemon(ctx)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "mission update requires daemon", err)
+	}
+	defer client.Close()
+
+	// Update mission via daemon
+	result, err := client.UpdateMission(ctx, name, dclient.MissionUpdateOptions{})
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "failed to update mission", err)
+	}
+
+	// Display result
+	if !result.Updated {
+		fmt.Printf("Mission '%s' is already up to date (v%s)\n", name, result.OldVersion)
+	} else {
+		fmt.Printf("Mission '%s' updated successfully in %v\n", name, result.Duration)
+		fmt.Printf("Version: %s -> %s\n", result.OldVersion, result.NewVersion)
+	}
+
+	return nil
+}
+
+// runMissionDefinitionShow displays details about an installed mission definition
+func runMissionDefinitionShow(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	name := args[0]
+
+	// Query definition requires daemon
+	client, err := dclient.RequireDaemon(ctx)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "mission definition query requires daemon", err)
+	}
+	defer client.Close()
+
+	// Get mission definition via daemon
+	definition, err := client.GetMissionDefinition(ctx, name)
+	if err != nil {
+		return internal.WrapError(internal.ExitError, "failed to get mission definition", err)
+	}
+
+	// If --yaml flag is set, output raw YAML
+	if missionDefinitionShowYAML {
+		// Read the raw YAML file from the mission directory
+		homeDir, err := getGibsonHome()
+		if err != nil {
+			return internal.WrapError(internal.ExitError, "failed to get Gibson home", err)
+		}
+
+		yamlPath := filepath.Join(homeDir, "missions", name, "mission.yaml")
+		yamlData, err := os.ReadFile(yamlPath)
+		if err != nil {
+			return internal.WrapError(internal.ExitError, "failed to read mission.yaml", err)
+		}
+
+		fmt.Println(string(yamlData))
+		return nil
+	}
+
+	// Display formatted output
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	defer tw.Flush()
+
+	fmt.Fprintf(tw, "NAME:\t%s\n", definition.Name)
+	fmt.Fprintf(tw, "VERSION:\t%s\n", definition.Version)
+	fmt.Fprintf(tw, "DESCRIPTION:\t%s\n", definition.Description)
+	fmt.Fprintf(tw, "SOURCE:\t%s\n", definition.Source)
+	fmt.Fprintf(tw, "INSTALLED:\t%s\n", definition.InstalledAt.Format("2006-01-02 15:04:05"))
+
+	// Show dependencies if present
+	if definition.Dependencies != nil {
+		if len(definition.Dependencies.Agents) > 0 {
+			fmt.Fprintln(tw, "")
+			fmt.Fprintln(tw, "REQUIRED AGENTS:")
+			for _, agent := range definition.Dependencies.Agents {
+				fmt.Fprintf(tw, "  - %s\n", agent)
+			}
+		}
+		if len(definition.Dependencies.Tools) > 0 {
+			fmt.Fprintln(tw, "")
+			fmt.Fprintln(tw, "REQUIRED TOOLS:")
+			for _, tool := range definition.Dependencies.Tools {
+				fmt.Fprintf(tw, "  - %s\n", tool)
+			}
+		}
+		if len(definition.Dependencies.Plugins) > 0 {
+			fmt.Fprintln(tw, "")
+			fmt.Fprintln(tw, "REQUIRED PLUGINS:")
+			for _, plugin := range definition.Dependencies.Plugins {
+				fmt.Fprintf(tw, "  - %s\n", plugin)
+			}
+		}
+	}
+
+	// Show mission structure
+	fmt.Fprintln(tw, "")
+	fmt.Fprintf(tw, "NODES:\t%d\n", len(definition.Nodes))
+	fmt.Fprintf(tw, "EDGES:\t%d\n", len(definition.Edges))
+	fmt.Fprintf(tw, "ENTRY POINTS:\t%d\n", len(definition.EntryPoints))
+	fmt.Fprintf(tw, "EXIT POINTS:\t%d\n", len(definition.ExitPoints))
+
+	return nil
 }
