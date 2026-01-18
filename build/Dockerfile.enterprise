@@ -86,7 +86,7 @@ RUN go mod edit -replace github.com/zero-day-ai/sdk=/build/sdk && \
 
 # Clone and build OSS tools (each tool has its own go.mod)
 RUN git clone --branch ${TOOLS_VERSION} --depth 1 \
-    https://github.com/zero-day-ai/gibson-oss-tools.git /build/tools
+    https://github.com/zero-day-ai/tools.git /build/tools
 
 WORKDIR /build/tools
 # Initialize go workspace and add SDK, then build each tool

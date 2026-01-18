@@ -15,10 +15,14 @@ const (
 	NodeTypeAgentRun = "agent_run"
 	// API - Web API service with multiple endpoints
 	NodeTypeApi = "api"
+	// ASN - Autonomous System Number information for network routing
+	NodeTypeASN = "asn"
 	// Certificate - TLS/SSL certificate discovered on a host or service
 	NodeTypeCertificate = "certificate"
 	// CloudAsset - Cloud infrastructure resource (AWS, GCP, Azure)
 	NodeTypeCloudAsset = "cloud_asset"
+	// DNSRecord - DNS record entry (A, AAAA, CNAME, MX, TXT, etc.)
+	NodeTypeDNSRecord = "dns_record"
 	// Domain - Root domain entity representing a registered domain name
 	NodeTypeDomain = "domain"
 	// Endpoint - Web endpoint or URL discovered through crawling or fuzzing
@@ -78,6 +82,8 @@ const (
 	RelTypeHasPort = "HAS_PORT"
 	// HAS_SUBDOMAIN - Domain has a subdomain
 	RelTypeHasSubdomain = "HAS_SUBDOMAIN"
+	// HOSTED_BY - Host or service is hosted by an ASN or cloud provider
+	RelTypeHostedBy = "HOSTED_BY"
 	// HOSTS - Cloud asset hosts a service or host instance
 	RelTypeHosts = "HOSTS"
 	// LEADS_TO - Finding leads to another finding in an attack chain
@@ -104,6 +110,8 @@ const (
 	RelTypeUsesTechnique = "USES_TECHNIQUE"
 	// USES_TECHNOLOGY - Service or endpoint uses a specific technology or framework
 	RelTypeUsesTechnology = "USES_TECHNOLOGY"
+	// VULNERABLE_TO - Asset is vulnerable to a specific CVE or security issue
+	RelTypeVulnerableTo = "VULNERABLE_TO"
 )
 
 // MITRE ATT&CK Technique ID constants
@@ -207,4 +215,52 @@ const (
 	PropMethod      = "method"
 	PropStatusCode  = "status_code"
 	PropTimestamp   = "timestamp"
+
+	// Service properties
+	PropServiceName = "service_name"
+	PropProduct     = "product"
+	PropCPE         = "cpe"
+
+	// Operating System properties
+	PropOSAccuracy = "os_accuracy"
+	PropOSFamily   = "os_family"
+	PropOSVendor   = "os_vendor"
+
+	// HTTP properties
+	PropFinalURL        = "final_url"
+	PropRedirectChain   = "redirect_chain"
+	PropServer          = "server"
+	PropXPoweredBy      = "x_powered_by"
+	PropResponseHeaders = "response_headers"
+
+	// Certificate properties
+	PropCertIssuer  = "cert_issuer"
+	PropCertSubject = "cert_subject"
+	PropCertExpiry  = "cert_expiry"
+	PropCertSANs    = "cert_sans"
+
+	// Vulnerability properties
+	PropCVEID       = "cve_id"
+	PropCWEID       = "cwe_id"
+	PropCVSSScore   = "cvss_score"
+	PropCVSSMetrics = "cvss_metrics"
+	PropRemediation = "remediation"
+	PropReferences  = "references"
+	PropMatcherName = "matcher_name"
+
+	// DNS properties
+	PropRecordType = "record_type"
+	PropTTL        = "ttl"
+	PropPriority   = "priority"
+
+	// ASN properties
+	PropASNNumber      = "asn_number"
+	PropASNDescription = "asn_description"
+	PropASNCountry     = "asn_country"
+
+	// Discovery properties
+	PropSources     = "sources"
+	PropIPAddresses = "ip_addresses"
+	PropBanner      = "banner"
+	PropScripts     = "scripts"
 )

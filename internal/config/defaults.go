@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/zero-day-ai/gibson/internal/memory/embedder"
 )
 
 // DefaultConfig returns a Config with sensible default values.
@@ -75,6 +77,7 @@ func DefaultConfig() *Config {
 		Daemon: DaemonConfig{
 			GRPCAddress: "localhost:50002",
 		},
+		Embedder: embedder.DefaultEmbedderConfig(),
 	}
 }
 

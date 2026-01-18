@@ -63,17 +63,19 @@ func NewMemoryManager(missionID types.ID, db *database.DB, config *MemoryConfig)
 
 	// Initialize embedder based on config
 	var emb embedder.Embedder
+	var embErr error
 	switch config.LongTerm.Embedder.Provider {
-	case "mock":
-		// Use mock embedder for testing
-		emb = embedder.NewMockEmbedder()
-	case "openai", "llm":
-		// For now, use mock embedder as a placeholder
-		// Real implementations will be added by other agents
-		emb = embedder.NewMockEmbedder()
+	case "native", "":
+		// Use native MiniLM embedder (default)
+		emb, embErr = embedder.CreateNativeEmbedder()
+		if embErr != nil {
+			return nil, NewEmbedderUnavailableError("failed to create native embedder: " + embErr.Error())
+		}
+	case "openai":
+		// OpenAI embedder not yet implemented
+		return nil, NewInvalidConfigError("OpenAI embedder not yet implemented - use 'native' provider")
 	default:
-		// Default to mock embedder
-		emb = embedder.NewMockEmbedder()
+		return nil, NewInvalidConfigError("unknown embedder provider: " + config.LongTerm.Embedder.Provider)
 	}
 
 	// Initialize vector store based on config

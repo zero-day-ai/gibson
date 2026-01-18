@@ -8,6 +8,7 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/events"
 	"github.com/zero-day-ai/gibson/internal/graphrag/schema"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -62,13 +63,14 @@ type OrchestratorActor interface {
 // It coordinates the observer, thinker, and actor components to autonomously
 // execute mission workflows based on LLM reasoning.
 type Orchestrator struct {
-	observer  OrchestratorObserver
-	thinker   OrchestratorThinker
-	actor     OrchestratorActor
-	eventBus  EventBus
-	logger    *slog.Logger
-	tracer    trace.Tracer
-	logWriter DecisionLogWriter
+	observer         OrchestratorObserver
+	thinker          OrchestratorThinker
+	actor            OrchestratorActor
+	eventBus         EventBus
+	logger           *slog.Logger
+	tracer           trace.Tracer
+	logWriter        DecisionLogWriter
+	inventoryBuilder *InventoryBuilder // Component discovery for validation
 
 	// Configuration options
 	maxIterations int
@@ -169,6 +171,16 @@ func WithDecisionLogWriter(writer DecisionLogWriter) OrchestratorOption {
 	return func(o *Orchestrator) {
 		if writer != nil {
 			o.logWriter = writer
+		}
+	}
+}
+
+// WithComponentDiscovery sets the component discovery for inventory building and validation.
+// This enables the orchestrator to validate spawned agents against the registry.
+func WithComponentDiscovery(discovery registry.ComponentDiscovery) OrchestratorOption {
+	return func(o *Orchestrator) {
+		if discovery != nil {
+			o.inventoryBuilder = NewInventoryBuilder(discovery)
 		}
 	}
 }

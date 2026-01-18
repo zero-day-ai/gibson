@@ -34,17 +34,20 @@ type Actor struct {
 	execQueries    *queries.ExecutionQueries
 	missionQueries *queries.MissionQueries
 	graphClient    graph.GraphClient
+	inventory      *ComponentInventory // Component inventory for validation
 }
 
 // NewActor creates a new Actor with the given dependencies.
 // The harness is used for agent delegation and tool execution.
 // The queries provide graph operations for tracking execution state.
-func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient) *Actor {
+// The inventory parameter is optional and used for component validation.
+func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient, inventory *ComponentInventory) *Actor {
 	return &Actor{
 		harness:        harness,
 		execQueries:    execQueries,
 		missionQueries: missionQueries,
 		graphClient:    graphClient,
+		inventory:      inventory,
 	}
 }
 
@@ -432,6 +435,20 @@ func (a *Actor) retryAgent(ctx context.Context, decision *Decision, missionID ty
 func (a *Actor) spawnAgent(ctx context.Context, decision *Decision, missionID types.ID) (*ActionResult, error) {
 	if decision.SpawnConfig == nil {
 		return nil, fmt.Errorf("spawn_config is required for spawn_agent action")
+	}
+
+	// Validate agent exists in inventory before creating node
+	if a.inventory != nil {
+		validator := NewInventoryValidator(a.inventory)
+		if err := validator.ValidateSpawnAgent(decision); err != nil {
+			// Return validation error - don't create the workflow node
+			return &ActionResult{
+				Action:       ActionSpawnAgent,
+				Error:        err,
+				IsTerminal:   false,
+				TargetNodeID: "",
+			}, nil // Return nil error - this is a validation failure, not a system error
+		}
 	}
 
 	cfg := decision.SpawnConfig

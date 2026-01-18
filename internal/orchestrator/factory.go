@@ -10,6 +10,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
+	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -54,6 +55,9 @@ type SOTAOrchestratorConfig struct {
 
 	// GraphLoader for storing workflows in Neo4j (optional)
 	GraphLoader WorkflowGraphLoader
+
+	// Registry for component discovery and validation (optional)
+	Registry registry.ComponentDiscovery
 }
 
 // NewSOTAMissionOrchestrator creates a new SOTA-based mission orchestrator.

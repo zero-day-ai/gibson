@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/memory/embedder"
 	"github.com/zero-day-ai/gibson/internal/prompt"
 )
 
@@ -20,11 +21,12 @@ type Config struct {
 	Metrics      MetricsConfig       `mapstructure:"metrics" yaml:"metrics"`
 	Registration RegistrationConfig  `mapstructure:"registration" yaml:"registration,omitempty"`
 	Registry     RegistryConfig      `mapstructure:"registry" yaml:"registry"`
-	Callback     CallbackConfig      `mapstructure:"callback" yaml:"callback,omitempty"`
-	Daemon       DaemonConfig        `mapstructure:"daemon" yaml:"daemon,omitempty"`
-	Langfuse     LangfuseConfig      `mapstructure:"langfuse" yaml:"langfuse"`
-	GraphRAG     GraphRAGConfig      `mapstructure:"graphrag" yaml:"graphrag"`
-	Plugins      PluginsConfig       `mapstructure:"plugins" yaml:"plugins,omitempty"`
+	Callback     CallbackConfig        `mapstructure:"callback" yaml:"callback,omitempty"`
+	Daemon       DaemonConfig          `mapstructure:"daemon" yaml:"daemon,omitempty"`
+	Embedder     embedder.EmbedderConfig `mapstructure:"embedder" yaml:"embedder"`
+	Langfuse     LangfuseConfig        `mapstructure:"langfuse" yaml:"langfuse"`
+	GraphRAG     GraphRAGConfig        `mapstructure:"graphrag" yaml:"graphrag"`
+	Plugins      PluginsConfig         `mapstructure:"plugins" yaml:"plugins,omitempty"`
 }
 
 // PluginsConfig contains configuration for all plugins.

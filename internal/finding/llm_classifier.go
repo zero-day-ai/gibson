@@ -240,10 +240,13 @@ func (lc *LLMFindingClassifier) buildFindingPrompt(finding agent.Finding) string
 }
 
 // parseResponse extracts JSON from the LLM response
+// Supports both raw JSON and markdown-wrapped JSON (```json ... ```).
 func (lc *LLMFindingClassifier) parseResponse(content string) (*ClassificationResponse, error) {
-	// Try to find JSON in the response
-	// LLMs often wrap JSON in markdown code blocks
-	jsonStr := lc.extractJSON(content)
+	// Extract JSON from markdown code blocks if present
+	jsonStr, err := llm.ExtractJSON(content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract JSON from response: %w", err)
+	}
 
 	var resp ClassificationResponse
 	if err := json.Unmarshal([]byte(jsonStr), &resp); err != nil {
@@ -251,40 +254,6 @@ func (lc *LLMFindingClassifier) parseResponse(content string) (*ClassificationRe
 	}
 
 	return &resp, nil
-}
-
-// extractJSON attempts to extract JSON from text that may contain markdown or other formatting
-func (lc *LLMFindingClassifier) extractJSON(text string) string {
-	// Remove markdown code blocks
-	text = strings.TrimSpace(text)
-
-	// Check for ```json ... ``` blocks
-	if strings.Contains(text, "```json") {
-		start := strings.Index(text, "```json")
-		end := strings.Index(text[start+7:], "```")
-		if end != -1 {
-			return strings.TrimSpace(text[start+7 : start+7+end])
-		}
-	}
-
-	// Check for ``` ... ``` blocks
-	if strings.Contains(text, "```") {
-		start := strings.Index(text, "```")
-		end := strings.Index(text[start+3:], "```")
-		if end != -1 {
-			return strings.TrimSpace(text[start+3 : start+3+end])
-		}
-	}
-
-	// Try to find JSON object boundaries
-	start := strings.Index(text, "{")
-	end := strings.LastIndex(text, "}")
-	if start != -1 && end != -1 && end > start {
-		return text[start : end+1]
-	}
-
-	// Return as-is and let JSON parser handle it
-	return text
 }
 
 // Ensure LLMFindingClassifier implements FindingClassifier

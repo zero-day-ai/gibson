@@ -304,13 +304,13 @@ func buildUserPrompt(input GenerateInput) string {
 }
 
 // parseGeneratedPlan parses the LLM's JSON response into an ExecutionPlan structure.
+// Supports both raw JSON and markdown-wrapped JSON (```json ... ```).
 func parseGeneratedPlan(response string) (*ExecutionPlan, error) {
-	// Clean up the response - remove markdown code blocks if present
-	response = strings.TrimSpace(response)
-	response = strings.TrimPrefix(response, "```json")
-	response = strings.TrimPrefix(response, "```")
-	response = strings.TrimSuffix(response, "```")
-	response = strings.TrimSpace(response)
+	// Extract JSON from markdown code blocks if present
+	extractedJSON, err := llm.ExtractJSON(response)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract JSON from response: %w", err)
+	}
 
 	// Parse the JSON structure
 	var parsed struct {
@@ -328,7 +328,7 @@ func parseGeneratedPlan(response string) (*ExecutionPlan, error) {
 		} `json:"steps"`
 	}
 
-	if err := json.Unmarshal([]byte(response), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(extractedJSON), &parsed); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %w", err)
 	}
 

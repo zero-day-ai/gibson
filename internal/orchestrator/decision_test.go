@@ -397,7 +397,7 @@ func TestParseDecision(t *testing.T) {
 			name:    "invalid_json",
 			jsonStr: `{invalid json}`,
 			wantErr: true,
-			errMsg:  "failed to parse decision JSON",
+			errMsg:  "failed to extract JSON",
 		},
 		{
 			name:    "valid_execute_agent",

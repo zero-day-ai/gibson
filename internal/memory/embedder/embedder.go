@@ -77,13 +77,15 @@ func (c *EmbedderConfig) Validate() error {
 	return nil
 }
 
-// DefaultEmbedderConfig returns a default configuration for OpenAI embedder.
+// DefaultEmbedderConfig returns a default configuration for the native embedder.
+// The native embedder (all-MiniLM-L6-v2) is preferred because it runs offline
+// without requiring API keys and has predictable latency.
 func DefaultEmbedderConfig() EmbedderConfig {
 	return EmbedderConfig{
-		Provider:   "openai",
-		Model:      "text-embedding-3-small",
-		APIKey:     "", // Must be provided via config or env var
-		BaseURL:    "https://api.openai.com/v1",
+		Provider:   "native",  // Use offline native embedder by default
+		Model:      "",        // Not needed for native embedder
+		APIKey:     "",        // Not needed for native embedder
+		BaseURL:    "",        // Not needed for native embedder
 		MaxRetries: 3,
 		Timeout:    30,
 	}

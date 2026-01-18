@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
@@ -229,6 +230,31 @@ func (e *taxonomyGraphEngine) HandleFinding(ctx context.Context, finding agent.F
 			logger.Warn("failed to create PART_OF relationship to mission", "error", err)
 		} else {
 			logger.Debug("created PART_OF relationship to mission")
+		}
+	}
+
+	// Create PRODUCED relationship from tool_execution to finding if tool_execution_id is in context
+	toolExecutionID := getToolExecutionIDFromContext(ctx)
+	if toolExecutionID != "" {
+		producedRel := `
+			MATCH (te:ToolExecution {id: $tool_execution_id})
+			MATCH (f:Finding {id: $finding_id})
+			MERGE (te)-[r:PRODUCED]->(f)
+			SET r.produced_at = $produced_at,
+			    r.confidence = $confidence
+		`
+		producedParams := map[string]any{
+			"tool_execution_id": toolExecutionID,
+			"finding_id":        string(finding.ID),
+			"produced_at":       time.Now().UTC().Unix(),
+			"confidence":        finding.Confidence,
+		}
+
+		if _, err := e.graphClient.Query(ctx, producedRel, producedParams); err != nil {
+			// Log but don't fail if tool_execution doesn't exist yet
+			logger.Warn("failed to create PRODUCED relationship", "tool_execution_id", toolExecutionID, "error", err)
+		} else {
+			logger.Debug("created PRODUCED relationship", "tool_execution_id", toolExecutionID)
 		}
 	}
 
@@ -748,4 +774,23 @@ func marshalJSON(v any) string {
 		return fmt.Sprintf("%v", v)
 	}
 	return string(b)
+}
+
+// contextKey is a type for context keys to avoid collisions with other packages.
+type contextKey string
+
+const (
+	toolExecutionIDKey contextKey = "gibson.tool_execution_id"
+)
+
+// getToolExecutionIDFromContext retrieves the tool execution ID from context.
+// Returns empty string if not set.
+// This mirrors the function in internal/harness/context.go to avoid circular dependency.
+func getToolExecutionIDFromContext(ctx context.Context) string {
+	if v := ctx.Value(toolExecutionIDKey); v != nil {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }

@@ -62,6 +62,23 @@ Respond with a JSON Decision object. Always include reasoning.
    - Requires: stop_reason
    - Consider: Are all critical paths explored?
 
+## Available Components Guidelines
+
+You have access to the registered agents, tools, and plugins listed in the "Available Components"
+section of each observation. Follow these rules:
+
+1. **spawn_agent**: The agent_name MUST be one of the agents listed in "Available Components".
+   Do NOT invent or guess agent names. Only use registered agents.
+
+2. **Capability Matching**: When spawning agents, prefer agents whose capabilities match the
+   mission objective. Check the "Capabilities" and "Target Types" columns.
+
+3. **Health Status**: Avoid using components marked as "unhealthy" or "unavailable" unless
+   no alternatives exist.
+
+4. **No Hallucination**: If no suitable agent exists for a task, use the "complete" action
+   with an appropriate stop_reason rather than inventing an agent name.
+
 ## Confidence Scoring
 
 Provide a confidence score (0.0 to 1.0) for each decision:
@@ -113,6 +130,16 @@ func BuildObservationPrompt(state *ObservationState) string {
 	sb.WriteString(fmt.Sprintf("**Elapsed Time**: %s\n", state.MissionInfo.TimeElapsed))
 	sb.WriteString(fmt.Sprintf("**Progress**: %d/%d nodes completed (%d failed)\n\n",
 		state.GraphSummary.CompletedNodes, state.GraphSummary.TotalNodes, state.GraphSummary.FailedNodes))
+
+	// Component inventory (if available) - show before ready nodes so LLM sees available components first
+	if state.ComponentInventory != nil {
+		formatter := NewInventoryPromptFormatter(WithMaxTokenBudget(500))
+		// Extract mission target type from mission info if available (future enhancement)
+		missionTargetType := "" // TODO: Extract from mission metadata when available
+		inventorySection := formatter.Format(state.ComponentInventory, missionTargetType)
+		sb.WriteString(inventorySection)
+		sb.WriteString("\n")
+	}
 
 	// Ready nodes (highest priority)
 	if len(state.ReadyNodes) > 0 {

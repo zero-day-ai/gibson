@@ -15,6 +15,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/llm/providers"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/memory/embedder"
+	"github.com/zero-day-ai/gibson/internal/memory/vector"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/plan"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -300,19 +301,30 @@ func (d *daemonImpl) checkInfrastructureHealth(ctx context.Context, infra *Infra
 // initGraphRAGBridges creates the full GraphRAG stack and returns bridge interfaces.
 //
 // This method creates:
-//  1. An embedder for vector operations (mock for now, can be configured for OpenAI)
-//  2. A GraphRAG provider using the Neo4j client
-//  3. A GraphRAG store that orchestrates the provider and embedder
-//  4. A bridge adapter that provides both GraphRAGBridge and GraphRAGQueryBridge interfaces
+//  1. An embedder for vector operations (native by default, with fallback to mock)
+//  2. A vector store for semantic similarity search
+//  3. A GraphRAG provider using the Neo4j client
+//  4. A GraphRAG store that orchestrates the provider and embedder
+//  5. A bridge adapter that provides both GraphRAGBridge and GraphRAGQueryBridge interfaces
 //
 // Returns the bridge, query bridge, and taxonomy engine, or an error if initialization fails.
 func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph.Neo4jClient) (harness.GraphRAGBridge, harness.GraphRAGQueryBridge, engine.TaxonomyGraphEngine, error) {
-	// Create embedder - use mock for now since it doesn't require API keys
-	// In production, this would use OpenAI or another embedding provider
-	emb := embedder.NewMockEmbedder()
-	d.logger.Info("created mock embedder for GraphRAG",
+	// Create embedder from config - fail fast if unavailable
+	emb, err := embedder.CreateEmbedder(d.config.Embedder)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create embedder: %w", err)
+	}
+	d.logger.Info("created embedder for GraphRAG",
+		"provider", d.config.Embedder.Provider,
 		"dimensions", emb.Dimensions(),
 		"model", emb.Model())
+
+	// Create vector store for semantic similarity search
+	// Use dimensions from the embedder to ensure compatibility
+	vectorStore := vector.NewEmbeddedVectorStore(emb.Dimensions())
+	d.logger.Info("created vector store for GraphRAG",
+		"dimensions", emb.Dimensions(),
+		"type", "embedded")
 
 	// Convert daemon config.GraphRAGConfig to graphrag.GraphRAGConfig
 	// Provider specifies the graph database type (neo4j, neptune, memgraph)
@@ -326,6 +338,9 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 			Password: d.config.GraphRAG.Neo4j.Password,
 			Database: "neo4j", // Default database
 			PoolSize: d.config.GraphRAG.Neo4j.MaxConnections,
+		},
+		Vector: graphrag.VectorConfig{
+			Enabled: true, // Enable vector search with the native embedder
 		},
 	}
 	graphRAGConfig.ApplyDefaults()
@@ -341,6 +356,13 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	// Initialize the provider
 	if err := prov.Initialize(ctx); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
+	}
+
+	// Inject vector store into the provider if it supports it
+	// The LocalGraphRAGProvider has a SetVectorStore method for this
+	if localProv, ok := prov.(*provider.LocalGraphRAGProvider); ok {
+		localProv.SetVectorStore(vectorStore)
+		d.logger.Info("injected vector store into GraphRAG provider")
 	}
 
 	// Create GraphRAG store with the provider and embedder

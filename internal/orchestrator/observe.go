@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -17,15 +18,45 @@ import (
 type Observer struct {
 	missionQueries   *queries.MissionQueries
 	executionQueries *queries.ExecutionQueries
+	inventoryBuilder *InventoryBuilder // Optional - provides component awareness
+}
+
+// ObserverOption is a functional option for configuring Observer.
+type ObserverOption func(*Observer)
+
+// WithInventoryBuilder configures the Observer to include component inventory
+// in observations. The inventory provides awareness of available agents, tools,
+// and plugins for orchestration decisions.
+//
+// If not provided, observations will not include component inventory data.
+func WithInventoryBuilder(builder *InventoryBuilder) ObserverOption {
+	return func(o *Observer) {
+		o.inventoryBuilder = builder
+	}
 }
 
 // NewObserver creates a new Observer with the required query handlers.
 // Both query dependencies are required and cannot be nil.
-func NewObserver(missionQueries *queries.MissionQueries, executionQueries *queries.ExecutionQueries) *Observer {
-	return &Observer{
+//
+// Optional configuration can be provided via ObserverOption:
+//   - WithInventoryBuilder(builder) - enables component inventory in observations
+//
+// Example:
+//
+//	observer := NewObserver(missionQueries, executionQueries,
+//	    WithInventoryBuilder(inventoryBuilder),
+//	)
+func NewObserver(missionQueries *queries.MissionQueries, executionQueries *queries.ExecutionQueries, opts ...ObserverOption) *Observer {
+	o := &Observer{
 		missionQueries:   missionQueries,
 		executionQueries: executionQueries,
 	}
+
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	return o
 }
 
 // ObservationState contains all context needed for the LLM to make a decision.
@@ -51,6 +82,11 @@ type ObservationState struct {
 
 	// Failed execution that triggered this observation (if any)
 	FailedExecution *ExecutionFailure `json:"failed_execution,omitempty"`
+
+	// ComponentInventory contains available agents, tools, and plugins
+	// This enables semantic error recovery by providing alternatives for failures.
+	// Optional - only populated if Observer was configured with InventoryBuilder.
+	ComponentInventory *ComponentInventory `json:"component_inventory,omitempty"`
 
 	// Timestamp when this observation was captured
 	ObservedAt time.Time `json:"observed_at"`
@@ -205,6 +241,20 @@ func (o *Observer) Observe(ctx context.Context, missionID string) (*ObservationS
 
 	// 5. Calculate resource constraints
 	o.calculateResourceConstraints(state)
+
+	// 6. Build component inventory if builder is configured
+	// This is optional - if inventory fails, log warning but don't fail the observation
+	if o.inventoryBuilder != nil {
+		inv, err := o.inventoryBuilder.BuildWithCache(ctx)
+		if err != nil {
+			// Log warning but continue - inventory is optional for backward compatibility
+			slog.Warn("failed to build component inventory, continuing without it",
+				"error", err,
+				"mission_id", missionID)
+		} else {
+			state.ComponentInventory = inv
+		}
+	}
 
 	return state, nil
 }

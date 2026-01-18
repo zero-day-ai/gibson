@@ -121,6 +121,37 @@ func fromLangchainResponse(resp *llms.ContentResponse, model string) *llm.Comple
 		}
 	}
 
+	// Extract token usage from langchaingo response
+	// Token usage is stored in GenerationInfo map
+	tokenUsage := llm.CompletionTokenUsage{}
+	if len(resp.Choices) > 0 && resp.Choices[0].GenerationInfo != nil {
+		genInfo := resp.Choices[0].GenerationInfo
+
+		// Try to extract token counts from various possible keys
+		if promptTokens, ok := genInfo["prompt_tokens"].(int); ok {
+			tokenUsage.PromptTokens = promptTokens
+		}
+		if completionTokens, ok := genInfo["completion_tokens"].(int); ok {
+			tokenUsage.CompletionTokens = completionTokens
+		}
+		if totalTokens, ok := genInfo["total_tokens"].(int); ok {
+			tokenUsage.TotalTokens = totalTokens
+		}
+
+		// Anthropic uses different key names
+		if inputTokens, ok := genInfo["input_tokens"].(int); ok {
+			tokenUsage.PromptTokens = inputTokens
+		}
+		if outputTokens, ok := genInfo["output_tokens"].(int); ok {
+			tokenUsage.CompletionTokens = outputTokens
+		}
+
+		// Calculate total if not provided
+		if tokenUsage.TotalTokens == 0 && (tokenUsage.PromptTokens > 0 || tokenUsage.CompletionTokens > 0) {
+			tokenUsage.TotalTokens = tokenUsage.PromptTokens + tokenUsage.CompletionTokens
+		}
+	}
+
 	return &llm.CompletionResponse{
 		ID:    uuid.New().String(),
 		Model: model,
@@ -130,7 +161,7 @@ func fromLangchainResponse(resp *llms.ContentResponse, model string) *llm.Comple
 			ToolCalls: toolCalls,
 		},
 		FinishReason: finishReason,
-		Usage:        llm.CompletionTokenUsage{},
+		Usage:        tokenUsage,
 	}
 }
 

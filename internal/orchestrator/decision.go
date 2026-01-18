@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/zero-day-ai/gibson/internal/llm"
 )
 
 // DecisionAction represents the type of action the orchestrator decides to take
@@ -177,14 +179,21 @@ func (s *SpawnNodeConfig) Validate() error {
 }
 
 // ParseDecision parses a JSON string (typically from LLM structured output)
-// into a Decision struct and validates it
+// into a Decision struct and validates it.
+// Supports both raw JSON and markdown-wrapped JSON (```json ... ```).
 func ParseDecision(jsonStr string) (*Decision, error) {
 	if strings.TrimSpace(jsonStr) == "" {
 		return nil, fmt.Errorf("empty JSON string")
 	}
 
+	// Extract JSON from markdown code blocks if present
+	extractedJSON, err := llm.ExtractJSON(jsonStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract JSON from response: %w", err)
+	}
+
 	var decision Decision
-	if err := json.Unmarshal([]byte(jsonStr), &decision); err != nil {
+	if err := json.Unmarshal([]byte(extractedJSON), &decision); err != nil {
 		return nil, fmt.Errorf("failed to parse decision JSON: %w", err)
 	}
 

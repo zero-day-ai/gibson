@@ -162,11 +162,28 @@ func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mis
 	// Create harness adapter for Actor
 	harnessAdapter := &orchestratorHarnessAdapter{harness: agentHarness}
 
+	// Build component inventory for validation (if registry available)
+	var inventory *ComponentInventory
+	if s.config.Registry != nil {
+		inventoryCtx, inventoryCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer inventoryCancel()
+
+		inventoryBuilder := NewInventoryBuilder(s.config.Registry)
+		var err error
+		inventory, err = inventoryBuilder.Build(inventoryCtx)
+		if err != nil {
+			s.config.Logger.Warn("failed to build component inventory, validation will be skipped",
+				"mission_id", m.ID,
+				"error", err)
+			inventory = nil // Continue without inventory
+		}
+	}
+
 	// Create Actor
-	actor := NewActor(harnessAdapter, executionQueries, missionQueries, s.config.GraphRAGClient)
+	actor := NewActor(harnessAdapter, executionQueries, missionQueries, s.config.GraphRAGClient, inventory)
 
 	// Create the orchestrator
-	orchestrator := NewOrchestrator(observer, thinker, actor,
+	orchOptions := []OrchestratorOption{
 		WithMaxIterations(s.config.MaxIterations),
 		WithMaxConcurrent(s.config.MaxConcurrent),
 		WithBudget(s.config.Budget),
@@ -175,7 +192,14 @@ func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mis
 		WithTracer(s.config.Tracer),
 		WithEventBus(s.config.EventBus),
 		WithDecisionLogWriter(s.config.DecisionLogWriter),
-	)
+	}
+
+	// Add component discovery if registry available
+	if s.config.Registry != nil {
+		orchOptions = append(orchOptions, WithComponentDiscovery(s.config.Registry))
+	}
+
+	orchestrator := NewOrchestrator(observer, thinker, actor, orchOptions...)
 
 	return orchestrator, nil
 }

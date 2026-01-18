@@ -25,7 +25,7 @@ version: 1.0.0
 description: Network mapper for host discovery and port scanning
 author: Gibson Team
 license: MIT
-repository: https://github.com/zero-day-ai/gibson-oss-tools
+repository: https://github.com/zero-day-ai/tools
 
 build:
   command: go build -o nmap .

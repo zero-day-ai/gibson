@@ -1,6 +1,10 @@
 package harness
 
-import "github.com/zero-day-ai/gibson/internal/types"
+import (
+	"context"
+
+	"github.com/zero-day-ai/gibson/internal/types"
+)
 
 // MissionContext represents the broader mission context for agent execution.
 // It provides agents with awareness of the overall mission, current phase,
@@ -135,4 +139,42 @@ func (t TargetInfo) WithMetadata(key string, value any) TargetInfo {
 	}
 	t.Metadata[key] = value
 	return t
+}
+
+// contextKey is a type for context keys to avoid collisions with other packages.
+type contextKey string
+
+const (
+	agentRunIDKey      contextKey = "gibson.agent_run_id"
+	toolExecutionIDKey contextKey = "gibson.tool_execution_id"
+)
+
+// ContextWithAgentRunID returns a new context with the agent run ID set.
+// The agent run ID format should be: agent_run:{trace_id}:{span_id}
+func ContextWithAgentRunID(ctx context.Context, agentRunID string) context.Context {
+	return context.WithValue(ctx, agentRunIDKey, agentRunID)
+}
+
+// AgentRunIDFromContext retrieves the agent run ID from context.
+// Returns empty string if not set.
+func AgentRunIDFromContext(ctx context.Context) string {
+	if v := ctx.Value(agentRunIDKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// ContextWithToolExecutionID returns a new context with the tool execution ID set.
+// The tool execution ID format should be: tool_execution:{trace_id}:{span_id}:{timestamp}
+func ContextWithToolExecutionID(ctx context.Context, toolExecutionID string) context.Context {
+	return context.WithValue(ctx, toolExecutionIDKey, toolExecutionID)
+}
+
+// ToolExecutionIDFromContext retrieves the tool execution ID from context.
+// Returns empty string if not set.
+func ToolExecutionIDFromContext(ctx context.Context) string {
+	if v := ctx.Value(toolExecutionIDKey); v != nil {
+		return v.(string)
+	}
+	return ""
 }

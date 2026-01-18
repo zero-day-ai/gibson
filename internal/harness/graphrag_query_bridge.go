@@ -4,6 +4,7 @@ package harness
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -249,8 +250,11 @@ func (b *DefaultGraphRAGQueryBridge) StoreNode(ctx context.Context, node sdkgrap
 		return "", fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
 	}
 
-	// Convert SDK node to internal node
-	internalNode := sdkNodeToInternal(node, missionID, agentName)
+	// Get agent_run_id from context for provenance
+	agentRunID := AgentRunIDFromContext(ctx)
+
+	// Convert SDK node to internal node (with provenance metadata)
+	internalNode := sdkNodeToInternal(node, missionID, agentName, agentRunID)
 
 	// Create graph record
 	record := graphrag.NewGraphRecord(*internalNode)
@@ -263,8 +267,43 @@ func (b *DefaultGraphRAGQueryBridge) StoreNode(ctx context.Context, node sdkgrap
 		return "", fmt.Errorf("%w: %v", sdkgraphrag.ErrStorageFailed, err)
 	}
 
-	span.SetAttributes(attribute.String("node.id", internalNode.ID.String()))
-	return internalNode.ID.String(), nil
+	nodeID := internalNode.ID.String()
+	span.SetAttributes(attribute.String("node.id", nodeID))
+
+	// Create hierarchy relationships based on reference properties (host_id, port_id, etc)
+	b.createHierarchyRelationships(ctx, node, nodeID)
+
+	// Create DISCOVERED relationship from agent_run to this node (if applicable)
+	// Skip execution nodes as they are part of the execution chain
+	// Note: agentRunID was already retrieved above for provenance
+	if agentRunID != "" && !isExecutionNode(node.Type) {
+		discoveredRel := sdkgraphrag.Relationship{
+			FromID: agentRunID,
+			ToID:   nodeID,
+			Type:   sdkgraphrag.RelTypeDiscovered,
+			Properties: map[string]any{
+				"discovered_at":    time.Now().UTC(),
+				"discovery_method": agentName,
+			},
+		}
+
+		// Create the DISCOVERED relationship (log warning on failure but don't fail the operation)
+		if err := b.CreateRelationship(ctx, discoveredRel); err != nil {
+			// Log warning but don't fail the node creation
+			span.AddEvent("discovered_relationship_failed",
+				trace.WithAttributes(
+					attribute.String("agent_run_id", agentRunID),
+					attribute.String("error", err.Error()),
+				))
+		} else {
+			span.AddEvent("discovered_relationship_created",
+				trace.WithAttributes(
+					attribute.String("agent_run_id", agentRunID),
+				))
+		}
+	}
+
+	return nodeID, nil
 }
 
 // CreateRelationship creates a relationship between two nodes.
@@ -330,6 +369,9 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 	records := make([]*graphrag.GraphRecord, len(batch.Nodes))
 	nodeIDs := make([]string, len(batch.Nodes))
 
+	// Get agent_run_id from context for provenance
+	agentRunID := AgentRunIDFromContext(ctx)
+
 	// Build maps for relationship mapping:
 	// - nodeIDToIndex: SDK node ID -> record index (for attaching relationships)
 	// - sdkIDToInternalID: SDK node ID -> internal UUID string (for ID translation)
@@ -342,8 +384,8 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 			return nil, fmt.Errorf("%w: node %d validation failed: %v", sdkgraphrag.ErrInvalidQuery, i, err)
 		}
 
-		// Convert node
-		internalNode := sdkNodeToInternal(sdkNode, missionID, agentName)
+		// Convert node (with provenance metadata)
+		internalNode := sdkNodeToInternal(sdkNode, missionID, agentName, agentRunID)
 		nodeIDs[i] = internalNode.ID.String()
 
 		// Map SDK node ID to record index and internal UUID
@@ -399,6 +441,59 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 	}
 
 	span.SetAttributes(attribute.Int("stored.count", len(nodeIDs)))
+
+	// Create hierarchy relationships for all nodes based on reference properties
+	for i, sdkNode := range batch.Nodes {
+		b.createHierarchyRelationships(ctx, sdkNode, nodeIDs[i])
+	}
+
+	// Create DISCOVERED relationships for non-execution nodes
+	// Note: agentRunID was already retrieved above for provenance
+	if agentRunID != "" {
+		discoveredRels := make([]sdkgraphrag.Relationship, 0, len(batch.Nodes))
+		discoveredCount := 0
+
+		for i, sdkNode := range batch.Nodes {
+			// Skip execution nodes as they are part of the execution chain
+			if !isExecutionNode(sdkNode.Type) {
+				discoveredRel := sdkgraphrag.Relationship{
+					FromID: agentRunID,
+					ToID:   nodeIDs[i],
+					Type:   sdkgraphrag.RelTypeDiscovered,
+					Properties: map[string]any{
+						"discovered_at":    time.Now().UTC(),
+						"discovery_method": agentName,
+					},
+				}
+				discoveredRels = append(discoveredRels, discoveredRel)
+			}
+		}
+
+		// Store DISCOVERED relationships in batch
+		if len(discoveredRels) > 0 {
+			for _, rel := range discoveredRels {
+				// Use CreateRelationship for each DISCOVERED relationship
+				// Log warning on failure but don't fail the batch operation
+				if err := b.CreateRelationship(ctx, rel); err != nil {
+					span.AddEvent("discovered_relationship_failed",
+						trace.WithAttributes(
+							attribute.String("to_node_id", rel.ToID),
+							attribute.String("error", err.Error()),
+						))
+				} else {
+					discoveredCount++
+				}
+			}
+
+			span.SetAttributes(attribute.Int("discovered.count", discoveredCount))
+			span.AddEvent("discovered_relationships_created",
+				trace.WithAttributes(
+					attribute.String("agent_run_id", agentRunID),
+					attribute.Int("count", discoveredCount),
+				))
+		}
+	}
+
 	return nodeIDs, nil
 }
 
@@ -604,7 +699,8 @@ func internalNodeToSDK(n graphrag.GraphNode) sdkgraphrag.GraphNode {
 }
 
 // sdkNodeToInternal converts SDK GraphNode to internal GraphNode.
-func sdkNodeToInternal(n sdkgraphrag.GraphNode, missionID, agentName string) *graphrag.GraphNode {
+// Adds provenance properties (created_in_run, discovery_method, discovered_at) if not already set.
+func sdkNodeToInternal(n sdkgraphrag.GraphNode, missionID, agentName, agentRunID string) *graphrag.GraphNode {
 	// Generate or parse node ID
 	var nodeID types.ID
 	if n.ID != "" {
@@ -628,15 +724,31 @@ func sdkNodeToInternal(n sdkgraphrag.GraphNode, missionID, agentName string) *gr
 	// Create node with type as label
 	node := graphrag.NewGraphNode(nodeID, graphrag.NodeType(n.Type))
 
-	// Set properties
-	if n.Properties != nil {
-		node.WithProperties(n.Properties)
+	// Initialize properties map if not present
+	props := n.Properties
+	if props == nil {
+		props = make(map[string]any)
 	}
 
-	// Add agent name to properties
-	if agentName != "" {
-		node.WithProperty("agent_name", agentName)
+	// Add provenance properties if not already set
+	// These track which agent run discovered this node and when
+	if _, exists := props["created_in_run"]; !exists && agentRunID != "" {
+		props["created_in_run"] = agentRunID
 	}
+	if _, exists := props["discovery_method"]; !exists && agentName != "" {
+		props["discovery_method"] = agentName
+	}
+	if _, exists := props["discovered_at"]; !exists {
+		props["discovered_at"] = time.Now().UTC()
+	}
+
+	// Add agent name to properties (legacy, kept for backward compatibility)
+	if agentName != "" {
+		props["agent_name"] = agentName
+	}
+
+	// Set all properties including provenance
+	node.WithProperties(props)
 
 	// Set mission ID
 	if internalMissionID != nil {
@@ -751,4 +863,100 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+// isExecutionNode returns true if the node type is part of the execution chain.
+// Execution nodes (mission, agent_run, llm_call, tool_execution) should not have
+// DISCOVERED relationships as they represent the execution itself rather than
+// discovered assets.
+func isExecutionNode(nodeType string) bool {
+	switch nodeType {
+	case sdkgraphrag.NodeTypeMission,
+		sdkgraphrag.NodeTypeAgentRun,
+		sdkgraphrag.NodeTypeLlmCall,
+		sdkgraphrag.NodeTypeToolExecution:
+		return true
+	default:
+		return false
+	}
+}
+
+// createHierarchyRelationships creates asset hierarchy relationships based on reference properties.
+// This enables automatic graph structure creation for asset dependencies:
+//   - Port with host_id → (host)-[:HAS_PORT]->(port)
+//   - Service with port_id → (port)-[:RUNS_SERVICE]->(service)
+//   - Endpoint with service_id → (service)-[:HAS_ENDPOINT]->(endpoint)
+//   - Subdomain with parent_domain → (domain)-[:HAS_SUBDOMAIN]->(subdomain)
+//
+// Errors are logged as warnings but don't fail the operation, allowing for partial
+// graph construction when parent nodes may not exist yet.
+func (b *DefaultGraphRAGQueryBridge) createHierarchyRelationships(ctx context.Context, node sdkgraphrag.GraphNode, nodeID string) {
+	props := node.Properties
+	if props == nil {
+		return
+	}
+
+	var fromID, relType string
+
+	// Detect parent reference based on node type and extract parent ID + relationship type
+	switch node.Type {
+	case sdkgraphrag.NodeTypePort:
+		// Port references its host via host_id property
+		// TODO: Replace "host_id" with sdkgraphrag.PropHostID when SDK is updated
+		if hostID, ok := props["host_id"].(string); ok && hostID != "" {
+			fromID = hostID
+			relType = sdkgraphrag.RelTypeHasPort
+		}
+
+	case sdkgraphrag.NodeTypeService:
+		// Service references its port via port_id property
+		// TODO: Replace "port_id" with sdkgraphrag.PropPortID when SDK is updated
+		if portID, ok := props["port_id"].(string); ok && portID != "" {
+			fromID = portID
+			relType = sdkgraphrag.RelTypeRunsService
+		}
+
+	case sdkgraphrag.NodeTypeEndpoint:
+		// Endpoint references its service via service_id property
+		// TODO: Replace "service_id" with sdkgraphrag.PropServiceID when SDK is updated
+		if serviceID, ok := props["service_id"].(string); ok && serviceID != "" {
+			fromID = serviceID
+			relType = sdkgraphrag.RelTypeHasEndpoint
+		}
+
+	case sdkgraphrag.NodeTypeSubdomain:
+		// Subdomain references its parent domain via parent_domain property
+		// TODO: Replace "parent_domain" with sdkgraphrag.PropParentDomain when SDK is updated
+		if parentDomain, ok := props["parent_domain"].(string); ok && parentDomain != "" {
+			fromID = parentDomain
+			relType = sdkgraphrag.RelTypeHasSubdomain
+		}
+	}
+
+	// Create relationship if we found a valid parent reference
+	if fromID != "" && relType != "" {
+		rel := sdkgraphrag.Relationship{
+			FromID: fromID,
+			ToID:   nodeID,
+			Type:   relType,
+		}
+
+		// Create the relationship - log warning on failure but don't fail the operation
+		// This allows for partial graph construction when parent nodes don't exist yet
+		if err := b.CreateRelationship(ctx, rel); err != nil {
+			// Use tracing to log the failure for observability
+			if span := ctx.Value("span"); span != nil {
+				if s, ok := span.(trace.Span); ok {
+					s.AddEvent("hierarchy_relationship_failed",
+						trace.WithAttributes(
+							attribute.String("node_id", nodeID),
+							attribute.String("node_type", node.Type),
+							attribute.String("from_id", fromID),
+							attribute.String("relationship_type", relType),
+							attribute.String("error", err.Error()),
+						))
+				}
+			}
+		}
+	}
 }

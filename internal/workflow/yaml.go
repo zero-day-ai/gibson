@@ -401,7 +401,9 @@ func convertAgentNode(yamlNode *YAMLNode, node *WorkflowNode) error {
 		task.Context[k] = v
 	}
 
-	// Then merge in task config (mode, verbose, etc.)
+	// Then merge in task config (agent-specific parameters like verbose, timeout, etc.)
+	// Note: Agents should be single-purpose. Use different agents for different tasks
+	// rather than mode-switching within a single agent.
 	// Task config values take precedence if there's overlap
 	for k, v := range yamlNode.Task {
 		task.Context[k] = v

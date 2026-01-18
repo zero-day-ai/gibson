@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/zero-day-ai/gibson/internal/llm"
 )
 
 // IndicatorMatcher evaluates success indicators against responses
@@ -255,11 +257,18 @@ func (m *indicatorMatcher) MatchLength(response string, criteria string) (bool, 
 
 // matchJSON attempts to match JSON content
 // For basic implementation, we'll check if the response is valid JSON
-// and optionally contains a specific key/value
+// and optionally contains a specific key/value.
+// Supports both raw JSON and markdown-wrapped JSON (```json ... ```).
 func (m *indicatorMatcher) matchJSON(response string, criteria string) (bool, error) {
-	// First, check if response is valid JSON
+	// Try to extract JSON from markdown if present
+	extractedJSON, err := llm.ExtractJSON(response)
+	if err != nil {
+		return false, nil // Not valid JSON or no JSON found, no match
+	}
+
+	// Validate it's actually valid JSON
 	var data interface{}
-	if err := json.Unmarshal([]byte(response), &data); err != nil {
+	if err := json.Unmarshal([]byte(extractedJSON), &data); err != nil {
 		return false, nil // Not valid JSON, no match
 	}
 
@@ -269,6 +278,6 @@ func (m *indicatorMatcher) matchJSON(response string, criteria string) (bool, er
 	}
 
 	// For more complex JSON path matching, we'd need a library like gjson
-	// For now, do a simple contains check on the criteria
-	return strings.Contains(response, criteria), nil
+	// For now, do a simple contains check on the criteria in the extracted JSON
+	return strings.Contains(extractedJSON, criteria), nil
 }

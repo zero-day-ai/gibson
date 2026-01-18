@@ -371,6 +371,7 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 			ThinkerMaxRetries:  3,
 			ThinkerTemperature: 0.2,
 			GraphLoader:        graphLoader,
+			Registry:           d.registryAdapter, // For component discovery and validation
 		}
 
 		var err error

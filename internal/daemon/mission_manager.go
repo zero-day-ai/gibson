@@ -406,19 +406,34 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, w
 	// Create harness adapter for the Actor
 	harnessAdapter := &orchestratorHarnessAdapter{harness: agentHarness}
 
+	// Build component inventory for validation
+	// Use a reasonable timeout for inventory building
+	inventoryCtx, inventoryCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer inventoryCancel()
+
+	inventoryBuilder := orchestrator.NewInventoryBuilder(m.registry)
+	inventory, err := inventoryBuilder.Build(inventoryCtx)
+	if err != nil {
+		m.logger.Warn("failed to build component inventory, validation will be skipped",
+			"mission_id", missionID,
+			"error", err)
+		inventory = nil // Continue without inventory
+	}
+
 	// Create SOTA orchestrator components
 	observer := orchestrator.NewObserver(missionQueries, executionQueries)
 	thinker := orchestrator.NewThinker(llmClient,
 		orchestrator.WithMaxRetries(3),
 		orchestrator.WithThinkerTemperature(0.2),
 	)
-	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient)
+	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient, inventory)
 
 	// Create the SOTA orchestrator
 	sotaOrchestrator := orchestrator.NewOrchestrator(observer, thinker, actor,
 		orchestrator.WithMaxIterations(100),
 		orchestrator.WithMaxConcurrent(10),
 		orchestrator.WithLogger(m.logger.With("component", "sota-orchestrator")),
+		orchestrator.WithComponentDiscovery(m.registry),
 	)
 
 	// Emit workflow execution started event
