@@ -80,25 +80,42 @@ func SchemaToCallbackProto(s schema.JSON) *pb.JSONSchemaNode {
 // TaxonomyToCallbackProto converts SDK TaxonomyMapping to harness callback proto TaxonomyMapping.
 func TaxonomyToCallbackProto(t schema.TaxonomyMapping) *pb.TaxonomyMapping {
 	proto := &pb.TaxonomyMapping{
-		NodeType:   t.NodeType,
-		IdTemplate: t.IDTemplate,
+		NodeType:              t.NodeType,
+		IdentifyingProperties: t.IdentifyingProperties,
 	}
 
 	// Convert property mappings
 	for _, p := range t.Properties {
 		proto.Properties = append(proto.Properties, &pb.PropertyMapping{
-			Source: p.Source,
-			Target: p.Target,
+			Source:    p.Source,
+			Target:    p.Target,
+			Transform: p.Transform,
 		})
 	}
 
 	// Convert relationship mappings
 	for _, r := range t.Relationships {
-		proto.Relationships = append(proto.Relationships, &pb.RelationshipMapping{
-			Type:           r.Type,
-			TargetType:     r.ToTemplate, // This maps to target type in simplified proto
-			TargetTemplate: r.ToTemplate,
-		})
+		relProto := &pb.RelationshipMapping{
+			Type:      r.Type,
+			Condition: r.Condition,
+			From: &pb.NodeReference{
+				Type:       r.From.Type,
+				Properties: r.From.Properties,
+			},
+			To: &pb.NodeReference{
+				Type:       r.To.Type,
+				Properties: r.To.Properties,
+			},
+		}
+		// Convert relationship properties
+		for _, p := range r.Properties {
+			relProto.RelProperties = append(relProto.RelProperties, &pb.PropertyMapping{
+				Source:    p.Source,
+				Target:    p.Target,
+				Transform: p.Transform,
+			})
+		}
+		proto.Relationships = append(proto.Relationships, relProto)
 	}
 
 	return proto
@@ -182,24 +199,48 @@ func CallbackProtoToTaxonomy(proto *pb.TaxonomyMapping) *schema.TaxonomyMapping 
 	}
 
 	t := &schema.TaxonomyMapping{
-		NodeType:   proto.NodeType,
-		IDTemplate: proto.IdTemplate,
+		NodeType:              proto.NodeType,
+		IdentifyingProperties: proto.IdentifyingProperties,
 	}
 
 	// Convert property mappings
 	for _, p := range proto.Properties {
 		t.Properties = append(t.Properties, schema.PropertyMapping{
-			Source: p.Source,
-			Target: p.Target,
+			Source:    p.Source,
+			Target:    p.Target,
+			Transform: p.Transform,
 		})
 	}
 
 	// Convert relationship mappings
 	for _, r := range proto.Relationships {
-		t.Relationships = append(t.Relationships, schema.RelationshipMapping{
-			Type:       r.Type,
-			ToTemplate: r.TargetTemplate,
-		})
+		rel := schema.RelationshipMapping{
+			Type:      r.Type,
+			Condition: r.Condition,
+		}
+		// Convert From NodeReference
+		if r.From != nil {
+			rel.From = schema.NodeReference{
+				Type:       r.From.Type,
+				Properties: r.From.Properties,
+			}
+		}
+		// Convert To NodeReference
+		if r.To != nil {
+			rel.To = schema.NodeReference{
+				Type:       r.To.Type,
+				Properties: r.To.Properties,
+			}
+		}
+		// Convert relationship properties
+		for _, p := range r.RelProperties {
+			rel.Properties = append(rel.Properties, schema.PropertyMapping{
+				Source:    p.Source,
+				Target:    p.Target,
+				Transform: p.Transform,
+			})
+		}
+		t.Relationships = append(t.Relationships, rel)
 	}
 
 	return t

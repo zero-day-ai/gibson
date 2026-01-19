@@ -20,21 +20,21 @@ type mockTaxonomyGraphEngine struct {
 	mu sync.Mutex
 
 	// Tracking for assertions
-	handleEventCalls     []eventCall
-	handleToolCalls      []toolCall
-	handleFindingCalls   []findingCall
-	healthCalls          int
+	handleEventCalls   []eventCall
+	handleToolCalls    []toolCall
+	handleFindingCalls []findingCall
+	healthCalls        int
 
 	// Error injection (protected by mutex)
-	handleEventError     error
-	handleToolError      error
-	handleFindingError   error
+	handleEventError   error
+	handleToolError    error
+	handleFindingError error
 
 	// Call tracking
-	eventCallCount       int
+	eventCallCount int
 
 	// Signal channels for testing
-	eventProcessed       chan struct{}
+	eventProcessed chan struct{}
 }
 
 type eventCall struct {
@@ -552,10 +552,10 @@ func TestGraphEventSubscriber_ErrorHandling(t *testing.T) {
 
 		// Publish event with nil metadata
 		event := api.EventData{
-			EventType:    "mission.started",
-			Source:       "test",
-			Timestamp:    time.Now(),
-			Metadata:     nil, // No metadata
+			EventType: "mission.started",
+			Source:    "test",
+			Timestamp: time.Now(),
+			Metadata:  nil, // No metadata
 			MissionEvent: &api.MissionEventData{
 				MissionID: "mission-1",
 			},

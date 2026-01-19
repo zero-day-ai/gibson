@@ -571,7 +571,8 @@ func (m *errorHandlerMockMetrics) RecordCounter(name string, value int64, labels
 
 func (m *errorHandlerMockMetrics) RecordGauge(name string, value float64, labels map[string]string) {}
 
-func (m *errorHandlerMockMetrics) RecordHistogram(name string, value float64, labels map[string]string) {}
+func (m *errorHandlerMockMetrics) RecordHistogram(name string, value float64, labels map[string]string) {
+}
 
 func (m *errorHandlerMockMetrics) getCounter(name string) int64 {
 	m.mu.Lock()

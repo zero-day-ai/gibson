@@ -11,35 +11,9 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 )
 
-// TestGraphRAGHealth_Disabled verifies that when GraphRAG is not configured,
-// the health check returns "healthy" with message "graphrag disabled" instead
-// of returning "unhealthy". This fix addresses the issue where external agents
-// report GraphRAG as unhealthy even though it's intentionally disabled.
-func TestGraphRAGHealth_Disabled(t *testing.T) {
-	// Create a minimal harness without GraphRAG configured
-	h := &DefaultAgentHarness{
-		graphRAGQueryBridge: nil, // GraphRAG not configured
-		logger:              slog.New(slog.NewTextHandler(os.Stdout, nil)),
-		tracer:              noop.NewTracerProvider().Tracer("test"),
-	}
-
-	ctx := context.Background()
-	status := h.GraphRAGHealth(ctx)
-
-	// Verify it returns healthy (not unhealthy) when disabled
-	if status.State != types.HealthStateHealthy {
-		t.Errorf("expected health state to be Healthy, got %v", status.State)
-	}
-
-	// Verify the message indicates GraphRAG is disabled
-	expectedMsg := "graphrag disabled"
-	if status.Message != expectedMsg {
-		t.Errorf("expected message %q, got %q", expectedMsg, status.Message)
-	}
-}
-
 // TestGraphRAGHealth_Enabled verifies that when GraphRAG is configured,
 // the health check delegates to the query bridge's health check.
+// Note: GraphRAG is now a required core component, so this is the primary test.
 func TestGraphRAGHealth_Enabled(t *testing.T) {
 	// Create a mock query bridge that returns a specific health status
 	mockBridge := &mockGraphRAGQueryBridge{
@@ -67,6 +41,31 @@ func TestGraphRAGHealth_Enabled(t *testing.T) {
 
 	if status.Message != "graphrag operational" {
 		t.Errorf("expected message %q, got %q", "graphrag operational", status.Message)
+	}
+}
+
+// TestGraphRAGHealth_Unhealthy verifies that when the underlying GraphRAG
+// reports unhealthy status, it's correctly propagated.
+func TestGraphRAGHealth_Unhealthy(t *testing.T) {
+	mockBridge := &mockGraphRAGQueryBridge{
+		healthStatus: types.Unhealthy("connection failed"),
+	}
+
+	h := &DefaultAgentHarness{
+		graphRAGQueryBridge: mockBridge,
+		logger:              slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		tracer:              noop.NewTracerProvider().Tracer("test"),
+	}
+
+	ctx := context.Background()
+	status := h.GraphRAGHealth(ctx)
+
+	if status.State != types.HealthStateUnhealthy {
+		t.Errorf("expected health state to be Unhealthy, got %v", status.State)
+	}
+
+	if status.Message != "connection failed" {
+		t.Errorf("expected message %q, got %q", "connection failed", status.Message)
 	}
 }
 

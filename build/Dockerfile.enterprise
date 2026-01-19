@@ -45,6 +45,17 @@ RUN go build -tags fts5 \
     -o /build/gibson-bin \
     ./cmd/gibson
 
+# Download the actual ONNX model file for the native embedder
+# The Go module proxy doesn't handle Git LFS files properly.
+# IMPORTANT: We must use the clems4ever repo's model which has mean pooling baked in
+# (outputs sentence_embedding), NOT the raw HuggingFace model (outputs last_hidden_state).
+RUN apk add --no-cache git-lfs && \
+    git clone --depth 1 https://github.com/clems4ever/all-minilm-l6-v2-go.git /tmp/minilm-repo && \
+    cd /tmp/minilm-repo && git lfs pull && \
+    mkdir -p /build/onnx-model && \
+    cp /tmp/minilm-repo/all_minilm_l6_v2/model.onnx /build/onnx-model/model.onnx && \
+    rm -rf /tmp/minilm-repo
+
 # Clone and build enterprise agents (each is a separate private repo)
 RUN git clone --branch ${AGENTS_VERSION} --depth 1 \
     https://${GITHUB_TOKEN}@github.com/zero-day-ai/bishop.git /build/agents/bishop && \
@@ -104,11 +115,13 @@ RUN go work init && \
 FROM kalilinux/kali-rolling
 
 # ONNX Runtime version for native embedder
-ARG ONNX_VERSION=1.21.0
+# IMPORTANT: Must be 1.23.0 - versions 1.23.1+ have protobuf compatibility issues
+# with the all-minilm-l6-v2-go embedded model
+ARG ONNX_VERSION=1.23.0
 
 # System dependencies and security tools
 RUN apt-get update && apt-get install -y \
-    git build-essential curl wget ca-certificates \
+    git git-lfs build-essential curl wget ca-certificates \
     # Core security tools (tool wrappers depend on these binaries)
     nmap amass theharvester recon-ng \
     sqlmap hydra gobuster \
@@ -146,6 +159,9 @@ RUN ARCH=$(uname -m) && \
     ldconfig && \
     rm -rf /tmp/onnxruntime*
 
+# Set ONNX Runtime library path for native embedder
+ENV ONNXRUNTIME_LIB_PATH=/usr/local/lib/libonnxruntime.so
+
 # Install rclone from official script (not in Kali repos)
 RUN curl https://rclone.org/install.sh | bash || true
 
@@ -171,6 +187,16 @@ COPY --from=builder /build/whistler /usr/local/bin/whistler
 
 # Copy compiled tools from builder stage
 COPY --from=builder /build/tools/bin/ /opt/gibson/tools/
+
+# Copy ONNX model file for native embedder
+# The model is placed in /opt/gibson/models and the library will find it via GOPATH
+COPY --from=builder /build/onnx-model/model.onnx /opt/gibson/models/all-minilm-l6-v2/model.onnx
+
+# Install the ONNX model into the Go module cache location
+# This is where the all-minilm-l6-v2-go library expects to find it
+RUN mkdir -p /go/pkg/mod/github.com/clems4ever/all-minilm-l6-v2-go@v0.0.9/all_minilm_l6_v2 && \
+    cp /opt/gibson/models/all-minilm-l6-v2/model.onnx \
+       /go/pkg/mod/github.com/clems4ever/all-minilm-l6-v2-go@v0.0.9/all_minilm_l6_v2/model.onnx
 
 # Ensure all binaries are executable
 RUN chmod +x /usr/local/bin/gibson \

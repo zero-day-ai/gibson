@@ -171,11 +171,11 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 
 		client, err := graph.NewNeo4jClient(graphConfig)
 		if err != nil {
-			slog.Warn("Failed to create Neo4j client, SOTA orchestrator will not be available", "error", err)
+			slog.Warn("Failed to create Neo4j client, orchestrator will not be available", "error", err)
 		} else {
 			// Connect to Neo4j
 			if err := client.Connect(ctx); err != nil {
-				slog.Warn("Failed to connect to Neo4j, SOTA orchestrator will not be available", "error", err)
+				slog.Warn("Failed to connect to Neo4j, orchestrator will not be available", "error", err)
 				client = nil
 			} else {
 				graphRAGClient = client
@@ -184,7 +184,7 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 						slog.Warn("failed to close Neo4j client", "error", err)
 					}
 				})
-				slog.Info("Connected to Neo4j for SOTA orchestrator")
+				slog.Info("Connected to Neo4j for orchestrator")
 			}
 		}
 	}
@@ -192,14 +192,14 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 	// Step 7: Create event emitter for progress reporting
 	eventEmitter := mission.NewDefaultEventEmitter(mission.WithBufferSize(100))
 
-	// Step 8: Create mission orchestrator using SOTA if GraphRAG is available
+	// Step 8: Create mission orchestrator if GraphRAG is available
 	var orch mission.MissionOrchestrator
 	if graphRAGClient != nil {
-		// Use SOTA orchestrator
+		// Use orchestrator
 		// TODO: Create MissionGraphLoader adapter
 		// graphLoader := workflow.NewGraphLoader(graphRAGClient)
 
-		sotaConfig := orchestrator.SOTAOrchestratorConfig{
+		cfg := orchestrator.Config{
 			GraphRAGClient:     graphRAGClient,
 			HarnessFactory:     harnessFactory,
 			Logger:             slog.Default(),
@@ -211,12 +211,12 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 			GraphLoader:        nil, // TODO: Implement MissionGraphLoader adapter
 		}
 
-		orch, err = orchestrator.NewSOTAMissionOrchestrator(sotaConfig)
+		orch, err = orchestrator.NewMissionAdapter(cfg)
 		if err != nil {
 			cleanup()
-			return nil, fmt.Errorf("failed to create SOTA orchestrator: %w", err)
+			return nil, fmt.Errorf("failed to create orchestrator: %w", err)
 		}
-		slog.Info("Using SOTA orchestrator for mission execution")
+		slog.Info("Using orchestrator for mission execution")
 	} else {
 		// Fallback: Neo4j not available
 		cleanup()

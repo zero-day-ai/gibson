@@ -60,8 +60,8 @@ const (
 	EventTypePluginQueryFailed    = "plugin.query.failed"
 
 	// Finding events
-	EventTypeFindingDiscovered       = "finding.discovered"
-	EventTypeAgentFindingSubmitted   = "agent.finding_submitted"
+	EventTypeFindingDiscovered     = "finding.discovered"
+	EventTypeAgentFindingSubmitted = "agent.finding_submitted"
 )
 
 // ExtractTraceContext extracts trace context (trace ID, span ID, parent span ID) from a context.

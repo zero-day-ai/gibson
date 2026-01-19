@@ -13,11 +13,11 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// SOTAMissionOrchestrator adapts the SOTA orchestrator to the mission.MissionOrchestrator interface.
+// MissionAdapter adapts the orchestrator to the mission.MissionOrchestrator interface.
 // It provides backward compatibility with existing code that expects the mission.MissionOrchestrator interface
-// while using the new SOTA (Observe → Think → Act) orchestrator internally.
-type SOTAMissionOrchestrator struct {
-	config SOTAOrchestratorConfig
+// while using the new (Observe → Think → Act) orchestrator internally.
+type MissionAdapter struct {
+	config Config
 
 	// Pause request handling for backward compatibility
 	pauseRequestedMu sync.RWMutex
@@ -32,22 +32,22 @@ type MissionGraphLoader interface {
 }
 
 // Execute implements mission.MissionOrchestrator interface.
-// It converts the mission to the SOTA format, executes it using the SOTA orchestrator,
+// It converts the mission to the orchestrator format, executes it using the orchestrator,
 // and converts the result back to a mission.MissionResult.
-func (s *SOTAMissionOrchestrator) Execute(ctx context.Context, m *mission.Mission) (*mission.MissionResult, error) {
+func (m *MissionAdapter) Execute(ctx context.Context, mis *mission.Mission) (*mission.MissionResult, error) {
 	// Validate mission can be executed
-	if !m.Status.CanTransitionTo(mission.MissionStatusRunning) {
-		return nil, mission.NewInvalidStateError(m.Status, mission.MissionStatusRunning)
+	if !mis.Status.CanTransitionTo(mission.MissionStatusRunning) {
+		return nil, mission.NewInvalidStateError(mis.Status, mission.MissionStatusRunning)
 	}
 
 	// Update mission status to running
 	startedAt := time.Now()
-	m.Status = mission.MissionStatusRunning
-	m.StartedAt = &startedAt
+	mis.Status = mission.MissionStatusRunning
+	mis.StartedAt = &startedAt
 
 	// Initialize metrics
-	if m.Metrics == nil {
-		m.Metrics = &mission.MissionMetrics{
+	if mis.Metrics == nil {
+		mis.Metrics = &mission.MissionMetrics{
 			StartedAt:          startedAt,
 			LastUpdateAt:       startedAt,
 			FindingsBySeverity: make(map[string]int),
@@ -58,79 +58,79 @@ func (s *SOTAMissionOrchestrator) Execute(ctx context.Context, m *mission.Missio
 	var def *mission.MissionDefinition
 	var err error
 
-	if m.WorkflowJSON != "" {
+	if mis.WorkflowJSON != "" {
 		// Parse mission definition from inline JSON
 		def = &mission.MissionDefinition{}
-		if err = json.Unmarshal([]byte(m.WorkflowJSON), def); err != nil {
+		if err = json.Unmarshal([]byte(mis.WorkflowJSON), def); err != nil {
 			return nil, fmt.Errorf("failed to parse mission definition: %w", err)
 		}
-	} else if m.WorkflowID != "" {
+	} else if mis.WorkflowID != "" {
 		// For now, we need the definition JSON to be present
 		// In a future enhancement, we could load from the mission definition store
-		return nil, fmt.Errorf("mission definition loading from WorkflowID not yet implemented in SOTA adapter")
+		return nil, fmt.Errorf("mission definition loading from WorkflowID not yet implemented in adapter")
 	} else {
 		return nil, fmt.Errorf("no mission definition available (neither WorkflowID nor WorkflowJSON)")
 	}
 
 	// Store mission definition in Neo4j graph for state tracking
-	if s.config.GraphLoader != nil {
-		graphMissionID, err := s.config.GraphLoader.LoadMission(ctx, def)
+	if m.config.GraphLoader != nil {
+		graphMissionID, err := m.config.GraphLoader.LoadMission(ctx, def)
 		if err != nil {
 			// Log warning but continue - graph storage is optional
-			s.config.Logger.Warn("failed to store mission definition in GraphRAG",
+			m.config.Logger.Warn("failed to store mission definition in GraphRAG",
 				"error", err,
-				"mission_id", m.ID,
+				"mission_id", mis.ID,
 				"definition_name", def.Name,
 			)
 		} else {
-			s.config.Logger.Info("mission definition stored in GraphRAG",
+			m.config.Logger.Info("mission definition stored in GraphRAG",
 				"graph_mission_id", graphMissionID,
-				"mission_id", m.ID,
+				"mission_id", mis.ID,
 				"definition_name", def.Name,
 			)
 		}
 	}
 
-	// Create SOTA orchestrator for this mission execution
-	orchestrator, err := s.createOrchestrator(ctx, m, def)
+	// Create orchestrator for this mission execution
+	orchestrator, err := m.createOrchestrator(ctx, mis, def)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
 	}
 
-	// Execute using SOTA orchestrator
-	orchResult, err := orchestrator.Run(ctx, m.ID.String())
+	// Execute using orchestrator
+	orchResult, err := orchestrator.Run(ctx, mis.ID.String())
 	if err != nil {
 		// Convert error to mission result
-		return s.convertErrorToResult(m, orchResult, err, startedAt), err
+		return m.convertErrorToResult(mis, orchResult, err, startedAt), err
 	}
 
 	// Convert orchestrator result to mission result
-	return s.convertResult(m, orchResult, startedAt), nil
+	return m.convertResult(mis, orchResult, startedAt), nil
 }
 
-// createOrchestrator creates a SOTA orchestrator instance for a specific mission execution.
+// createOrchestrator creates an orchestrator instance for a specific mission execution.
 // It creates the harness, adapters, and all orchestrator components (Observer, Thinker, Actor).
-func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mission.Mission, def *mission.MissionDefinition) (*Orchestrator, error) {
+func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mission, def *mission.MissionDefinition) (*Orchestrator, error) {
 	// Validate GraphRAG client
-	if s.config.GraphRAGClient == nil {
+	if m.config.GraphRAGClient == nil {
 		return nil, fmt.Errorf("GraphRAGClient not configured")
 	}
 
 	// Create query handlers
-	missionQueries := queries.NewMissionQueries(s.config.GraphRAGClient)
-	executionQueries := queries.NewExecutionQueries(s.config.GraphRAGClient)
+	missionQueries := queries.NewMissionQueries(m.config.GraphRAGClient)
+	executionQueries := queries.NewExecutionQueries(m.config.GraphRAGClient)
 
 	// Create Observer
 	observer := NewObserver(missionQueries, executionQueries)
 
 	// Create harness for this mission
 	// Use the harness factory to create an appropriate harness
-	missionCtx := harness.NewMissionContext(m.ID, m.Name, "")
+	missionCtx := harness.NewMissionContext(mis.ID, mis.Name, "")
 
 	// Create target info
 	// Note: In a full implementation, we would load the target entity here
 	// For now, we use a simplified approach
-	targetInfo := harness.NewTargetInfo(m.TargetID, "mission-target", "", "")
+	targetInfo := harness.NewTargetInfo(mis.TargetID, "mission-target", "", "")
 
 	// Get first agent name from definition
 	agentName := "orchestrator" // Default agent name
@@ -144,7 +144,7 @@ func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mis
 	}
 
 	// Create harness
-	agentHarness, err := s.config.HarnessFactory.Create(agentName, missionCtx, targetInfo)
+	agentHarness, err := m.config.HarnessFactory.Create(agentName, missionCtx, targetInfo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create harness: %w", err)
 	}
@@ -154,8 +154,8 @@ func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mis
 
 	// Create Thinker
 	thinker := NewThinker(llmClient,
-		WithMaxRetries(s.config.ThinkerMaxRetries),
-		WithThinkerTemperature(s.config.ThinkerTemperature),
+		WithMaxRetries(m.config.ThinkerMaxRetries),
+		WithThinkerTemperature(m.config.ThinkerTemperature),
 	)
 
 	// Create harness adapter for Actor
@@ -163,39 +163,39 @@ func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mis
 
 	// Build component inventory for validation (if registry available)
 	var inventory *ComponentInventory
-	if s.config.Registry != nil {
+	if m.config.Registry != nil {
 		inventoryCtx, inventoryCancel := context.WithTimeout(ctx, 5*time.Second)
 		defer inventoryCancel()
 
-		inventoryBuilder := NewInventoryBuilder(s.config.Registry)
+		inventoryBuilder := NewInventoryBuilder(m.config.Registry)
 		var err error
 		inventory, err = inventoryBuilder.Build(inventoryCtx)
 		if err != nil {
-			s.config.Logger.Warn("failed to build component inventory, validation will be skipped",
-				"mission_id", m.ID,
+			m.config.Logger.Warn("failed to build component inventory, validation will be skipped",
+				"mission_id", mis.ID,
 				"error", err)
 			inventory = nil // Continue without inventory
 		}
 	}
 
 	// Create Actor
-	actor := NewActor(harnessAdapter, executionQueries, missionQueries, s.config.GraphRAGClient, inventory)
+	actor := NewActor(harnessAdapter, executionQueries, missionQueries, m.config.GraphRAGClient, inventory, m.config.MissionTracer)
 
 	// Create the orchestrator
 	orchOptions := []OrchestratorOption{
-		WithMaxIterations(s.config.MaxIterations),
-		WithMaxConcurrent(s.config.MaxConcurrent),
-		WithBudget(s.config.Budget),
-		WithTimeout(s.config.Timeout),
-		WithLogger(s.config.Logger.With("component", "sota-orchestrator", "mission_id", m.ID)),
-		WithTracer(s.config.Tracer),
-		WithEventBus(s.config.EventBus),
-		WithDecisionLogWriter(s.config.DecisionLogWriter),
+		WithMaxIterations(m.config.MaxIterations),
+		WithMaxConcurrent(m.config.MaxConcurrent),
+		WithBudget(m.config.Budget),
+		WithTimeout(m.config.Timeout),
+		WithLogger(m.config.Logger.With("component", "orchestrator", "mission_id", mis.ID)),
+		WithTracer(m.config.Tracer),
+		WithEventBus(m.config.EventBus),
+		WithDecisionLogWriter(m.config.DecisionLogWriter),
 	}
 
 	// Add component discovery if registry available
-	if s.config.Registry != nil {
-		orchOptions = append(orchOptions, WithComponentDiscovery(s.config.Registry))
+	if m.config.Registry != nil {
+		orchOptions = append(orchOptions, WithComponentDiscovery(m.config.Registry))
 	}
 
 	orchestrator := NewOrchestrator(observer, thinker, actor, orchOptions...)
@@ -204,10 +204,10 @@ func (s *SOTAMissionOrchestrator) createOrchestrator(ctx context.Context, m *mis
 }
 
 // convertResult converts an OrchestratorResult to a mission.MissionResult
-func (s *SOTAMissionOrchestrator) convertResult(m *mission.Mission, orchResult *OrchestratorResult, startedAt time.Time) *mission.MissionResult {
+func (m *MissionAdapter) convertResult(mis *mission.Mission, orchResult *OrchestratorResult, startedAt time.Time) *mission.MissionResult {
 	result := &mission.MissionResult{
-		MissionID:  m.ID,
-		Metrics:    m.Metrics,
+		MissionID:  mis.ID,
+		Metrics:    mis.Metrics,
 		FindingIDs: []types.ID{},
 	}
 
@@ -215,52 +215,52 @@ func (s *SOTAMissionOrchestrator) convertResult(m *mission.Mission, orchResult *
 	switch orchResult.Status {
 	case StatusCompleted:
 		result.Status = mission.MissionStatusCompleted
-		m.Status = mission.MissionStatusCompleted
+		mis.Status = mission.MissionStatusCompleted
 	case StatusFailed:
 		result.Status = mission.MissionStatusFailed
-		m.Status = mission.MissionStatusFailed
+		mis.Status = mission.MissionStatusFailed
 		if orchResult.Error != nil {
 			result.Error = orchResult.Error.Error()
-			m.Error = orchResult.Error.Error()
+			mis.Error = orchResult.Error.Error()
 		}
 	case StatusCancelled:
 		result.Status = mission.MissionStatusCancelled
-		m.Status = mission.MissionStatusCancelled
+		mis.Status = mission.MissionStatusCancelled
 		result.Error = "orchestration cancelled"
-		m.Error = "orchestration cancelled"
+		mis.Error = "orchestration cancelled"
 	case StatusMaxIterations:
 		result.Status = mission.MissionStatusFailed
-		m.Status = mission.MissionStatusFailed
+		mis.Status = mission.MissionStatusFailed
 		result.Error = "max iterations reached"
-		m.Error = "max iterations reached"
+		mis.Error = "max iterations reached"
 	case StatusTimeout:
 		result.Status = mission.MissionStatusFailed
-		m.Status = mission.MissionStatusFailed
+		mis.Status = mission.MissionStatusFailed
 		result.Error = "orchestration timeout"
-		m.Error = "orchestration timeout"
+		mis.Error = "orchestration timeout"
 	case StatusBudgetExceeded:
 		result.Status = mission.MissionStatusFailed
-		m.Status = mission.MissionStatusFailed
+		mis.Status = mission.MissionStatusFailed
 		result.Error = "token budget exceeded"
-		m.Error = "token budget exceeded"
+		mis.Error = "token budget exceeded"
 	case StatusConcurrencyLimit:
 		result.Status = mission.MissionStatusFailed
-		m.Status = mission.MissionStatusFailed
+		mis.Status = mission.MissionStatusFailed
 		result.Error = "concurrency limit reached"
-		m.Error = "concurrency limit reached"
+		mis.Error = "concurrency limit reached"
 	default:
 		result.Status = mission.MissionStatusFailed
-		m.Status = mission.MissionStatusFailed
+		mis.Status = mission.MissionStatusFailed
 		result.Error = fmt.Sprintf("unknown orchestrator status: %s", orchResult.Status)
-		m.Error = fmt.Sprintf("unknown orchestrator status: %s", orchResult.Status)
+		mis.Error = fmt.Sprintf("unknown orchestrator status: %s", orchResult.Status)
 	}
 
 	// Update mission metrics
 	completedAt := time.Now()
-	m.CompletedAt = &completedAt
-	m.Metrics.Duration = orchResult.Duration
-	m.Metrics.CompletedNodes = orchResult.CompletedNodes
-	m.Metrics.LastUpdateAt = completedAt
+	mis.CompletedAt = &completedAt
+	mis.Metrics.Duration = orchResult.Duration
+	mis.Metrics.CompletedNodes = orchResult.CompletedNodes
+	mis.Metrics.LastUpdateAt = completedAt
 
 	// Set result completion time
 	result.CompletedAt = completedAt
@@ -287,21 +287,21 @@ func (s *SOTAMissionOrchestrator) convertResult(m *mission.Mission, orchResult *
 }
 
 // convertErrorToResult creates a failed mission result from an error
-func (s *SOTAMissionOrchestrator) convertErrorToResult(m *mission.Mission, orchResult *OrchestratorResult, err error, startedAt time.Time) *mission.MissionResult {
+func (m *MissionAdapter) convertErrorToResult(mis *mission.Mission, orchResult *OrchestratorResult, err error, startedAt time.Time) *mission.MissionResult {
 	result := &mission.MissionResult{
-		MissionID:  m.ID,
+		MissionID:  mis.ID,
 		Status:     mission.MissionStatusFailed,
 		Error:      err.Error(),
-		Metrics:    m.Metrics,
+		Metrics:    mis.Metrics,
 		FindingIDs: []types.ID{},
 	}
 
 	// Update mission status
-	m.Status = mission.MissionStatusFailed
-	m.Error = err.Error()
+	mis.Status = mission.MissionStatusFailed
+	mis.Error = err.Error()
 	completedAt := time.Now()
-	m.CompletedAt = &completedAt
-	m.Metrics.Duration = completedAt.Sub(startedAt)
+	mis.CompletedAt = &completedAt
+	mis.Metrics.Duration = completedAt.Sub(startedAt)
 	result.CompletedAt = completedAt
 
 	// If we have partial orchestrator results, include them
@@ -323,38 +323,38 @@ func (s *SOTAMissionOrchestrator) convertErrorToResult(m *mission.Mission, orchR
 
 // RequestPause signals the orchestrator to pause at the next clean boundary.
 // This implements the mission.MissionOrchestrator interface for backward compatibility.
-func (s *SOTAMissionOrchestrator) RequestPause(ctx context.Context, missionID types.ID) error {
-	s.pauseRequestedMu.Lock()
-	defer s.pauseRequestedMu.Unlock()
+func (m *MissionAdapter) RequestPause(ctx context.Context, missionID types.ID) error {
+	m.pauseRequestedMu.Lock()
+	defer m.pauseRequestedMu.Unlock()
 
-	s.pauseRequested[missionID] = true
-	// Note: The SOTA orchestrator doesn't currently support pause/resume
+	m.pauseRequested[missionID] = true
+	// Note: The orchestrator doesn't currently support pause/resume
 	// This is tracked for future implementation
 	return nil
 }
 
 // IsPauseRequested checks if pause has been requested for a mission.
-func (s *SOTAMissionOrchestrator) IsPauseRequested(missionID types.ID) bool {
-	s.pauseRequestedMu.RLock()
-	defer s.pauseRequestedMu.RUnlock()
+func (m *MissionAdapter) IsPauseRequested(missionID types.ID) bool {
+	m.pauseRequestedMu.RLock()
+	defer m.pauseRequestedMu.RUnlock()
 
-	return s.pauseRequested[missionID]
+	return m.pauseRequested[missionID]
 }
 
 // ClearPauseRequest clears the pause request flag for a mission.
-func (s *SOTAMissionOrchestrator) ClearPauseRequest(missionID types.ID) {
-	s.pauseRequestedMu.Lock()
-	defer s.pauseRequestedMu.Unlock()
+func (m *MissionAdapter) ClearPauseRequest(missionID types.ID) {
+	m.pauseRequestedMu.Lock()
+	defer m.pauseRequestedMu.Unlock()
 
-	delete(s.pauseRequested, missionID)
+	delete(m.pauseRequested, missionID)
 }
 
 // ExecuteFromCheckpoint resumes execution from a saved checkpoint.
 // This implements the mission.MissionOrchestrator interface for backward compatibility.
-func (s *SOTAMissionOrchestrator) ExecuteFromCheckpoint(ctx context.Context, m *mission.Mission, checkpoint *mission.MissionCheckpoint) (*mission.MissionResult, error) {
-	// For now, checkpoint recovery is not yet implemented in SOTA orchestrator
+func (m *MissionAdapter) ExecuteFromCheckpoint(ctx context.Context, mis *mission.Mission, checkpoint *mission.MissionCheckpoint) (*mission.MissionResult, error) {
+	// For now, checkpoint recovery is not yet implemented in orchestrator
 	// We'll execute from the beginning
-	// TODO: Implement checkpoint recovery in SOTA orchestrator
+	// TODO: Implement checkpoint recovery in orchestrator
 
 	// Parse checkpoint state if available
 	if checkpoint != nil && len(checkpoint.CompletedNodes) > 0 {
@@ -364,11 +364,11 @@ func (s *SOTAMissionOrchestrator) ExecuteFromCheckpoint(ctx context.Context, m *
 	}
 
 	// Execute normally
-	return s.Execute(ctx, m)
+	return m.Execute(ctx, mis)
 }
 
 // parseCheckpointState converts a checkpoint to graph updates
-func (s *SOTAMissionOrchestrator) parseCheckpointState(checkpoint *mission.MissionCheckpoint) (map[string]any, error) {
+func (m *MissionAdapter) parseCheckpointState(checkpoint *mission.MissionCheckpoint) (map[string]any, error) {
 	if checkpoint == nil {
 		return nil, nil
 	}
@@ -393,5 +393,5 @@ func (s *SOTAMissionOrchestrator) parseCheckpointState(checkpoint *mission.Missi
 	return state, nil
 }
 
-// Ensure SOTAMissionOrchestrator implements mission.MissionOrchestrator
-var _ mission.MissionOrchestrator = (*SOTAMissionOrchestrator)(nil)
+// Ensure MissionAdapter implements mission.MissionOrchestrator
+var _ mission.MissionOrchestrator = (*MissionAdapter)(nil)

@@ -70,6 +70,7 @@ type Orchestrator struct {
 	logger           *slog.Logger
 	tracer           trace.Tracer
 	logWriter        DecisionLogWriter
+	debugWriter      *DebugLogWriter   // Debug output writer for raw logging to stdout
 	inventoryBuilder *InventoryBuilder // Component discovery for validation
 
 	// Configuration options
@@ -185,6 +186,15 @@ func WithComponentDiscovery(discovery registry.ComponentDiscovery) OrchestratorO
 	}
 }
 
+// WithDebugLogging enables raw debug logging to stdout.
+// This prints all observation state, LLM prompts/responses, decisions, and actions
+// in plain text format for debugging purposes.
+func WithDebugLogging() OrchestratorOption {
+	return func(o *Orchestrator) {
+		o.debugWriter = NewDebugLogWriter()
+	}
+}
+
 // NewOrchestrator creates a new Orchestrator with the specified components and options.
 //
 // Required components:
@@ -214,6 +224,7 @@ func NewOrchestrator(observer OrchestratorObserver, thinker OrchestratorThinker,
 		runMode:       envRunMode, // Default from environment or production
 		logger:        slog.Default(),
 		tracer:        trace.NewNoopTracerProvider().Tracer("orchestrator"),
+		debugWriter:   NewDebugLogWriter(), // Always-on debug logging to stdout
 	}
 
 	// Apply functional options (can override environment variable)
@@ -365,6 +376,11 @@ func (o *Orchestrator) Run(ctx context.Context, missionID string) (*Orchestrator
 			"completed_nodes", len(state.CompletedNodes),
 			"failed_nodes", len(state.FailedNodes),
 		)
+
+		// Debug logging: print observation state
+		if o.debugWriter != nil {
+			o.debugWriter.LogObservation(iteration, missionID, state)
+		}
 
 		// 2. CHECK TERMINATION CONDITIONS
 
@@ -518,6 +534,11 @@ func (o *Orchestrator) Run(ctx context.Context, missionID string) (*Orchestrator
 
 // logDecision writes the decision to the graph and external log systems.
 func (o *Orchestrator) logDecision(ctx context.Context, result *ThinkResult, iteration int, missionID string) error {
+	// Debug logging: print think/decide phases
+	if o.debugWriter != nil {
+		_ = o.debugWriter.LogDecision(ctx, result.Decision, result, iteration, missionID)
+	}
+
 	// Log to external system (Langfuse, etc.) if configured
 	if o.logWriter != nil {
 		if err := o.logWriter.LogDecision(ctx, result.Decision, result, iteration, missionID); err != nil {
@@ -549,6 +570,11 @@ func (o *Orchestrator) logDecision(ctx context.Context, result *ThinkResult, ite
 
 // logAction writes the action result to external log systems.
 func (o *Orchestrator) logAction(ctx context.Context, action *ActionResult, iteration int, missionID string) error {
+	// Debug logging: print act phase
+	if o.debugWriter != nil {
+		_ = o.debugWriter.LogAction(ctx, action, iteration, missionID)
+	}
+
 	// Log to external system (Langfuse, etc.) if configured
 	if o.logWriter != nil {
 		if err := o.logWriter.LogAction(ctx, action, iteration, missionID); err != nil {

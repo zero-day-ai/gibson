@@ -55,8 +55,8 @@ func TestMemoryWrapper(t *testing.T) {
 
 	// Create config with memory wrapper
 	config := HarnessConfig{
-		SlotManager:    llm.NewSlotManager(nil),
-		MemoryManager:  mockMM,
+		SlotManager:   llm.NewSlotManager(nil),
+		MemoryManager: mockMM,
 		MemoryWrapper: func(mm memory.MemoryManager) memory.MemoryManager {
 			wrapperCalled = true
 			wrappedMM = memory.NewTracedMemoryManager(mm, trace.NewNoopTracerProvider().Tracer("test"))

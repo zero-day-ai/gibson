@@ -360,14 +360,54 @@ func (d *daemonImpl) StopMission(ctx context.Context, missionID string, force bo
 	cancelFunc, exists := d.activeMissions[missionID]
 	if !exists {
 		d.missionsMu.Unlock()
-		// Mission is not running - check if it exists in the store
-		_, err := d.missionStore.Get(ctx, types.ID(missionID))
+		// Mission is not running in memory - check if it exists in the store
+		missionObj, err := d.missionStore.Get(ctx, types.ID(missionID))
 		if err != nil {
 			// Mission not found in store either
 			d.logger.Warn("mission not found", "mission_id", missionID)
 			return fmt.Errorf("mission not found: %s", missionID)
 		}
-		// Mission exists but is not running
+
+		// If mission is paused (orphaned), mark it as failed to unblock future runs
+		// This preserves memory for inheritance while allowing new runs to proceed
+		if missionObj.Status == mission.MissionStatusPaused {
+			d.logger.Info("marking orphaned paused mission as failed", "mission_id", missionID)
+			missionObj.Status = mission.MissionStatusFailed
+			completedAt := time.Now()
+			missionObj.CompletedAt = &completedAt
+			if missionObj.Metadata == nil {
+				missionObj.Metadata = make(map[string]any)
+			}
+			missionObj.Metadata["failure_reason"] = "Orphaned paused mission - failed to resume"
+
+			if err := d.missionStore.Update(ctx, missionObj); err != nil {
+				d.logger.Error("failed to update orphaned mission status", "error", err, "mission_id", missionID)
+				return fmt.Errorf("failed to mark orphaned mission as failed: %w", err)
+			}
+
+			// Emit event for the status change
+			if d.eventBus != nil {
+				event := api.EventData{
+					EventType: "mission_failed",
+					Timestamp: time.Now(),
+					Source:    "daemon",
+					MissionEvent: &api.MissionEventData{
+						EventType: "mission_failed",
+						Timestamp: time.Now(),
+						MissionID: missionID,
+						Message:   "Orphaned paused mission marked as failed",
+					},
+				}
+				if err := d.eventBus.Publish(ctx, event); err != nil {
+					d.logger.Warn("failed to publish mission failed event", "error", err)
+				}
+			}
+
+			d.logger.Info("orphaned paused mission marked as failed", "mission_id", missionID)
+			return nil
+		}
+
+		// Mission exists but is not running and not paused (already terminal)
 		d.logger.Info("mission is not currently running", "mission_id", missionID)
 		return fmt.Errorf("mission is not currently running: %s", missionID)
 	}
@@ -834,10 +874,10 @@ func (d *daemonImpl) PauseMission(ctx context.Context, missionID string, force b
 		return fmt.Errorf("mission ID cannot be empty")
 	}
 
-	// Check if mission manager is available
-	if d.missionManager == nil {
-		d.logger.Error("mission manager not initialized")
-		return fmt.Errorf("mission manager not initialized")
+	// Initialize mission manager if not already done
+	if err := d.ensureMissionManager(); err != nil {
+		d.logger.Error("failed to initialize mission manager", "error", err)
+		return fmt.Errorf("failed to initialize mission manager: %w", err)
 	}
 
 	// Call mission manager's pause method
@@ -859,10 +899,10 @@ func (d *daemonImpl) ResumeMission(ctx context.Context, missionID string) (<-cha
 		return nil, fmt.Errorf("mission ID cannot be empty")
 	}
 
-	// Check if mission manager is available
-	if d.missionManager == nil {
-		d.logger.Error("mission manager not initialized")
-		return nil, fmt.Errorf("mission manager not initialized")
+	// Initialize mission manager if not already done
+	if err := d.ensureMissionManager(); err != nil {
+		d.logger.Error("failed to initialize mission manager", "error", err)
+		return nil, fmt.Errorf("failed to initialize mission manager: %w", err)
 	}
 
 	// Call mission manager's resume method
@@ -1151,6 +1191,105 @@ func (d *daemonImpl) InstallComponent(ctx context.Context, kind string, url stri
 		BinPath:     result.Component.BinPath,
 		BuildOutput: result.BuildOutput,
 		DurationMs:  result.Duration.Milliseconds(),
+	}, nil
+}
+
+// InstallAllComponent installs all components from a mono-repo.
+func (d *daemonImpl) InstallAllComponent(ctx context.Context, kind string, url string, branch string, tag string, force bool, skipBuild bool, verbose bool) (api.InstallAllComponentResult, error) {
+	d.logger.Info("InstallAllComponent called", "kind", kind, "url", url, "force", force)
+
+	// Validate kind
+	var componentKind component.ComponentKind
+	switch kind {
+	case "agent":
+		componentKind = component.ComponentKindAgent
+	case "tool":
+		componentKind = component.ComponentKindTool
+	case "plugin":
+		componentKind = component.ComponentKindPlugin
+	default:
+		return api.InstallAllComponentResult{}, fmt.Errorf("invalid component kind: %s", kind)
+	}
+
+	// Check if installer is available
+	if d.componentInstaller == nil {
+		d.logger.Error("component installer not available")
+		return api.InstallAllComponentResult{}, fmt.Errorf("component installer not available")
+	}
+
+	// Build install options
+	opts := component.InstallOptions{
+		Branch:    branch,
+		Tag:       tag,
+		Force:     force,
+		SkipBuild: skipBuild,
+		Verbose:   verbose,
+	}
+
+	// Execute bulk installation
+	start := time.Now()
+	result, err := d.componentInstaller.InstallAll(ctx, url, componentKind, opts)
+	if err != nil {
+		d.logger.Error("failed to install all components", "error", err, "kind", kind, "url", url)
+		return api.InstallAllComponentResult{}, fmt.Errorf("failed to install components: %w", err)
+	}
+
+	duration := time.Since(start)
+	d.logger.Info("install all completed",
+		"kind", kind,
+		"found", result.ComponentsFound,
+		"successful", len(result.Successful),
+		"skipped", len(result.Skipped),
+		"failed", len(result.Failed),
+		"duration", duration,
+	)
+
+	// Convert to API result
+	apiSuccessful := make([]api.InstallAllResultItem, len(result.Successful))
+	for i, item := range result.Successful {
+		apiSuccessful[i] = api.InstallAllResultItem{
+			Name:    item.Component.Name,
+			Version: item.Component.Version,
+			Path:    item.Component.RepoPath,
+		}
+	}
+
+	apiSkipped := make([]api.InstallAllResultItem, len(result.Skipped))
+	for i, item := range result.Skipped {
+		apiSkipped[i] = api.InstallAllResultItem{
+			Name:    item.Name,
+			Version: "", // Skipped components don't have version info
+			Path:    item.Path,
+		}
+	}
+
+	apiFailed := make([]api.InstallAllFailedItem, len(result.Failed))
+	for i, item := range result.Failed {
+		apiFailed[i] = api.InstallAllFailedItem{
+			Name:  item.Name,
+			Path:  item.Path,
+			Error: item.Error.Error(),
+		}
+	}
+
+	// Determine overall success
+	success := len(result.Failed) == 0 && result.ComponentsFound > 0
+
+	// Build message
+	message := fmt.Sprintf("Found %d components: %d successful, %d skipped, %d failed",
+		result.ComponentsFound, len(result.Successful), len(result.Skipped), len(result.Failed))
+
+	return api.InstallAllComponentResult{
+		Success:         success,
+		ComponentsFound: result.ComponentsFound,
+		SuccessfulCount: len(result.Successful),
+		SkippedCount:    len(result.Skipped),
+		FailedCount:     len(result.Failed),
+		Successful:      apiSuccessful,
+		Skipped:         apiSkipped,
+		Failed:          apiFailed,
+		DurationMs:      duration.Milliseconds(),
+		Message:         message,
 	}, nil
 }
 

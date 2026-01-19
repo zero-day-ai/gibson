@@ -281,15 +281,15 @@ func TestBuild_EmptyRegistry(t *testing.T) {
 // TestBuild_PartialFailure tests graceful handling of partial failures
 func TestBuild_PartialFailure(t *testing.T) {
 	tests := []struct {
-		name              string
-		agentsErr         error
-		toolsErr          error
-		pluginsErr        error
-		expectError       bool
-		expectedAgents    int
-		expectedTools     int
-		expectedPlugins   int
-		errorContains     string
+		name            string
+		agentsErr       error
+		toolsErr        error
+		pluginsErr      error
+		expectError     bool
+		expectedAgents  int
+		expectedTools   int
+		expectedPlugins int
+		errorContains   string
 	}{
 		{
 			name:            "agents query fails",

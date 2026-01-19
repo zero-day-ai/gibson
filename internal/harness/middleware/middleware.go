@@ -227,7 +227,6 @@ type ChatResponse struct {
 	Error    error
 }
 
-
 // AgentRequest wraps the parameters for agent delegation operations.
 type AgentRequest struct {
 	Name string

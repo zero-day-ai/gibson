@@ -676,3 +676,151 @@ func TestMissionTracer_ContextCancellation(t *testing.T) {
 	// Should fail due to cancelled context
 	assert.Error(t, err)
 }
+
+func TestGetMetrics(t *testing.T) {
+	server := newMockLangfuseServer()
+	defer server.Close()
+
+	tracer, err := NewMissionTracer(LangfuseConfig{
+		Host:      server.URL,
+		PublicKey: "test-public-key",
+		SecretKey: "test-secret-key",
+	})
+	require.NoError(t, err)
+	defer tracer.Close()
+
+	// Initial metrics should be zero
+	metrics := tracer.GetMetrics()
+	assert.Equal(t, int64(0), metrics.EventsQueued)
+	assert.Equal(t, int64(0), metrics.EventsSent)
+	assert.Equal(t, int64(0), metrics.EventsFailed)
+	assert.Equal(t, int64(0), metrics.BytesSent)
+	assert.Equal(t, 0, metrics.ConsecutiveFails)
+	assert.True(t, metrics.LastSuccessTime.IsZero())
+	assert.True(t, metrics.LastErrorTime.IsZero())
+	assert.Empty(t, metrics.LastError)
+
+	// Send a successful event
+	mission := schema.NewMission(
+		types.NewID(),
+		"Test Mission",
+		"Description",
+		"Objective",
+		"target",
+		"yaml",
+	)
+
+	ctx := context.Background()
+	trace, err := tracer.StartMissionTrace(ctx, mission)
+	require.NoError(t, err)
+	assert.NotNil(t, trace)
+
+	// Check metrics after successful send
+	metrics = tracer.GetMetrics()
+	assert.Equal(t, int64(1), metrics.EventsQueued)
+	assert.Equal(t, int64(1), metrics.EventsSent)
+	assert.Equal(t, int64(0), metrics.EventsFailed)
+	assert.Greater(t, metrics.BytesSent, int64(0))
+	assert.Equal(t, 0, metrics.ConsecutiveFails)
+	assert.False(t, metrics.LastSuccessTime.IsZero())
+	assert.True(t, metrics.LastErrorTime.IsZero())
+	assert.Empty(t, metrics.LastError)
+}
+
+func TestGetMetrics_WithFailures(t *testing.T) {
+	// Create a server that returns errors
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Internal server error"))
+	}))
+	defer server.Close()
+
+	tracer, err := NewMissionTracer(LangfuseConfig{
+		Host:      server.URL,
+		PublicKey: "test-public-key",
+		SecretKey: "test-secret-key",
+	})
+	require.NoError(t, err)
+	defer tracer.Close()
+
+	// Try to send an event that will fail
+	mission := schema.NewMission(
+		types.NewID(),
+		"Test Mission",
+		"Description",
+		"Objective",
+		"target",
+		"yaml",
+	)
+
+	ctx := context.Background()
+	_, err = tracer.StartMissionTrace(ctx, mission)
+	assert.Error(t, err)
+
+	// Check metrics after failed send
+	metrics := tracer.GetMetrics()
+	assert.Equal(t, int64(1), metrics.EventsQueued)
+	assert.Equal(t, int64(0), metrics.EventsSent)
+	assert.Equal(t, int64(1), metrics.EventsFailed)
+	assert.Equal(t, int64(0), metrics.BytesSent)
+	assert.Equal(t, 1, metrics.ConsecutiveFails)
+	assert.True(t, metrics.LastSuccessTime.IsZero())
+	assert.False(t, metrics.LastErrorTime.IsZero())
+	assert.NotEmpty(t, metrics.LastError)
+	assert.Contains(t, metrics.LastError, "500")
+}
+
+func TestGetMetrics_ConcurrentAccess(t *testing.T) {
+	server := newMockLangfuseServer()
+	defer server.Close()
+
+	tracer, err := NewMissionTracer(LangfuseConfig{
+		Host:      server.URL,
+		PublicKey: "test-public-key",
+		SecretKey: "test-secret-key",
+	})
+	require.NoError(t, err)
+	defer tracer.Close()
+
+	ctx := context.Background()
+	numGoroutines := 10
+	var wg sync.WaitGroup
+
+	// Send events and read metrics concurrently
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(2)
+
+		// Goroutine to send events
+		go func(iteration int) {
+			defer wg.Done()
+			mission := schema.NewMission(
+				types.NewID(),
+				fmt.Sprintf("Test Mission %d", iteration),
+				"Description",
+				"Objective",
+				"target",
+				"yaml",
+			)
+			_, _ = tracer.StartMissionTrace(ctx, mission)
+		}(i)
+
+		// Goroutine to read metrics
+		go func() {
+			defer wg.Done()
+			metrics := tracer.GetMetrics()
+			// Just ensure we can read without panicking
+			_ = metrics.EventsQueued
+			_ = metrics.EventsSent
+			_ = metrics.EventsFailed
+		}()
+	}
+
+	wg.Wait()
+
+	// Verify final metrics
+	finalMetrics := tracer.GetMetrics()
+	assert.Equal(t, int64(numGoroutines), finalMetrics.EventsQueued)
+	assert.Equal(t, int64(numGoroutines), finalMetrics.EventsSent)
+	assert.Equal(t, int64(0), finalMetrics.EventsFailed)
+	assert.Equal(t, 0, finalMetrics.ConsecutiveFails)
+}

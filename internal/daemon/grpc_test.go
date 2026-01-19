@@ -1310,9 +1310,9 @@ func TestBuildAttackOptions_TargetPropagation(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		req          api.AttackRequest
-		expectedURL  string
+		name        string
+		req         api.AttackRequest
+		expectedURL string
 	}{
 		{
 			name: "target from database",

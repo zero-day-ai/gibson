@@ -1,11 +1,13 @@
 FROM kalilinux/kali-rolling
 
 # ONNX Runtime version for native embedder
-ARG ONNX_VERSION=1.21.0
+# IMPORTANT: Must be 1.23.0 - versions 1.23.1+ have protobuf compatibility issues
+# with the all-minilm-l6-v2-go embedded model
+ARG ONNX_VERSION=1.23.0
 
 # System dependencies and security tools
 RUN apt-get update && apt-get install -y \
-    golang-go git build-essential curl wget \
+    golang-go git git-lfs build-essential curl wget \
     # Core security tools (tool wrappers depend on these binaries)
     nmap amass theharvester recon-ng \
     sqlmap hydra gobuster \
@@ -37,6 +39,9 @@ RUN ARCH=$(uname -m) && \
     ldconfig && \
     rm -rf /tmp/onnxruntime*
 
+# Set ONNX Runtime library path for native embedder
+ENV ONNXRUNTIME_LIB_PATH=/usr/local/lib/libonnxruntime.so
+
 # Install rclone from official script (not in Kali repos)
 RUN curl https://rclone.org/install.sh | bash || true
 
@@ -65,6 +70,25 @@ RUN git clone --branch ${GIBSON_VERSION} --depth 1 \
 WORKDIR /src/gibson
 ENV CGO_ENABLED=1
 RUN go build -tags fts5 -o /usr/local/bin/gibson ./cmd/gibson
+
+# Download the actual ONNX model file for the native embedder
+# The Go module proxy doesn't handle Git LFS files properly.
+# IMPORTANT: We must use the clems4ever repo's model which has mean pooling baked in
+# (outputs sentence_embedding), NOT the raw HuggingFace model (outputs last_hidden_state).
+# Clone the repo with LFS to get the correct model file.
+RUN MODEL_PATH=$(go env GOPATH)/pkg/mod/github.com/clems4ever/all-minilm-l6-v2-go@*/all_minilm_l6_v2/model.onnx && \
+    MODEL_DIR=$(dirname $(ls $MODEL_PATH 2>/dev/null | head -1)) && \
+    if [ -n "$MODEL_DIR" ] && [ -d "$MODEL_DIR" ]; then \
+        git clone --depth 1 https://github.com/clems4ever/all-minilm-l6-v2-go.git /tmp/minilm-repo && \
+        cd /tmp/minilm-repo && git lfs pull && \
+        chmod +w "$MODEL_DIR" && \
+        chmod 644 "$MODEL_DIR/model.onnx" && \
+        cp /tmp/minilm-repo/all_minilm_l6_v2/model.onnx "$MODEL_DIR/model.onnx" && \
+        rm -rf /tmp/minilm-repo && \
+        echo "Downloaded ONNX model with sentence_embedding output to $MODEL_DIR"; \
+    else \
+        echo "Warning: Could not find all-minilm-l6-v2-go module path"; \
+    fi
 
 # Initialize gibson and install all tools from the official tools repo
 RUN gibson init && \

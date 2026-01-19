@@ -406,9 +406,9 @@ func TestTemplateEngine_RealWorldExamples(t *testing.T) {
 			name:     "finding with multiple fields",
 			template: "finding:{target_id}:{vuln_type}:{timestamp}",
 			data: map[string]any{
-				"target_id":  "t123",
-				"vuln_type":  "sqli",
-				"timestamp":  1641945600,
+				"target_id": "t123",
+				"vuln_type": "sqli",
+				"timestamp": 1641945600,
 			},
 			want:    "finding:t123:sqli:1641945600",
 			wantErr: false,

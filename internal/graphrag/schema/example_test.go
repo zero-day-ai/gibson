@@ -101,9 +101,9 @@ func ExampleDecision_modifyParams() {
 		WithReasoning("Previous scan was too shallow. Increasing depth to find hidden vulnerabilities.").
 		WithConfidence(0.88).
 		WithModifications(map[string]any{
-			"max_depth":     5,
-			"timeout":       600,
-			"aggressive":    true,
+			"max_depth":    5,
+			"timeout":      600,
+			"aggressive":   true,
 			"skip_cdn_ips": false,
 		})
 

@@ -549,9 +549,9 @@ func TestMissionDefinition_ComplexStructure(t *testing.T) {
 				},
 			},
 			"scan": {
-				ID:       "scan",
-				Type:     NodeTypeParallel,
-				Name:     "Parallel Scanning",
+				ID:   "scan",
+				Type: NodeTypeParallel,
+				Name: "Parallel Scanning",
 				SubNodes: []*MissionNode{
 					{ID: "port-scan", Type: NodeTypeTool, ToolName: "nmap"},
 					{ID: "vuln-scan", Type: NodeTypeTool, ToolName: "nuclei"},

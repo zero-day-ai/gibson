@@ -299,12 +299,12 @@ func toSDKMissionInfo(m *MissionInfo) *sdkmission.MissionInfo {
 // toSDKMissionStatusInfo converts harness MissionStatusInfo to SDK MissionStatusInfo.
 func toSDKMissionStatusInfo(status *MissionStatusInfo) *sdkmission.MissionStatusInfo {
 	sdkStatus := &sdkmission.MissionStatusInfo{
-		Status:      sdkmission.MissionStatus(status.Status),
-		Progress:    status.Progress,
-		Phase:       status.Phase,
-		Duration:    status.Duration,
-		Error:       status.Error,
-		TokenUsage:  status.TokenUsage,
+		Status:     sdkmission.MissionStatus(status.Status),
+		Progress:   status.Progress,
+		Phase:      status.Phase,
+		Duration:   status.Duration,
+		Error:      status.Error,
+		TokenUsage: status.TokenUsage,
 	}
 
 	// Convert finding counts

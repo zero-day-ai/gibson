@@ -493,10 +493,10 @@ func TestErrorRecoveryIntegration_PromptTokenBudget(t *testing.T) {
 				Priority: 1,
 			},
 			{
-				Strategy:    "modify_params",
-				Params:      map[string]any{"timing": 2, "retries": 5, "timeout": "120s"},
-				Reason:      "Second recovery hint with parameter modifications",
-				Priority:    2,
+				Strategy: "modify_params",
+				Params:   map[string]any{"timing": 2, "retries": 5, "timeout": "120s"},
+				Reason:   "Second recovery hint with parameter modifications",
+				Priority: 2,
 			},
 			{
 				Strategy:    "use_alternative_tool",

@@ -72,7 +72,6 @@ func (m *mockTaxonomyGraphEngine) Health(ctx context.Context) engine.HealthStatu
 // Verify mockTaxonomyGraphEngine implements engine.TaxonomyGraphEngine
 var _ engine.TaxonomyGraphEngine = (*mockTaxonomyGraphEngine)(nil)
 
-
 // TestDefaultGraphRAGBridge_StoreAsync tests that StoreAsync calls the underlying engine.
 func TestDefaultGraphRAGBridge_StoreAsync(t *testing.T) {
 	mockEngine := newMockTaxonomyGraphEngine()
@@ -266,71 +265,6 @@ func TestDefaultGraphRAGBridge_ErrorHandling(t *testing.T) {
 	defer mockEngine.mu.Unlock()
 	if mockEngine.handleFindingCalls != 1 {
 		t.Errorf("Expected 1 HandleFinding call, got %d", mockEngine.handleFindingCalls)
-	}
-}
-
-
-// TestNoopGraphRAGBridge tests that NoopGraphRAGBridge does nothing.
-func TestNoopGraphRAGBridge(t *testing.T) {
-	bridge := &NoopGraphRAGBridge{}
-
-	ctx := context.Background()
-	missionID := types.NewID()
-
-	finding := agent.Finding{
-		ID:          types.NewID(),
-		Title:       "Test Finding",
-		Description: "Test description",
-		Severity:    agent.SeverityLow,
-		CreatedAt:   time.Now(),
-	}
-
-	// StoreAsync should not panic
-	bridge.StoreAsync(ctx, finding, missionID, nil)
-
-	// Shutdown should return nil
-	err := bridge.Shutdown(ctx)
-	if err != nil {
-		t.Errorf("Expected Shutdown to return nil, got: %v", err)
-	}
-
-	// Health should return healthy
-	health := bridge.Health(ctx)
-	if !health.IsHealthy() {
-		t.Errorf("Expected healthy status, got: %v", health.State)
-	}
-}
-
-// TestDefaultGraphRAGBridge_Disabled tests that disabled bridge is a no-op.
-func TestDefaultGraphRAGBridge_Disabled(t *testing.T) {
-	mockEngine := newMockTaxonomyGraphEngine()
-
-	config := DefaultGraphRAGBridgeConfig()
-	config.Enabled = false
-	bridge := NewGraphRAGBridge(mockEngine, nil, config)
-
-	ctx := context.Background()
-	missionID := types.NewID()
-
-	finding := agent.Finding{
-		ID:          types.NewID(),
-		Title:       "Test Finding",
-		Description: "Test description",
-		Severity:    agent.SeverityLow,
-		CreatedAt:   time.Now(),
-	}
-
-	// StoreAsync should not call the engine when disabled
-	bridge.StoreAsync(ctx, finding, missionID, nil)
-
-	// Small delay to ensure any async work would have started
-	time.Sleep(10 * time.Millisecond)
-
-	// Verify no calls were made
-	mockEngine.mu.Lock()
-	defer mockEngine.mu.Unlock()
-	if mockEngine.handleFindingCalls != 0 {
-		t.Errorf("Expected 0 HandleFinding calls when disabled, got %d", mockEngine.handleFindingCalls)
 	}
 }
 

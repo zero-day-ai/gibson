@@ -19,7 +19,8 @@ import (
 
 // TestTaxonomyEngineIntegration tests the full event flow with a real Neo4j database.
 // This test requires Neo4j to be running. Start it with:
-//   docker-compose -f build/docker-compose.yml up -d neo4j
+//
+//	docker-compose -f build/docker-compose.yml up -d neo4j
 //
 // Run with: go test -tags=integration -v ./internal/graphrag/engine/...
 func TestTaxonomyEngineIntegration(t *testing.T) {

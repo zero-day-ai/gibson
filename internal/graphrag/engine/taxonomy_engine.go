@@ -650,7 +650,7 @@ func (e *taxonomyGraphEngine) createNodeFromExtraction(ctx context.Context, extr
 
 	// Create relationships
 	for _, relSpec := range extractSpec.Relationships {
-		if err := e.createRelationshipFromExtraction(ctx, &relSpec, nodeID, agentRunID); err != nil {
+		if err := e.createRelationshipFromExtraction(ctx, &relSpec, nodeID, item, agentRunID); err != nil {
 			e.logger.Warn("failed to create relationship from extraction",
 				"relationship_type", relSpec.Type,
 				"error", err,
@@ -662,19 +662,19 @@ func (e *taxonomyGraphEngine) createNodeFromExtraction(ctx context.Context, extr
 }
 
 // createRelationshipFromExtraction creates a relationship from extracted data.
-func (e *taxonomyGraphEngine) createRelationshipFromExtraction(ctx context.Context, relSpec *taxonomy.ToolOutputRelationship, fromNodeID string, agentRunID string) error {
-	// Interpolate to node template
-	toNodeID, err := e.interpolateTemplate(relSpec.ToTemplate, map[string]any{
-		"agent_run_id": agentRunID,
-		"from_node_id": fromNodeID,
-	})
+// The relationship endpoints are identified using NodeReferenceConfig which specifies
+// the node type and properties to match, rather than templates.
+func (e *taxonomyGraphEngine) createRelationshipFromExtraction(ctx context.Context, relSpec *taxonomy.ToolOutputRelationship, extractedNodeID string, item map[string]any, agentRunID string) error {
+	// Resolve the "from" node ID
+	fromNodeID, err := e.resolveNodeReference(relSpec.From, extractedNodeID, item, agentRunID)
 	if err != nil {
-		return fmt.Errorf("failed to interpolate to node: %w", err)
+		return fmt.Errorf("failed to resolve from node: %w", err)
 	}
 
-	// Handle special node references
-	if toNodeID == "tool_execution" || toNodeID == "agent_run" {
-		toNodeID = agentRunID
+	// Resolve the "to" node ID
+	toNodeID, err := e.resolveNodeReference(relSpec.To, extractedNodeID, item, agentRunID)
+	if err != nil {
+		return fmt.Errorf("failed to resolve to node: %w", err)
 	}
 
 	// Build relationship properties
@@ -712,6 +712,52 @@ func (e *taxonomyGraphEngine) createRelationshipFromExtraction(ctx context.Conte
 	)
 
 	return nil
+}
+
+// resolveNodeReference resolves a NodeReferenceConfig to a node ID.
+// If the type is "self", it returns the extractedNodeID.
+// Otherwise, it looks up the node by type and properties from the item data.
+func (e *taxonomyGraphEngine) resolveNodeReference(ref taxonomy.NodeReferenceConfig, extractedNodeID string, item map[string]any, agentRunID string) (string, error) {
+	// Special case: "self" refers to the node just created from extraction
+	if ref.Type == "self" {
+		return extractedNodeID, nil
+	}
+
+	// Special case: "agent_run" or "tool_execution" refers to the current agent run
+	if ref.Type == "agent_run" || ref.Type == "tool_execution" {
+		return agentRunID, nil
+	}
+
+	// Look up node type definition
+	nodeDef, ok := e.registry.NodeType(ref.Type)
+	if !ok {
+		return "", fmt.Errorf("node type not found: %s", ref.Type)
+	}
+
+	// Build identifying properties from the reference config
+	// The Properties map in NodeReferenceConfig maps property names to JSONPath expressions
+	// that extract values from the item data
+	idProps := make(map[string]any)
+	for propName, jsonPath := range ref.Properties {
+		// Simple field access from item (strip leading $. if present)
+		fieldName := strings.TrimPrefix(jsonPath, "$.")
+		fieldName = strings.TrimPrefix(fieldName, ".")
+
+		value, ok := item[fieldName]
+		if !ok {
+			return "", fmt.Errorf("property %s not found in item for node type %s", fieldName, ref.Type)
+		}
+		idProps[propName] = value
+	}
+
+	// Generate deterministic ID using the node type's ID template
+	// The ID template uses {property} syntax
+	nodeID, err := e.interpolateTemplate(nodeDef.IDTemplate, idProps)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate node ID for type %s: %w", ref.Type, err)
+	}
+
+	return nodeID, nil
 }
 
 // interpolateTemplate replaces placeholders in a template with data values.

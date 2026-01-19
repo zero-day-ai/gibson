@@ -12,6 +12,23 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
+// toInt64 safely converts various numeric types to int64.
+// Neo4j driver returns int64, but JSON unmarshaling or other sources may return float64.
+func toInt64(v any) (int64, bool) {
+	switch n := v.(type) {
+	case int64:
+		return n, true
+	case float64:
+		return int64(n), true
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	default:
+		return 0, false
+	}
+}
+
 // MissionQueries provides high-level query operations for mission execution data.
 type MissionQueries struct {
 	client graph.GraphClient
@@ -22,6 +39,74 @@ func NewMissionQueries(client graph.GraphClient) *MissionQueries {
 	return &MissionQueries{
 		client: client,
 	}
+}
+
+// CreateMission creates or updates a mission node in the graph.
+// Uses MERGE for idempotency - if mission exists, updates its status.
+// On create, sets all properties. On match, only updates status and started_at.
+// Returns an error if validation fails or if the database operation fails.
+func (mq *MissionQueries) CreateMission(ctx context.Context, m *schema.Mission) error {
+	if m == nil {
+		return types.NewError(graph.ErrCodeGraphInvalidQuery, "mission cannot be nil")
+	}
+
+	// Validate mission before creating
+	if err := m.Validate(); err != nil {
+		return types.WrapError(graph.ErrCodeGraphInvalidQuery,
+			"invalid mission", err)
+	}
+
+	// Build Cypher query with MERGE for idempotency
+	cypher := `
+		MERGE (m:Mission {id: $id})
+		ON CREATE SET
+			m.name = $name,
+			m.description = $description,
+			m.objective = $objective,
+			m.target_ref = $target_ref,
+			m.status = $status,
+			m.yaml_source = $yaml_source,
+			m.created_at = datetime($created_at),
+			m.started_at = CASE WHEN $started_at IS NOT NULL THEN datetime($started_at) ELSE NULL END
+		ON MATCH SET
+			m.status = $status,
+			m.started_at = CASE WHEN $started_at IS NOT NULL THEN datetime($started_at) ELSE m.started_at END
+		RETURN m.id as id
+	`
+
+	// Build parameters map
+	params := map[string]any{
+		"id":          m.ID.String(),
+		"name":        m.Name,
+		"description": m.Description,
+		"objective":   m.Objective,
+		"target_ref":  m.TargetRef,
+		"status":      m.Status.String(),
+		"yaml_source": m.YAMLSource,
+		"created_at":  m.CreatedAt.UTC().Format(time.RFC3339Nano),
+	}
+
+	// Add optional started_at timestamp
+	if m.StartedAt != nil {
+		params["started_at"] = m.StartedAt.UTC().Format(time.RFC3339Nano)
+	} else {
+		params["started_at"] = nil
+	}
+
+	// Execute query
+	result, err := mq.client.Query(ctx, cypher, params)
+	if err != nil {
+		return types.WrapError(graph.ErrCodeGraphNodeCreateFailed,
+			fmt.Sprintf("failed to create mission %s", m.ID), err)
+	}
+
+	// Verify result (should always have one record with MERGE)
+	if len(result.Records) == 0 {
+		return types.NewError(graph.ErrCodeGraphNodeCreateFailed,
+			fmt.Sprintf("no result returned when creating mission %s", m.ID))
+	}
+
+	return nil
 }
 
 // GetMission retrieves a mission by ID.
@@ -79,7 +164,7 @@ func (mq *MissionQueries) GetMissionNodes(ctx context.Context, missionID types.I
 // GetMissionDecisions retrieves all orchestrator decisions for a mission, ordered by iteration.
 func (mq *MissionQueries) GetMissionDecisions(ctx context.Context, missionID types.ID) ([]*schema.Decision, error) {
 	cypher := `
-		MATCH (d:Decision)-[:PART_OF]->(m:Mission {id: $mission_id})
+		MATCH (m:Mission {id: $mission_id})-[:HAS_DECISION]->(d:Decision)
 		RETURN properties(d) as d
 		ORDER BY d.iteration, d.timestamp
 	`
@@ -108,7 +193,7 @@ func (mq *MissionQueries) GetMissionDecisions(ctx context.Context, missionID typ
 // GetNodeExecutions retrieves all executions for a specific workflow node.
 func (mq *MissionQueries) GetNodeExecutions(ctx context.Context, nodeID types.ID) ([]*schema.AgentExecution, error) {
 	cypher := `
-		MATCH (e:AgentExecution)-[:EXECUTED_BY]->(n:WorkflowNode {id: $node_id})
+		MATCH (e:AgentExecution)-[:EXECUTES]->(n:WorkflowNode {id: $node_id})
 		RETURN properties(e) as e
 		ORDER BY e.started_at
 	`
@@ -198,6 +283,123 @@ func (mq *MissionQueries) GetNodeDependencies(ctx context.Context, nodeID types.
 	return nodes, nil
 }
 
+// CreateNodeDependency creates a DEPENDS_ON relationship between two workflow nodes.
+// The relationship direction is: (fromNodeID)-[:DEPENDS_ON]->(toNodeID), meaning
+// fromNodeID depends on toNodeID (fromNodeID must wait for toNodeID to complete).
+// Uses MERGE for idempotency - safe to call multiple times with same nodes.
+// Returns an error if either node is not found.
+func (mq *MissionQueries) CreateNodeDependency(ctx context.Context, fromNodeID, toNodeID types.ID) error {
+	cypher := `
+		MATCH (from:WorkflowNode {id: $from_id})
+		MATCH (to:WorkflowNode {id: $to_id})
+		MERGE (from)-[:DEPENDS_ON]->(to)
+		RETURN count(*) as count
+	`
+
+	params := map[string]any{
+		"from_id": fromNodeID.String(),
+		"to_id":   toNodeID.String(),
+	}
+
+	result, err := mq.client.Query(ctx, cypher, params)
+	if err != nil {
+		return types.WrapError(graph.ErrCodeGraphRelationshipCreateFailed,
+			fmt.Sprintf("failed to create dependency from %s to %s", fromNodeID, toNodeID), err)
+	}
+
+	// If no records returned, one or both nodes don't exist
+	if len(result.Records) == 0 {
+		return types.NewError(graph.ErrCodeGraphNodeNotFound,
+			fmt.Sprintf("one or both nodes not found: from=%s, to=%s", fromNodeID, toNodeID))
+	}
+
+	return nil
+}
+
+// CreateWorkflowNode creates a new workflow node and links it to its mission.
+// Uses MERGE for idempotency and creates the PART_OF relationship in the same query.
+// Returns an error if validation fails or if the mission doesn't exist.
+func (mq *MissionQueries) CreateWorkflowNode(ctx context.Context, node *schema.WorkflowNode) error {
+	if node == nil {
+		return types.NewError(graph.ErrCodeGraphInvalidQuery, "workflow node cannot be nil")
+	}
+
+	// Validate node before creating
+	if err := node.Validate(); err != nil {
+		return types.WrapError(graph.ErrCodeGraphInvalidQuery,
+			"invalid workflow node", err)
+	}
+
+	// Serialize JSON fields
+	taskConfigJSON, err := node.TaskConfigJSON()
+	if err != nil {
+		return types.WrapError(graph.ErrCodeGraphInvalidQuery,
+			"failed to marshal task config", err)
+	}
+
+	retryPolicyJSON, err := node.RetryPolicyJSON()
+	if err != nil {
+		return types.WrapError(graph.ErrCodeGraphInvalidQuery,
+			"failed to marshal retry policy", err)
+	}
+
+	// Create workflow node with MERGE for idempotency
+	// Also creates PART_OF relationship to mission in the same query
+	cypher := `
+		MERGE (n:WorkflowNode {id: $id})
+		SET n.mission_id = $mission_id,
+			n.type = $type,
+			n.name = $name,
+			n.description = $description,
+			n.agent_name = $agent_name,
+			n.tool_name = $tool_name,
+			n.timeout = $timeout,
+			n.retry_policy = $retry_policy,
+			n.task_config = $task_config,
+			n.status = $status,
+			n.is_dynamic = $is_dynamic,
+			n.spawned_by = $spawned_by,
+			n.created_at = $created_at,
+			n.updated_at = $updated_at
+		WITH n
+		MATCH (m:Mission {id: $mission_id})
+		MERGE (n)-[:PART_OF]->(m)
+		RETURN n.id as id
+	`
+
+	params := map[string]any{
+		"id":           node.ID.String(),
+		"mission_id":   node.MissionID.String(),
+		"type":         string(node.Type),
+		"name":         node.Name,
+		"description":  node.Description,
+		"agent_name":   node.AgentName,
+		"tool_name":    node.ToolName,
+		"timeout":      node.Timeout.Milliseconds(),
+		"retry_policy": retryPolicyJSON,
+		"task_config":  taskConfigJSON,
+		"status":       string(node.Status),
+		"is_dynamic":   node.IsDynamic,
+		"spawned_by":   node.SpawnedBy,
+		"created_at":   node.CreatedAt.UTC().Format(time.RFC3339Nano),
+		"updated_at":   node.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+
+	result, err := mq.client.Query(ctx, cypher, params)
+	if err != nil {
+		return types.WrapError(graph.ErrCodeGraphNodeCreateFailed,
+			fmt.Sprintf("failed to create workflow node %s", node.ID), err)
+	}
+
+	// Verify that the mission exists
+	if len(result.Records) == 0 {
+		return types.NewError(graph.ErrCodeGraphNodeNotFound,
+			fmt.Sprintf("mission %s not found", node.MissionID))
+	}
+
+	return nil
+}
+
 // GetMissionStats returns execution statistics for a mission.
 type MissionStats struct {
 	TotalNodes      int       `json:"total_nodes"`
@@ -216,7 +418,7 @@ func (mq *MissionQueries) GetMissionStats(ctx context.Context, missionID types.I
 		MATCH (m:Mission {id: $mission_id})
 		OPTIONAL MATCH (n:WorkflowNode)-[:PART_OF]->(m)
 		OPTIONAL MATCH (d:Decision)-[:PART_OF]->(m)
-		OPTIONAL MATCH (e:AgentExecution)-[:EXECUTED_BY]->(n)
+		OPTIONAL MATCH (e:AgentExecution)-[:EXECUTES]->(n)
 		RETURN
 			COUNT(DISTINCT n) as total_nodes,
 			COUNT(DISTINCT CASE WHEN n.status = 'completed' THEN n END) as completed_nodes,
@@ -242,13 +444,19 @@ func (mq *MissionQueries) GetMissionStats(ctx context.Context, missionID types.I
 	}
 
 	record := result.Records[0]
+	totalNodes, _ := toInt64(record["total_nodes"])
+	completedNodes, _ := toInt64(record["completed_nodes"])
+	failedNodes, _ := toInt64(record["failed_nodes"])
+	pendingNodes, _ := toInt64(record["pending_nodes"])
+	totalDecisions, _ := toInt64(record["total_decisions"])
+	totalExecutions, _ := toInt64(record["total_executions"])
 	stats := &MissionStats{
-		TotalNodes:      int(record["total_nodes"].(int64)),
-		CompletedNodes:  int(record["completed_nodes"].(int64)),
-		FailedNodes:     int(record["failed_nodes"].(int64)),
-		PendingNodes:    int(record["pending_nodes"].(int64)),
-		TotalDecisions:  int(record["total_decisions"].(int64)),
-		TotalExecutions: int(record["total_executions"].(int64)),
+		TotalNodes:      int(totalNodes),
+		CompletedNodes:  int(completedNodes),
+		FailedNodes:     int(failedNodes),
+		PendingNodes:    int(pendingNodes),
+		TotalDecisions:  int(totalDecisions),
+		TotalExecutions: int(totalExecutions),
 	}
 
 	if startTime, ok := record["start_time"].(time.Time); ok {
@@ -333,7 +541,7 @@ func recordToWorkflowNode(data any) (*schema.WorkflowNode, error) {
 	if spawnedBy, ok := n["spawned_by"].(string); ok && spawnedBy != "" {
 		node.SpawnedBy = spawnedBy
 	}
-	if timeout, ok := n["timeout"].(int64); ok && timeout > 0 {
+	if timeout, ok := toInt64(n["timeout"]); ok && timeout > 0 {
 		node.Timeout = time.Duration(timeout) * time.Millisecond
 	}
 	if createdAt, ok := n["created_at"].(time.Time); ok {
@@ -377,10 +585,11 @@ func recordToDecision(data any) (*schema.Decision, error) {
 		return nil, fmt.Errorf("invalid mission ID: %w", err)
 	}
 
+	iteration, _ := toInt64(d["iteration"])
 	decision := &schema.Decision{
 		ID:            id,
 		MissionID:     missionID,
-		Iteration:     int(d["iteration"].(int64)),
+		Iteration:     int(iteration),
 		Action:        schema.DecisionAction(d["action"].(string)),
 		Reasoning:     d["reasoning"].(string),
 		Confidence:    d["confidence"].(float64),
@@ -396,13 +605,13 @@ func recordToDecision(data any) (*schema.Decision, error) {
 	if langfuseSpanID, ok := d["langfuse_span_id"].(string); ok {
 		decision.LangfuseSpanID = langfuseSpanID
 	}
-	if promptTokens, ok := d["prompt_tokens"].(int64); ok {
+	if promptTokens, ok := toInt64(d["prompt_tokens"]); ok {
 		decision.PromptTokens = int(promptTokens)
 	}
-	if completionTokens, ok := d["completion_tokens"].(int64); ok {
+	if completionTokens, ok := toInt64(d["completion_tokens"]); ok {
 		decision.CompletionTokens = int(completionTokens)
 	}
-	if latencyMs, ok := d["latency_ms"].(int64); ok {
+	if latencyMs, ok := toInt64(d["latency_ms"]); ok {
 		decision.LatencyMs = int(latencyMs)
 	}
 	if timestamp, ok := d["timestamp"].(time.Time); ok {
@@ -441,12 +650,13 @@ func recordToAgentExecution(data any) (*schema.AgentExecution, error) {
 		return nil, fmt.Errorf("invalid mission ID: %w", err)
 	}
 
+	attempt, _ := toInt64(e["attempt"])
 	exec := &schema.AgentExecution{
 		ID:             id,
 		WorkflowNodeID: e["workflow_node_id"].(string),
 		MissionID:      missionID,
 		Status:         schema.ExecutionStatus(e["status"].(string)),
-		Attempt:        int(e["attempt"].(int64)),
+		Attempt:        int(attempt),
 		Error:          "",
 		ConfigUsed:     make(map[string]any),
 		Result:         make(map[string]any),

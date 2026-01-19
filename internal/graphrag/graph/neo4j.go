@@ -379,7 +379,7 @@ func isWriteOperation(cypher string) bool {
 	writeKeywords := []string{
 		"CREATE",
 		"MERGE",
-		"SET ",  // Space to avoid matching OFFSET
+		"SET ", // Space to avoid matching OFFSET
 		"DELETE",
 		"REMOVE",
 		"DETACH",

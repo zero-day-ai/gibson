@@ -16,10 +16,10 @@ import (
 // DaemonCredentialStore implements harness.CredentialStore using the
 // daemon's database and master key for secure credential retrieval.
 type DaemonCredentialStore struct {
-	dao        *database.CredentialDAO
-	encryptor  *crypto.AESGCMEncryptor
-	masterKey  []byte
-	homeDir    string
+	dao       *database.CredentialDAO
+	encryptor *crypto.AESGCMEncryptor
+	masterKey []byte
+	homeDir   string
 }
 
 // NewDaemonCredentialStore creates a new credential store for the daemon.

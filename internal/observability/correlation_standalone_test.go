@@ -1,3 +1,4 @@
+//go:build standalone
 // +build standalone
 
 package observability_test

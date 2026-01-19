@@ -1,13 +1,10 @@
 package component
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/cmd/gibson/core"
-	"github.com/zero-day-ai/gibson/internal/component"
 	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 )
 
@@ -150,90 +147,89 @@ func runInstall(cmd *cobra.Command, args []string, cfg Config, flags *InstallFla
 // runInstallAll executes the install-all command logic.
 func runInstallAll(cmd *cobra.Command, args []string, cfg Config, flags *InstallFlags) error {
 	repoURL := args[0]
+	ctx := cmd.Context()
 
 	cmd.Printf("Installing all %s from %s...\n", cfg.DisplayPlural, repoURL)
 
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
+	// Check for daemon client in context
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
-	defer cc.Close()
+
+	// Type assert to daemon client
+	client, ok := clientIface.(*daemonclient.Client)
+	if !ok {
+		return fmt.Errorf("invalid daemon client type")
+	}
 
 	// Build install options
-	opts := core.InstallOptions{
-		Branch:       flags.Branch,
-		Tag:          flags.Tag,
-		Force:        flags.Force,
-		SkipBuild:    flags.SkipBuild,
-		SkipRegister: flags.SkipRegister,
-		Verbose:      flags.Verbose,
+	opts := daemonclient.InstallOptions{
+		Branch:    flags.Branch,
+		Tag:       flags.Tag,
+		Force:     flags.Force,
+		SkipBuild: flags.SkipBuild,
+		Verbose:   flags.Verbose,
 	}
 
-	// Call core function
-	result, err := core.ComponentInstallAll(cc, cfg.Kind, repoURL, opts)
+	// Call appropriate method based on component kind
+	var result *daemonclient.InstallAllResult
+	var err error
+
+	switch cfg.Kind.String() {
+	case "agent":
+		result, err = client.InstallAllAgent(ctx, repoURL, opts)
+	case "tool":
+		result, err = client.InstallAllTool(ctx, repoURL, opts)
+	case "plugin":
+		result, err = client.InstallAllPlugin(ctx, repoURL, opts)
+	default:
+		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
+	}
+
 	if err != nil {
+		// Check if it's a connection error
+		if strings.Contains(err.Error(), "daemon not responding") {
+			return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
+		}
 		return FormatInstallError(cmd, err)
-	}
-
-	// Extract install all result
-	installAllResult, ok := result.Data.(*component.InstallAllResult)
-	if !ok {
-		return fmt.Errorf("unexpected result type")
 	}
 
 	// Print summary
 	cmd.Printf("\nInstallation complete in %v\n", result.Duration)
-	cmd.Printf("Components found: %d\n", installAllResult.ComponentsFound)
+	cmd.Printf("Components found: %d\n", result.ComponentsFound)
 	cmd.Printf("Successfully installed: %d, Skipped: %d, Failed: %d\n",
-		len(installAllResult.Successful), len(installAllResult.Skipped), len(installAllResult.Failed))
+		result.SuccessfulCount, result.SkippedCount, result.FailedCount)
 
 	// List successful installations
-	if len(installAllResult.Successful) > 0 {
+	if len(result.Successful) > 0 {
 		cmd.Printf("\nInstalled %s:\n", cfg.DisplayPlural)
-		for _, r := range installAllResult.Successful {
-			cmd.Printf("  - %s (v%s)\n", r.Component.Name, r.Component.Version)
+		for _, r := range result.Successful {
+			versionStr := ""
+			if r.Version != "" {
+				versionStr = fmt.Sprintf(" (v%s)", r.Version)
+			}
+			cmd.Printf("  - %s%s\n", r.Name, versionStr)
 		}
 	}
 
 	// List failures with detailed error information
-	if len(installAllResult.Failed) > 0 {
+	if len(result.Failed) > 0 {
 		cmd.Printf("\nFailed installations:\n")
-		for _, f := range installAllResult.Failed {
+		for _, f := range result.Failed {
 			name := f.Name
 			if name == "" {
 				name = f.Path
 			}
-			cmd.Printf("  - %s: %v\n", name, f.Error)
-
-			// Show detailed build output if available
-			var compErr *component.ComponentError
-			if errors.As(f.Error, &compErr) && compErr.Context != nil {
-				if buildCmd, ok := compErr.Context["build_command"].(string); ok {
-					cmd.Printf("    Build command: %s\n", buildCmd)
-				}
-				if stdout, ok := compErr.Context["stdout"].(string); ok && stdout != "" {
-					cmd.Printf("\n    --- Build stdout ---\n")
-					// Indent the output
-					for _, line := range strings.Split(stdout, "\n") {
-						cmd.Printf("    %s\n", line)
-					}
-				}
-				if stderr, ok := compErr.Context["stderr"].(string); ok && stderr != "" {
-					cmd.Printf("\n    --- Build stderr ---\n")
-					for _, line := range strings.Split(stderr, "\n") {
-						cmd.Printf("    %s\n", line)
-					}
-				}
-			}
+			cmd.Printf("  - %s: %s\n", name, f.Error)
 		}
 	}
 
 	// List skipped components
-	if len(installAllResult.Skipped) > 0 {
+	if len(result.Skipped) > 0 {
 		cmd.Printf("\nSkipped (already installed):\n")
-		for _, s := range installAllResult.Skipped {
-			cmd.Printf("  - %s (%s)\n", s.Name, s.Reason)
+		for _, s := range result.Skipped {
+			cmd.Printf("  - %s\n", s.Name)
 		}
 	}
 

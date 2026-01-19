@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 )
 
 // TestNewHarnessCallbackService tests the service constructor.

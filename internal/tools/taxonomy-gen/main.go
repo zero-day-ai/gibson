@@ -250,9 +250,10 @@ func buildTemplateData(tax *taxonomy.Taxonomy) templateData {
 
 // toConstName converts a type string to a Go constant name.
 // Examples:
-//   domain -> NodeTypeDomain
-//   subdomain -> NodeTypeSubdomain
-//   HAS_SUBDOMAIN -> RelTypeHasSubdomain
+//
+//	domain -> NodeTypeDomain
+//	subdomain -> NodeTypeSubdomain
+//	HAS_SUBDOMAIN -> RelTypeHasSubdomain
 func toConstName(prefix, typeName string) string {
 	// Split on underscores and capitalize each part
 	parts := strings.Split(typeName, "_")
@@ -265,8 +266,9 @@ func toConstName(prefix, typeName string) string {
 
 // toTechniqueConstName converts a technique ID to a Go constant name.
 // Examples:
-//   T1190 -> TechniqueT1190
-//   ARC-T001 -> TechniqueARCT001
+//
+//	T1190 -> TechniqueT1190
+//	ARC-T001 -> TechniqueARCT001
 func toTechniqueConstName(techniqueID string) string {
 	// Remove hyphens and format
 	cleaned := strings.ReplaceAll(techniqueID, "-", "")

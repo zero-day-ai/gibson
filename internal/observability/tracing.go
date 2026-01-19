@@ -127,8 +127,12 @@ func InitTracing(ctx context.Context, cfg TracingConfig, langfuse *LangfuseConfi
 	case "langfuse":
 		// Langfuse integration has been moved to MissionTracer.
 		// Use NewMissionTracer() directly instead of the OpenTelemetry provider.
-		// For now, return a no-op provider when langfuse is requested via InitTracing.
-		return sdktrace.NewTracerProvider(), nil
+		if langfuse == nil || langfuse.Host == "" || langfuse.PublicKey == "" || langfuse.SecretKey == "" {
+			return nil, WrapObservabilityError(ErrExporterConnection,
+				"langfuse provider requires LangfuseConfig with host, public_key, and secret_key. Use NewMissionTracer() instead", nil)
+		}
+		return nil, WrapObservabilityError(ErrExporterConnection,
+			"langfuse provider is not supported in InitTracing. Use NewMissionTracer() directly for Langfuse integration", nil)
 
 	case "otlp":
 		// Build OTLP options based on TLS configuration

@@ -39,8 +39,8 @@ type DefaultAttackRunner struct {
 	targetResolver  TargetResolver
 	agentSelector   AgentSelector
 	payloadFilter   PayloadFilter
-	logger *slog.Logger
-	tracer trace.Tracer
+	logger          *slog.Logger
+	tracer          trace.Tracer
 }
 
 // RunnerOption is a functional option for configuring the AttackRunner.
@@ -87,7 +87,6 @@ func WithComponentDiscovery(discovery registry.ComponentDiscovery) RunnerOption 
 		r.discovery = discovery
 	}
 }
-
 
 // NewAttackRunner creates a new DefaultAttackRunner with the provided dependencies.
 // It uses functional options for optional configuration.
@@ -172,7 +171,6 @@ func (r *DefaultAttackRunner) Run(ctx context.Context, opts *AttackOptions) (*At
 		"url", targetConfig.URL,
 		"type", targetConfig.Type,
 		"provider", targetConfig.Provider)
-
 
 	// Step 2: Select agent
 	selectedAgent, err := r.agentSelector.Select(ctx, opts.AgentName)

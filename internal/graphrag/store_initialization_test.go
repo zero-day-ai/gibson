@@ -6,40 +6,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-func TestNewGraphRAGStore_DisabledGraphRAG(t *testing.T) {
-	// Test that when GraphRAG is disabled, NewGraphRAGStore creates a store with noop provider
+func TestNewGraphRAGStore_AlwaysRequiresProviderInjection(t *testing.T) {
+	// Test that NewGraphRAGStore always returns an error directing to NewGraphRAGStoreWithProvider
+	// GraphRAG is now a required core component
 	config := GraphRAGConfig{
-		Enabled: false,
-	}
-	embedder := NewMockEmbedder()
-
-	store, err := NewGraphRAGStore(config, embedder)
-
-	// Should succeed
-	require.NoError(t, err)
-	require.NotNil(t, store)
-
-	// Verify it's a DefaultGraphRAGStore
-	defaultStore, ok := store.(*DefaultGraphRAGStore)
-	require.True(t, ok, "Expected *DefaultGraphRAGStore")
-
-	// Verify provider is a noop provider
-	_, ok = defaultStore.provider.(*noopProvider)
-	assert.True(t, ok, "Expected noopProvider when GraphRAG is disabled")
-
-	// Verify it's functional
-	ctx := context.Background()
-	health := store.Health(ctx)
-	assert.True(t, health.IsHealthy(), "Noop provider should be healthy")
-}
-
-func TestNewGraphRAGStore_EnabledGraphRAG(t *testing.T) {
-	// Test that when GraphRAG is enabled, NewGraphRAGStore returns a descriptive error
-	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "neo4j",
 		Neo4j: Neo4jConfig{
 			URI:      "bolt://localhost:7687",
@@ -51,7 +23,7 @@ func TestNewGraphRAGStore_EnabledGraphRAG(t *testing.T) {
 
 	store, err := NewGraphRAGStore(config, embedder)
 
-	// Should fail with clear error message
+	// Should fail with clear error message directing to NewGraphRAGStoreWithProvider
 	require.Error(t, err)
 	require.Nil(t, store)
 
@@ -61,7 +33,6 @@ func TestNewGraphRAGStore_EnabledGraphRAG(t *testing.T) {
 	assert.Equal(t, ErrCodeInvalidConfig, graphErr.Code)
 
 	// Verify error contains helpful context
-	assert.Contains(t, graphErr.Error(), "GraphRAG is enabled")
 	assert.Contains(t, graphErr.Error(), "provider injection")
 	assert.NotNil(t, graphErr.Context["solution"])
 	assert.NotNil(t, graphErr.Context["provider_type"])
@@ -71,7 +42,6 @@ func TestNewGraphRAGStore_EnabledGraphRAG(t *testing.T) {
 func TestNewGraphRAGStoreWithProvider_Success(t *testing.T) {
 	// Test that NewGraphRAGStoreWithProvider works with injected provider
 	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "neo4j",
 		Neo4j: Neo4jConfig{
 			URI:      "bolt://localhost:7687",
@@ -101,7 +71,6 @@ func TestNewGraphRAGStoreWithProvider_Success(t *testing.T) {
 func TestNewGraphRAGStoreWithProvider_NilProvider(t *testing.T) {
 	// Test that NewGraphRAGStoreWithProvider rejects nil provider
 	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "neo4j",
 		Neo4j: Neo4jConfig{
 			URI:      "bolt://localhost:7687",
@@ -122,7 +91,6 @@ func TestNewGraphRAGStoreWithProvider_NilProvider(t *testing.T) {
 func TestNewGraphRAGStoreWithProvider_NilEmbedder(t *testing.T) {
 	// Test that NewGraphRAGStoreWithProvider rejects nil embedder
 	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "neo4j",
 		Neo4j: Neo4jConfig{
 			URI:      "bolt://localhost:7687",
@@ -140,21 +108,28 @@ func TestNewGraphRAGStoreWithProvider_NilEmbedder(t *testing.T) {
 	assert.Contains(t, err.Error(), "embedder cannot be nil")
 }
 
-func TestNoopProvider_BasicOperations(t *testing.T) {
-	// Test that the inline noop provider implements all operations correctly
-	provider := &noopProvider{}
+func TestNewGraphRAGStoreWithProvider_InvalidConfig(t *testing.T) {
+	// Test that NewGraphRAGStoreWithProvider validates config
+	config := GraphRAGConfig{
+		Provider: "", // Empty provider is invalid
+	}
+	embedder := NewMockEmbedder()
+	mockProvider := NewMockGraphRAGProvider()
+
+	store, err := NewGraphRAGStoreWithProvider(config, embedder, mockProvider)
+
+	// Should fail due to invalid config
+	require.Error(t, err)
+	require.Nil(t, store)
+}
+
+func TestMockGraphRAGProvider_BasicOperations(t *testing.T) {
+	// Test that the mock provider implements all operations correctly for testing
+	provider := NewMockGraphRAGProvider()
 	ctx := context.Background()
 
 	// All operations should succeed with empty/nil results
 	err := provider.Initialize(ctx)
-	assert.NoError(t, err)
-
-	node := NewGraphNode(types.NewID(), NodeType("finding"))
-	err = provider.StoreNode(ctx, *node)
-	assert.NoError(t, err)
-
-	rel := NewRelationship(types.NewID(), types.NewID(), RelationType("similar_to"))
-	err = provider.StoreRelationship(ctx, *rel)
 	assert.NoError(t, err)
 
 	nodes, err := provider.QueryNodes(ctx, *NewNodeQuery())
@@ -175,7 +150,6 @@ func TestNoopProvider_BasicOperations(t *testing.T) {
 
 	health := provider.Health(ctx)
 	assert.True(t, health.IsHealthy())
-	assert.Contains(t, health.Message, "noop provider")
 
 	err = provider.Close()
 	assert.NoError(t, err)

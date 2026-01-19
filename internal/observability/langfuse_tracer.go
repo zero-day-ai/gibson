@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/graphrag/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -20,6 +23,19 @@ const (
 	// defaultHTTPTimeout is the default timeout for HTTP requests to Langfuse
 	defaultHTTPTimeout = 30 * time.Second
 )
+
+// LangfuseMetrics tracks Langfuse operation statistics
+type LangfuseMetrics struct {
+	EventsQueued     int64     `json:"events_queued"`
+	EventsSent       int64     `json:"events_sent"`
+	EventsFailed     int64     `json:"events_failed"`
+	BytesSent        int64     `json:"bytes_sent"`
+	LastFlushTime    time.Time `json:"last_flush_time"`
+	LastSuccessTime  time.Time `json:"last_success_time"`
+	LastErrorTime    time.Time `json:"last_error_time,omitempty"`
+	LastError        string    `json:"last_error,omitempty"`
+	ConsecutiveFails int       `json:"consecutive_fails"`
+}
 
 // MissionTracer provides mission-aware tracing to Langfuse.
 // It creates a hierarchical trace structure that aligns with the orchestrator execution model.
@@ -40,13 +56,17 @@ const (
 //     ├── Generation: orchestrator-decision-2
 //     │   └── ...
 //     └── Span: mission-complete
-//         └── metadata: {summary, total_tokens, duration}
+//     └── metadata: {summary, total_tokens, duration}
 type MissionTracer struct {
-	client    *http.Client
-	host      string
-	publicKey string
-	secretKey string
-	mu        sync.RWMutex // Protects concurrent access to tracer state
+	client           *http.Client
+	host             string
+	publicKey        string
+	secretKey        string
+	mu               sync.RWMutex    // Protects concurrent access to tracer state and health fields
+	lastError        error           // Last connectivity error
+	lastSuccess      time.Time       // Last successful connection
+	consecutiveFails int             // Consecutive failed connection attempts
+	metrics          LangfuseMetrics // Operation metrics
 }
 
 // NewMissionTracer creates a new mission-aware Langfuse tracer.
@@ -90,6 +110,7 @@ type DecisionLog struct {
 	Model         string           // LLM model used
 	GraphSnapshot string           // Graph state at decision time
 	Neo4jNodeID   string           // Neo4j node ID for correlation
+	OTELTraceID   string           // OTEL trace ID for correlation with infrastructure traces
 }
 
 // AgentExecutionLog captures agent execution information for Langfuse.
@@ -99,6 +120,7 @@ type AgentExecutionLog struct {
 	Config      map[string]any         // Configuration used
 	Neo4jNodeID string                 // Neo4j node ID for correlation
 	SpanID      string                 // Parent span ID (set by StartAgentExecution)
+	OTELTraceID string                 // OTEL trace ID for correlation with infrastructure traces
 }
 
 // ToolExecutionLog captures tool execution information for Langfuse.
@@ -106,6 +128,7 @@ type ToolExecutionLog struct {
 	Execution   *schema.ToolExecution // The tool execution node
 	Neo4jNodeID string                // Neo4j node ID for correlation
 	SpanID      string                // Span ID for this tool execution
+	OTELTraceID string                // OTEL trace ID for correlation with infrastructure traces
 }
 
 // MissionTraceSummary captures final mission statistics for tracing.
@@ -140,6 +163,9 @@ func (mt *MissionTracer) StartMissionTrace(ctx context.Context, mission *schema.
 	traceID := fmt.Sprintf("mission-%s", mission.ID.String())
 	now := time.Now()
 
+	// Extract OTEL trace ID from context for correlation
+	otelTraceID := extractOTELTraceIDFromContext(ctx)
+
 	// Create trace-create event
 	event := map[string]any{
 		"type":      "trace-create",
@@ -150,11 +176,12 @@ func (mt *MissionTracer) StartMissionTrace(ctx context.Context, mission *schema.
 			"name":      fmt.Sprintf("Mission: %s", mission.Name),
 			"timestamp": now.Format(time.RFC3339Nano),
 			"metadata": map[string]any{
-				"mission_id":   mission.ID.String(),
-				"mission_name": mission.Name,
-				"objective":    mission.Objective,
-				"target_ref":   mission.TargetRef,
-				"status":       mission.Status.String(),
+				"mission_id":    mission.ID.String(),
+				"mission_name":  mission.Name,
+				"objective":     mission.Objective,
+				"target_ref":    mission.TargetRef,
+				"status":        mission.Status.String(),
+				"otel_trace_id": otelTraceID,
 			},
 		},
 	}
@@ -228,6 +255,7 @@ func (mt *MissionTracer) LogDecision(ctx context.Context, trace *MissionTrace, l
 				"neo4j_node_id":   log.Neo4jNodeID,
 				"latency_seconds": latencySec,
 				"total_tokens":    decision.TotalTokens(),
+				"otel_trace_id":   log.OTELTraceID,
 			},
 		},
 	}
@@ -295,6 +323,7 @@ func (mt *MissionTracer) LogAgentExecution(ctx context.Context, trace *MissionTr
 				"error":            exec.Error,
 				"neo4j_node_id":    log.Neo4jNodeID,
 				"duration_seconds": exec.Duration().Seconds(),
+				"otel_trace_id":    log.OTELTraceID,
 			},
 		},
 	}
@@ -364,6 +393,7 @@ func (mt *MissionTracer) LogToolExecution(ctx context.Context, parentLog *AgentE
 				"error":             tool.Error,
 				"neo4j_node_id":     log.Neo4jNodeID,
 				"duration_seconds":  tool.Duration().Seconds(),
+				"otel_trace_id":     log.OTELTraceID,
 			},
 		},
 	}
@@ -418,17 +448,17 @@ func (mt *MissionTracer) EndMissionTrace(ctx context.Context, trace *MissionTrac
 			"endTime":   now.Format(time.RFC3339Nano),
 			"level":     level,
 			"metadata": map[string]any{
-				"mission_id":        trace.MissionID.String(),
-				"mission_name":      trace.Name,
-				"status":            summary.Status,
-				"total_decisions":   summary.TotalDecisions,
-				"total_executions":  summary.TotalExecutions,
-				"total_tools":       summary.TotalTools,
-				"total_tokens":      summary.TotalTokens,
-				"total_cost_usd":    summary.TotalCost,
-				"duration_seconds":  summary.Duration.Seconds(),
-				"outcome":           summary.Outcome,
-				"graph_stats":       summary.GraphStats,
+				"mission_id":       trace.MissionID.String(),
+				"mission_name":     trace.Name,
+				"status":           summary.Status,
+				"total_decisions":  summary.TotalDecisions,
+				"total_executions": summary.TotalExecutions,
+				"total_tools":      summary.TotalTools,
+				"total_tokens":     summary.TotalTokens,
+				"total_cost_usd":   summary.TotalCost,
+				"duration_seconds": summary.Duration.Seconds(),
+				"outcome":          summary.Outcome,
+				"graph_stats":      summary.GraphStats,
 			},
 		},
 	}
@@ -441,6 +471,23 @@ func (mt *MissionTracer) EndMissionTrace(ctx context.Context, trace *MissionTrac
 	return nil
 }
 
+// SendEvent sends a custom event to the Langfuse ingestion API.
+// This is a public wrapper around sendEvent for agent-level tracing from middleware.
+// Events are sent immediately without batching for real-time observability.
+//
+// Use this method when you need to send custom generation or span events that don't
+// fit the high-level Log* methods (e.g., agent-level LLM calls, tool calls from harness).
+//
+// Parameters:
+//   - ctx: Context for the HTTP request
+//   - event: The event to send (must be a valid Langfuse ingestion event)
+//
+// Returns:
+//   - error: Any error encountered during sending
+func (mt *MissionTracer) SendEvent(ctx context.Context, event map[string]any) error {
+	return mt.sendEvent(ctx, event)
+}
+
 // sendEvent sends a single event to the Langfuse ingestion API.
 // Events are sent immediately without batching for real-time observability.
 //
@@ -451,8 +498,18 @@ func (mt *MissionTracer) EndMissionTrace(ctx context.Context, trace *MissionTrac
 // Returns:
 //   - error: Any error encountered during sending
 func (mt *MissionTracer) sendEvent(ctx context.Context, event map[string]any) error {
+	// Read lock for sending - we'll upgrade for health tracking
 	mt.mu.RLock()
-	defer mt.mu.RUnlock()
+	host := mt.host
+	publicKey := mt.publicKey
+	secretKey := mt.secretKey
+	mt.mu.RUnlock()
+
+	// Extract event type for logging
+	eventType := "unknown"
+	if t, ok := event["type"].(string); ok {
+		eventType = t
+	}
 
 	// Wrap event in batch format expected by Langfuse API
 	payload := map[string]any{
@@ -465,8 +522,13 @@ func (mt *MissionTracer) sendEvent(ctx context.Context, event map[string]any) er
 		return fmt.Errorf("failed to marshal event: %w", err)
 	}
 
+	// Track queued event
+	mt.mu.Lock()
+	mt.metrics.EventsQueued++
+	mt.mu.Unlock()
+
 	// Create HTTP request
-	url := mt.host + langfuseAPIIngestion
+	url := host + langfuseAPIIngestion
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -474,19 +536,72 @@ func (mt *MissionTracer) sendEvent(ctx context.Context, event map[string]any) er
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(mt.publicKey, mt.secretKey)
+	req.SetBasicAuth(publicKey, secretKey)
 
 	// Send request
 	resp, err := mt.client.Do(req)
 	if err != nil {
+		slog.Error("langfuse HTTP request failed",
+			"url", url,
+			"error", err,
+			"event_type", eventType,
+		)
+
+		// Track connectivity failure and metrics
+		mt.mu.Lock()
+		mt.lastError = err
+		mt.consecutiveFails++
+		mt.metrics.EventsFailed++
+		mt.metrics.LastErrorTime = time.Now()
+		mt.metrics.LastError = err.Error()
+		mt.metrics.ConsecutiveFails++
+		mt.mu.Unlock()
+
 		return NewExporterConnectionError(url, err)
 	}
 	defer resp.Body.Close()
 
+	// Read response body for debugging (limit to 4KB)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+
 	// Check response status
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return NewExporterConnectionError(url, fmt.Errorf("HTTP %d: request failed", resp.StatusCode))
+		respErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		slog.Error("langfuse HTTP request returned error",
+			"url", url,
+			"status", resp.StatusCode,
+			"body", string(body),
+			"event_type", eventType,
+		)
+
+		// Track connectivity failure and metrics
+		mt.mu.Lock()
+		mt.lastError = respErr
+		mt.consecutiveFails++
+		mt.metrics.EventsFailed++
+		mt.metrics.LastErrorTime = time.Now()
+		mt.metrics.LastError = respErr.Error()
+		mt.metrics.ConsecutiveFails++
+		mt.mu.Unlock()
+
+		return NewExporterConnectionError(url, respErr)
 	}
+
+	slog.Debug("langfuse event sent successfully",
+		"event_type", eventType,
+		"status", resp.StatusCode,
+	)
+
+	// Track successful connection and metrics
+	mt.mu.Lock()
+	mt.lastSuccess = time.Now()
+	mt.consecutiveFails = 0
+	mt.lastError = nil
+	mt.metrics.EventsSent++
+	mt.metrics.BytesSent += int64(len(data))
+	mt.metrics.LastSuccessTime = time.Now()
+	mt.metrics.ConsecutiveFails = 0
+	mt.mu.Unlock()
 
 	return nil
 }
@@ -523,4 +638,171 @@ func (mt *MissionTracer) Close() error {
 	}
 
 	return nil
+}
+
+// GetMetrics returns a copy of current Langfuse metrics.
+// This method is safe for concurrent access and provides a snapshot
+// of the current metrics state.
+//
+// Returns:
+//   - LangfuseMetrics: A copy of the current metrics
+func (mt *MissionTracer) GetMetrics() LangfuseMetrics {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	return mt.metrics // Return copy
+}
+
+// extractOTELTraceIDFromContext extracts the OpenTelemetry trace ID from context.
+// This enables correlation between Langfuse traces and infrastructure traces in Grafana/Jaeger.
+// Returns empty string if no valid OTEL span is found in the context.
+func extractOTELTraceIDFromContext(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if !span.SpanContext().IsValid() {
+		return ""
+	}
+	return span.SpanContext().TraceID().String()
+}
+
+// CheckConnectivity verifies that the MissionTracer can reach the Langfuse API.
+// This method sends a lightweight HTTP request to the Langfuse ingestion endpoint
+// to validate connectivity without creating any trace data.
+//
+// The method uses HEAD request to minimize bandwidth and avoid creating test data.
+// If HEAD is not supported (405), it falls back to GET with immediate cancellation.
+//
+// This is intended for startup health checks and should not be called frequently.
+//
+// Parameters:
+//   - ctx: Context for the HTTP request
+//
+// Returns:
+//   - error: Any error encountered during connectivity check
+func (mt *MissionTracer) CheckConnectivity(ctx context.Context) error {
+	mt.mu.RLock()
+	host := mt.host
+	publicKey := mt.publicKey
+	secretKey := mt.secretKey
+	mt.mu.RUnlock()
+
+	// Try HEAD request first (most efficient)
+	url := host + langfuseAPIIngestion
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create connectivity check request: %w", err)
+	}
+
+	// Set authentication headers
+	req.SetBasicAuth(publicKey, secretKey)
+
+	// Send request
+	resp, err := mt.client.Do(req)
+	if err != nil {
+		slog.Debug("langfuse connectivity check failed",
+			"url", url,
+			"method", "HEAD",
+			"error", err,
+		)
+
+		// Track connectivity failure
+		mt.mu.Lock()
+		mt.lastError = err
+		mt.consecutiveFails++
+		mt.mu.Unlock()
+
+		return NewExporterConnectionError(url, err)
+	}
+	defer resp.Body.Close()
+
+	// Check if HEAD is supported
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		// Fall back to GET
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return fmt.Errorf("failed to create fallback connectivity check request: %w", err)
+		}
+		req.SetBasicAuth(publicKey, secretKey)
+
+		resp, err = mt.client.Do(req)
+		if err != nil {
+			slog.Debug("langfuse connectivity check failed",
+				"url", url,
+				"method", "GET",
+				"error", err,
+			)
+
+			// Track connectivity failure
+			mt.mu.Lock()
+			mt.lastError = err
+			mt.consecutiveFails++
+			mt.mu.Unlock()
+
+			return NewExporterConnectionError(url, err)
+		}
+		defer resp.Body.Close()
+	}
+
+	// Accept any 2xx or 4xx status (4xx means we reached the server but auth/validation failed)
+	// We consider 4xx as "connected" since the server is reachable
+	if resp.StatusCode >= 500 {
+		respErr := fmt.Errorf("server error: HTTP %d", resp.StatusCode)
+		slog.Debug("langfuse connectivity check returned server error",
+			"url", url,
+			"status", resp.StatusCode,
+		)
+
+		// Track connectivity failure
+		mt.mu.Lock()
+		mt.lastError = respErr
+		mt.consecutiveFails++
+		mt.mu.Unlock()
+
+		return NewExporterConnectionError(url, respErr)
+	}
+
+	slog.Debug("langfuse connectivity check successful",
+		"url", url,
+		"status", resp.StatusCode,
+	)
+
+	// Track successful connection
+	mt.mu.Lock()
+	mt.lastSuccess = time.Now()
+	mt.consecutiveFails = 0
+	mt.lastError = nil
+	mt.mu.Unlock()
+
+	return nil
+}
+
+// IsHealthy returns true if Langfuse has been reachable recently (within 5 minutes).
+// This method checks the timestamp of the last successful connection to determine health.
+//
+// Returns:
+//   - bool: true if healthy, false otherwise
+func (mt *MissionTracer) IsHealthy() bool {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	return time.Since(mt.lastSuccess) < 5*time.Minute
+}
+
+// LastError returns the last connectivity error, or nil if healthy.
+// This method provides access to the most recent error encountered.
+//
+// Returns:
+//   - error: The last error, or nil if no recent errors
+func (mt *MissionTracer) LastError() error {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	return mt.lastError
+}
+
+// LastSuccessTime returns when Langfuse was last successfully reached.
+// This method provides the timestamp of the most recent successful connection.
+//
+// Returns:
+//   - time.Time: Timestamp of last successful connection
+func (mt *MissionTracer) LastSuccessTime() time.Time {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	return mt.lastSuccess
 }

@@ -300,7 +300,7 @@ func (r *taxonomyRegistry) GenerateNodeID(typeName string, properties map[string
 		}
 
 		placeholder := match[0] // Full match including braces
-		key := match[1]          // Just the key name
+		key := match[1]         // Just the key name
 
 		// Handle special functions
 		if strings.HasPrefix(key, "uuid") {

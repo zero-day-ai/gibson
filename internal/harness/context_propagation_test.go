@@ -51,9 +51,9 @@ func TestAgentRunIDFromContextEmpty(t *testing.T) {
 
 func TestToolExecutionIDContextPropagation(t *testing.T) {
 	tests := []struct {
-		name             string
-		toolExecutionID  string
-		expectEmpty      bool
+		name            string
+		toolExecutionID string
+		expectEmpty     bool
 	}{
 		{
 			name:            "valid tool execution ID",

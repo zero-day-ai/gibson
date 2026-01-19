@@ -61,12 +61,11 @@ func (h *HybridGraphRAGProvider) Initialize(ctx context.Context) error {
 		return nil // Already initialized
 	}
 
-	// Initialize local graph provider (without vector store)
-	localConfig := h.config
-	localConfig.Vector.Enabled = false // Disable local vector - we'll use cloud
-
+	// Initialize local graph provider (without vector store - cloud handles vector)
+	// The local provider will not have a vector store, so vector search will be
+	// delegated to the cloud provider in hybrid mode
 	var err error
-	h.localGraph, err = NewLocalProvider(localConfig)
+	h.localGraph, err = NewLocalProvider(h.config)
 	if err != nil {
 		return graphrag.WrapGraphRAGError(
 			graphrag.ErrCodeConnectionFailed,

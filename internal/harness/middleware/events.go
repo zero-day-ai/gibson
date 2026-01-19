@@ -300,4 +300,3 @@ func extractPluginInfo(req any) (string, string) {
 	}
 	return "", ""
 }
-

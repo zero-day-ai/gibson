@@ -373,11 +373,11 @@ func (v *taxonomyValidator) validateTargetType(t *TargetTypeDefinition) error {
 
 	// Validate category is one of the allowed values
 	validCategories := map[string]bool{
-		"web":         true,
-		"ai":          true,
+		"web":            true,
+		"ai":             true,
 		"infrastructure": true,
-		"cloud":       true,
-		"blockchain":  true,
+		"cloud":          true,
+		"blockchain":     true,
 	}
 	if !validCategories[t.Category] {
 		return &TaxonomyError{
@@ -428,17 +428,17 @@ func (v *taxonomyValidator) validateTechniqueType(t *TechniqueTypeDefinition) er
 
 	// Validate category is a valid MITRE tactic
 	validCategories := map[string]bool{
-		"initial_access":     true,
-		"execution":          true,
-		"persistence":        true,
+		"initial_access":       true,
+		"execution":            true,
+		"persistence":          true,
 		"privilege_escalation": true,
-		"defense_evasion":    true,
-		"credential_access":  true,
-		"discovery":          true,
-		"lateral_movement":   true,
-		"collection":         true,
-		"exfiltration":       true,
-		"impact":             true,
+		"defense_evasion":      true,
+		"credential_access":    true,
+		"discovery":            true,
+		"lateral_movement":     true,
+		"collection":           true,
+		"exfiltration":         true,
+		"impact":               true,
 	}
 	if !validCategories[t.Category] {
 		return &TaxonomyError{

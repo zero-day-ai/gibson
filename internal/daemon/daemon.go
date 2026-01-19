@@ -400,10 +400,10 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	// Initialize attack runner with required dependencies
 	d.logger.Info("initializing attack runner")
 
-	// Create mission orchestrator using SOTA if GraphRAG is available
+	// Create mission orchestrator if GraphRAG is available
 	var orch mission.MissionOrchestrator
 	if d.infrastructure.graphRAGClient != nil {
-		// Use SOTA orchestrator
+		// Use mission orchestrator
 		// TODO: Create MissionGraphLoader adapter for workflow.GraphLoader
 		// For now, set to nil as it's optional
 
@@ -415,27 +415,52 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 			tracer = trace.NewNoopTracerProvider().Tracer("orchestrator")
 		}
 
-		sotaConfig := orchestrator.SOTAOrchestratorConfig{
+		// Configure Langfuse observability for attack runner missions.
+		//
+		// IMPORTANT: DecisionLogWriterAdapter cannot be created here because it requires
+		// mission-specific context (schema.Mission) at construction time. The attack runner
+		// creates ephemeral missions dynamically when Run() is called, so there's no mission
+		// context available at daemon startup.
+		//
+		// Solution: Pass missionTracer via Config so the orchestrator adapter can create
+		// DecisionLogWriterAdapter per-mission in Execute(). This requires modifying
+		// MissionAdapter.createOrchestrator() to check for MissionTracer and create the
+		// adapter with mission context (future work - see Task 8 notes in spec).
+		//
+		// For now, DecisionLogWriter remains nil. Attack runner missions will have:
+		// - OpenTelemetry tracing (via Tracer) ✓
+		// - No Langfuse decision logging ✗ (requires MissionAdapter enhancement)
+		//
+		// See mission_manager.go:462-484 for the pattern that needs to be replicated
+		// in orchestrator/adapter.go:createOrchestrator().
+		if d.infrastructure.missionTracer != nil {
+			d.logger.Debug("mission tracer available for attack runner",
+				"note", "DecisionLogWriter creation deferred to per-mission context (requires MissionAdapter enhancement)")
+		}
+
+		cfg := orchestrator.Config{
 			GraphRAGClient:     d.infrastructure.graphRAGClient,
 			HarnessFactory:     d.infrastructure.harnessFactory,
-			Logger:             d.logger.With("component", "sota-orchestrator"),
+			Logger:             d.logger.With("component", "orchestrator"),
 			Tracer:             tracer,
 			EventBus:           nil, // EventBus adapter incompatible, will add later
 			MaxIterations:      100,
 			MaxConcurrent:      10,
 			ThinkerMaxRetries:  3,
 			ThinkerTemperature: 0.2,
-			GraphLoader:        nil, // TODO: Implement MissionGraphLoader adapter
-			Registry:           d.registryAdapter, // For component discovery and validation
+			GraphLoader:        nil,                            // TODO: Implement MissionGraphLoader adapter
+			Registry:           d.registryAdapter,              // For component discovery and validation
+			DecisionLogWriter:  nil,                            // Cannot create without mission context - see comment above
+			MissionTracer:      d.infrastructure.missionTracer, // Pass for future per-mission adapter creation
 		}
 
 		var err error
-		orch, err = orchestrator.NewSOTAMissionOrchestrator(sotaConfig)
+		orch, err = orchestrator.NewMissionAdapter(cfg)
 		if err != nil {
-			d.logger.Error("failed to create SOTA orchestrator", "error", err)
-			return fmt.Errorf("failed to create SOTA orchestrator: %w", err)
+			d.logger.Error("failed to create orchestrator", "error", err)
+			return fmt.Errorf("failed to create orchestrator: %w", err)
 		}
-		d.logger.Info("Using SOTA orchestrator for attack runner")
+		d.logger.Info("Using orchestrator for attack runner")
 	} else {
 		d.logger.Error("GraphRAG not available, cannot create attack runner")
 		return fmt.Errorf("GraphRAG (Neo4j) is required for attack runner but not configured")

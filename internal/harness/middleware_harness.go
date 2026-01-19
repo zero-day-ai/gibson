@@ -168,17 +168,17 @@ func (h *MiddlewareHarness) SubmitFinding(ctx context.Context, finding agent.Fin
 func (h *MiddlewareHarness) GetFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
 	return h.inner.GetFindings(ctx, filter)
 }
-func (h *MiddlewareHarness) Memory() memory.MemoryStore            { return h.inner.Memory() }
-func (h *MiddlewareHarness) Mission() MissionContext               { return h.inner.Mission() }
-func (h *MiddlewareHarness) MissionID() types.ID                   { return h.inner.MissionID() }
-func (h *MiddlewareHarness) Target() TargetInfo                    { return h.inner.Target() }
-func (h *MiddlewareHarness) ListTools() []ToolDescriptor           { return h.inner.ListTools() }
-func (h *MiddlewareHarness) ListPlugins() []PluginDescriptor       { return h.inner.ListPlugins() }
-func (h *MiddlewareHarness) ListAgents() []AgentDescriptor         { return h.inner.ListAgents() }
-func (h *MiddlewareHarness) Tracer() trace.Tracer                  { return h.inner.Tracer() }
-func (h *MiddlewareHarness) Logger() *slog.Logger                  { return h.inner.Logger() }
-func (h *MiddlewareHarness) Metrics() MetricsRecorder              { return h.inner.Metrics() }
-func (h *MiddlewareHarness) TokenUsage() *llm.TokenTracker         { return h.inner.TokenUsage() }
+func (h *MiddlewareHarness) Memory() memory.MemoryStore      { return h.inner.Memory() }
+func (h *MiddlewareHarness) Mission() MissionContext         { return h.inner.Mission() }
+func (h *MiddlewareHarness) MissionID() types.ID             { return h.inner.MissionID() }
+func (h *MiddlewareHarness) Target() TargetInfo              { return h.inner.Target() }
+func (h *MiddlewareHarness) ListTools() []ToolDescriptor     { return h.inner.ListTools() }
+func (h *MiddlewareHarness) ListPlugins() []PluginDescriptor { return h.inner.ListPlugins() }
+func (h *MiddlewareHarness) ListAgents() []AgentDescriptor   { return h.inner.ListAgents() }
+func (h *MiddlewareHarness) Tracer() trace.Tracer            { return h.inner.Tracer() }
+func (h *MiddlewareHarness) Logger() *slog.Logger            { return h.inner.Logger() }
+func (h *MiddlewareHarness) Metrics() MetricsRecorder        { return h.inner.Metrics() }
+func (h *MiddlewareHarness) TokenUsage() *llm.TokenTracker   { return h.inner.TokenUsage() }
 func (h *MiddlewareHarness) MissionExecutionContext() MissionExecutionContextSDK {
 	return h.inner.MissionExecutionContext()
 }

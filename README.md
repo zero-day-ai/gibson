@@ -214,7 +214,7 @@ External Components (gRPC):
 
 - Go 1.24.4 or later
 - CGO enabled (for SQLite FTS5 support)
-- Neo4j (optional, for GraphRAG)
+- Neo4j 5+ (required for GraphRAG knowledge graph)
 
 ### Build from Source
 
@@ -850,12 +850,13 @@ metrics:
   enabled: false
   port: 9090
 
-# GraphRAG configuration (Neo4j)
+# GraphRAG configuration (Neo4j - required)
 graphrag:
-  enabled: false
-  uri: "bolt://localhost:7687"
-  username: neo4j
-  password: ""
+  provider: neo4j
+  neo4j:
+    uri: "bolt://localhost:7687"
+    username: neo4j
+    password: ""
 ```
 
 ### Environment Variables

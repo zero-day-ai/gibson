@@ -322,4 +322,3 @@ func addPromptAttribute(span trace.Span, messages []Message) {
 	}
 	span.SetAttributes(attribute.String("gen_ai.prompt", promptBuilder))
 }
-

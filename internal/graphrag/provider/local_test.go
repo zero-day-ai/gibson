@@ -14,10 +14,10 @@ import (
 )
 
 // testConfig creates a valid test configuration for local provider
+// Note: GraphRAG is a required core component - Enabled field has been removed
 func testConfig() graphrag.GraphRAGConfig {
 	return graphrag.GraphRAGConfig{
-		Enabled:  true,
-		Provider: "neo4j",
+		Provider: "neo4j", // Required
 		Neo4j: graphrag.Neo4jConfig{
 			URI:      "bolt://localhost:7687",
 			Username: "neo4j",
@@ -26,7 +26,6 @@ func testConfig() graphrag.GraphRAGConfig {
 			PoolSize: 50,
 		},
 		Vector: graphrag.VectorConfig{
-			Enabled:    false, // Disabled by default for simpler tests
 			IndexType:  "hnsw",
 			Dimensions: 1536,
 			Metric:     "cosine",
@@ -120,8 +119,7 @@ func TestNewLocalProvider(t *testing.T) {
 		{
 			name: "valid configuration",
 			config: graphrag.GraphRAGConfig{
-				Enabled:  true,
-				Provider: "neo4j", // Use neo4j as provider name
+				Provider: "neo4j", // Required - GraphRAG is a core component
 				Neo4j: graphrag.Neo4jConfig{
 					URI:      "bolt://localhost:7687",
 					Username: "neo4j",
@@ -130,7 +128,6 @@ func TestNewLocalProvider(t *testing.T) {
 					PoolSize: 50,
 				},
 				Vector: graphrag.VectorConfig{
-					Enabled:    true,
 					IndexType:  "hnsw",
 					Dimensions: 1536,
 					Metric:     "cosine",
@@ -154,7 +151,6 @@ func TestNewLocalProvider(t *testing.T) {
 		{
 			name: "invalid configuration - missing URI",
 			config: graphrag.GraphRAGConfig{
-				Enabled:  true,
 				Provider: "neo4j",
 				Neo4j: graphrag.Neo4jConfig{
 					Username: "neo4j",
@@ -184,7 +180,6 @@ func TestNewLocalProvider(t *testing.T) {
 func TestLocalProvider_Initialize(t *testing.T) {
 	t.Run("multiple initialize calls are safe", func(t *testing.T) {
 		config := testConfig()
-		config.Vector.Enabled = false // Disable vector for this test
 
 		provider, err := NewLocalProvider(config)
 		require.NoError(t, err)
@@ -201,9 +196,8 @@ func TestLocalProvider_Initialize(t *testing.T) {
 		assert.NoError(t, err) // Should be no-op if already initialized
 	})
 
-	t.Run("requires vector store when vector enabled", func(t *testing.T) {
+	t.Run("vector store is optional", func(t *testing.T) {
 		config := testConfig()
-		config.Vector.Enabled = true
 
 		_, err := NewLocalProvider(config)
 		require.NoError(t, err)
@@ -287,7 +281,6 @@ func TestLocalProvider_StoreRelationship(t *testing.T) {
 func TestLocalProvider_VectorSearch(t *testing.T) {
 	t.Run("vector search with mock store", func(t *testing.T) {
 		config := testConfig()
-		config.Vector.Enabled = true
 
 		provider, err := NewLocalProvider(config)
 		require.NoError(t, err)
@@ -322,14 +315,13 @@ func TestLocalProvider_VectorSearch(t *testing.T) {
 		assert.GreaterOrEqual(t, len(results), 0)
 	})
 
-	t.Run("vector search disabled returns error", func(t *testing.T) {
+	t.Run("vector search without store returns error", func(t *testing.T) {
 		config := testConfig()
-		config.Vector.Enabled = false
 
 		provider, err := NewLocalProvider(config)
 		require.NoError(t, err)
 
-		// Mark as initialized
+		// Mark as initialized but no vector store set
 		provider.initialized = true
 
 		ctx := context.Background()
@@ -338,7 +330,7 @@ func TestLocalProvider_VectorSearch(t *testing.T) {
 
 		assert.Error(t, err)
 		assert.Nil(t, results)
-		assert.Contains(t, err.Error(), "disabled")
+		assert.Contains(t, err.Error(), "unavailable")
 	})
 }
 
@@ -358,7 +350,6 @@ func TestLocalProvider_Health(t *testing.T) {
 
 	t.Run("both backends healthy returns healthy", func(t *testing.T) {
 		config := testConfig()
-		config.Vector.Enabled = true
 
 		_, err := NewLocalProvider(config)
 		require.NoError(t, err)
@@ -381,7 +372,6 @@ func TestLocalProvider_Close(t *testing.T) {
 
 	t.Run("close releases resources", func(t *testing.T) {
 		config := testConfig()
-		config.Vector.Enabled = true
 
 		provider, err := NewLocalProvider(config)
 		require.NoError(t, err)
@@ -418,7 +408,6 @@ func TestLocalProvider_QueryNodes(t *testing.T) {
 
 	t.Run("all backends unavailable returns error", func(t *testing.T) {
 		config := testConfig()
-		config.Vector.Enabled = false // Vector disabled
 
 		provider, err := NewLocalProvider(config)
 		require.NoError(t, err)

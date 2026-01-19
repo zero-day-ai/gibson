@@ -230,6 +230,12 @@ func TestNewHarnessFactory_PreservesProvidedConfig(t *testing.T) {
 
 func TestNewHarnessFactory_FullConfiguration(t *testing.T) {
 	// Test with all fields specified
+	// Note: GraphRAGBridge and GraphRAGQueryBridge are required - use mock implementations
+	mockEngine := newMockTaxonomyGraphEngine()
+	graphRAGBridge := NewGraphRAGBridge(mockEngine, nil, DefaultGraphRAGBridgeConfig())
+	mockStore := &MockGraphRAGStore{IsHealthy: true}
+	graphRAGQueryBridge := NewGraphRAGQueryBridge(mockStore)
+
 	config := HarnessConfig{
 		SlotManager:         llm.NewSlotManager(llm.NewLLMRegistry()),
 		LLMRegistry:         llm.NewLLMRegistry(),
@@ -238,8 +244,8 @@ func TestNewHarnessFactory_FullConfiguration(t *testing.T) {
 		FindingStore:        NewInMemoryFindingStore(),
 		Metrics:             NewNoOpMetricsRecorder(),
 		MemoryManager:       &MockMemoryStore{},
-		GraphRAGBridge:      &NoopGraphRAGBridge{},
-		GraphRAGQueryBridge: &NoopGraphRAGQueryBridge{},
+		GraphRAGBridge:      graphRAGBridge,
+		GraphRAGQueryBridge: graphRAGQueryBridge,
 	}
 
 	factory, err := NewHarnessFactory(config)
@@ -1022,4 +1028,3 @@ func TestHarnessFactory_WithoutMiddleware(t *testing.T) {
 	_, ok := harness.(*DefaultAgentHarness)
 	assert.True(t, ok, "harness should be *DefaultAgentHarness when no middleware is configured")
 }
-

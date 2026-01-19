@@ -370,12 +370,11 @@ SQLite-backed with full-text search.
 
 ## GraphRAG Configuration
 
-Neo4j-backed knowledge graph with vector search.
+Neo4j-backed knowledge graph with vector search. GraphRAG is a required core component.
 
 ```yaml
 graphrag:
-  enabled: true
-  provider: neo4j
+  provider: neo4j  # Required: neo4j, neptune, or memgraph
 
   neo4j:
     uri: bolt://localhost:7687
@@ -385,7 +384,6 @@ graphrag:
     pool_size: 10
 
   vector:
-    enabled: true
     index_type: hnsw
     dimensions: 384
     metric: cosine
@@ -418,8 +416,7 @@ graphrag:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable GraphRAG |
-| `provider` | string | `neo4j` | Graph provider: `neo4j`, `neptune`, `memgraph` |
+| `provider` | string | - | **Required.** Graph provider: `neo4j`, `neptune`, `memgraph` |
 
 ### Neo4j Configuration
 
@@ -435,7 +432,6 @@ graphrag:
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | bool | `false` | Enable vector search |
 | `index_type` | string | `hnsw` | Index type: `hnsw`, `ivfflat` |
 | `dimensions` | int | - | Embedding vector dimensions |
 | `metric` | string | `cosine` | Similarity metric: `cosine`, `euclidean`, `dot` |
@@ -815,8 +811,7 @@ memory:
       api_key: ${OPENAI_API_KEY}
 
 graphrag:
-  enabled: true
-  provider: neo4j
+  provider: neo4j  # Required
   neo4j:
     uri: bolt://localhost:7687
     username: neo4j
@@ -824,7 +819,6 @@ graphrag:
     database: neo4j
     pool_size: 10
   vector:
-    enabled: true
     index_type: hnsw
     dimensions: 384
     metric: cosine

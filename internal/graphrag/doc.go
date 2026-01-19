@@ -49,7 +49,6 @@
 // Configure GraphRAG with GraphRAGConfig:
 //
 //	config := GraphRAGConfig{
-//	    Enabled: true,
 //	    Provider: ProviderConfig{
 //	        Type: "cloud",  // "local", "cloud", "hybrid", "noop"
 //	        Neo4j: Neo4jConfig{
@@ -114,13 +113,16 @@
 //
 //	    // Configure GraphRAG
 //	    config := graphrag.GraphRAGConfig{
-//	        Enabled:  true,
 //	        Provider: graphrag.ProviderConfig{Type: "cloud"},
 //	    }
 //	    config.ApplyDefaults()
 //
-//	    // Create store
-//	    store, err := graphrag.NewGraphRAGStore(config, embedder)
+//	    // Create store with provider injection
+//	    prov, err := provider.NewProvider(config)
+//	    if err != nil {
+//	        log.Fatal(err)
+//	    }
+//	    store, err := graphrag.NewGraphRAGStoreWithProvider(config, embedder, prov)
 //	    if err != nil {
 //	        log.Fatal(err)
 //	    }

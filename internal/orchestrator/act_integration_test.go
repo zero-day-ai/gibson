@@ -213,9 +213,9 @@ func TestActor_SpawnAgent_NilInventory(t *testing.T) {
 
 		// Create decision with nil spawn_config
 		decision := &Decision{
-			Reasoning:  "Test",
-			Action:     ActionSpawnAgent,
-			Confidence: 0.9,
+			Reasoning:   "Test",
+			Action:      ActionSpawnAgent,
+			Confidence:  0.9,
 			SpawnConfig: nil, // Invalid
 		}
 

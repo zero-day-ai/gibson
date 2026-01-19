@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/gibson/internal/llm"
 )
 
 // mockLLMClient is a test double for LLMClient.
@@ -389,8 +389,8 @@ func TestThinker_Think_Errors(t *testing.T) {
 		wantError   string
 	}{
 		{
-			name:      "nil observation state",
-			state:     nil,
+			name:  "nil observation state",
+			state: nil,
 			setupClient: func() *mockLLMClient {
 				return &mockLLMClient{}
 			},
@@ -616,9 +616,9 @@ func TestCompletionOptions(t *testing.T) {
 
 func TestIsRetryableError(t *testing.T) {
 	tests := []struct {
-		name       string
-		err        error
-		retryable  bool
+		name      string
+		err       error
+		retryable bool
 	}{
 		{
 			name:      "nil error",

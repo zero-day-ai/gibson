@@ -89,9 +89,9 @@ func ExampleDecision_modifyParams() {
 		Action:       orchestrator.ActionModifyParams,
 		TargetNodeID: "port-scan-1",
 		Modifications: map[string]interface{}{
-			"port_range": "1-1000",  // Reduced from 1-65535
-			"timeout":    600,        // Increased from 300
-			"threads":    10,         // Reduced from 50
+			"port_range": "1-1000", // Reduced from 1-65535
+			"timeout":    600,      // Increased from 300
+			"threads":    10,       // Reduced from 50
 		},
 		Confidence: 0.85,
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/daemon/api"
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/graphrag/queries"
+	"github.com/zero-day-ai/gibson/internal/graphrag/schema"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/mission"
@@ -45,6 +46,7 @@ type missionManager struct {
 	targetStore     targetStoreLookup
 	runLinker       mission.MissionRunLinker
 	infrastructure  *Infrastructure
+	missionTracer   *observability.MissionTracer // nil when tracing is disabled
 	// TODO(workflow-migration): Re-enable GraphRAG storage for mission definitions
 	// graphLoader will store mission definitions in Neo4j for cross-mission analysis
 	// Currently disabled during workflow -> mission migration
@@ -58,12 +60,12 @@ type missionManager struct {
 
 // activeMission tracks a running mission with its context and event channel
 type activeMission struct {
-	mission       *mission.Mission
-	ctx           context.Context
-	cancel        context.CancelFunc
-	eventChan     chan api.MissionEventData
+	mission      *mission.Mission
+	ctx          context.Context
+	cancel       context.CancelFunc
+	eventChan    chan api.MissionEventData
 	missionState *mission.MissionState
-	startTime     time.Time
+	startTime    time.Time
 }
 
 // newMissionManager creates a new mission manager instance.
@@ -79,6 +81,7 @@ func newMissionManager(
 	targetStore targetStoreLookup,
 	runLinker mission.MissionRunLinker,
 	infrastructure *Infrastructure,
+	missionTracer *observability.MissionTracer,
 ) *missionManager {
 	// TODO(workflow-migration): Re-enable GraphRAG storage for mission definitions
 	// GraphLoader initialization disabled during workflow -> mission migration
@@ -100,6 +103,7 @@ func newMissionManager(
 		targetStore:     targetStore,
 		runLinker:       runLinker,
 		infrastructure:  infrastructure,
+		missionTracer:   missionTracer,
 		activeMissions:  make(map[string]*activeMission),
 	}
 }
@@ -288,7 +292,7 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	return eventChan, nil
 }
 
-// executeMission runs the mission execution using the SOTA orchestrator.
+// executeMission runs the mission execution using the orchestrator.
 // This handles the full mission lifecycle including setup, execution via
 // the Observe → Think → Act loop, and cleanup.
 func (m *missionManager) executeMission(ctx context.Context, missionID string, def *mission.MissionDefinition, eventChan chan api.MissionEventData) {
@@ -308,7 +312,7 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 		defer span.End()
 	}
 
-	m.logger.Info("executing mission with SOTA orchestrator", "mission_id", missionID)
+	m.logger.Info("executing mission with orchestrator", "mission_id", missionID)
 
 	// Get active mission
 	m.mu.RLock()
@@ -338,9 +342,22 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 		span.SetAttributes(attribute.String(observability.GibsonMissionName, active.mission.Name))
 	}
 
-	// Check if GraphRAG is available - required for SOTA orchestrator
+	// Set StartedAt timestamp now that execution is beginning
+	now := time.Now()
+	active.mission.StartedAt = &now
+
+	// Update mission status to Running in SQLite
+	if m.missionStore != nil {
+		active.mission.Status = mission.MissionStatusRunning
+		if err := m.missionStore.Update(ctx, active.mission); err != nil {
+			m.logger.Warn("failed to update mission status in store", "error", err, "mission_id", missionID)
+			// Continue execution - this is not critical
+		}
+	}
+
+	// Check if GraphRAG is available - required for orchestrator
 	if m.infrastructure == nil || m.infrastructure.graphRAGClient == nil {
-		m.logger.Error("GraphRAG not available - SOTA orchestrator requires Neo4j",
+		m.logger.Error("GraphRAG not available - orchestrator requires Neo4j",
 			"mission_id", missionID)
 
 		m.emitEvent(eventChan, api.MissionEventData{
@@ -356,6 +373,19 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 	graphClient := m.infrastructure.graphRAGClient
 	missionQueries := queries.NewMissionQueries(graphClient)
 	executionQueries := queries.NewExecutionQueries(graphClient)
+
+	// Bootstrap mission graph structure before execution
+	bootstrapper := NewGraphBootstrapper(graphClient, m.logger)
+	if err := bootstrapper.Bootstrap(ctx, active.mission, def); err != nil {
+		m.logger.Error("failed to bootstrap mission graph", "error", err, "mission_id", missionID)
+		m.emitEvent(eventChan, api.MissionEventData{
+			EventType: "mission.failed",
+			Timestamp: time.Now(),
+			MissionID: missionID,
+			Error:     fmt.Sprintf("failed to initialize mission graph: %v", err),
+		})
+		return
+	}
 
 	// Create mission context and target info for harness
 	missionCtx := harness.NewMissionContext(active.mission.ID, active.mission.Name, "")
@@ -421,39 +451,85 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 		inventory = nil // Continue without inventory
 	}
 
-	// Create SOTA orchestrator components
+	// Create orchestrator components
 	observer := orchestrator.NewObserver(missionQueries, executionQueries)
 	thinker := orchestrator.NewThinker(llmClient,
 		orchestrator.WithMaxRetries(3),
 		orchestrator.WithThinkerTemperature(0.2),
 	)
-	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient, inventory)
+	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient, inventory, m.infrastructure.missionTracer)
 
-	// Create the SOTA orchestrator
-	sotaOrchestrator := orchestrator.NewOrchestrator(observer, thinker, actor,
+	// Create DecisionLogWriterAdapter for Langfuse tracing if tracer is available
+	var decisionLogWriter orchestrator.DecisionLogWriter
+	var decisionLogAdapter *observability.DecisionLogWriterAdapter // Keep reference for Close
+	if m.infrastructure != nil && m.infrastructure.missionTracer != nil {
+		// Convert mission state to schema format for Langfuse
+		schemaMission := convertToSchemaMission(active.mission, def)
+
+		// Create adapter with tracer and schema mission
+		logAdapter, err := observability.NewDecisionLogWriterAdapter(ctx, m.infrastructure.missionTracer, schemaMission)
+		if err != nil {
+			// Log warning but continue without tracing - don't fail mission
+			m.logger.Warn("failed to create DecisionLogWriterAdapter, continuing without decision tracing",
+				"mission_id", missionID,
+				"error", err,
+			)
+		} else {
+			decisionLogWriter = logAdapter
+			decisionLogAdapter = logAdapter
+			m.logger.Info("created DecisionLogWriterAdapter for mission tracing",
+				"mission_id", missionID,
+			)
+		}
+	}
+
+	// Create the orchestrator with optional decision log writer
+	orchOptions := []orchestrator.OrchestratorOption{
 		orchestrator.WithMaxIterations(100),
 		orchestrator.WithMaxConcurrent(10),
-		orchestrator.WithLogger(m.logger.With("component", "sota-orchestrator")),
+		orchestrator.WithLogger(m.logger.With("component", "orchestrator")),
 		orchestrator.WithComponentDiscovery(m.registry),
-	)
+	}
+
+	// Add decision log writer if available
+	if decisionLogWriter != nil {
+		orchOptions = append(orchOptions, orchestrator.WithDecisionLogWriter(decisionLogWriter))
+	}
+
+	orch := orchestrator.NewOrchestrator(observer, thinker, actor, orchOptions...)
 
 	// Emit workflow execution started event
 	m.emitEvent(eventChan, api.MissionEventData{
 		EventType: "workflow.started",
 		Timestamp: time.Now(),
 		MissionID: missionID,
-		Message:   fmt.Sprintf("Starting SOTA orchestrator for mission %s", missionID),
+		Message:   fmt.Sprintf("Starting orchestrator for mission %s", missionID),
 	})
 
-	// Execute mission through SOTA orchestrator's Observe → Think → Act loop
-	result, err := sotaOrchestrator.Run(ctx, missionID)
-
-	// Calculate mission duration
-	missionDuration := time.Since(active.startTime)
-
-	// Determine final status based on execution result
+	// Execute mission through orchestrator's Observe → Think → Act loop
+	// Use defer to ensure decision log adapter is closed even on panic
+	var result *orchestrator.OrchestratorResult
 	var finalStatus mission.MissionStatus
 	var errorMsg string
+	var missionDuration time.Duration
+
+	defer func() {
+		if decisionLogAdapter != nil {
+			// Build summary from execution results
+			summary := buildMissionTraceSummary(result, finalStatus, missionDuration, errorMsg)
+			if closeErr := decisionLogAdapter.Close(ctx, summary); closeErr != nil {
+				m.logger.Warn("failed to close decision log adapter",
+					"mission_id", missionID,
+					"error", closeErr,
+				)
+			}
+		}
+	}()
+
+	result, err = orch.Run(ctx, missionID)
+
+	// Calculate mission duration
+	missionDuration = time.Since(active.startTime)
 
 	if err != nil {
 		m.logger.Error("mission execution failed", "mission_id", missionID, "error", err)
@@ -504,7 +580,7 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 		}
 
 		// Log orchestrator statistics
-		m.logger.Info("SOTA orchestrator completed",
+		m.logger.Info("orchestrator completed",
 			"mission_id", missionID,
 			"status", result.Status,
 			"iterations", result.TotalIterations,
@@ -551,7 +627,7 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 	} else {
 		// No result returned - treat as failed
 		finalStatus = mission.MissionStatusFailed
-		errorMsg = "no result returned from SOTA orchestrator"
+		errorMsg = "no result returned from orchestrator"
 
 		// Record error on span
 		if span != nil {
@@ -573,8 +649,8 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 	// Update mission in store
 	active.mission.Status = finalStatus
 	active.mission.Error = errorMsg
-	now := time.Now()
-	active.mission.CompletedAt = &now
+	completedAt := time.Now()
+	active.mission.CompletedAt = &completedAt
 
 	if m.missionStore != nil {
 		if saveErr := m.missionStore.Update(ctx, active.mission); saveErr != nil {
@@ -698,7 +774,7 @@ func (m *missionManager) Resume(ctx context.Context, missionID string) (<-chan a
 	// Parse mission definition from stored JSON
 	var def *mission.MissionDefinition
 	if missionRecord.WorkflowJSON != "" {
-		def, err = mission.ParseDefinitionFromBytes([]byte(missionRecord.WorkflowJSON))
+		def, err = mission.ParseDefinitionFromJSON([]byte(missionRecord.WorkflowJSON))
 		if err != nil {
 			m.logger.Error("failed to parse mission definition", "error", err)
 			return nil, fmt.Errorf("failed to parse mission definition: %w", err)
@@ -951,7 +1027,7 @@ func containsStr(s, substr string) bool {
 }
 
 // llmClientAdapter adapts an AgentHarness to the orchestrator.LLMClient interface.
-// This allows the SOTA orchestrator's Thinker to use the harness for LLM operations.
+// This allows the orchestrator's Thinker to use the harness for LLM operations.
 type llmClientAdapter struct {
 	harness harness.AgentHarness
 }
@@ -999,7 +1075,7 @@ func (a *llmClientAdapter) CompleteStructuredAny(ctx context.Context, slot strin
 }
 
 // orchestratorHarnessAdapter adapts an AgentHarness to the orchestrator.Harness interface.
-// This allows the SOTA orchestrator's Actor to delegate to agents.
+// This allows the orchestrator's Actor to delegate to agents.
 type orchestratorHarnessAdapter struct {
 	harness harness.AgentHarness
 }
@@ -1012,4 +1088,54 @@ func (a *orchestratorHarnessAdapter) DelegateToAgent(ctx context.Context, agentN
 // CallTool executes a tool via the harness.
 func (a *orchestratorHarnessAdapter) CallTool(ctx context.Context, toolName string, input map[string]interface{}) (interface{}, error) {
 	return a.harness.CallTool(ctx, toolName, input)
+}
+
+// buildMissionTraceSummary constructs a MissionTraceSummary from orchestrator results.
+// This is used when closing the decision log adapter to provide final statistics.
+func buildMissionTraceSummary(result *orchestrator.OrchestratorResult, status mission.MissionStatus, duration time.Duration, errorMsg string) *observability.MissionTraceSummary {
+	summary := &observability.MissionTraceSummary{
+		Duration:   duration,
+		Outcome:    string(status),
+		GraphStats: make(map[string]int),
+	}
+
+	// Map mission status to schema status string
+	switch status {
+	case mission.MissionStatusCompleted:
+		summary.Status = string(schema.MissionStatusCompleted)
+	case mission.MissionStatusFailed:
+		summary.Status = string(schema.MissionStatusFailed)
+	case mission.MissionStatusCancelled:
+		summary.Status = string(schema.MissionStatusFailed) // Treat cancelled as failed for Langfuse
+	case mission.MissionStatusPaused:
+		summary.Status = string(schema.MissionStatusFailed) // Treat paused as failed for Langfuse
+	default:
+		summary.Status = string(schema.MissionStatusFailed)
+	}
+
+	// Extract statistics from orchestrator result if available
+	if result != nil {
+		summary.TotalDecisions = result.TotalDecisions
+		summary.TotalTokens = result.TotalTokensUsed
+		summary.Outcome = result.StopReason
+		if summary.Outcome == "" {
+			summary.Outcome = string(result.Status)
+		}
+
+		// Add graph statistics
+		summary.GraphStats["completed_nodes"] = result.CompletedNodes
+		summary.GraphStats["failed_nodes"] = result.FailedNodes
+		summary.GraphStats["total_iterations"] = result.TotalIterations
+	}
+
+	// Add error message to outcome if present
+	if errorMsg != "" {
+		if summary.Outcome != "" {
+			summary.Outcome = fmt.Sprintf("%s: %s", summary.Outcome, errorMsg)
+		} else {
+			summary.Outcome = errorMsg
+		}
+	}
+
+	return summary
 }

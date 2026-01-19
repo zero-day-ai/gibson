@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/zero-day-ai/gibson/cmd/gibson/component"
-	"github.com/zero-day-ai/gibson/internal/daemon/client"
 	internalcomp "github.com/zero-day-ai/gibson/internal/component"
+	"github.com/zero-day-ai/gibson/internal/daemon/client"
 )
 
 var toolCmd = &cobra.Command{

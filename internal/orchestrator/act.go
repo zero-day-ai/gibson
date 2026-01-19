@@ -35,19 +35,22 @@ type Actor struct {
 	missionQueries *queries.MissionQueries
 	graphClient    graph.GraphClient
 	inventory      *ComponentInventory // Component inventory for validation
+	missionTracer  interface{}         // *observability.MissionTracer for Langfuse tracing (optional, can be nil)
 }
 
 // NewActor creates a new Actor with the given dependencies.
 // The harness is used for agent delegation and tool execution.
 // The queries provide graph operations for tracking execution state.
 // The inventory parameter is optional and used for component validation.
-func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient, inventory *ComponentInventory) *Actor {
+// The missionTracer parameter is optional and enables Langfuse observability when provided.
+func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient, inventory *ComponentInventory, missionTracer interface{}) *Actor {
 	return &Actor{
 		harness:        harness,
 		execQueries:    execQueries,
 		missionQueries: missionQueries,
 		graphClient:    graphClient,
 		inventory:      inventory,
+		missionTracer:  missionTracer,
 	}
 }
 
@@ -153,6 +156,26 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 		return nil, fmt.Errorf("failed to create agent execution: %w", err)
 	}
 
+	// Create AgentExecutionLog for Langfuse tracing if tracer is available
+	// This will be passed to the agent harness to link LLM calls to this execution span
+	// We pass it via context so the harness can access it during delegation
+	if a.missionTracer != nil {
+		// Build the log entry with execution metadata
+		// The actual *observability.AgentExecutionLog will be created by the middleware
+		// We pass the raw data through context to avoid import cycles
+		agentExecData := map[string]interface{}{
+			"execution_id":     execution.ID.String(),
+			"agent_name":       node.AgentName,
+			"workflow_node_id": node.ID.String(),
+			"config_used":      node.TaskConfig,
+			"attempt":          attemptNum,
+		}
+
+		// Store both the tracer and execution data in context for the harness/middleware to access
+		ctx = context.WithValue(ctx, "langfuse_mission_tracer", a.missionTracer)
+		ctx = context.WithValue(ctx, "langfuse_agent_exec_data", agentExecData)
+	}
+
 	// Update workflow node status to running
 	if err := a.updateNodeStatus(ctx, node.ID, schema.WorkflowNodeStatusRunning); err != nil {
 		return nil, fmt.Errorf("failed to update node status: %w", err)
@@ -246,18 +269,28 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 	// Check if agent execution failed
 	if result.Status == agent.ResultStatusFailed {
 		errMsg := "agent execution failed"
+		var errCode string
+
 		if result.Error != nil {
 			errMsg = result.Error.Message
+			errCode = result.Error.Code
 
-			// Check if the error has a code (likely from toolerr)
-			// ResultError.Code might contain the toolerr error code
-			if result.Error.Code != "" {
+			// Log detailed error info at debug level
+			slog.Debug("agent execution failed with structured error",
+				"agent_name", node.AgentName,
+				"error_code", result.Error.Code,
+				"error_message", result.Error.Message,
+				"recoverable", result.Error.Recoverable,
+			)
+
+			// Store structured error details in execution if error code is available
+			if errCode != "" {
 				// Infer class from code and store structured error details
-				errorClass := string(toolerr.DefaultClassForCode(result.Error.Code))
+				errorClass := string(toolerr.DefaultClassForCode(errCode))
 				execution.MarkFailedWithDetails(
 					errMsg,
 					errorClass,
-					result.Error.Code,
+					errCode,
 					nil, // No hints available at this level
 				)
 			} else {
@@ -266,6 +299,14 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 			}
 		} else {
 			execution.MarkFailed(errMsg)
+		}
+
+		// Add error code to metadata if available
+		if errCode != "" {
+			if execution.Result == nil {
+				execution.Result = make(map[string]any)
+			}
+			execution.Result["error_code"] = errCode
 		}
 
 		// Update node status to failed
@@ -767,12 +808,12 @@ func (a *Actor) createNodeDependencies(ctx context.Context, nodeID types.ID, dep
 	return nil
 }
 
-// linkNodeToMission creates a HAS_NODE relationship from mission to node.
+// linkNodeToMission creates a PART_OF relationship from node to mission.
 func (a *Actor) linkNodeToMission(ctx context.Context, missionID, nodeID types.ID) error {
 	cypher := `
 		MATCH (m:Mission {id: $mission_id})
 		MATCH (n:WorkflowNode {id: $node_id})
-		MERGE (m)-[:HAS_NODE]->(n)
+		MERGE (n)-[:PART_OF]->(m)
 		RETURN count(*) as count
 	`
 

@@ -102,12 +102,12 @@ func TestTaxonomyValidator_ValidateNode(t *testing.T) {
 		{
 			name: "id_template references undefined property",
 			node: &NodeTypeDefinition{
-				ID:          "node_test",
-				Name:        "Test Node",
-				Type:        "test",
-				Category:    "asset",
-				IDTemplate:  "test:{undefined_prop}",
-				Properties:  []PropertyDefinition{},
+				ID:         "node_test",
+				Name:       "Test Node",
+				Type:       "test",
+				Category:   "asset",
+				IDTemplate: "test:{undefined_prop}",
+				Properties: []PropertyDefinition{},
 			},
 			wantErr: true,
 			errType: ErrorTypeInvalidReference,
@@ -115,11 +115,11 @@ func TestTaxonomyValidator_ValidateNode(t *testing.T) {
 		{
 			name: "id_template with sha256 function",
 			node: &NodeTypeDefinition{
-				ID:          "node_test",
-				Name:        "Test Node",
-				Type:        "test",
-				Category:    "asset",
-				IDTemplate:  "test:{sha256(name)}",
+				ID:         "node_test",
+				Name:       "Test Node",
+				Type:       "test",
+				Category:   "asset",
+				IDTemplate: "test:{sha256(name)}",
 				Properties: []PropertyDefinition{
 					{Name: "name", Type: "string", Required: true},
 				},

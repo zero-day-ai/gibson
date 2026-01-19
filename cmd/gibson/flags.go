@@ -17,15 +17,15 @@ const (
 
 // GlobalFlags holds global flags available to all commands
 type GlobalFlags struct {
-	Verbose           bool
-	VeryVerbose       bool
-	DebugVerbose      bool
-	Quiet             bool
-	OutputFormat      string
-	ConfigFile        string
-	HomeDir           string
-	TaxonomyPath      string
-	ValidateTaxonomy  bool
+	Verbose          bool
+	VeryVerbose      bool
+	DebugVerbose     bool
+	Quiet            bool
+	OutputFormat     string
+	ConfigFile       string
+	HomeDir          string
+	TaxonomyPath     string
+	ValidateTaxonomy bool
 }
 
 var globalFlags = &GlobalFlags{}

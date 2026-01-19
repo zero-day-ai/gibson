@@ -124,9 +124,9 @@ func ExampleTemplateEngine_realWorld() {
 	}
 
 	context := map[string]any{
-		"agent_id":  "bishop",
+		"agent_id":   "bishop",
 		"mission_id": "recon_001",
-		"trace_id":  "550e8400-e29b-41d4-a716-446655440000",
+		"trace_id":   "550e8400-e29b-41d4-a716-446655440000",
 	}
 
 	// Generate node ID for the subdomain

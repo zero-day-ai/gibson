@@ -10,9 +10,9 @@ import (
 
 func TestNewTaxonomyRegistry(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		taxonomy *Taxonomy
-		wantErr bool
+		wantErr  bool
 	}{
 		{
 			name:     "valid taxonomy",
@@ -342,29 +342,29 @@ func TestTaxonomyRegistry_Techniques(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		source     string
-		wantCount  int
+		name      string
+		source    string
+		wantCount int
 	}{
 		{
-			name:       "all techniques",
-			source:     "",
-			wantCount:  3,
+			name:      "all techniques",
+			source:    "",
+			wantCount: 3,
 		},
 		{
-			name:       "MITRE techniques only",
-			source:     "mitre",
-			wantCount:  2,
+			name:      "MITRE techniques only",
+			source:    "mitre",
+			wantCount: 2,
 		},
 		{
-			name:       "Arcanum techniques only",
-			source:     "arcanum",
-			wantCount:  1,
+			name:      "Arcanum techniques only",
+			source:    "arcanum",
+			wantCount: 1,
 		},
 		{
-			name:       "non-existent source",
-			source:     "nonexistent",
-			wantCount:  0,
+			name:      "non-existent source",
+			source:    "nonexistent",
+			wantCount: 0,
 		},
 	}
 

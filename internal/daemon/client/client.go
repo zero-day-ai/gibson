@@ -555,7 +555,7 @@ type MissionEvent struct {
 func (c *Client) RunMission(ctx context.Context, workflowPath string, memoryContinuity string) (<-chan MissionEvent, error) {
 	// Start streaming RPC
 	stream, err := c.daemon.RunMission(ctx, &api.RunMissionRequest{
-		WorkflowPath:      workflowPath,
+		WorkflowPath:     workflowPath,
 		MemoryContinuity: memoryContinuity,
 	})
 	if err != nil {
@@ -610,6 +610,7 @@ func (c *Client) RunMission(ctx context.Context, workflowPath string, memoryCont
 // MissionInfo represents information about a mission.
 type MissionInfo struct {
 	ID           string
+	Name         string
 	WorkflowPath string
 	Status       string
 	StartTime    time.Time
@@ -670,6 +671,7 @@ func (c *Client) ListMissions(ctx context.Context, activeOnly bool, statusFilter
 	for i, m := range resp.Missions {
 		missions[i] = MissionInfo{
 			ID:           m.Id,
+			Name:         m.Name,
 			WorkflowPath: m.WorkflowPath,
 			Status:       m.Status,
 			StartTime:    time.Unix(m.StartTime, 0),
@@ -1090,6 +1092,32 @@ type InstallResult struct {
 	Duration    time.Duration // Total install time
 }
 
+// InstallAllResult represents the result of installing multiple components.
+type InstallAllResult struct {
+	ComponentsFound int                 // Total components discovered
+	SuccessfulCount int                 // Number of successful installs
+	SkippedCount    int                 // Number of skipped components
+	FailedCount     int                 // Number of failed installs
+	Successful      []InstallResultItem // Successfully installed components
+	Skipped         []InstallResultItem // Skipped components
+	Failed          []InstallFailedItem // Failed components
+	Duration        time.Duration       // Total installation time
+}
+
+// InstallResultItem represents a single component install result.
+type InstallResultItem struct {
+	Name    string // Component name
+	Version string // Component version
+	Path    string // Local repository path
+}
+
+// InstallFailedItem represents a failed component installation.
+type InstallFailedItem struct {
+	Name  string // Component name (if available)
+	Path  string // Path where failure occurred
+	Error string // Error message
+}
+
 // InstallAgent installs an agent from a Git repository.
 func (c *Client) InstallAgent(ctx context.Context, url string, opts InstallOptions) (*InstallResult, error) {
 	return c.installComponent(ctx, "agent", url, opts)
@@ -1103,6 +1131,93 @@ func (c *Client) InstallTool(ctx context.Context, url string, opts InstallOption
 // InstallPlugin installs a plugin from a Git repository.
 func (c *Client) InstallPlugin(ctx context.Context, url string, opts InstallOptions) (*InstallResult, error) {
 	return c.installComponent(ctx, "plugin", url, opts)
+}
+
+// InstallAllAgent installs all agents from a mono-repo.
+func (c *Client) InstallAllAgent(ctx context.Context, url string, opts InstallOptions) (*InstallAllResult, error) {
+	return c.installAllComponent(ctx, "agent", url, opts)
+}
+
+// InstallAllTool installs all tools from a mono-repo.
+func (c *Client) InstallAllTool(ctx context.Context, url string, opts InstallOptions) (*InstallAllResult, error) {
+	return c.installAllComponent(ctx, "tool", url, opts)
+}
+
+// InstallAllPlugin installs all plugins from a mono-repo.
+func (c *Client) InstallAllPlugin(ctx context.Context, url string, opts InstallOptions) (*InstallAllResult, error) {
+	return c.installAllComponent(ctx, "plugin", url, opts)
+}
+
+// installAllComponent is the internal method that installs all components from a mono-repo via the daemon.
+func (c *Client) installAllComponent(ctx context.Context, kind, url string, opts InstallOptions) (*InstallAllResult, error) {
+	resp, err := c.daemon.InstallAllComponent(ctx, &api.InstallAllComponentRequest{
+		Kind:      kind,
+		Url:       url,
+		Branch:    opts.Branch,
+		Tag:       opts.Tag,
+		Force:     opts.Force,
+		SkipBuild: opts.SkipBuild,
+		Verbose:   opts.Verbose,
+	})
+	if err != nil {
+		// Wrap error with user-friendly message
+		if st, ok := status.FromError(err); ok {
+			switch st.Code() {
+			case codes.Unavailable:
+				return nil, fmt.Errorf("daemon not responding (is it running?)")
+			case codes.InvalidArgument:
+				return nil, fmt.Errorf("invalid component URL or options: %s", st.Message())
+			case codes.NotFound:
+				return nil, fmt.Errorf("repository not found or no components found: %s", url)
+			default:
+				return nil, fmt.Errorf("failed to install components: %s", st.Message())
+			}
+		}
+		return nil, fmt.Errorf("failed to install components: %w", err)
+	}
+
+	if !resp.Success {
+		return nil, fmt.Errorf("failed to install components: %s", resp.Message)
+	}
+
+	// Convert proto response to client types
+	successful := make([]InstallResultItem, len(resp.Successful))
+	for i, item := range resp.Successful {
+		successful[i] = InstallResultItem{
+			Name:    item.Name,
+			Version: item.Version,
+			Path:    item.Path,
+		}
+	}
+
+	skipped := make([]InstallResultItem, len(resp.Skipped))
+	for i, item := range resp.Skipped {
+		skipped[i] = InstallResultItem{
+			Name:    item.Name,
+			Version: item.Version,
+			Path:    item.Path,
+		}
+	}
+
+	failed := make([]InstallFailedItem, len(resp.Failed))
+	for i, item := range resp.Failed {
+		failed[i] = InstallFailedItem{
+			Name:  item.Name,
+			Path:  item.Path,
+			Error: item.Error,
+		}
+	}
+
+	return &InstallAllResult{
+		ComponentsFound: int(resp.ComponentsFound),
+		SuccessfulCount: int(resp.SuccessfulCount),
+		SkippedCount:    int(resp.SkippedCount),
+		FailedCount:     int(resp.FailedCount),
+		Successful:      successful,
+		Skipped:         skipped,
+		Failed:          failed,
+		Duration:        time.Duration(resp.DurationMs) * time.Millisecond,
+	}, nil
 }
 
 // installComponent is the internal method that installs a component via the daemon.
@@ -1324,20 +1439,20 @@ func (c *Client) buildComponent(ctx context.Context, kind, name string) (*BuildR
 
 // ComponentInfo represents detailed information about a component.
 type ComponentInfo struct {
-	Name        string
-	Version     string
-	Kind        string
-	Status      string
-	Source      string
-	RepoPath    string
-	BinPath     string
-	Port        int
-	PID         int
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	StartedAt   *time.Time
-	StoppedAt   *time.Time
-	Manifest    string // JSON-encoded manifest info
+	Name      string
+	Version   string
+	Kind      string
+	Status    string
+	Source    string
+	RepoPath  string
+	BinPath   string
+	Port      int
+	PID       int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	StartedAt *time.Time
+	StoppedAt *time.Time
+	Manifest  string // JSON-encoded manifest info
 }
 
 // ShowAgent retrieves detailed information about an agent.
@@ -1762,8 +1877,8 @@ type AvailableTool struct {
 	Tags             []string
 	InputSchemaJSON  string
 	OutputSchemaJSON string
-	Status           string   // "ready", "schema-unknown", "error"
-	ErrorMessage     string   // Non-empty if Status is "error"
+	Status           string // "ready", "schema-unknown", "error"
+	ErrorMessage     string // Non-empty if Status is "error"
 }
 
 // ToolExecutionResult represents the result of executing a tool.
@@ -1953,9 +2068,9 @@ type MissionInstallOptions struct {
 
 // MissionInstallResult represents the result of a mission installation
 type MissionInstallResult struct {
-	Name         string                 // Mission name
-	Version      string                 // Mission version
-	Duration     time.Duration          // Installation duration
+	Name         string                           // Mission name
+	Version      string                           // Mission version
+	Duration     time.Duration                    // Installation duration
 	Dependencies []MissionDependencyInstallResult // Installed dependencies
 }
 
@@ -1982,16 +2097,16 @@ type MissionUpdateResult struct {
 
 // MissionDefinition represents an installed mission definition
 type MissionDefinition struct {
-	Name         string                   // Mission name
-	Version      string                   // Mission version
-	Description  string                   // Mission description
-	Source       string                   // Git URL source
-	InstalledAt  time.Time                // Installation timestamp
-	Dependencies *MissionDependencyList   // Required dependencies
-	Nodes        map[string]*MissionNode  // Mission nodes
-	Edges        []MissionEdge            // Mission edges
-	EntryPoints  []string                 // Entry point node IDs
-	ExitPoints   []string                 // Exit point node IDs
+	Name         string                  // Mission name
+	Version      string                  // Mission version
+	Description  string                  // Mission description
+	Source       string                  // Git URL source
+	InstalledAt  time.Time               // Installation timestamp
+	Dependencies *MissionDependencyList  // Required dependencies
+	Nodes        map[string]*MissionNode // Mission nodes
+	Edges        []MissionEdge           // Mission edges
+	EntryPoints  []string                // Entry point node IDs
+	ExitPoints   []string                // Exit point node IDs
 }
 
 // MissionDependencyList contains lists of required dependencies

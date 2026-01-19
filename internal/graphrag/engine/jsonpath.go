@@ -119,8 +119,9 @@ func (e *JSONPathExtractor) ExtractRelative(relativePath string, context map[str
 //  4. Returns ExtractedItem with both value and parent reference
 //
 // Example:
-//   Input: $.hosts[*].ports[*]
-//   Returns: Each port with its parent host available as _parent
+//
+//	Input: $.hosts[*].ports[*]
+//	Returns: Each port with its parent host available as _parent
 func (e *JSONPathExtractor) ExtractWithParent(jsonPath string, data map[string]any) ([]ExtractedItem, error) {
 	// Parse the path to identify nesting levels
 	// $.hosts[*].ports[*] -> ["hosts", "ports"]

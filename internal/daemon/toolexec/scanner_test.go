@@ -16,11 +16,11 @@ import (
 
 func TestBinaryScanner_Scan(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupTools     func(t *testing.T, dir string) []string
-		wantToolCount  int
-		wantErrors     int
-		validateTools  func(t *testing.T, tools []ToolBinaryInfo)
+		name          string
+		setupTools    func(t *testing.T, dir string) []string
+		wantToolCount int
+		wantErrors    int
+		validateTools func(t *testing.T, tools []ToolBinaryInfo)
 	}{
 		{
 			name: "successfully scans valid tools",
@@ -189,10 +189,10 @@ func TestBinaryScanner_Scan_NotADirectory(t *testing.T) {
 
 func TestBinaryScanner_GetSchema(t *testing.T) {
 	tests := []struct {
-		name          string
-		toolOutput    string
-		wantErr       bool
-		errContains   string
+		name           string
+		toolOutput     string
+		wantErr        bool
+		errContains    string
 		validateSchema func(t *testing.T, schema *ToolSchema)
 	}{
 		{

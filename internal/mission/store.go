@@ -159,7 +159,7 @@ func (f *MissionFilter) WithPagination(limit, offset int) *MissionFilter {
 // DBMissionStore implements MissionStore using a SQL database for mission instances
 // and etcd for mission definitions.
 type DBMissionStore struct {
-	db        *database.DB
+	db         *database.DB
 	etcdClient *clientv3.Client
 	namespace  string
 }

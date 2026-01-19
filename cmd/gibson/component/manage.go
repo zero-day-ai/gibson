@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/zero-day-ai/gibson/cmd/gibson/core"
 	"github.com/zero-day-ai/gibson/internal/component"
 	daemonclient "github.com/zero-day-ai/gibson/internal/daemon/client"
 	"golang.org/x/text/cases"
@@ -105,13 +104,13 @@ func runList(cmd *cobra.Command, args []string, cfg Config, flags *ListFlags) er
 	ctx := cmd.Context()
 
 	// Check for daemon client in context
-	if clientIface := GetDaemonClient(ctx); clientIface != nil {
-		// Daemon is available - use it for listing components
-		return runListWithDaemon(cmd, clientIface, cfg)
+	clientIface := GetDaemonClient(ctx)
+	if clientIface == nil {
+		return fmt.Errorf("daemon not running. Start with: gibson daemon start --foreground")
 	}
 
-	// No daemon - fall back to local database queries
-	return runListWithDatabase(cmd, cfg, flags)
+	// Use daemon for listing components
+	return runListWithDaemon(cmd, clientIface, cfg)
 }
 
 // runListWithDaemon lists components using the daemon client
@@ -225,84 +224,6 @@ func runListWithDaemon(cmd *cobra.Command, clientIface interface{}, cfg Config) 
 	default:
 		return fmt.Errorf("unsupported component kind: %s", cfg.Kind)
 	}
-}
-
-// runListWithDatabase lists components using local database (fallback)
-func runListWithDatabase(cmd *cobra.Command, cfg Config, flags *ListFlags) error {
-	// Build command context
-	cc, err := buildCommandContext(cmd)
-	if err != nil {
-		return err
-	}
-	defer cc.Close()
-
-	// Build list options
-	opts := core.ListOptions{
-		Local:  flags.Local,
-		Remote: flags.Remote,
-	}
-
-	// Call core function
-	result, err := core.ComponentList(cc, cfg.Kind, opts)
-	if err != nil {
-		return err
-	}
-
-	// Format output
-	components, ok := result.Data.([]*component.Component)
-	if !ok {
-		return fmt.Errorf("unexpected result type")
-	}
-
-	if len(components) == 0 {
-		cmd.Printf("No %s installed.\n", cfg.DisplayPlural)
-		return nil
-	}
-
-	// Display results in table format
-	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-
-	// Different headers based on component kind
-	if cfg.Kind == component.ComponentKindAgent {
-		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tPORT\tSOURCE")
-		fmt.Fprintln(w, "----\t-------\t------\t----\t------")
-
-		for _, comp := range components {
-			port := "-"
-			if comp.Port > 0 {
-				port = fmt.Sprintf("%d", comp.Port)
-			}
-
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				comp.Name,
-				comp.Version,
-				comp.Status,
-				port,
-				comp.Source,
-			)
-		}
-	} else {
-		// For tools and plugins
-		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tSOURCE\tPATH")
-		fmt.Fprintln(w, "----\t-------\t------\t------\t----")
-
-		for _, comp := range components {
-			path := comp.RepoPath
-			if path == "" {
-				path = "-"
-			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-				comp.Name,
-				comp.Version,
-				comp.Status,
-				comp.Source,
-				path,
-			)
-		}
-	}
-
-	w.Flush()
-	return nil
 }
 
 // runShow executes the show command.

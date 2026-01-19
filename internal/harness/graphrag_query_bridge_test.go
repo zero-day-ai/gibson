@@ -161,6 +161,13 @@ func (m *MockGraphRAGStore) StoreFinding(ctx context.Context, finding graphrag.F
 	return nil
 }
 
+// GetNode retrieves a single node by ID (for batch validation)
+func (m *MockGraphRAGStore) GetNode(ctx context.Context, nodeID types.ID) (*graphrag.GraphNode, error) {
+	// For testing, return a dummy node or error based on mock configuration
+	// This can be extended with more sophisticated mock behavior as needed
+	return nil, errors.New("node not found")
+}
+
 // Health returns the health status
 func (m *MockGraphRAGStore) Health(ctx context.Context) types.HealthStatus {
 	m.HealthCalled = true
@@ -1035,155 +1042,260 @@ func TestDefaultGraphRAGQueryBridge_Health(t *testing.T) {
 	}
 }
 
-// TestDefaultGraphRAGQueryBridge_NilStore tests behavior with nil store
-func TestDefaultGraphRAGQueryBridge_NilStore(t *testing.T) {
-	bridge := NewGraphRAGQueryBridge(nil)
+// Note: TestDefaultGraphRAGQueryBridge_NilStore has been removed since GraphRAG is now
+// a required core component. The bridge should never be created with a nil store.
+// NoopGraphRAGQueryBridge tests have also been removed for the same reason.
+
+// TestStoreBatch_ValidBatch tests that a batch with valid relationships succeeds.
+func TestStoreBatch_ValidBatch(t *testing.T) {
+	// Create nodes with IDs
+	node1ID := types.NewID()
+	node2ID := types.NewID()
+	node3ID := types.NewID()
+
+	batch := sdkgraphrag.Batch{
+		Nodes: []sdkgraphrag.GraphNode{
+			{
+				ID:         node1ID.String(),
+				Type:       "Host",
+				Properties: map[string]any{"name": "server1"},
+			},
+			{
+				ID:         node2ID.String(),
+				Type:       "Port",
+				Properties: map[string]any{"number": 443},
+			},
+			{
+				ID:         node3ID.String(),
+				Type:       "Service",
+				Properties: map[string]any{"name": "https"},
+			},
+		},
+		Relationships: []sdkgraphrag.Relationship{
+			{
+				FromID: node1ID.String(),
+				ToID:   node2ID.String(),
+				Type:   "HAS_PORT",
+			},
+			{
+				FromID: node2ID.String(),
+				ToID:   node3ID.String(),
+				Type:   "RUNS_SERVICE",
+			},
+		},
+	}
+
+	mock := &MockGraphRAGStore{
+		IsHealthy: true,
+	}
+
+	bridge := NewGraphRAGQueryBridge(mock)
 	ctx := context.Background()
+	missionID := types.NewID().String()
 
-	t.Run("Query with nil store", func(t *testing.T) {
-		_, err := bridge.Query(ctx, createValidSDKQuery())
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	nodeIDs, err := bridge.StoreBatch(ctx, batch, missionID, "test-agent")
 
-	t.Run("FindSimilarAttacks with nil store", func(t *testing.T) {
-		_, err := bridge.FindSimilarAttacks(ctx, "test", 5)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	// Should succeed without errors
+	require.NoError(t, err)
+	assert.Len(t, nodeIDs, 3)
+	assert.True(t, mock.StoreBatchCalled)
+	require.NotNil(t, mock.LastStoreBatchRecords)
+	assert.Len(t, mock.LastStoreBatchRecords, 3)
 
-	t.Run("FindSimilarFindings with nil store", func(t *testing.T) {
-		_, err := bridge.FindSimilarFindings(ctx, types.NewID().String(), 5)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	// Verify relationships were added to the correct records
+	// First record (node1) should have the HAS_PORT relationship
+	assert.Len(t, mock.LastStoreBatchRecords[0].Relationships, 1)
+	assert.Equal(t, node1ID, mock.LastStoreBatchRecords[0].Relationships[0].FromID)
+	assert.Equal(t, node2ID, mock.LastStoreBatchRecords[0].Relationships[0].ToID)
 
-	t.Run("GetAttackChains with nil store", func(t *testing.T) {
-		_, err := bridge.GetAttackChains(ctx, "T1566", 3)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	// Second record (node2) should have the RUNS_SERVICE relationship
+	assert.Len(t, mock.LastStoreBatchRecords[1].Relationships, 1)
+	assert.Equal(t, node2ID, mock.LastStoreBatchRecords[1].Relationships[0].FromID)
+	assert.Equal(t, node3ID, mock.LastStoreBatchRecords[1].Relationships[0].ToID)
 
-	t.Run("GetRelatedFindings with nil store", func(t *testing.T) {
-		_, err := bridge.GetRelatedFindings(ctx, types.NewID().String())
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
-
-	t.Run("StoreNode with nil store", func(t *testing.T) {
-		node := sdkgraphrag.GraphNode{Type: "Finding"}
-		_, err := bridge.StoreNode(ctx, node, types.NewID().String(), "agent")
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
-
-	t.Run("CreateRelationship with nil store", func(t *testing.T) {
-		rel := sdkgraphrag.Relationship{
-			FromID: types.NewID().String(),
-			ToID:   types.NewID().String(),
-			Type:   "RELATED_TO",
-		}
-		err := bridge.CreateRelationship(ctx, rel)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
-
-	t.Run("StoreBatch with nil store", func(t *testing.T) {
-		batch := sdkgraphrag.Batch{
-			Nodes: []sdkgraphrag.GraphNode{{Type: "Finding"}},
-		}
-		_, err := bridge.StoreBatch(ctx, batch, types.NewID().String(), "agent")
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
-
-	t.Run("Traverse with nil store", func(t *testing.T) {
-		opts := sdkgraphrag.TraversalOptions{MaxDepth: 2}
-		_, err := bridge.Traverse(ctx, types.NewID().String(), opts)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
-
-	t.Run("Health with nil store", func(t *testing.T) {
-		status := bridge.Health(ctx)
-		assert.True(t, status.IsUnhealthy())
-		assert.Contains(t, status.Message, "nil")
-	})
+	// Third record (node3) should have no relationships
+	assert.Len(t, mock.LastStoreBatchRecords[2].Relationships, 0)
 }
 
-// TestNoopGraphRAGQueryBridge tests the NoopGraphRAGQueryBridge
-func TestNoopGraphRAGQueryBridge(t *testing.T) {
-	bridge := &NoopGraphRAGQueryBridge{}
+// TestStoreBatch_InvalidFromID tests that a batch with invalid FromID is rejected.
+func TestStoreBatch_InvalidFromID(t *testing.T) {
+	node1ID := types.NewID()
+	node2ID := types.NewID()
+	invalidFromID := types.NewID() // Not in batch
+
+	batch := sdkgraphrag.Batch{
+		Nodes: []sdkgraphrag.GraphNode{
+			{
+				ID:         node1ID.String(),
+				Type:       "Host",
+				Properties: map[string]any{"name": "server1"},
+			},
+			{
+				ID:         node2ID.String(),
+				Type:       "Port",
+				Properties: map[string]any{"number": 443},
+			},
+		},
+		Relationships: []sdkgraphrag.Relationship{
+			{
+				FromID: invalidFromID.String(), // Invalid - not in batch
+				ToID:   node2ID.String(),
+				Type:   "HAS_PORT",
+			},
+		},
+	}
+
+	mock := &MockGraphRAGStore{
+		IsHealthy: true,
+	}
+
+	bridge := NewGraphRAGQueryBridge(mock)
 	ctx := context.Background()
+	missionID := types.NewID().String()
 
-	t.Run("Query returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		_, err := bridge.Query(ctx, createValidSDKQuery())
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	nodeIDs, err := bridge.StoreBatch(ctx, batch, missionID, "test-agent")
 
-	t.Run("FindSimilarAttacks returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		_, err := bridge.FindSimilarAttacks(ctx, "test", 5)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	// Should fail with validation error
+	require.Error(t, err)
+	assert.Nil(t, nodeIDs)
+	assert.Contains(t, err.Error(), "batch validation failed")
+	assert.Contains(t, err.Error(), "invalid relationships")
+	assert.Contains(t, err.Error(), invalidFromID.String())
+	assert.Contains(t, err.Error(), "from_id")
+	assert.Contains(t, err.Error(), "not found")
+	assert.False(t, mock.StoreBatchCalled, "StoreBatch should not be called when validation fails")
+}
 
-	t.Run("FindSimilarFindings returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		_, err := bridge.FindSimilarFindings(ctx, types.NewID().String(), 5)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+// TestStoreBatch_InvalidToID tests that a batch with invalid ToID is rejected.
+func TestStoreBatch_InvalidToID(t *testing.T) {
+	node1ID := types.NewID()
+	node2ID := types.NewID()
+	invalidToID := types.NewID() // Not in batch
 
-	t.Run("GetAttackChains returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		_, err := bridge.GetAttackChains(ctx, "T1566", 3)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	batch := sdkgraphrag.Batch{
+		Nodes: []sdkgraphrag.GraphNode{
+			{
+				ID:         node1ID.String(),
+				Type:       "Host",
+				Properties: map[string]any{"name": "server1"},
+			},
+			{
+				ID:         node2ID.String(),
+				Type:       "Port",
+				Properties: map[string]any{"number": 443},
+			},
+		},
+		Relationships: []sdkgraphrag.Relationship{
+			{
+				FromID: node1ID.String(),
+				ToID:   invalidToID.String(), // Invalid - not in batch
+				Type:   "HAS_PORT",
+			},
+		},
+	}
 
-	t.Run("GetRelatedFindings returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		_, err := bridge.GetRelatedFindings(ctx, types.NewID().String())
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	mock := &MockGraphRAGStore{
+		IsHealthy: true,
+	}
 
-	t.Run("StoreNode returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		node := sdkgraphrag.GraphNode{Type: "Finding"}
-		_, err := bridge.StoreNode(ctx, node, types.NewID().String(), "agent")
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	bridge := NewGraphRAGQueryBridge(mock)
+	ctx := context.Background()
+	missionID := types.NewID().String()
 
-	t.Run("CreateRelationship returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		rel := sdkgraphrag.Relationship{
-			FromID: types.NewID().String(),
-			ToID:   types.NewID().String(),
-			Type:   "RELATED_TO",
-		}
-		err := bridge.CreateRelationship(ctx, rel)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	nodeIDs, err := bridge.StoreBatch(ctx, batch, missionID, "test-agent")
 
-	t.Run("StoreBatch returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		batch := sdkgraphrag.Batch{
-			Nodes: []sdkgraphrag.GraphNode{{Type: "Finding"}},
-		}
-		_, err := bridge.StoreBatch(ctx, batch, types.NewID().String(), "agent")
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+	// Should fail with validation error
+	require.Error(t, err)
+	assert.Nil(t, nodeIDs)
+	assert.Contains(t, err.Error(), "batch validation failed")
+	assert.Contains(t, err.Error(), "invalid relationships")
+	assert.Contains(t, err.Error(), invalidToID.String())
+	assert.Contains(t, err.Error(), "to_id")
+	assert.Contains(t, err.Error(), "not found")
+	assert.False(t, mock.StoreBatchCalled, "StoreBatch should not be called when validation fails")
+}
 
-	t.Run("Traverse returns ErrGraphRAGNotEnabled", func(t *testing.T) {
-		opts := sdkgraphrag.TraversalOptions{MaxDepth: 2}
-		_, err := bridge.Traverse(ctx, types.NewID().String(), opts)
-		assert.Error(t, err)
-		assert.ErrorIs(t, err, sdkgraphrag.ErrGraphRAGNotEnabled)
-	})
+// TestStoreBatch_MultipleInvalid tests that all invalid relationships are reported.
+func TestStoreBatch_MultipleInvalid(t *testing.T) {
+	node1ID := types.NewID()
+	node2ID := types.NewID()
+	invalidFromID1 := types.NewID() // Not in batch
+	invalidFromID2 := types.NewID() // Not in batch
+	invalidToID1 := types.NewID()   // Not in batch
+	invalidToID2 := types.NewID()   // Not in batch
 
-	t.Run("Health returns healthy status", func(t *testing.T) {
-		status := bridge.Health(ctx)
-		assert.True(t, status.IsHealthy())
-		assert.Contains(t, status.Message, "disabled")
-		assert.Contains(t, status.Message, "noop")
-	})
+	batch := sdkgraphrag.Batch{
+		Nodes: []sdkgraphrag.GraphNode{
+			{
+				ID:         node1ID.String(),
+				Type:       "Host",
+				Properties: map[string]any{"name": "server1"},
+			},
+			{
+				ID:         node2ID.String(),
+				Type:       "Port",
+				Properties: map[string]any{"number": 443},
+			},
+		},
+		Relationships: []sdkgraphrag.Relationship{
+			{
+				FromID: invalidFromID1.String(), // Invalid from_id
+				ToID:   node2ID.String(),
+				Type:   "HAS_PORT",
+			},
+			{
+				FromID: node1ID.String(),
+				ToID:   invalidToID1.String(), // Invalid to_id
+				Type:   "CONNECTS_TO",
+			},
+			{
+				FromID: invalidFromID2.String(), // Invalid from_id
+				ToID:   invalidToID2.String(),   // Invalid to_id (both invalid)
+				Type:   "SIMILAR_TO",
+			},
+		},
+	}
+
+	mock := &MockGraphRAGStore{
+		IsHealthy: true,
+	}
+
+	bridge := NewGraphRAGQueryBridge(mock)
+	ctx := context.Background()
+	missionID := types.NewID().String()
+
+	nodeIDs, err := bridge.StoreBatch(ctx, batch, missionID, "test-agent")
+
+	// Should fail with validation error
+	require.Error(t, err)
+	assert.Nil(t, nodeIDs)
+	assert.Contains(t, err.Error(), "batch validation failed")
+	assert.Contains(t, err.Error(), "invalid relationships")
+	assert.False(t, mock.StoreBatchCalled, "StoreBatch should not be called when validation fails")
+
+	// All invalid relationships should be listed in the error
+	errorMsg := err.Error()
+
+	// Check for first relationship (invalid from_id)
+	assert.Contains(t, errorMsg, "rel[0]")
+	assert.Contains(t, errorMsg, "HAS_PORT")
+	assert.Contains(t, errorMsg, invalidFromID1.String())
+	assert.Contains(t, errorMsg, "from_id")
+
+	// Check for second relationship (invalid to_id)
+	assert.Contains(t, errorMsg, "rel[1]")
+	assert.Contains(t, errorMsg, "CONNECTS_TO")
+	assert.Contains(t, errorMsg, invalidToID1.String())
+	assert.Contains(t, errorMsg, "to_id")
+
+	// Check for third relationship (both from_id and to_id invalid)
+	assert.Contains(t, errorMsg, "rel[2]")
+	assert.Contains(t, errorMsg, "SIMILAR_TO")
+	assert.Contains(t, errorMsg, invalidFromID2.String())
+	assert.Contains(t, errorMsg, invalidToID2.String())
+
+	// Verify that error messages include relationship types
+	assert.Contains(t, errorMsg, "HAS_PORT")
+	assert.Contains(t, errorMsg, "CONNECTS_TO")
+	assert.Contains(t, errorMsg, "SIMILAR_TO")
 }

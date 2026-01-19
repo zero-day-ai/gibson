@@ -304,11 +304,11 @@ func TestCheckSpawnLimits_ConcurrentLimit(t *testing.T) {
 	parentID := newID("parent-1")
 
 	tests := []struct {
-		name           string
-		runningCount   int
-		maxConcurrent  int
-		expectError    bool
-		errorContains  string
+		name          string
+		runningCount  int
+		maxConcurrent int
+		expectError   bool
+		errorContains string
 	}{
 		{
 			name:          "under limit",
@@ -323,31 +323,31 @@ func TestCheckSpawnLimits_ConcurrentLimit(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			name:           "exactly at limit (parent + 49 others = 50)",
-			runningCount:   49,
-			maxConcurrent:  50,
-			expectError:    true,
-			errorContains:  "concurrent mission limit",
+			name:          "exactly at limit (parent + 49 others = 50)",
+			runningCount:  49,
+			maxConcurrent: 50,
+			expectError:   true,
+			errorContains: "concurrent mission limit",
 		},
 		{
-			name:           "over limit",
-			runningCount:   75,
-			maxConcurrent:  50,
-			expectError:    true,
-			errorContains:  "concurrent mission limit",
+			name:          "over limit",
+			runningCount:  75,
+			maxConcurrent: 50,
+			expectError:   true,
+			errorContains: "concurrent mission limit",
 		},
 		{
-			name:           "zero limit blocks even parent mission",
-			runningCount:   0,
-			maxConcurrent:  0,
-			expectError:    true,
-			errorContains:  "concurrent mission limit",
+			name:          "zero limit blocks even parent mission",
+			runningCount:  0,
+			maxConcurrent: 0,
+			expectError:   true,
+			errorContains: "concurrent mission limit",
 		},
 		{
-			name:           "single concurrent at limit (parent is running, counts as 1)",
-			runningCount:   0,
-			maxConcurrent:  2, // Allow parent + 1 more
-			expectError:    false,
+			name:          "single concurrent at limit (parent is running, counts as 1)",
+			runningCount:  0,
+			maxConcurrent: 2, // Allow parent + 1 more
+			expectError:   false,
 		},
 	}
 

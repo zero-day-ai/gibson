@@ -10,9 +10,13 @@
 //
 // Usage:
 //
-//	config := GraphRAGConfig{Enabled: true, Provider: "neo4j", ...}
+//	config := GraphRAGConfig{Provider: "neo4j", ...}
 //	embedder := embedder.NewOpenAIEmbedder(...)
-//	store, err := NewGraphRAGStore(config, embedder)
+//	prov, err := provider.NewProvider(config)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	store, err := NewGraphRAGStoreWithProvider(config, embedder, prov)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
@@ -94,6 +98,10 @@ type GraphRAGStore interface {
 	// Useful for correlation and deduplication analysis.
 	GetRelatedFindings(ctx context.Context, findingID string) ([]FindingNode, error)
 
+	// GetNode retrieves a single node by ID.
+	// Returns the node if found, or an error if not found or query fails.
+	GetNode(ctx context.Context, nodeID types.ID) (*GraphNode, error)
+
 	// Health returns the current health status of the GraphRAG store.
 	// Aggregates health from provider, embedder, and processor.
 	Health(ctx context.Context) types.HealthStatus
@@ -149,54 +157,24 @@ type DefaultGraphRAGStore struct {
 }
 
 // NewGraphRAGStore creates a new GraphRAGStore with the given configuration.
-// Initializes the provider, processor, and embedder based on the config.
+// DEPRECATED: GraphRAG is now a required core component. Use NewGraphRAGStoreWithProvider instead.
+//
+// This function exists for backwards compatibility but will always return an error
+// directing callers to use the provider injection pattern.
 //
 // Parameters:
 //   - config: GraphRAG configuration
 //   - emb: Embedder for generating embeddings
 //
-// Returns a GraphRAGStore ready for use, or an error if initialization fails.
+// Returns an error directing users to NewGraphRAGStoreWithProvider.
 func NewGraphRAGStore(config GraphRAGConfig, emb embedder.Embedder) (GraphRAGStore, error) {
-	// Apply defaults
-	config.ApplyDefaults()
-
-	// Validate embedder
-	if emb == nil {
-		return nil, NewConfigError("embedder cannot be nil", nil)
-	}
-
-	// Check if GraphRAG is enabled
-	// If enabled, we cannot create a provider here due to import cycles
-	// Return a descriptive error directing users to NewGraphRAGStoreWithProvider
-	if config.Enabled {
-		return nil, NewConfigError(
-			"GraphRAG is enabled but requires provider injection to avoid import cycles",
-			nil,
-		).WithContext("solution", "Use NewGraphRAGStoreWithProvider() and inject provider created via provider.NewProvider()").
-			WithContext("provider_type", config.Provider).
-			WithContext("neo4j_uri", config.Neo4j.URI)
-	}
-
-	// GraphRAG is disabled - validate config and create noop provider
-	if err := config.Validate(); err != nil {
-		return nil, NewConfigError("invalid GraphRAG configuration", err)
-	}
-
-	// Create noop provider for disabled GraphRAG
-	provider := &noopProvider{}
-
-	// Create query processor (nil logger defaults to slog.Default())
-	processor, err := NewQueryProcessorFromConfig(config, emb, nil)
-	if err != nil {
-		return nil, NewConfigError("failed to create query processor", err)
-	}
-
-	return &DefaultGraphRAGStore{
-		provider:  provider,
-		processor: processor,
-		embedder:  emb,
-		config:    config,
-	}, nil
+	// GraphRAG is a required core component - always require provider injection
+	return nil, NewConfigError(
+		"GraphRAG requires provider injection to avoid import cycles",
+		nil,
+	).WithContext("solution", "Use NewGraphRAGStoreWithProvider() and inject provider created via provider.NewProvider()").
+		WithContext("provider_type", config.Provider).
+		WithContext("neo4j_uri", config.Neo4j.URI)
 }
 
 // Store stores a single graph record (node + relationships).
@@ -562,6 +540,24 @@ func (s *DefaultGraphRAGStore) GetRelatedFindings(ctx context.Context, findingID
 	return findings, nil
 }
 
+// GetNode retrieves a single node by ID.
+// Returns the node if found, or an error if not found or query fails.
+func (s *DefaultGraphRAGStore) GetNode(ctx context.Context, nodeID types.ID) (*GraphNode, error) {
+	// Use the provider's QueryNodes method to fetch the node by ID
+	nodeQuery := NewNodeQuery().WithProperty("id", nodeID.String())
+
+	nodes, err := s.provider.QueryNodes(ctx, *nodeQuery)
+	if err != nil {
+		return nil, NewQueryError("failed to query node", err)
+	}
+
+	if len(nodes) == 0 {
+		return nil, NewNodeNotFoundError(nodeID.String())
+	}
+
+	return &nodes[0], nil
+}
+
 // Health returns the current health status of the GraphRAG store.
 // Aggregates health from provider and embedder.
 func (s *DefaultGraphRAGStore) Health(ctx context.Context) types.HealthStatus {
@@ -592,31 +588,6 @@ func (s *DefaultGraphRAGStore) Close() error {
 	}
 	return nil
 }
-
-// noopProvider is a minimal inline noop provider implementation.
-// Used when GraphRAG is disabled to avoid import cycles with provider package.
-// For enabled GraphRAG, use NewGraphRAGStoreWithProvider() with provider.NewProvider().
-type noopProvider struct{}
-
-func (n *noopProvider) Initialize(ctx context.Context) error                          { return nil }
-func (n *noopProvider) StoreNode(ctx context.Context, node GraphNode) error           { return nil }
-func (n *noopProvider) StoreRelationship(ctx context.Context, rel Relationship) error { return nil }
-func (n *noopProvider) QueryNodes(ctx context.Context, query NodeQuery) ([]GraphNode, error) {
-	return []GraphNode{}, nil
-}
-func (n *noopProvider) QueryRelationships(ctx context.Context, query RelQuery) ([]Relationship, error) {
-	return []Relationship{}, nil
-}
-func (n *noopProvider) TraverseGraph(ctx context.Context, startID string, maxHops int, filters TraversalFilters) ([]GraphNode, error) {
-	return []GraphNode{}, nil
-}
-func (n *noopProvider) VectorSearch(ctx context.Context, embedding []float64, topK int, filters map[string]any) ([]VectorResult, error) {
-	return []VectorResult{}, nil
-}
-func (n *noopProvider) Health(ctx context.Context) types.HealthStatus {
-	return types.Healthy("noop provider (GraphRAG disabled)")
-}
-func (n *noopProvider) Close() error { return nil }
 
 // NewGraphRAGStoreWithProvider creates a new GraphRAGStore with an injected provider.
 // This is the recommended constructor when GraphRAG is enabled, as it allows

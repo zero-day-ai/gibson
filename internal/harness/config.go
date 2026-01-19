@@ -118,6 +118,18 @@ type HarnessConfig struct {
 	// Optional: defaults to nil (no middleware).
 	Middleware middleware.Middleware
 
+	// LangfuseMiddlewareFactory creates Langfuse tracing middleware when provided.
+	// This factory is called by the harness factory when MissionTracer and AgentExecLog
+	// are both non-nil. The factory should create middleware using:
+	//   observability.LangfuseTracingMiddleware(tracer, log)
+	//
+	// This indirection avoids import cycles (harness cannot import observability).
+	// The caller (typically orchestrator/daemon) provides this factory.
+	//
+	// Signature: func(tracer any, log any) middleware.Middleware
+	// Optional: defaults to nil (no Langfuse middleware).
+	LangfuseMiddlewareFactory func(tracer any, log any) middleware.Middleware
+
 	// MemoryWrapper is an optional function that wraps MemoryManager instances.
 	// This enables composition patterns like adding observability (TracedMemoryManager)
 	// or other cross-cutting concerns to memory operations.
@@ -138,6 +150,20 @@ type HarnessConfig struct {
 	// If not set, DefaultSpawnLimits() will be used when MissionClient is configured.
 	// Optional: defaults will be applied if MissionClient is set.
 	SpawnLimits SpawnLimits
+
+	// MissionTracer provides Langfuse tracing for mission-level operations.
+	// When set, the harness will create child traces for agent executions
+	// that roll up to the mission trace. Used for LLM observability and debugging.
+	// Expected type: *observability.MissionTracer
+	// Optional: defaults to nil (no Langfuse tracing).
+	MissionTracer any
+
+	// AgentExecLog provides parent span context for agent-level Langfuse tracing.
+	// This links agent LLM calls and tool executions to the parent agent execution span.
+	// Must be paired with MissionTracer to enable nested tracing.
+	// Expected type: *observability.AgentExecutionLog
+	// Optional: defaults to nil (no parent span context).
+	AgentExecLog any
 }
 
 // Validate checks that required fields are set and returns an error if validation fails.

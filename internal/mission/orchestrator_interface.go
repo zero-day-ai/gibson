@@ -15,7 +15,6 @@ type TargetStore interface {
 }
 
 // MissionOrchestrator defines the interface for executing missions.
-// This interface is implemented by both the legacy orchestrator and the SOTA orchestrator.
 type MissionOrchestrator interface {
 	// Execute runs the mission workflow and manages all orchestration
 	Execute(ctx context.Context, mission *Mission) (*MissionResult, error)

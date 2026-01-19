@@ -139,8 +139,8 @@ func (p *DaemonToolProxy) OutputSchema() schema.JSON {
 
 // Tool execution error codes for DaemonToolProxy
 const (
-	ErrProxyInputSerialization  types.ErrorCode = "TOOL_PROXY_INPUT_SERIALIZATION"
-	ErrProxyExecutionFailed     types.ErrorCode = "TOOL_PROXY_EXECUTION_FAILED"
+	ErrProxyInputSerialization    types.ErrorCode = "TOOL_PROXY_INPUT_SERIALIZATION"
+	ErrProxyExecutionFailed       types.ErrorCode = "TOOL_PROXY_EXECUTION_FAILED"
 	ErrProxyOutputDeserialization types.ErrorCode = "TOOL_PROXY_OUTPUT_DESERIALIZATION"
 )
 
@@ -378,11 +378,11 @@ func NewDirectToolProxy(
 	}
 }
 
-func (p *DirectToolProxy) Name() string                   { return p.name }
-func (p *DirectToolProxy) Description() string            { return p.description }
-func (p *DirectToolProxy) Version() string                { return p.version }
-func (p *DirectToolProxy) Tags() []string                 { return p.tags }
-func (p *DirectToolProxy) InputSchema() schema.JSON { return p.inputSchema }
+func (p *DirectToolProxy) Name() string              { return p.name }
+func (p *DirectToolProxy) Description() string       { return p.description }
+func (p *DirectToolProxy) Version() string           { return p.version }
+func (p *DirectToolProxy) Tags() []string            { return p.tags }
+func (p *DirectToolProxy) InputSchema() schema.JSON  { return p.inputSchema }
 func (p *DirectToolProxy) OutputSchema() schema.JSON { return p.outputSchema }
 
 func (p *DirectToolProxy) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {

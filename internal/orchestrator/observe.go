@@ -147,23 +147,23 @@ type ResourceConstraints struct {
 
 // BudgetInfo tracks resource budgets (optional, for future use)
 type BudgetInfo struct {
-	MaxExecutions     int `json:"max_executions"`
+	MaxExecutions       int `json:"max_executions"`
 	RemainingExecutions int `json:"remaining_executions"`
-	MaxTokens         int `json:"max_tokens,omitempty"`
-	UsedTokens        int `json:"used_tokens,omitempty"`
+	MaxTokens           int `json:"max_tokens,omitempty"`
+	UsedTokens          int `json:"used_tokens,omitempty"`
 }
 
 // ExecutionFailure captures details about a failed execution
 type ExecutionFailure struct {
 	// Existing fields
-	NodeID      string    `json:"node_id"`
-	NodeName    string    `json:"node_name"`
-	AgentName   string    `json:"agent_name,omitempty"`
-	Attempt     int       `json:"attempt"`
-	Error       string    `json:"error"`
-	FailedAt    time.Time `json:"failed_at"`
-	CanRetry    bool      `json:"can_retry"`
-	MaxRetries  int       `json:"max_retries"`
+	NodeID     string    `json:"node_id"`
+	NodeName   string    `json:"node_name"`
+	AgentName  string    `json:"agent_name,omitempty"`
+	Attempt    int       `json:"attempt"`
+	Error      string    `json:"error"`
+	FailedAt   time.Time `json:"failed_at"`
+	CanRetry   bool      `json:"can_retry"`
+	MaxRetries int       `json:"max_retries"`
 
 	// NEW: Structured error classification for semantic error recovery
 	// ErrorClass categorizes the error (infrastructure/semantic/transient/permanent)
@@ -315,7 +315,7 @@ func (o *Observer) observeNodes(ctx context.Context, missionID types.ID, state *
 
 		// Add attempt count for failed/running nodes
 		if node.Status == schema.WorkflowNodeStatusFailed ||
-		   node.Status == schema.WorkflowNodeStatusRunning {
+			node.Status == schema.WorkflowNodeStatusRunning {
 			executions, err := o.missionQueries.GetNodeExecutions(ctx, node.ID)
 			if err == nil && len(executions) > 0 {
 				summary.Attempt = executions[len(executions)-1].Attempt

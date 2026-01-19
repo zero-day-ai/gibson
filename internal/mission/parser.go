@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,13 +46,13 @@ func (e *ParseError) Unwrap() error {
 
 // yamlMissionData represents the mission YAML structure with all sections
 type yamlMissionData struct {
-	Name         string                   `yaml:"name"`
-	Description  string                   `yaml:"description"`
-	Version      string                   `yaml:"version"`
-	Target       *yamlTargetSpec          `yaml:"target,omitempty"`
-	Nodes        yaml.Node                `yaml:"nodes"` // Can be array or map
-	Dependencies *MissionDependencies     `yaml:"dependencies,omitempty"`
-	Metadata     map[string]any           `yaml:"metadata,omitempty"`
+	Name         string               `yaml:"name"`
+	Description  string               `yaml:"description"`
+	Version      string               `yaml:"version"`
+	Target       *yamlTargetSpec      `yaml:"target,omitempty"`
+	Nodes        yaml.Node            `yaml:"nodes"` // Can be array or map
+	Dependencies *MissionDependencies `yaml:"dependencies,omitempty"`
+	Metadata     map[string]any       `yaml:"metadata,omitempty"`
 }
 
 // yamlTargetSpec represents target configuration
@@ -82,23 +83,23 @@ func (t *yamlTargetSpec) UnmarshalYAML(unmarshal func(interface{}) error) error 
 
 // yamlNodeData represents a single node definition with all possible fields
 type yamlNodeData struct {
-	ID           string                 `yaml:"id"`
-	Type         string                 `yaml:"type"`
-	Name         string                 `yaml:"name"`
-	Description  string                 `yaml:"description"`
-	DependsOn    []string               `yaml:"depends_on,omitempty"`
-	Timeout      string                 `yaml:"timeout,omitempty"`
-	Retry        *yamlRetryData         `yaml:"retry,omitempty"`
-	Agent        string                 `yaml:"agent,omitempty"`
-	Task         map[string]interface{} `yaml:"task,omitempty"`
-	Tool         string                 `yaml:"tool,omitempty"`
-	Input        map[string]interface{} `yaml:"input,omitempty"`
-	Plugin       string                 `yaml:"plugin,omitempty"`
-	Method       string                 `yaml:"method,omitempty"`
-	Params       map[string]interface{} `yaml:"params,omitempty"`
-	Condition    *yamlConditionData     `yaml:"condition,omitempty"`
-	SubNodes     []yamlNodeData         `yaml:"sub_nodes,omitempty"`
-	Metadata     map[string]interface{} `yaml:"metadata,omitempty"`
+	ID          string                 `yaml:"id"`
+	Type        string                 `yaml:"type"`
+	Name        string                 `yaml:"name"`
+	Description string                 `yaml:"description"`
+	DependsOn   []string               `yaml:"depends_on,omitempty"`
+	Timeout     string                 `yaml:"timeout,omitempty"`
+	Retry       *yamlRetryData         `yaml:"retry,omitempty"`
+	Agent       string                 `yaml:"agent,omitempty"`
+	Task        map[string]interface{} `yaml:"task,omitempty"`
+	Tool        string                 `yaml:"tool,omitempty"`
+	Input       map[string]interface{} `yaml:"input,omitempty"`
+	Plugin      string                 `yaml:"plugin,omitempty"`
+	Method      string                 `yaml:"method,omitempty"`
+	Params      map[string]interface{} `yaml:"params,omitempty"`
+	Condition   *yamlConditionData     `yaml:"condition,omitempty"`
+	SubNodes    []yamlNodeData         `yaml:"sub_nodes,omitempty"`
+	Metadata    map[string]interface{} `yaml:"metadata,omitempty"`
 }
 
 // yamlRetryData represents retry policy configuration
@@ -381,17 +382,23 @@ func parseNode(nodeData *yamlNodeData, line int) (*MissionNode, error) {
 		Metadata:     nodeData.Metadata,
 	}
 
-	// Parse timeout
+	// Parse timeout - supports both string durations ("10m") and numeric nanoseconds (600000000000)
 	if nodeData.Timeout != "" {
 		timeout, err := time.ParseDuration(nodeData.Timeout)
 		if err != nil {
-			return nil, &ParseError{
-				Message: fmt.Sprintf("invalid timeout format '%s': must be a valid Go duration (e.g., '30s', '5m')", nodeData.Timeout),
-				Line:    line,
-				Err:     err,
+			// Try parsing as nanoseconds (for JSON-serialized time.Duration)
+			if ns, numErr := strconv.ParseInt(nodeData.Timeout, 10, 64); numErr == nil {
+				node.Timeout = time.Duration(ns)
+			} else {
+				return nil, &ParseError{
+					Message: fmt.Sprintf("invalid timeout format '%s': must be a valid Go duration (e.g., '30s', '5m')", nodeData.Timeout),
+					Line:    line,
+					Err:     err,
+				}
 			}
+		} else {
+			node.Timeout = timeout
 		}
-		node.Timeout = timeout
 	}
 
 	// Parse retry policy

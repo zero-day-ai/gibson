@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -2468,7 +2469,10 @@ func (s *HarnessCallbackService) GetTaxonomySchema(ctx context.Context, req *pb.
 			Type:        nt.Type,
 			Category:    nt.Category,
 			Description: nt.Description,
-			IdTemplate:  nt.IDTemplate,
+		}
+		// Convert IDTemplate to IdentifyingProperties by extracting property names from template
+		if nt.IDTemplate != "" {
+			protoNT.IdentifyingProperties = extractPropertiesFromTemplate(nt.IDTemplate)
 		}
 		for _, p := range nt.Properties {
 			protoNT.Properties = append(protoNT.Properties, s.convertPropertyToProto(p))
@@ -2889,4 +2893,35 @@ func (s *HarnessCallbackService) ValidateRelationship(ctx context.Context, req *
 	s.logger.Debug("ValidateRelationship completed", "valid", resp.Valid, "errors", len(resp.Errors))
 
 	return resp, nil
+}
+
+// extractPropertiesFromTemplate extracts property names from an ID template string.
+// Templates use {property} syntax, e.g., "host:{ip}:{port}" -> ["ip", "port"]
+// This is used to convert legacy IDTemplate to the new IdentifyingProperties format.
+func extractPropertiesFromTemplate(template string) []string {
+	var properties []string
+	inBrace := false
+	var currentProp strings.Builder
+
+	for _, ch := range template {
+		switch ch {
+		case '{':
+			inBrace = true
+			currentProp.Reset()
+		case '}':
+			if inBrace {
+				prop := currentProp.String()
+				if prop != "" {
+					properties = append(properties, prop)
+				}
+			}
+			inBrace = false
+		default:
+			if inBrace {
+				currentProp.WriteRune(ch)
+			}
+		}
+	}
+
+	return properties
 }

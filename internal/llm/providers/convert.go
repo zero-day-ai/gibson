@@ -6,8 +6,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/zero-day-ai/gibson/internal/llm"
-	"github.com/zero-day-ai/sdk/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/schema"
 )
 
 // toSchemaMessages converts Gibson messages to langchaingo MessageContent

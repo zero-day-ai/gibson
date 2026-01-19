@@ -160,6 +160,7 @@ type EmbedderConfig struct {
 func (c *EmbedderConfig) Validate() error {
 	// Validate provider type
 	validProviders := map[string]bool{
+		"native": true, // Native ONNX embedder (all-MiniLM-L6-v2, runs offline)
 		"openai": true, // OpenAI embeddings (text-embedding-3-small, text-embedding-3-large)
 		"llm":    true, // Generic LLM provider embeddings
 		"mock":   true, // Mock embedder for testing
@@ -167,11 +168,11 @@ func (c *EmbedderConfig) Validate() error {
 
 	if c.Provider != "" && !validProviders[c.Provider] {
 		return types.NewError(types.CONFIG_VALIDATION_FAILED,
-			fmt.Sprintf("invalid embedder provider '%s', must be one of: openai, llm, mock", c.Provider))
+			fmt.Sprintf("invalid embedder provider '%s', must be one of: native, openai, llm, mock", c.Provider))
 	}
 
-	// Model is required for non-mock providers
-	if c.Provider != "" && c.Provider != "mock" {
+	// Model is required for non-native and non-mock providers
+	if c.Provider != "" && c.Provider != "mock" && c.Provider != "native" {
 		if c.Model == "" {
 			return types.NewError(types.CONFIG_VALIDATION_FAILED,
 				fmt.Sprintf("embedder model is required for provider '%s'", c.Provider))
@@ -187,7 +188,7 @@ func (c *EmbedderConfig) Validate() error {
 // ApplyDefaults applies default values to unset fields.
 func (c *EmbedderConfig) ApplyDefaults() {
 	if c.Provider == "" {
-		c.Provider = "openai" // Default: OpenAI embeddings
+		c.Provider = "native" // Default: native ONNX embedder (runs offline, no API key needed)
 	}
 	if c.Model == "" && c.Provider == "openai" {
 		c.Model = "text-embedding-3-small" // Default: smaller, cheaper model

@@ -98,6 +98,9 @@ type DaemonInterface interface {
 	// InstallComponent installs a component from a git repository
 	InstallComponent(ctx context.Context, kind string, url string, branch string, tag string, force bool, skipBuild bool, verbose bool) (InstallComponentResult, error)
 
+	// InstallAllComponent installs all components from a mono-repo
+	InstallAllComponent(ctx context.Context, kind string, url string, branch string, tag string, force bool, skipBuild bool, verbose bool) (InstallAllComponentResult, error)
+
 	// UninstallComponent uninstalls a component by kind and name
 	UninstallComponent(ctx context.Context, kind string, name string, force bool) error
 
@@ -190,6 +193,7 @@ type PluginInfoInternal struct {
 // MissionData represents mission information.
 type MissionData struct {
 	ID           string
+	Name         string
 	WorkflowPath string
 	Status       string
 	StartTime    time.Time
@@ -297,6 +301,20 @@ type InstallComponentResult struct {
 	BinPath     string
 	BuildOutput string
 	DurationMs  int64
+}
+
+// InstallAllComponentResult represents the result of installing multiple components.
+type InstallAllComponentResult struct {
+	Success         bool
+	ComponentsFound int
+	SuccessfulCount int
+	SkippedCount    int
+	FailedCount     int
+	Successful      []InstallAllResultItem
+	Skipped         []InstallAllResultItem
+	Failed          []InstallAllFailedItem
+	DurationMs      int64
+	Message         string
 }
 
 // UpdateComponentResult represents the result of updating a component.
@@ -593,6 +611,7 @@ func (s *DaemonServer) ListMissions(ctx context.Context, req *ListMissionsReques
 	for i, m := range missions {
 		protoMissions[i] = &MissionInfo{
 			Id:           m.ID,
+			Name:         m.Name,
 			WorkflowPath: m.WorkflowPath,
 			Status:       m.Status,
 			StartTime:    m.StartTime.Unix(),
@@ -1411,6 +1430,95 @@ func (s *DaemonServer) InstallComponent(ctx context.Context, req *InstallCompone
 		BuildOutput: result.BuildOutput,
 		DurationMs:  result.DurationMs,
 		Message:     fmt.Sprintf("Component '%s' installed successfully", result.Name),
+	}, nil
+}
+
+// InstallAllComponent installs all components from a mono-repo.
+func (s *DaemonServer) InstallAllComponent(ctx context.Context, req *InstallAllComponentRequest) (*InstallAllComponentResponse, error) {
+	s.logger.Info("install all components request received",
+		"kind", req.Kind,
+		"url", req.Url,
+		"branch", req.Branch,
+		"tag", req.Tag,
+		"force", req.Force,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Url == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component URL is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.InstallAllComponent(ctx, req.Kind, req.Url, req.Branch, req.Tag, req.Force, req.SkipBuild, req.Verbose)
+	if err != nil {
+		s.logger.Error("failed to install all components", "error", err, "kind", req.Kind, "url", req.Url)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "clone failed") {
+			return nil, status_grpc.Errorf(codes.NotFound, "%v", err)
+		}
+		if strings.Contains(err.Error(), "no components found") {
+			return nil, status_grpc.Errorf(codes.NotFound, "%v", err)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to install components: %v", err)
+	}
+
+	s.logger.Info("components installed",
+		"kind", req.Kind,
+		"found", result.ComponentsFound,
+		"successful", result.SuccessfulCount,
+		"skipped", result.SkippedCount,
+		"failed", result.FailedCount,
+	)
+
+	// Convert result to proto response
+	protoSuccessful := make([]*InstallAllResultItem, len(result.Successful))
+	for i, item := range result.Successful {
+		protoSuccessful[i] = &InstallAllResultItem{
+			Name:    item.Name,
+			Version: item.Version,
+			Path:    item.Path,
+		}
+	}
+
+	protoSkipped := make([]*InstallAllResultItem, len(result.Skipped))
+	for i, item := range result.Skipped {
+		protoSkipped[i] = &InstallAllResultItem{
+			Name:    item.Name,
+			Version: item.Version,
+			Path:    item.Path,
+		}
+	}
+
+	protoFailed := make([]*InstallAllFailedItem, len(result.Failed))
+	for i, item := range result.Failed {
+		protoFailed[i] = &InstallAllFailedItem{
+			Name:  item.Name,
+			Path:  item.Path,
+			Error: item.Error,
+		}
+	}
+
+	return &InstallAllComponentResponse{
+		Success:         result.Success,
+		ComponentsFound: int32(result.ComponentsFound),
+		SuccessfulCount: int32(result.SuccessfulCount),
+		SkippedCount:    int32(result.SkippedCount),
+		FailedCount:     int32(result.FailedCount),
+		Successful:      protoSuccessful,
+		Skipped:         protoSkipped,
+		Failed:          protoFailed,
+		DurationMs:      result.DurationMs,
+		Message:         result.Message,
 	}, nil
 }
 

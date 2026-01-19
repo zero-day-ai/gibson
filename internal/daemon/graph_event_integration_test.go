@@ -22,7 +22,8 @@ import (
 // TestGraphEventIntegrationFlow tests the full event flow from EventBus → GraphEventSubscriber → TaxonomyGraphEngine → Neo4j.
 //
 // This integration test requires Neo4j to be running. Start it with:
-//   docker-compose -f build/docker-compose.yml up -d neo4j
+//
+//	docker-compose -f build/docker-compose.yml up -d neo4j
 //
 // Run with: go test -tags=integration -v ./internal/daemon -run TestGraphEventIntegrationFlow
 func TestGraphEventIntegrationFlow(t *testing.T) {

@@ -93,6 +93,10 @@ service DaemonService {
   // Clones the repository, builds the component, and registers it in the registry.
   rpc InstallComponent(InstallComponentRequest) returns (InstallComponentResponse);
 
+  // InstallAllComponent installs all components from a mono-repo.
+  // Clones the repository once, discovers all component.yaml files, and installs each component.
+  rpc InstallAllComponent(InstallAllComponentRequest) returns (InstallAllComponentResponse);
+
   // UninstallComponent removes a component (agent, tool, or plugin) from the system.
   // Stops the component if running and removes it from the registry.
   rpc UninstallComponent(UninstallComponentRequest) returns (UninstallComponentResponse);
@@ -290,7 +294,7 @@ message MissionInfo {
   // id is the unique mission identifier
   string id = 1;
 
-  // workflow_path is the path to the workflow file
+  // workflow_path is the path to the workflow file (legacy, may be "<inline>")
   string workflow_path = 2;
 
   // status is the mission status (running, completed, failed)
@@ -304,6 +308,9 @@ message MissionInfo {
 
   // finding_count is the number of findings discovered
   int32 finding_count = 6;
+
+  // name is the human-readable mission name
+  string name = 7;
 }
 
 // ListAgentsRequest queries agent registry.
@@ -956,14 +963,14 @@ message JSONSchemaNode {
 }
 
 // TaxonomyMapping defines how tool output maps to graph nodes and relationships.
-// It specifies the node type, ID generation, property mappings, and relationships
-// to create when processing data according to a taxonomy.
+// It specifies the node type, identifying properties for deterministic ID generation,
+// property mappings, and relationships to create when processing data.
 message TaxonomyMapping {
   // node_type is the type of node to create in the graph (e.g., "host", "port", "vulnerability")
   string node_type = 1;
 
-  // id_template is a template string for generating node IDs (e.g., "host:{.ip}")
-  string id_template = 2;
+  // identifying_properties maps property names to JSONPath expressions for deterministic ID generation
+  map<string, string> identifying_properties = 2;
 
   // properties maps source data fields to node properties
   repeated PropertyMapping properties = 3;
@@ -988,23 +995,33 @@ message PropertyMapping {
   string transform = 4;
 }
 
+// NodeReference identifies a node by type and property mappings.
+// Use type="self" to reference the current node being mapped.
+message NodeReference {
+  // type is the node type (e.g., "host", "port") or "self" for current node
+  string type = 1;
+
+  // properties maps identifying property names to JSONPath expressions
+  map<string, string> properties = 2;
+}
+
 // RelationshipMapping defines a relationship to create between nodes.
 // It supports conditional relationships and property mappings on the edge itself.
 message RelationshipMapping {
   // type is the relationship type (e.g., "HAS_PORT", "AFFECTS", "RUNS_ON")
   string type = 1;
 
-  // from_template is a template for the source node ID (e.g., "host:{.ip}")
-  string from_template = 2;
+  // from identifies the source node of the relationship (use type="self" for current node)
+  NodeReference from = 2;
 
-  // to_template is a template for the target node ID (e.g., "port:{.port}")
-  string to_template = 3;
+  // to identifies the target node of the relationship
+  NodeReference to = 3;
 
-  // condition is an optional condition for creating this relationship (e.g., "{{.severity}} == 'critical'")
+  // condition is an optional condition for creating this relationship
   string condition = 4;
 
-  // properties are property mappings for the relationship edge
-  repeated PropertyMapping properties = 5;
+  // rel_properties are property mappings for the relationship edge
+  repeated PropertyMapping rel_properties = 5;
 }
 
 // InstallComponentRequest requests installing a component from a Git repository.
@@ -1056,6 +1073,87 @@ message InstallComponentResponse {
 
   // message provides additional context or error information
   string message = 8;
+}
+
+// InstallAllComponentRequest requests installing all components from a mono-repo.
+message InstallAllComponentRequest {
+  // kind is the component kind ("agent", "tool", "plugin")
+  string kind = 1;
+
+  // url is the Git repository URL to clone
+  string url = 2;
+
+  // branch is the Git branch to checkout (optional)
+  string branch = 3;
+
+  // tag is the Git tag to checkout (optional)
+  string tag = 4;
+
+  // force indicates whether to reinstall if already exists
+  bool force = 5;
+
+  // skip_build skips the build step after cloning
+  bool skip_build = 6;
+
+  // verbose enables detailed build output streaming
+  bool verbose = 7;
+}
+
+// InstallAllComponentResponse returns the result of installing multiple components.
+message InstallAllComponentResponse {
+  // success indicates if the operation completed (even with partial failures)
+  bool success = 1;
+
+  // components_found is the total number of components discovered
+  int32 components_found = 2;
+
+  // successful_count is the number of successfully installed components
+  int32 successful_count = 3;
+
+  // skipped_count is the number of components skipped (already installed)
+  int32 skipped_count = 4;
+
+  // failed_count is the number of components that failed to install
+  int32 failed_count = 5;
+
+  // successful contains details of successfully installed components
+  repeated InstallAllResultItem successful = 6;
+
+  // skipped contains details of skipped components
+  repeated InstallAllResultItem skipped = 7;
+
+  // failed contains details of failed components
+  repeated InstallAllFailedItem failed = 8;
+
+  // duration_ms is the total installation time in milliseconds
+  int64 duration_ms = 9;
+
+  // message provides additional context or error information
+  string message = 10;
+}
+
+// InstallAllResultItem represents a successful or skipped component installation.
+message InstallAllResultItem {
+  // name is the component name
+  string name = 1;
+
+  // version is the component version
+  string version = 2;
+
+  // path is the local repository path
+  string path = 3;
+}
+
+// InstallAllFailedItem represents a failed component installation.
+message InstallAllFailedItem {
+  // name is the component name (if available)
+  string name = 1;
+
+  // path is the local path where the failure occurred
+  string path = 2;
+
+  // error is the error message
+  string error = 3;
 }
 
 // UninstallComponentRequest requests removing a component.

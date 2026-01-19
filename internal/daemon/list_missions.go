@@ -150,6 +150,7 @@ func convertMissionToData(m *mission.Mission) api.MissionData {
 
 	return api.MissionData{
 		ID:           m.ID.String(),
+		Name:         m.Name,
 		WorkflowPath: workflowPath,
 		Status:       string(m.Status),
 		StartTime:    startTime,
@@ -184,11 +185,8 @@ func (d *daemonImpl) filterMissions(missions []*mission.Mission, statusFilter, n
 		}
 
 		// Apply name pattern filter (simple contains match for now)
-		// In future, could add glob pattern matching
 		if namePattern != "" {
-			// Use WorkflowID as name for now (could be enhanced to use mission name field)
-			missionName := m.WorkflowID.String()
-			if !contains(missionName, namePattern) {
+			if !contains(m.Name, namePattern) {
 				continue
 			}
 		}

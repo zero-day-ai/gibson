@@ -908,17 +908,15 @@ func (h *DefaultAgentHarness) SubmitFinding(ctx context.Context, finding agent.F
 
 	// Async store to GraphRAG knowledge graph (non-blocking)
 	// This happens after local store succeeds to ensure findings are never lost
-	if h.graphRAGBridge != nil {
-		// Get target ID from mission context if available
-		var targetID *types.ID
-		if h.targetInfo.ID != "" {
-			id, err := types.ParseID(string(h.targetInfo.ID))
-			if err == nil {
-				targetID = &id
-			}
+	// GraphRAG is a required core component - always store
+	var targetID *types.ID
+	if h.targetInfo.ID != "" {
+		id, err := types.ParseID(string(h.targetInfo.ID))
+		if err == nil {
+			targetID = &id
 		}
-		h.graphRAGBridge.StoreAsync(ctx, finding, h.missionCtx.ID, targetID)
 	}
+	h.graphRAGBridge.StoreAsync(ctx, finding, h.missionCtx.ID, targetID)
 
 	return nil
 }
@@ -1046,12 +1044,6 @@ func (h *DefaultAgentHarness) QueryGraphRAG(ctx context.Context, query sdkgraphr
 	ctx, span := h.tracer.Start(ctx, "harness.QueryGraphRAG")
 	defer span.End()
 
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	h.logger.Debug("querying graphrag",
 		"query_text", query.Text,
 		"top_k", query.TopK,
@@ -1078,12 +1070,6 @@ func (h *DefaultAgentHarness) FindSimilarAttacks(ctx context.Context, content st
 	ctx, span := h.tracer.Start(ctx, "harness.FindSimilarAttacks")
 	defer span.End()
 
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	h.logger.Debug("finding similar attacks",
 		"content_length", len(content),
 		"top_k", topK)
@@ -1107,12 +1093,6 @@ func (h *DefaultAgentHarness) FindSimilarFindings(ctx context.Context, findingID
 	// Create span for distributed tracing
 	ctx, span := h.tracer.Start(ctx, "harness.FindSimilarFindings")
 	defer span.End()
-
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
 
 	h.logger.Debug("finding similar findings",
 		"finding_id", findingID,
@@ -1139,12 +1119,6 @@ func (h *DefaultAgentHarness) GetAttackChains(ctx context.Context, techniqueID s
 	ctx, span := h.tracer.Start(ctx, "harness.GetAttackChains")
 	defer span.End()
 
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	h.logger.Debug("getting attack chains",
 		"technique_id", techniqueID,
 		"max_depth", maxDepth)
@@ -1169,12 +1143,6 @@ func (h *DefaultAgentHarness) GetRelatedFindings(ctx context.Context, findingID 
 	// Create span for distributed tracing
 	ctx, span := h.tracer.Start(ctx, "harness.GetRelatedFindings")
 	defer span.End()
-
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
 
 	h.logger.Debug("getting related findings",
 		"finding_id", findingID)
@@ -1204,12 +1172,6 @@ func (h *DefaultAgentHarness) StoreGraphNode(ctx context.Context, node sdkgraphr
 	ctx, span := h.tracer.Start(ctx, "harness.StoreGraphNode")
 	defer span.End()
 
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return "", sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	h.logger.Debug("storing graph node",
 		"node_type", node.Type)
 
@@ -1233,12 +1195,6 @@ func (h *DefaultAgentHarness) CreateGraphRelationship(ctx context.Context, rel s
 	// Create span for distributed tracing
 	ctx, span := h.tracer.Start(ctx, "harness.CreateGraphRelationship")
 	defer span.End()
-
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return sdkgraphrag.ErrGraphRAGNotEnabled
-	}
 
 	h.logger.Debug("creating graph relationship",
 		"relationship_type", rel.Type,
@@ -1265,12 +1221,6 @@ func (h *DefaultAgentHarness) StoreGraphBatch(ctx context.Context, batch sdkgrap
 	ctx, span := h.tracer.Start(ctx, "harness.StoreGraphBatch")
 	defer span.End()
 
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	h.logger.Debug("storing graph batch",
 		"nodes_count", len(batch.Nodes),
 		"relationships_count", len(batch.Relationships))
@@ -1294,12 +1244,6 @@ func (h *DefaultAgentHarness) TraverseGraph(ctx context.Context, startNodeID str
 	// Create span for distributed tracing
 	ctx, span := h.tracer.Start(ctx, "harness.TraverseGraph")
 	defer span.End()
-
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
 
 	h.logger.Debug("traversing graph",
 		"start_node_id", startNodeID,
@@ -1327,13 +1271,7 @@ func (h *DefaultAgentHarness) GraphRAGHealth(ctx context.Context) types.HealthSt
 	ctx, span := h.tracer.Start(ctx, "harness.GraphRAGHealth")
 	defer span.End()
 
-	// Check if GraphRAG is enabled
-	if h.graphRAGQueryBridge == nil {
-		h.logger.Debug("graphrag query bridge not enabled")
-		return types.Healthy("graphrag disabled")
-	}
-
-	// Delegate to query bridge
+	// Delegate to query bridge (GraphRAG is always required)
 	status := h.graphRAGQueryBridge.Health(ctx)
 
 	h.logger.Debug("graphrag health check completed",

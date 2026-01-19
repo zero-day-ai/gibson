@@ -209,7 +209,7 @@ llm:
       api_key: ${OPENAI_API_KEY}
 
 graphrag:
-  enabled: true
+  provider: neo4j  # Required: neo4j, neptune, or memgraph
   neo4j:
     uri: bolt://localhost:7687
     username: neo4j

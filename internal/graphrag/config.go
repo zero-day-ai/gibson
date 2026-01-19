@@ -6,11 +6,11 @@ import (
 )
 
 // GraphRAGConfig contains the top-level configuration for GraphRAG integration.
+// GraphRAG is a required core component of Gibson - there is no disabled state.
 // Supports multiple graph providers (Neo4j, AWS Neptune, etc.) with vector search
 // and embeddings for hybrid retrieval combining graph traversal and semantic search.
 type GraphRAGConfig struct {
-	Enabled  bool           `yaml:"enabled" json:"enabled" mapstructure:"enabled"`
-	Provider string         `yaml:"provider" json:"provider" mapstructure:"provider"` // neo4j, neptune, memgraph
+	Provider string         `yaml:"provider" json:"provider" mapstructure:"provider"` // neo4j, neptune, memgraph (required)
 	Neo4j    Neo4jConfig    `yaml:"neo4j" json:"neo4j" mapstructure:"neo4j"`
 	Vector   VectorConfig   `yaml:"vector" json:"vector" mapstructure:"vector"`
 	Embedder EmbedderConfig `yaml:"embedder" json:"embedder" mapstructure:"embedder"`
@@ -29,9 +29,9 @@ type Neo4jConfig struct {
 }
 
 // VectorConfig contains vector search configuration.
-// Used for hybrid retrieval combining graph structure and semantic similarity.
+// Vector search is always enabled as part of GraphRAG's hybrid retrieval.
+// Used for combining graph structure and semantic similarity.
 type VectorConfig struct {
-	Enabled    bool   `yaml:"enabled" json:"enabled" mapstructure:"enabled"`
 	IndexType  string `yaml:"index_type" json:"index_type" mapstructure:"index_type"` // hnsw, ivfflat
 	Dimensions int    `yaml:"dimensions" json:"dimensions" mapstructure:"dimensions"` // Embedding dimensions
 	Metric     string `yaml:"metric" json:"metric" mapstructure:"metric"`             // cosine, euclidean, dot
@@ -74,11 +74,13 @@ type QueryConfig struct {
 }
 
 // Validate validates the GraphRAGConfig fields.
+// GraphRAG is a required core component - validation always runs.
 // Returns an error if Provider is invalid, required fields are missing,
 // or configuration values are out of valid ranges.
 func (c *GraphRAGConfig) Validate() error {
-	if !c.Enabled {
-		return nil
+	// Provider is required (GraphRAG is a core component)
+	if c.Provider == "" {
+		return fmt.Errorf("graphrag provider is required (must be one of: neo4j, neptune, memgraph)")
 	}
 
 	// Validate provider
@@ -107,19 +109,17 @@ func (c *GraphRAGConfig) Validate() error {
 		}
 	}
 
-	// Validate vector config if enabled
-	if c.Vector.Enabled {
-		if err := c.Vector.Validate(); err != nil {
-			return fmt.Errorf("vector config validation failed: %w", err)
-		}
-		if err := c.Embedder.Validate(); err != nil {
-			return fmt.Errorf("embedder config validation failed: %w", err)
-		}
-		// Ensure dimensions match
-		if c.Vector.Dimensions != c.Embedder.Dimensions {
-			return fmt.Errorf("vector dimensions (%d) must match embedder dimensions (%d)",
-				c.Vector.Dimensions, c.Embedder.Dimensions)
-		}
+	// Validate vector config (always enabled as part of GraphRAG)
+	if err := c.Vector.Validate(); err != nil {
+		return fmt.Errorf("vector config validation failed: %w", err)
+	}
+	if err := c.Embedder.Validate(); err != nil {
+		return fmt.Errorf("embedder config validation failed: %w", err)
+	}
+	// Ensure dimensions match
+	if c.Vector.Dimensions != c.Embedder.Dimensions {
+		return fmt.Errorf("vector dimensions (%d) must match embedder dimensions (%d)",
+			c.Vector.Dimensions, c.Embedder.Dimensions)
 	}
 
 	// Validate query config
@@ -172,12 +172,9 @@ func (n *Neo4jConfig) ApplyDefaults() {
 }
 
 // Validate validates the VectorConfig fields.
+// Vector search is always enabled as part of GraphRAG.
 // Returns an error if index type is invalid or dimensions are out of range.
 func (v *VectorConfig) Validate() error {
-	if !v.Enabled {
-		return nil
-	}
-
 	// Validate index type
 	validIndexTypes := []string{"hnsw", "ivfflat"}
 	indexType := strings.ToLower(v.IndexType)
@@ -220,7 +217,7 @@ func (v *VectorConfig) ApplyDefaults() {
 		v.IndexType = "hnsw"
 	}
 	if v.Dimensions == 0 {
-		v.Dimensions = 1536 // OpenAI ada-002 default
+		v.Dimensions = 384 // Native embedder (all-MiniLM-L6-v2) default
 	}
 	if v.Metric == "" {
 		v.Metric = "cosine"
@@ -231,7 +228,7 @@ func (v *VectorConfig) ApplyDefaults() {
 // Returns an error if provider is invalid or required fields are missing.
 func (e *EmbedderConfig) Validate() error {
 	// Validate provider
-	validProviders := []string{"openai", "huggingface", "local"}
+	validProviders := []string{"native", "openai", "huggingface", "local"}
 	provider := strings.ToLower(e.Provider)
 	isValid := false
 	for _, valid := range validProviders {
@@ -244,7 +241,16 @@ func (e *EmbedderConfig) Validate() error {
 		return fmt.Errorf("invalid embedder provider: %s (must be one of: %s)", e.Provider, strings.Join(validProviders, ", "))
 	}
 
-	// Validate model
+	// Native embedder doesn't require model or API key - it's embedded
+	if provider == "native" {
+		// Native embedder (all-MiniLM-L6-v2) has fixed 384 dimensions
+		if e.Dimensions != 0 && e.Dimensions != 384 {
+			return fmt.Errorf("native embedder produces 384 dimensions, got %d", e.Dimensions)
+		}
+		return nil
+	}
+
+	// Validate model for non-native providers
 	if e.Model == "" {
 		return fmt.Errorf("embedder model is required")
 	}
@@ -272,13 +278,16 @@ func (e *EmbedderConfig) Validate() error {
 // ApplyDefaults applies default values to the EmbedderConfig.
 func (e *EmbedderConfig) ApplyDefaults() {
 	if e.Provider == "" {
-		e.Provider = "openai"
+		e.Provider = "native" // Use offline native embedder by default (all-MiniLM-L6-v2)
 	}
-	if e.Model == "" && e.Provider == "openai" {
+	if e.Provider == "native" {
+		e.Dimensions = 384 // Native embedder produces 384-dimensional vectors
+		e.Model = "all-MiniLM-L6-v2"
+	} else if e.Model == "" && e.Provider == "openai" {
 		e.Model = "text-embedding-ada-002"
-	}
-	if e.Dimensions == 0 {
-		e.Dimensions = 1536 // OpenAI ada-002 default
+		if e.Dimensions == 0 {
+			e.Dimensions = 1536 // OpenAI ada-002 default
+		}
 	}
 }
 

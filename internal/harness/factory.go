@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/zero-day-ai/gibson/internal/harness/middleware"
 	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -176,8 +177,28 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 	}
 
 	// Apply middleware if configured
-	if f.config.Middleware != nil {
-		harness = NewMiddlewareHarness(harness, f.config.Middleware)
+	// Build middleware chain with Langfuse middleware if tracer and log are provided
+	middlewareChain := f.config.Middleware
+	if f.config.MissionTracer != nil && f.config.AgentExecLog != nil && f.config.LangfuseMiddlewareFactory != nil {
+		// Create Langfuse tracing middleware using the factory
+		langfuseMW := f.config.LangfuseMiddlewareFactory(f.config.MissionTracer, f.config.AgentExecLog)
+
+		// Chain with existing middleware if present
+		if middlewareChain != nil {
+			middlewareChain = middleware.Chain(middlewareChain, langfuseMW)
+		} else {
+			middlewareChain = langfuseMW
+		}
+
+		logger.Debug("langfuse tracing enabled for agent harness",
+			slog.String("mission_id", missionCtx.ID.String()),
+			slog.String("agent", agentName),
+		)
+	}
+
+	// Apply the final middleware chain
+	if middlewareChain != nil {
+		harness = NewMiddlewareHarness(harness, middlewareChain)
 	}
 
 	// Log mission management status

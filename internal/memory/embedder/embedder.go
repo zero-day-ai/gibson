@@ -82,10 +82,10 @@ func (c *EmbedderConfig) Validate() error {
 // without requiring API keys and has predictable latency.
 func DefaultEmbedderConfig() EmbedderConfig {
 	return EmbedderConfig{
-		Provider:   "native",  // Use offline native embedder by default
-		Model:      "",        // Not needed for native embedder
-		APIKey:     "",        // Not needed for native embedder
-		BaseURL:    "",        // Not needed for native embedder
+		Provider:   "native", // Use offline native embedder by default
+		Model:      "",       // Not needed for native embedder
+		APIKey:     "",       // Not needed for native embedder
+		BaseURL:    "",       // Not needed for native embedder
 		MaxRetries: 3,
 		Timeout:    30,
 	}

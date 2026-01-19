@@ -1,0 +1,226 @@
+# Gibson Framework Configuration
+# This is an example configuration file showing all available options.
+# Copy this to ~/.gibson/config.yaml and customize for your environment.
+
+# Core application settings
+core:
+  home_dir: ~/.gibson              # Gibson installation directory
+  data_dir: ~/.gibson/data         # Directory for data storage
+  cache_dir: ~/.gibson/cache       # Directory for cached data
+  parallel_limit: 10               # Maximum parallel operations
+  timeout: 5m                      # Global operation timeout
+  debug: false                     # Enable debug mode
+
+# Database configuration (SQLite with FTS5)
+database:
+  path: ~/.gibson/gibson.db        # Path to SQLite database
+  max_connections: 10              # Maximum concurrent connections
+  timeout: 30s                     # Connection timeout
+  wal_mode: true                   # Enable Write-Ahead Logging for better concurrency
+  auto_vacuum: true                # Enable automatic database vacuuming
+
+# Security settings
+security:
+  encryption_algorithm: aes-256-gcm  # Encryption algorithm for secrets
+  key_derivation: scrypt             # Key derivation function
+  ssl_validation: true               # Enable SSL certificate validation
+  audit_logging: true                # Enable audit logging for sensitive operations
+
+# LLM provider configuration
+llm:
+  default_provider: ""             # Default LLM provider (anthropic, openai, ollama)
+  # Configure specific providers via environment variables:
+  # - ANTHROPIC_API_KEY for Anthropic Claude
+  # - OPENAI_API_KEY for OpenAI GPT
+  # - OLLAMA_HOST for Ollama (default: http://localhost:11434)
+
+# Logging configuration
+logging:
+  level: info                      # Log level: debug, info, warn, error, fatal
+  format: json                     # Log format: json or text
+
+# Distributed tracing (OpenTelemetry)
+tracing:
+  enabled: false                   # Enable distributed tracing
+  endpoint: ""                     # OTLP collector endpoint (e.g., localhost:4317)
+
+# Metrics export (Prometheus)
+metrics:
+  enabled: false                   # Enable metrics collection
+  port: 9090                       # Prometheus metrics port
+
+# Service registry (etcd-based service discovery)
+registry:
+  type: embedded                   # Registry type: embedded or etcd
+  data_dir: ~/.gibson/etcd-data    # Directory for embedded etcd data
+  listen_address: localhost:2379   # Listen address for embedded etcd
+  namespace: gibson                # Service namespace prefix
+  ttl: 30s                         # Service registration TTL
+  tls:
+    enabled: false                 # Enable TLS for etcd connections
+    cert_file: ""                  # Client certificate file
+    key_file: ""                   # Client private key file
+    ca_file: ""                    # Certificate authority file
+
+# Daemon configuration
+daemon:
+  grpc_address: localhost:50002    # gRPC API server address
+
+# Embedder configuration (for semantic search and GraphRAG)
+embedder:
+  provider: native                 # Embedder provider: native, openai
+  model: all-minilm-l6-v2         # Model name (native provider)
+  # For OpenAI embedder:
+  # provider: openai
+  # model: text-embedding-3-small
+  # api_key: ${OPENAI_API_KEY}
+
+# GraphRAG configuration (Neo4j knowledge graph)
+graphrag:
+  enabled: true                    # Enable GraphRAG knowledge graph
+  neo4j:
+    uri: bolt://localhost:7687     # Neo4j connection URI
+    username: neo4j                # Neo4j username
+    password: password             # Neo4j password (use environment variable in production)
+    max_connections: 10            # Maximum connection pool size
+    connection_timeout: 30s        # Connection timeout
+
+# ============================================================================
+# Langfuse Observability Integration
+# ============================================================================
+# Langfuse provides mission-aware LLM observability and tracing for Gibson.
+# It captures orchestrator decisions, agent executions, tool calls, and LLM
+# interactions in a hierarchical trace structure.
+#
+# Trace Hierarchy:
+#   - Trace: mission-{mission_id}
+#     ├── Generation: orchestrator-decision-1 (LLM reasoning)
+#     │   ├── input: full prompt with graph state
+#     │   ├── output: Decision JSON
+#     │   └── metadata: {tokens, latency, graph_snapshot}
+#     ├── Span: agent-execution-{id}
+#     │   ├── Span: tool-call-nmap
+#     │   ├── Span: tool-call-httpx
+#     │   └── Generation: agent-llm-call (agent's internal LLM usage)
+#     ├── Generation: orchestrator-decision-2
+#     └── Span: mission-complete
+#         └── metadata: {summary, total_tokens, duration}
+#
+# Use Cases:
+#   - Debug orchestrator decision-making process
+#   - Monitor LLM token usage and costs per mission
+#   - Analyze agent execution patterns and performance
+#   - Trace tool execution sequences and dependencies
+#   - Correlate findings with decision provenance
+#   - Audit mission execution for compliance
+#
+# Getting Started with Langfuse:
+#   1. Sign up at https://cloud.langfuse.com or self-host
+#   2. Create a project and get API keys
+#   3. Set environment variables (recommended):
+#      export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+#      export LANGFUSE_SECRET_KEY="sk-lf-..."
+#      export LANGFUSE_HOST="https://cloud.langfuse.com"
+#   4. Enable Langfuse in this config file
+#   5. Run a mission and view traces in Langfuse UI
+#
+# Configuration Options:
+langfuse:
+  # enabled controls whether Langfuse tracing is active
+  # Default: false
+  # When disabled, no traces are sent and there is zero performance overhead
+  enabled: true
+
+  # host is the Langfuse API URL (cloud or self-hosted)
+  # Cloud: https://cloud.langfuse.com
+  # Self-hosted: https://your-langfuse-instance.com
+  # Default: ""
+  # Environment variable: LANGFUSE_HOST
+  host: "http://localhost:3000"
+
+  # public_key is your Langfuse project public key (starts with pk-lf-)
+  # Get this from the Langfuse project settings
+  # Default: ""
+  # Environment variable: LANGFUSE_PUBLIC_KEY
+  # IMPORTANT: This is NOT a secret and can be committed to version control
+  public_key: "pk-lf-babee552-373b-43d1-b145-19d60bc681e3"
+
+  # secret_key is your Langfuse project secret key (starts with sk-lf-)
+  # Get this from the Langfuse project settings
+  # Default: ""
+  # Environment variable: LANGFUSE_SECRET_KEY
+  # IMPORTANT: Never commit this to version control - use environment variables
+  secret_key: "sk-lf-50fe9827-e667-480d-b926-ff3ddd5c73fa"
+
+  # Optional: Advanced Configuration
+  # These settings have sensible defaults and rarely need to be changed
+
+  # flush_interval controls how often events are batched and sent to Langfuse
+  # Lower values = more real-time, higher network overhead
+  # Higher values = better batching, slight delay in UI updates
+  # Default: 10s
+  # Uncomment to customize:
+  # flush_interval: 10s
+
+  # batch_size controls the maximum number of events sent in a single batch
+  # Langfuse API has a maximum batch size limit (typically 100-500 events)
+  # Default: 100
+  # Uncomment to customize:
+  # batch_size: 100
+
+# Notes:
+# - Langfuse tracing is fire-and-forget - mission execution never fails due to tracing errors
+# - Failed trace exports are logged as warnings but do not block operations
+# - Traces are sent immediately (no local buffering) for real-time observability
+# - Each mission creates a new trace with unique trace ID: mission-{mission_id}
+# - Orchestrator decisions are logged as Langfuse "generations" (LLM calls)
+# - Agent executions and tool calls are logged as Langfuse "spans"
+# - Agent-level LLM calls (within harness) are also traced as generations
+# - GraphRAG knowledge graph node IDs are included in metadata for correlation
+# - OpenTelemetry trace IDs (otel_trace_id) are added for cross-system correlation
+
+# Example: Enable Langfuse for Development
+# langfuse:
+#   enabled: true
+#   host: "https://cloud.langfuse.com"
+#   public_key: "pk-lf-your-key-here"
+#   secret_key: "sk-lf-your-secret-here"
+
+# Example: Enable Langfuse with Environment Variables (Recommended)
+# langfuse:
+#   enabled: true
+#   host: "${LANGFUSE_HOST}"
+#   public_key: "${LANGFUSE_PUBLIC_KEY}"
+#   secret_key: "${LANGFUSE_SECRET_KEY}"
+
+# Example: Self-Hosted Langfuse
+# langfuse:
+#   enabled: true
+#   host: "https://langfuse.your-company.com"
+#   public_key: "${LANGFUSE_PUBLIC_KEY}"
+#   secret_key: "${LANGFUSE_SECRET_KEY}"
+
+# ============================================================================
+# End of Langfuse Configuration
+# ============================================================================
+
+# Agent registration server (optional)
+# Allows agents to dynamically announce themselves to Gibson
+registration:
+  enabled: false                   # Enable registration server
+  port: 50100                      # Registration gRPC port
+  auth_token: ""                   # Optional authentication token
+  heartbeat_timeout: 30s           # Agent heartbeat timeout
+
+# Callback server configuration (for agent-to-Gibson communication)
+callback:
+  enabled: true                    # Enable callback server
+  listen_address: 0.0.0.0:50001    # Listen address for callbacks
+  advertise_address: ""            # Public address agents should connect to (optional)
+
+# Plugin-specific configuration
+# Each plugin can have its own configuration section
+# plugins:
+#   example-plugin:
+#     api_key: "${EXAMPLE_API_KEY}"
+#     endpoint: "https://api.example.com"

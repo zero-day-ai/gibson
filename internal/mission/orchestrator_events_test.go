@@ -8,7 +8,7 @@ import (
 func TestMissionOrchestrator_EmitsProgressEvents(t *testing.T) {
 	t.Skip("Skipping - requires real orchestrator implementation to test event emission")
 	// This test was testing the old DefaultMissionOrchestrator's event emission logic.
-	// The new SOTA orchestrator in internal/orchestrator/ has its own event emission tests.
+	// The orchestrator in internal/orchestrator/ has its own event emission tests.
 	// Event integration is tested at the controller/service level.
 }
 

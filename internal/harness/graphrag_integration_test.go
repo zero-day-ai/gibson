@@ -99,66 +99,8 @@ func TestHarnessSubmitFinding_WithGraphRAG(t *testing.T) {
 	}
 }
 
-// TestHarnessSubmitFinding_WithoutGraphRAG tests that the harness works normally
-// when using NoopGraphRAGBridge (default when not configured).
-func TestHarnessSubmitFinding_WithoutGraphRAG(t *testing.T) {
-	// Create harness config with default (noop) bridge
-	harnessConfig := HarnessConfig{
-		SlotManager: &mockSlotManager{},
-		// GraphRAGBridge will be defaulted to NoopGraphRAGBridge
-	}
-	harnessConfig.ApplyDefaults()
-
-	// Verify the default is NoopGraphRAGBridge
-	if _, ok := harnessConfig.GraphRAGBridge.(*NoopGraphRAGBridge); !ok {
-		t.Fatalf("Expected default GraphRAGBridge to be NoopGraphRAGBridge, got %T", harnessConfig.GraphRAGBridge)
-	}
-
-	// Create factory and harness
-	factory, err := NewHarnessFactory(harnessConfig)
-	if err != nil {
-		t.Fatalf("Failed to create harness factory: %v", err)
-	}
-
-	missionCtx := MissionContext{
-		ID:   types.NewID(),
-		Name: "Test Mission",
-	}
-	targetInfo := TargetInfo{
-		ID:   types.ID(types.NewID()),
-		Name: "Test Target",
-	}
-
-	harness, err := factory.Create("test-agent", missionCtx, targetInfo)
-	if err != nil {
-		t.Fatalf("Failed to create harness: %v", err)
-	}
-
-	// Submit a finding through the harness
-	ctx := context.Background()
-	finding := agent.Finding{
-		ID:          types.NewID(),
-		Title:       "Test Vulnerability",
-		Description: "Found during integration test",
-		Severity:    agent.SeverityMedium,
-		CreatedAt:   time.Now(),
-	}
-
-	// Should succeed without error
-	err = harness.SubmitFinding(ctx, finding)
-	if err != nil {
-		t.Fatalf("SubmitFinding failed: %v", err)
-	}
-
-	// Verify finding was stored in the local FindingStore
-	findings, err := harness.GetFindings(ctx, FindingFilter{})
-	if err != nil {
-		t.Fatalf("GetFindings failed: %v", err)
-	}
-	if len(findings) != 1 {
-		t.Errorf("Expected 1 finding in local store, got %d", len(findings))
-	}
-}
+// Note: TestHarnessSubmitFinding_WithoutGraphRAG has been removed since GraphRAG is now required.
+// All harness configurations must provide valid GraphRAGBridge and GraphRAGQueryBridge instances.
 
 // TestHarnessSubmitFinding_GraphRAGFailure tests that the harness continues
 // to work even when GraphRAG storage fails.
@@ -504,7 +446,7 @@ func TestIntegration_HealthCheckViaHarness(t *testing.T) {
 func TestIntegration_WiringVerification(t *testing.T) {
 	// Compile-time interface checks
 	var _ GraphRAGBridge = (*DefaultGraphRAGBridge)(nil)
-	var _ GraphRAGBridge = (*NoopGraphRAGBridge)(nil)
+	// Note: NoopGraphRAGBridge has been removed - GraphRAG is now required
 	// mockTaxonomyGraphEngine implements engine.TaxonomyGraphEngine (verified in graphrag_bridge_test.go)
 
 	// Runtime verification
@@ -519,12 +461,5 @@ func TestIntegration_WiringVerification(t *testing.T) {
 	health := bridgeInterface.Health(ctx)
 	if !health.IsHealthy() {
 		t.Errorf("bridge should be healthy, got state: %v", health.State)
-	}
-
-	// Verify noop bridge
-	var noopBridge GraphRAGBridge = &NoopGraphRAGBridge{}
-	noopHealth := noopBridge.Health(ctx)
-	if !noopHealth.IsHealthy() {
-		t.Errorf("noop bridge should be healthy, got state: %v", noopHealth.State)
 	}
 }

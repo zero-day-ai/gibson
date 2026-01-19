@@ -34,24 +34,24 @@ type Trace struct {
 
 // Generation represents an LLM generation event in Langfuse.
 type Generation struct {
-	ID                   string                 `json:"id"`
-	TraceID              string                 `json:"traceId"`
-	Name                 string                 `json:"name,omitempty"`
-	StartTime            time.Time              `json:"startTime"`
-	EndTime              time.Time              `json:"endTime,omitempty"`
-	CompletionStartTime  time.Time              `json:"completionStartTime,omitempty"`
-	Model                string                 `json:"model,omitempty"`
-	ModelParameters      map[string]interface{} `json:"modelParameters,omitempty"`
-	Input                interface{}            `json:"input,omitempty"`
-	Output               interface{}            `json:"output,omitempty"`
-	Usage                *Usage                 `json:"usage,omitempty"`
-	Metadata             map[string]interface{} `json:"metadata,omitempty"`
-	ParentObservationID  string                 `json:"parentObservationId,omitempty"`
-	Level                string                 `json:"level,omitempty"` // DEBUG, DEFAULT, WARNING, ERROR
-	StatusMessage        string                 `json:"statusMessage,omitempty"`
-	Version              string                 `json:"version,omitempty"`
-	PromptName           string                 `json:"promptName,omitempty"`
-	PromptVersion        int                    `json:"promptVersion,omitempty"`
+	ID                  string                 `json:"id"`
+	TraceID             string                 `json:"traceId"`
+	Name                string                 `json:"name,omitempty"`
+	StartTime           time.Time              `json:"startTime"`
+	EndTime             time.Time              `json:"endTime,omitempty"`
+	CompletionStartTime time.Time              `json:"completionStartTime,omitempty"`
+	Model               string                 `json:"model,omitempty"`
+	ModelParameters     map[string]interface{} `json:"modelParameters,omitempty"`
+	Input               interface{}            `json:"input,omitempty"`
+	Output              interface{}            `json:"output,omitempty"`
+	Usage               *Usage                 `json:"usage,omitempty"`
+	Metadata            map[string]interface{} `json:"metadata,omitempty"`
+	ParentObservationID string                 `json:"parentObservationId,omitempty"`
+	Level               string                 `json:"level,omitempty"` // DEBUG, DEFAULT, WARNING, ERROR
+	StatusMessage       string                 `json:"statusMessage,omitempty"`
+	Version             string                 `json:"version,omitempty"`
+	PromptName          string                 `json:"promptName,omitempty"`
+	PromptVersion       int                    `json:"promptVersion,omitempty"`
 }
 
 // Span represents a generic span event in Langfuse.

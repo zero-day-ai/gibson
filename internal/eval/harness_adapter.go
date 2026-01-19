@@ -25,8 +25,8 @@ import (
 	gibsonHarness "github.com/zero-day-ai/gibson/internal/harness"
 	gibsonLLM "github.com/zero-day-ai/gibson/internal/llm"
 	gibsonMemory "github.com/zero-day-ai/gibson/internal/memory"
-	gibsonSchema "github.com/zero-day-ai/sdk/schema"
 	gibsonTypes "github.com/zero-day-ai/gibson/internal/types"
+	gibsonSchema "github.com/zero-day-ai/sdk/schema"
 )
 
 var (

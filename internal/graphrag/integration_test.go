@@ -26,7 +26,6 @@ func TestIntegration_StoreFindingAndQuery(t *testing.T) {
 
 	// Create store
 	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "local",
 		Query: QueryConfig{
 			DefaultTopK:    10,
@@ -118,7 +117,6 @@ func TestIntegration_AttackPatternWorkflow(t *testing.T) {
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "local",
 	}
 
@@ -175,7 +173,7 @@ func TestIntegration_FindingCorrelationAcrossMissions(t *testing.T) {
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
-	config := GraphRAGConfig{Enabled: true}
+	config := GraphRAGConfig{}
 	store := &DefaultGraphRAGStore{
 		provider:  provider,
 		processor: processor,
@@ -271,7 +269,6 @@ func TestIntegration_ProviderSwitching(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := GraphRAGConfig{
-				Enabled:  true,
 				Provider: tt.providerType,
 			}
 
@@ -314,7 +311,7 @@ func TestIntegration_ObservabilitySpans(t *testing.T) {
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
-	config := GraphRAGConfig{Enabled: true}
+	config := GraphRAGConfig{}
 
 	// Wrap provider with tracing
 	tracedProvider := NewTracedGraphRAGProvider(provider, tracer)
@@ -393,7 +390,6 @@ func TestIntegration_GraphRAGStoreEndToEnd(t *testing.T) {
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "local",
 		Query: QueryConfig{
 			DefaultTopK:    10,
@@ -567,7 +563,7 @@ func TestIntegration_ErrorHandlingAndGracefulDegradation(t *testing.T) {
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
-	config := GraphRAGConfig{Enabled: true}
+	config := GraphRAGConfig{}
 	store := &DefaultGraphRAGStore{
 		provider:  provider,
 		processor: processor,
@@ -614,7 +610,7 @@ func TestIntegration_HealthAggregation(t *testing.T) {
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
-	config := GraphRAGConfig{Enabled: true}
+	config := GraphRAGConfig{}
 	store := &DefaultGraphRAGStore{
 		provider:  provider,
 		processor: processor,
@@ -682,7 +678,7 @@ func TestIntegration_GetAttackChains(t *testing.T) {
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
-	config := GraphRAGConfig{Enabled: true}
+	config := GraphRAGConfig{}
 	store := &DefaultGraphRAGStore{
 		provider:  provider,
 		processor: processor,

@@ -11,13 +11,13 @@ import (
 
 // mockGraphClient implements WritableGraphClient for testing.
 type mockGraphClient struct {
-	queryResults      map[string]graph.QueryResult
-	executeResults    map[string]graph.QueryResult
-	queryError        error
-	executeError      error
-	queryCalls        []string
-	executeCalls      []string
-	executeParams     []map[string]any
+	queryResults   map[string]graph.QueryResult
+	executeResults map[string]graph.QueryResult
+	queryError     error
+	executeError   error
+	queryCalls     []string
+	executeCalls   []string
+	executeParams  []map[string]any
 }
 
 func newMockGraphClient() *mockGraphClient {

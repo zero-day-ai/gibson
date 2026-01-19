@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/zero-day-ai/gibson/internal/component/git"
+	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // MockGitOperations is a mock implementation of git.GitOperations
@@ -53,7 +54,7 @@ func (m *MockMissionStore) Save(ctx context.Context, mission *Mission) error {
 	return args.Error(0)
 }
 
-func (m *MockMissionStore) Get(ctx context.Context, id interface{}) (*Mission, error) {
+func (m *MockMissionStore) Get(ctx context.Context, id types.ID) (*Mission, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -82,22 +83,22 @@ func (m *MockMissionStore) Update(ctx context.Context, mission *Mission) error {
 	return args.Error(0)
 }
 
-func (m *MockMissionStore) UpdateStatus(ctx context.Context, id interface{}, status MissionStatus) error {
+func (m *MockMissionStore) UpdateStatus(ctx context.Context, id types.ID, status MissionStatus) error {
 	args := m.Called(ctx, id, status)
 	return args.Error(0)
 }
 
-func (m *MockMissionStore) UpdateProgress(ctx context.Context, id interface{}, progress float64) error {
+func (m *MockMissionStore) UpdateProgress(ctx context.Context, id types.ID, progress float64) error {
 	args := m.Called(ctx, id, progress)
 	return args.Error(0)
 }
 
-func (m *MockMissionStore) Delete(ctx context.Context, id interface{}) error {
+func (m *MockMissionStore) Delete(ctx context.Context, id types.ID) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
 
-func (m *MockMissionStore) GetByTarget(ctx context.Context, targetID interface{}) ([]*Mission, error) {
+func (m *MockMissionStore) GetByTarget(ctx context.Context, targetID types.ID) ([]*Mission, error) {
 	args := m.Called(ctx, targetID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -113,7 +114,7 @@ func (m *MockMissionStore) GetActive(ctx context.Context) ([]*Mission, error) {
 	return args.Get(0).([]*Mission), args.Error(1)
 }
 
-func (m *MockMissionStore) SaveCheckpoint(ctx context.Context, missionID interface{}, checkpoint *MissionCheckpoint) error {
+func (m *MockMissionStore) SaveCheckpoint(ctx context.Context, missionID types.ID, checkpoint *MissionCheckpoint) error {
 	args := m.Called(ctx, missionID, checkpoint)
 	return args.Error(0)
 }

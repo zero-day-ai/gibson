@@ -292,14 +292,10 @@ func TestInitTracing_WithLangfuse(t *testing.T) {
 	ctx := context.Background()
 	provider, err := InitTracing(ctx, cfg, langfuseCfg)
 
-	require.NoError(t, err)
-	require.NotNil(t, provider)
-
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = ShutdownTracing(shutdownCtx, provider)
-	}()
+	// Langfuse is no longer supported via InitTracing - must use NewMissionTracer
+	require.Error(t, err)
+	require.Nil(t, provider)
+	require.Contains(t, err.Error(), "Use NewMissionTracer() directly")
 }
 
 func TestInitTracing_WithInMemoryExporter(t *testing.T) {

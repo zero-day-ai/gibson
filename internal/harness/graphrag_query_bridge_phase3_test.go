@@ -105,10 +105,10 @@ func TestProvenanceProperties(t *testing.T) {
 // TestCreateHierarchyRelationships verifies relationship detection logic
 func TestCreateHierarchyRelationshipsDetection(t *testing.T) {
 	testCases := []struct {
-		name         string
-		nodeType     string
-		properties   map[string]any
-		expectFromID string
+		name          string
+		nodeType      string
+		properties    map[string]any
+		expectFromID  string
 		expectRelType string
 	}{
 		{

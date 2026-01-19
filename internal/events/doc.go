@@ -39,10 +39,10 @@
 // # Slow Consumer Handling
 //
 // If a subscriber's buffer fills up, the EventBus will:
-//   1. Drop the event for that subscriber only
-//   2. Call the error handler with context
-//   3. Record metrics via the metrics recorder
-//   4. Continue delivering to other subscribers
+//  1. Drop the event for that subscriber only
+//  2. Call the error handler with context
+//  3. Record metrics via the metrics recorder
+//  4. Continue delivering to other subscribers
 //
 // This prevents one slow subscriber from blocking publishers or other subscribers.
 //

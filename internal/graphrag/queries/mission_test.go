@@ -192,17 +192,17 @@ func TestMissionQueries_GetMissionDecisions(t *testing.T) {
 	decisions, err := mq.GetMissionDecisions(ctx, missionID)
 	require.NoError(t, err)
 	require.Len(t, decisions, 2)
-	
+
 	// Verify order by iteration
 	assert.Equal(t, 1, decisions[0].Iteration)
 	assert.Equal(t, 2, decisions[1].Iteration)
-	
+
 	// Verify decision details
 	assert.Equal(t, schema.DecisionActionExecuteAgent, decisions[0].Action)
 	assert.Equal(t, schema.DecisionActionSkipAgent, decisions[1].Action)
 	assert.Equal(t, "First decision", decisions[0].Reasoning)
 	assert.Equal(t, 0.9, decisions[0].Confidence)
-	
+
 	// Verify modifications were parsed
 	assert.NotEmpty(t, decisions[0].Modifications)
 	assert.Equal(t, "value", decisions[0].Modifications["param"])
@@ -270,14 +270,14 @@ func TestMissionQueries_GetNodeExecutions(t *testing.T) {
 	executions, err := mq.GetNodeExecutions(ctx, nodeID)
 	require.NoError(t, err)
 	require.Len(t, executions, 2)
-	
+
 	// Verify first execution (completed)
 	assert.Equal(t, exec1ID, executions[0].ID)
 	assert.Equal(t, schema.ExecutionStatusCompleted, executions[0].Status)
 	assert.NotNil(t, executions[0].CompletedAt)
 	assert.Equal(t, "value", executions[0].ConfigUsed["key"])
 	assert.Equal(t, "result", executions[0].Result["output"])
-	
+
 	// Verify second execution (running)
 	assert.Equal(t, exec2ID, executions[1].ID)
 	assert.Equal(t, schema.ExecutionStatusRunning, executions[1].Status)
@@ -396,14 +396,14 @@ func TestMissionQueries_GetMissionStats(t *testing.T) {
 	mock.AddQueryResult(graph.QueryResult{
 		Records: []map[string]any{
 			{
-				"total_nodes":       int64(5),
-				"completed_nodes":   int64(3),
-				"failed_nodes":      int64(1),
-				"pending_nodes":     int64(1),
-				"total_decisions":   int64(10),
-				"total_executions":  int64(4),
-				"start_time":        now,
-				"end_time":          now.Add(time.Hour),
+				"total_nodes":      int64(5),
+				"completed_nodes":  int64(3),
+				"failed_nodes":     int64(1),
+				"pending_nodes":    int64(1),
+				"total_decisions":  int64(10),
+				"total_executions": int64(4),
+				"start_time":       now,
+				"end_time":         now.Add(time.Hour),
 			},
 		},
 	})
@@ -433,7 +433,7 @@ func TestMissionQueries_IntegrationScenario(t *testing.T) {
 	missionID := types.NewID()
 
 	// Scenario: Query mission execution progress
-	
+
 	// Step 1: Get mission
 	mock.AddQueryResult(graph.QueryResult{
 		Records: []map[string]any{
@@ -521,16 +521,16 @@ func TestMissionQueries_IntegrationScenario(t *testing.T) {
 		Records: []map[string]any{
 			{
 				"d": map[string]any{
-					"id":          decisionID.String(),
-					"mission_id":  missionID.String(),
-					"iteration":   int64(1),
-					"action":      "execute_agent",
-					"reasoning":   "Execute first node",
-					"confidence":  0.95,
+					"id":            decisionID.String(),
+					"mission_id":    missionID.String(),
+					"iteration":     int64(1),
+					"action":        "execute_agent",
+					"reasoning":     "Execute first node",
+					"confidence":    0.95,
 					"modifications": "{}",
-					"timestamp":   time.Now(),
-					"created_at":  time.Now(),
-					"updated_at":  time.Now(),
+					"timestamp":     time.Now(),
+					"created_at":    time.Now(),
+					"updated_at":    time.Now(),
 				},
 			},
 		},
@@ -610,4 +610,476 @@ func TestMissionQueries_EmptyResults(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, deps)
 	})
+}
+
+// TestMissionQueries_CreateNodeDependency tests creating DEPENDS_ON relationships.
+func TestMissionQueries_CreateNodeDependency(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	fromNodeID := types.NewID()
+	toNodeID := types.NewID()
+
+	// Mock successful relationship creation
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"count": int64(1)},
+		},
+	})
+
+	err = mq.CreateNodeDependency(ctx, fromNodeID, toNodeID)
+	require.NoError(t, err)
+}
+
+// TestMissionQueries_CreateNodeDependency_NodeNotFound tests error when nodes don't exist.
+func TestMissionQueries_CreateNodeDependency_NodeNotFound(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	fromNodeID := types.NewID()
+	toNodeID := types.NewID()
+
+	// Mock empty result (nodes not found)
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{},
+	})
+
+	err = mq.CreateNodeDependency(ctx, fromNodeID, toNodeID)
+	require.Error(t, err)
+
+	// Verify it's a typed error with correct code
+	gibsonErr, ok := err.(*types.GibsonError)
+	require.True(t, ok, "expected *types.GibsonError")
+	assert.Equal(t, graph.ErrCodeGraphNodeNotFound, gibsonErr.Code)
+	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), fromNodeID.String())
+	assert.Contains(t, err.Error(), toNodeID.String())
+}
+
+// TestMissionQueries_CreateNodeDependency_Idempotent tests that MERGE makes it idempotent.
+func TestMissionQueries_CreateNodeDependency_Idempotent(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	fromNodeID := types.NewID()
+	toNodeID := types.NewID()
+
+	// First call - creates relationship
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"count": int64(1)},
+		},
+	})
+
+	err = mq.CreateNodeDependency(ctx, fromNodeID, toNodeID)
+	require.NoError(t, err)
+
+	// Second call - same relationship, should succeed (MERGE is idempotent)
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"count": int64(1)},
+		},
+	})
+
+	err = mq.CreateNodeDependency(ctx, fromNodeID, toNodeID)
+	require.NoError(t, err, "MERGE should make CreateNodeDependency idempotent")
+}
+
+// TestMissionQueries_CreateMission tests creating a mission node.
+func TestMissionQueries_CreateMission(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	missionID := types.NewID()
+	now := time.Now()
+
+	mission := &schema.Mission{
+		ID:          missionID,
+		Name:        "test-mission",
+		Description: "Test mission description",
+		Objective:   "Test objective",
+		TargetRef:   "target-123",
+		Status:      schema.MissionStatusPending,
+		YAMLSource:  "workflow: test",
+		CreatedAt:   now,
+		StartedAt:   nil,
+	}
+
+	// Mock successful creation
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": missionID.String()},
+		},
+	})
+
+	err = mq.CreateMission(ctx, mission)
+	require.NoError(t, err)
+
+	// Verify query was called
+	assert.Greater(t, mock.CallCount(), 0)
+}
+
+// TestMissionQueries_CreateMission_NilMission tests error handling for nil mission.
+func TestMissionQueries_CreateMission_NilMission(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+
+	err = mq.CreateMission(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mission cannot be nil")
+}
+
+// TestMissionQueries_CreateMission_Idempotent tests MERGE idempotency.
+func TestMissionQueries_CreateMission_Idempotent(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	missionID := types.NewID()
+	now := time.Now()
+
+	mission := &schema.Mission{
+		ID:          missionID,
+		Name:        "test-mission",
+		Description: "Test mission",
+		Objective:   "Test objective",
+		TargetRef:   "target-123",
+		Status:      schema.MissionStatusPending,
+		YAMLSource:  "workflow: test",
+		CreatedAt:   now,
+	}
+
+	// First call - creates mission
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": missionID.String()},
+		},
+	})
+
+	err = mq.CreateMission(ctx, mission)
+	require.NoError(t, err)
+
+	// Second call - updates mission status, should not error (MERGE)
+	mission.Status = schema.MissionStatusRunning
+	startedAt := now.Add(time.Minute)
+	mission.StartedAt = &startedAt
+
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": missionID.String()},
+		},
+	})
+
+	err = mq.CreateMission(ctx, mission)
+	require.NoError(t, err, "MERGE should make CreateMission idempotent")
+}
+
+// TestMissionQueries_CreateMission_WithStartedAt tests creating mission with started_at timestamp.
+func TestMissionQueries_CreateMission_WithStartedAt(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	missionID := types.NewID()
+	now := time.Now()
+	startedAt := now.Add(time.Second)
+
+	mission := &schema.Mission{
+		ID:          missionID,
+		Name:        "test-mission",
+		Description: "Test mission",
+		Objective:   "Test objective",
+		TargetRef:   "target-123",
+		Status:      schema.MissionStatusRunning,
+		YAMLSource:  "workflow: test",
+		CreatedAt:   now,
+		StartedAt:   &startedAt,
+	}
+
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": missionID.String()},
+		},
+	})
+
+	err = mq.CreateMission(ctx, mission)
+	require.NoError(t, err)
+}
+
+// TestMissionQueries_CreateWorkflowNode tests creating a workflow node.
+func TestMissionQueries_CreateWorkflowNode(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	nodeID := types.NewID()
+	missionID := types.NewID()
+	now := time.Now()
+
+	node := &schema.WorkflowNode{
+		ID:          nodeID,
+		MissionID:   missionID,
+		Type:        schema.WorkflowNodeTypeAgent,
+		Name:        "test-node",
+		Description: "Test node description",
+		AgentName:   "test-agent",
+		Status:      schema.WorkflowNodeStatusPending,
+		Timeout:     5 * time.Minute,
+		TaskConfig:  map[string]any{"key": "value"},
+		IsDynamic:   false,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	// Mock successful creation with PART_OF relationship
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": nodeID.String()},
+		},
+	})
+
+	err = mq.CreateWorkflowNode(ctx, node)
+	require.NoError(t, err)
+
+	// Verify query was called
+	assert.Greater(t, mock.CallCount(), 0)
+}
+
+// TestMissionQueries_CreateWorkflowNode_NilNode tests error handling for nil node.
+func TestMissionQueries_CreateWorkflowNode_NilNode(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+
+	err = mq.CreateWorkflowNode(ctx, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workflow node cannot be nil")
+}
+
+// TestMissionQueries_CreateWorkflowNode_MissionNotFound tests error when mission doesn't exist.
+func TestMissionQueries_CreateWorkflowNode_MissionNotFound(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	nodeID := types.NewID()
+	missionID := types.NewID()
+
+	node := &schema.WorkflowNode{
+		ID:          nodeID,
+		MissionID:   missionID,
+		Type:        schema.WorkflowNodeTypeAgent,
+		Name:        "test-node",
+		Description: "Test node",
+		AgentName:   "test-agent",
+		Status:      schema.WorkflowNodeStatusPending,
+		Timeout:     5 * time.Minute,
+		TaskConfig:  map[string]any{},
+		IsDynamic:   false,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	// Mock empty result (mission not found)
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{},
+	})
+
+	err = mq.CreateWorkflowNode(ctx, node)
+	require.Error(t, err)
+
+	// Verify it's a typed error with correct code
+	gibsonErr, ok := err.(*types.GibsonError)
+	require.True(t, ok, "expected *types.GibsonError")
+	assert.Equal(t, graph.ErrCodeGraphNodeNotFound, gibsonErr.Code)
+	assert.Contains(t, err.Error(), "mission")
+	assert.Contains(t, err.Error(), missionID.String())
+}
+
+// TestMissionQueries_CreateWorkflowNode_Idempotent tests MERGE idempotency.
+func TestMissionQueries_CreateWorkflowNode_Idempotent(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	nodeID := types.NewID()
+	missionID := types.NewID()
+	now := time.Now()
+
+	node := &schema.WorkflowNode{
+		ID:          nodeID,
+		MissionID:   missionID,
+		Type:        schema.WorkflowNodeTypeAgent,
+		Name:        "test-node",
+		Description: "Test node",
+		AgentName:   "test-agent",
+		Status:      schema.WorkflowNodeStatusPending,
+		Timeout:     5 * time.Minute,
+		TaskConfig:  map[string]any{"key": "value"},
+		IsDynamic:   false,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	// First call - creates node with PART_OF relationship
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": nodeID.String()},
+		},
+	})
+
+	err = mq.CreateWorkflowNode(ctx, node)
+	require.NoError(t, err)
+
+	// Second call - updates node, should not error (MERGE)
+	node.Status = schema.WorkflowNodeStatusReady
+	node.UpdatedAt = now.Add(time.Minute)
+
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": nodeID.String()},
+		},
+	})
+
+	err = mq.CreateWorkflowNode(ctx, node)
+	require.NoError(t, err, "MERGE should make CreateWorkflowNode idempotent")
+}
+
+// TestMissionQueries_CreateWorkflowNode_WithRetryPolicy tests creating node with retry policy.
+func TestMissionQueries_CreateWorkflowNode_WithRetryPolicy(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	nodeID := types.NewID()
+	missionID := types.NewID()
+	now := time.Now()
+
+	retryPolicy := &schema.RetryPolicy{
+		MaxRetries: 3,
+		Backoff:    time.Second,
+		Strategy:   "exponential",
+		MaxBackoff: 30 * time.Second,
+	}
+
+	node := &schema.WorkflowNode{
+		ID:          nodeID,
+		MissionID:   missionID,
+		Type:        schema.WorkflowNodeTypeTool,
+		Name:        "test-tool-node",
+		Description: "Test tool node",
+		ToolName:    "test-tool",
+		Status:      schema.WorkflowNodeStatusPending,
+		Timeout:     2 * time.Minute,
+		RetryPolicy: retryPolicy,
+		TaskConfig:  map[string]any{"input": "test"},
+		IsDynamic:   false,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": nodeID.String()},
+		},
+	})
+
+	err = mq.CreateWorkflowNode(ctx, node)
+	require.NoError(t, err)
+}
+
+// TestMissionQueries_CreateWorkflowNode_DynamicNode tests creating a dynamic node.
+func TestMissionQueries_CreateWorkflowNode_DynamicNode(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	nodeID := types.NewID()
+	missionID := types.NewID()
+	parentNodeID := types.NewID()
+	now := time.Now()
+
+	node := &schema.WorkflowNode{
+		ID:          nodeID,
+		MissionID:   missionID,
+		Type:        schema.WorkflowNodeTypeAgent,
+		Name:        "dynamic-node",
+		Description: "Dynamically spawned node",
+		AgentName:   "spawned-agent",
+		Status:      schema.WorkflowNodeStatusPending,
+		Timeout:     5 * time.Minute,
+		TaskConfig:  map[string]any{},
+		IsDynamic:   true,
+		SpawnedBy:   parentNodeID.String(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"id": nodeID.String()},
+		},
+	})
+
+	err = mq.CreateWorkflowNode(ctx, node)
+	require.NoError(t, err)
 }

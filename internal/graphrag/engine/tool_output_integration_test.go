@@ -19,7 +19,8 @@ import (
 
 // TestToolOutputIntegration tests tool output parsing and graph creation with real Neo4j.
 // This test requires Neo4j to be running. Start it with:
-//   docker-compose -f build/docker-compose.yml up -d neo4j
+//
+//	docker-compose -f build/docker-compose.yml up -d neo4j
 //
 // Run with: go test -tags=integration -v ./internal/graphrag/engine/...
 func TestToolOutputIntegration(t *testing.T) {
@@ -241,10 +242,10 @@ func testHttpxOutput(t *testing.T, ctx context.Context, engine TaxonomyGraphEngi
 	httpxOutput := map[string]any{
 		"results": []any{
 			map[string]any{
-				"url":           "https://www.example.com",
-				"status_code":   200,
-				"title":         "Example Domain",
-				"content_type":  "text/html",
+				"url":            "https://www.example.com",
+				"status_code":    200,
+				"title":          "Example Domain",
+				"content_type":   "text/html",
 				"content_length": 1256,
 				"technologies": []any{
 					"Apache",
@@ -253,10 +254,10 @@ func testHttpxOutput(t *testing.T, ctx context.Context, engine TaxonomyGraphEngi
 				},
 			},
 			map[string]any{
-				"url":           "https://api.example.com",
-				"status_code":   200,
-				"title":         "API Server",
-				"content_type":  "application/json",
+				"url":            "https://api.example.com",
+				"status_code":    200,
+				"title":          "API Server",
+				"content_type":   "application/json",
 				"content_length": 42,
 				"technologies": []any{
 					"nginx",

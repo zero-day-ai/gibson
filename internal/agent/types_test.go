@@ -31,12 +31,12 @@ func TestTaskJSONSerialization(t *testing.T) {
 		Input: map[string]any{
 			"legacy": "input",
 		},
-		Timeout:      30 * time.Minute,
-		MissionID:    &missionID,
-		TargetID:     &targetID,
-		CreatedAt:    time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		Priority:     5,
-		Tags:         []string{"test", "serialization"},
+		Timeout:   30 * time.Minute,
+		MissionID: &missionID,
+		TargetID:  &targetID,
+		CreatedAt: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		Priority:  5,
+		Tags:      []string{"test", "serialization"},
 	}
 
 	// Marshal to JSON
@@ -90,9 +90,9 @@ func TestTaskJSONRoundTrip(t *testing.T) {
 		Description: "Task for round-trip testing",
 		Goal:        "Complete round-trip test",
 		Context: map[string]any{
-			"phase":        "analyze",
-			"findings":     []string{"finding1", "finding2"},
-			"nested":       map[string]any{"key": "value"},
+			"phase":    "analyze",
+			"findings": []string{"finding1", "finding2"},
+			"nested":   map[string]any{"key": "value"},
 		},
 		Input: map[string]any{
 			"param1": "value1",
@@ -143,7 +143,7 @@ func TestTaskJSONWithEmptyGoalAndContext(t *testing.T) {
 		ID:          types.NewID(),
 		Name:        "minimal-task",
 		Description: "Task with no goal or context",
-		Goal:        "", // Empty goal
+		Goal:        "",  // Empty goal
 		Context:     nil, // Nil context
 		Input: map[string]any{
 			"test": "value",

@@ -102,7 +102,7 @@ func TestAttackResult_WithAgentFailure_Chaining(t *testing.T) {
 	// Test method chaining
 	result.
 		WithMissionID(missionID).
-		WithDuration(100 * time.Millisecond).
+		WithDuration(100*time.Millisecond).
 		WithAgentFailure("agent error", []string{"node-1"}).
 		WithTurnsUsed(5)
 

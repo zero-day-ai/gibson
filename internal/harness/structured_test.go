@@ -380,10 +380,10 @@ func TestCompleteStructured_ProviderNotSupported(t *testing.T) {
 // TestCompleteStructured_HappyPath_Integration tests the complete flow from request to unmarshaled result
 func TestCompleteStructured_HappyPath_Integration(t *testing.T) {
 	type TestResult struct {
-		Name    string `json:"name"`
-		Count   int    `json:"count"`
-		Active  bool   `json:"active"`
-		Tags    []string `json:"tags"`
+		Name   string   `json:"name"`
+		Count  int      `json:"count"`
+		Active bool     `json:"active"`
+		Tags   []string `json:"tags"`
 	}
 
 	// Create mock provider that returns valid JSON
@@ -832,9 +832,9 @@ func (m *mockStructuredSlotManager) ValidateSlot(ctx context.Context, slot agent
 // mockMetrics implements basic metrics recording for testing
 type mockMetrics struct{}
 
-func (m *mockMetrics) RecordCounter(name string, value int64, labels map[string]string) {}
+func (m *mockMetrics) RecordCounter(name string, value int64, labels map[string]string)     {}
 func (m *mockMetrics) RecordHistogram(name string, value float64, labels map[string]string) {}
-func (m *mockMetrics) RecordGauge(name string, value float64, labels map[string]string) {}
+func (m *mockMetrics) RecordGauge(name string, value float64, labels map[string]string)     {}
 
 // mockTokenTracker implements token usage tracking for testing
 type mockTokenTracker struct{}

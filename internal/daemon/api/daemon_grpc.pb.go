@@ -41,6 +41,7 @@ const (
 	DaemonService_ExecuteTool_FullMethodName            = "/gibson.daemon.v1.DaemonService/ExecuteTool"
 	DaemonService_GetAvailableTools_FullMethodName      = "/gibson.daemon.v1.DaemonService/GetAvailableTools"
 	DaemonService_InstallComponent_FullMethodName       = "/gibson.daemon.v1.DaemonService/InstallComponent"
+	DaemonService_InstallAllComponent_FullMethodName    = "/gibson.daemon.v1.DaemonService/InstallAllComponent"
 	DaemonService_UninstallComponent_FullMethodName     = "/gibson.daemon.v1.DaemonService/UninstallComponent"
 	DaemonService_UpdateComponent_FullMethodName        = "/gibson.daemon.v1.DaemonService/UpdateComponent"
 	DaemonService_BuildComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/BuildComponent"
@@ -123,6 +124,9 @@ type DaemonServiceClient interface {
 	// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
 	// Clones the repository, builds the component, and registers it in the registry.
 	InstallComponent(ctx context.Context, in *InstallComponentRequest, opts ...grpc.CallOption) (*InstallComponentResponse, error)
+	// InstallAllComponent installs all components from a mono-repo.
+	// Clones the repository once, discovers all component.yaml files, and installs each component.
+	InstallAllComponent(ctx context.Context, in *InstallAllComponentRequest, opts ...grpc.CallOption) (*InstallAllComponentResponse, error)
 	// UninstallComponent removes a component (agent, tool, or plugin) from the system.
 	// Stops the component if running and removes it from the registry.
 	UninstallComponent(ctx context.Context, in *UninstallComponentRequest, opts ...grpc.CallOption) (*UninstallComponentResponse, error)
@@ -414,6 +418,16 @@ func (c *daemonServiceClient) InstallComponent(ctx context.Context, in *InstallC
 	return out, nil
 }
 
+func (c *daemonServiceClient) InstallAllComponent(ctx context.Context, in *InstallAllComponentRequest, opts ...grpc.CallOption) (*InstallAllComponentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InstallAllComponentResponse)
+	err := c.cc.Invoke(ctx, DaemonService_InstallAllComponent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *daemonServiceClient) UninstallComponent(ctx context.Context, in *UninstallComponentRequest, opts ...grpc.CallOption) (*UninstallComponentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UninstallComponentResponse)
@@ -584,6 +598,9 @@ type DaemonServiceServer interface {
 	// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
 	// Clones the repository, builds the component, and registers it in the registry.
 	InstallComponent(context.Context, *InstallComponentRequest) (*InstallComponentResponse, error)
+	// InstallAllComponent installs all components from a mono-repo.
+	// Clones the repository once, discovers all component.yaml files, and installs each component.
+	InstallAllComponent(context.Context, *InstallAllComponentRequest) (*InstallAllComponentResponse, error)
 	// UninstallComponent removes a component (agent, tool, or plugin) from the system.
 	// Stops the component if running and removes it from the registry.
 	UninstallComponent(context.Context, *UninstallComponentRequest) (*UninstallComponentResponse, error)
@@ -684,6 +701,9 @@ func (UnimplementedDaemonServiceServer) GetAvailableTools(context.Context, *GetA
 }
 func (UnimplementedDaemonServiceServer) InstallComponent(context.Context, *InstallComponentRequest) (*InstallComponentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method InstallComponent not implemented")
+}
+func (UnimplementedDaemonServiceServer) InstallAllComponent(context.Context, *InstallAllComponentRequest) (*InstallAllComponentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InstallAllComponent not implemented")
 }
 func (UnimplementedDaemonServiceServer) UninstallComponent(context.Context, *UninstallComponentRequest) (*UninstallComponentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UninstallComponent not implemented")
@@ -1101,6 +1121,24 @@ func _DaemonService_InstallComponent_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DaemonService_InstallAllComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InstallAllComponentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).InstallAllComponent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_InstallAllComponent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).InstallAllComponent(ctx, req.(*InstallAllComponentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _DaemonService_UninstallComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(UninstallComponentRequest)
 	if err := dec(in); err != nil {
@@ -1334,6 +1372,10 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "InstallComponent",
 			Handler:    _DaemonService_InstallComponent_Handler,
+		},
+		{
+			MethodName: "InstallAllComponent",
+			Handler:    _DaemonService_InstallAllComponent_Handler,
 		},
 		{
 			MethodName: "UninstallComponent",

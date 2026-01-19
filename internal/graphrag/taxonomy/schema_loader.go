@@ -219,9 +219,9 @@ func extractTaxonomyMappings(s schema.JSON, jsonPath string) []ToolOutputExtract
 // convertTaxonomyToExtraction converts a schema.TaxonomyMapping to a ToolOutputExtraction.
 func convertTaxonomyToExtraction(taxonomy *schema.TaxonomyMapping, jsonPath string) ToolOutputExtraction {
 	extract := ToolOutputExtraction{
-		NodeType:   taxonomy.NodeType,
-		JSONPath:   jsonPath,
-		IDTemplate: taxonomy.IDTemplate,
+		NodeType:              taxonomy.NodeType,
+		JSONPath:              jsonPath,
+		IdentifyingProperties: taxonomy.IdentifyingProperties,
 	}
 
 	// Convert property mappings
@@ -249,9 +249,16 @@ func convertTaxonomyToExtraction(taxonomy *schema.TaxonomyMapping, jsonPath stri
 		extract.Relationships = make([]ToolOutputRelationship, 0, len(taxonomy.Relationships))
 		for _, rel := range taxonomy.Relationships {
 			outputRel := ToolOutputRelationship{
-				Type:         rel.Type,
-				FromTemplate: rel.FromTemplate,
-				ToTemplate:   rel.ToTemplate,
+				Type:      rel.Type,
+				Condition: rel.Condition,
+				From: NodeReferenceConfig{
+					Type:       rel.From.Type,
+					Properties: rel.From.Properties,
+				},
+				To: NodeReferenceConfig{
+					Type:       rel.To.Type,
+					Properties: rel.To.Properties,
+				},
 			}
 
 			// Convert relationship properties

@@ -15,8 +15,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// SOTAOrchestratorConfig holds configuration for creating a SOTA orchestrator.
-type SOTAOrchestratorConfig struct {
+// Config holds configuration for creating a mission orchestrator.
+type Config struct {
 	// GraphRAGClient is the Neo4j client for state tracking (required)
 	GraphRAGClient graph.GraphClient
 
@@ -58,12 +58,19 @@ type SOTAOrchestratorConfig struct {
 
 	// Registry for component discovery and validation (optional)
 	Registry registry.ComponentDiscovery
+
+	// MissionTracer for Langfuse observability (optional)
+	// When set, enables tracing of agent executions and LLM calls to Langfuse.
+	// The tracer is passed to the Actor to create AgentExecutionLog context for
+	// linking agent-level LLM calls to the agent execution span.
+	// Type: *observability.MissionTracer (stored as interface{} to avoid import cycles)
+	MissionTracer interface{}
 }
 
-// NewSOTAMissionOrchestrator creates a new SOTA-based mission orchestrator.
+// NewMissionAdapter creates a new mission orchestrator adapter.
 // The adapter will create the Observer, Thinker, and Actor components per-mission
 // using the provided configuration.
-func NewSOTAMissionOrchestrator(cfg SOTAOrchestratorConfig) (*SOTAMissionOrchestrator, error) {
+func NewMissionAdapter(cfg Config) (*MissionAdapter, error) {
 	// Validate required dependencies
 	if cfg.GraphRAGClient == nil {
 		return nil, fmt.Errorf("GraphRAGClient is required")
@@ -94,7 +101,7 @@ func NewSOTAMissionOrchestrator(cfg SOTAOrchestratorConfig) (*SOTAMissionOrchest
 
 	// Create the adapter with configuration
 	// The adapter will create the actual orchestrator per-mission
-	adapter := &SOTAMissionOrchestrator{
+	adapter := &MissionAdapter{
 		config:         cfg,
 		pauseRequested: make(map[types.ID]bool),
 	}
@@ -103,7 +110,7 @@ func NewSOTAMissionOrchestrator(cfg SOTAOrchestratorConfig) (*SOTAMissionOrchest
 }
 
 // llmClientAdapter adapts an AgentHarness to the orchestrator.LLMClient interface.
-// This allows the SOTA orchestrator's Thinker to use the harness for LLM operations.
+// This allows the orchestrator's Thinker to use the harness for LLM operations.
 type llmClientAdapter struct {
 	harness harness.AgentHarness
 }
@@ -151,7 +158,7 @@ func (a *llmClientAdapter) CompleteStructuredAny(ctx context.Context, slot strin
 }
 
 // orchestratorHarnessAdapter adapts an AgentHarness to the orchestrator.Harness interface.
-// This allows the SOTA orchestrator's Actor to delegate to agents.
+// This allows the orchestrator's Actor to delegate to agents.
 type orchestratorHarnessAdapter struct {
 	harness harness.AgentHarness
 }

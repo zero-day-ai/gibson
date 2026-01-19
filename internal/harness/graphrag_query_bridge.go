@@ -4,6 +4,7 @@ package harness
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -21,7 +22,7 @@ import (
 // data like attack patterns and security findings.
 //
 // All methods include OpenTelemetry instrumentation for observability.
-// The bridge handles nil store gracefully by returning ErrGraphRAGNotEnabled.
+// GraphRAG is a core requirement - the daemon will fail to start if GraphRAG is not configured.
 type GraphRAGQueryBridge interface {
 	// Query executes a hybrid GraphRAG query combining semantic search and graph traversal.
 	// Returns results ranked by combined vector and graph scores.
@@ -88,10 +89,6 @@ func (b *DefaultGraphRAGQueryBridge) Query(ctx context.Context, query sdkgraphra
 		))
 	defer span.End()
 
-	if b.store == nil {
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	// Validate query
 	if err := query.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
@@ -125,10 +122,6 @@ func (b *DefaultGraphRAGQueryBridge) FindSimilarAttacks(ctx context.Context, con
 		))
 	defer span.End()
 
-	if b.store == nil {
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	// Execute similarity search
 	internalPatterns, err := b.store.FindSimilarAttacks(ctx, content, topK)
 	if err != nil {
@@ -153,10 +146,6 @@ func (b *DefaultGraphRAGQueryBridge) FindSimilarFindings(ctx context.Context, fi
 			attribute.Int("top_k", topK),
 		))
 	defer span.End()
-
-	if b.store == nil {
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
 
 	// Execute similarity search
 	internalFindings, err := b.store.FindSimilarFindings(ctx, findingID, topK)
@@ -183,10 +172,6 @@ func (b *DefaultGraphRAGQueryBridge) GetAttackChains(ctx context.Context, techni
 		))
 	defer span.End()
 
-	if b.store == nil {
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	// Execute attack chain discovery
 	internalChains, err := b.store.GetAttackChains(ctx, techniqueID, maxDepth)
 	if err != nil {
@@ -210,10 +195,6 @@ func (b *DefaultGraphRAGQueryBridge) GetRelatedFindings(ctx context.Context, fin
 			attribute.String("finding_id", findingID),
 		))
 	defer span.End()
-
-	if b.store == nil {
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
 
 	// Execute relationship traversal
 	internalFindings, err := b.store.GetRelatedFindings(ctx, findingID)
@@ -240,10 +221,6 @@ func (b *DefaultGraphRAGQueryBridge) StoreNode(ctx context.Context, node sdkgrap
 			attribute.String("agent_name", agentName),
 		))
 	defer span.End()
-
-	if b.store == nil {
-		return "", sdkgraphrag.ErrGraphRAGNotEnabled
-	}
 
 	// Validate node
 	if err := node.Validate(); err != nil {
@@ -316,10 +293,6 @@ func (b *DefaultGraphRAGQueryBridge) CreateRelationship(ctx context.Context, rel
 		))
 	defer span.End()
 
-	if b.store == nil {
-		return sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	// Validate relationship
 	if err := rel.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
@@ -361,10 +334,6 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 		))
 	defer span.End()
 
-	if b.store == nil {
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	// Convert SDK batch to internal records
 	records := make([]*graphrag.GraphRecord, len(batch.Nodes))
 	nodeIDs := make([]string, len(batch.Nodes))
@@ -402,6 +371,50 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 		records[i] = recordPtr
 	}
 
+	// Validate all relationships reference valid nodes BEFORE storage (Task 8)
+	// Build a map of all node IDs in this batch (both SDK IDs and generated internal IDs)
+	batchNodeIDs := make(map[string]bool, len(batch.Nodes)*2)
+	for _, node := range batch.Nodes {
+		// Add SDK node ID if it exists (may be empty if auto-generated)
+		if node.ID != "" {
+			batchNodeIDs[node.ID] = true
+		}
+	}
+	// Also add all generated internal IDs
+	for sdkID, internalID := range sdkIDToInternalID {
+		batchNodeIDs[sdkID] = true
+		batchNodeIDs[internalID.String()] = true
+	}
+
+	var invalidRels []string
+	for i, rel := range batch.Relationships {
+		fromExists := batchNodeIDs[rel.FromID]
+		toExists := batchNodeIDs[rel.ToID]
+
+		// Check graph if not in batch
+		if !fromExists {
+			fromExists = b.nodeExistsInGraph(ctx, rel.FromID)
+		}
+		if !toExists {
+			toExists = b.nodeExistsInGraph(ctx, rel.ToID)
+		}
+
+		if !fromExists {
+			invalidRels = append(invalidRels, fmt.Sprintf(
+				"rel[%d] %s: from_id %q not found", i, rel.Type, rel.FromID))
+		}
+		if !toExists {
+			invalidRels = append(invalidRels, fmt.Sprintf(
+				"rel[%d] %s: to_id %q not found", i, rel.Type, rel.ToID))
+		}
+	}
+
+	if len(invalidRels) > 0 {
+		span.SetAttributes(attribute.StringSlice("invalid_relationships", invalidRels))
+		return nil, fmt.Errorf("batch validation failed - invalid relationships:\n  %s",
+			strings.Join(invalidRels, "\n  "))
+	}
+
 	// Add relationships to the appropriate records based on source node ID
 	for _, sdkRel := range batch.Relationships {
 		// Validate relationship
@@ -419,13 +432,10 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 		if idx, ok := nodeIDToIndex[sdkRel.FromID]; ok {
 			records[idx].WithRelationship(*internalRel)
 		} else {
-			// Source node not in this batch - store relationship separately
-			// This handles cross-batch relationships
-			orphanRecord := graphrag.NewGraphRecord(graphrag.GraphNode{})
-			orphanRecord.WithRelationship(*internalRel)
-			if err := b.store.Store(ctx, orphanRecord); err != nil {
-				return nil, fmt.Errorf("failed to store orphan relationship: %w", err)
-			}
+			// After validation (Task 8), this path should be unreachable.
+			// If we get here, it's a bug in the validation logic.
+			return nil, fmt.Errorf("BUG: relationship %s references node %q which passed validation but is not in nodeIDToIndex - this should never happen",
+				sdkRel.Type, sdkRel.FromID)
 		}
 	}
 
@@ -507,10 +517,6 @@ func (b *DefaultGraphRAGQueryBridge) Traverse(ctx context.Context, startNodeID s
 		))
 	defer span.End()
 
-	if b.store == nil {
-		return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-	}
-
 	// Convert relationship types to internal types
 	var relTypes []graphrag.RelationType
 	for _, rt := range opts.RelationshipTypes {
@@ -539,71 +545,11 @@ func (b *DefaultGraphRAGQueryBridge) Traverse(ctx context.Context, startNodeID s
 
 // Health returns the health status of the GraphRAG bridge.
 func (b *DefaultGraphRAGQueryBridge) Health(ctx context.Context) types.HealthStatus {
-	if b.store == nil {
-		return types.Unhealthy("graphrag store is nil")
-	}
 	return b.store.Health(ctx)
 }
 
 // Compile-time interface check
 var _ GraphRAGQueryBridge = (*DefaultGraphRAGQueryBridge)(nil)
-
-// NoopGraphRAGQueryBridge is a no-op implementation that returns ErrGraphRAGNotEnabled.
-// Use this when GraphRAG is disabled or not configured.
-type NoopGraphRAGQueryBridge struct{}
-
-// Query returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) Query(_ context.Context, _ sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
-	return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// FindSimilarAttacks returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) FindSimilarAttacks(_ context.Context, _ string, _ int) ([]sdkgraphrag.AttackPattern, error) {
-	return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// FindSimilarFindings returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) FindSimilarFindings(_ context.Context, _ string, _ int) ([]sdkgraphrag.FindingNode, error) {
-	return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// GetAttackChains returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) GetAttackChains(_ context.Context, _ string, _ int) ([]sdkgraphrag.AttackChain, error) {
-	return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// GetRelatedFindings returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) GetRelatedFindings(_ context.Context, _ string) ([]sdkgraphrag.FindingNode, error) {
-	return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// StoreNode returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) StoreNode(_ context.Context, _ sdkgraphrag.GraphNode, _, _ string) (string, error) {
-	return "", sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// CreateRelationship returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) CreateRelationship(_ context.Context, _ sdkgraphrag.Relationship) error {
-	return sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// StoreBatch returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) StoreBatch(_ context.Context, _ sdkgraphrag.Batch, _, _ string) ([]string, error) {
-	return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// Traverse returns ErrGraphRAGNotEnabled.
-func (n *NoopGraphRAGQueryBridge) Traverse(_ context.Context, _ string, _ sdkgraphrag.TraversalOptions) ([]sdkgraphrag.TraversalResult, error) {
-	return nil, sdkgraphrag.ErrGraphRAGNotEnabled
-}
-
-// Health returns a healthy status since no-op bridge has no failure modes.
-func (n *NoopGraphRAGQueryBridge) Health(_ context.Context) types.HealthStatus {
-	return types.Healthy("graphrag query bridge disabled (noop)")
-}
-
-// Compile-time interface check
-var _ GraphRAGQueryBridge = (*NoopGraphRAGQueryBridge)(nil)
 
 // Type conversion functions (adapters)
 
@@ -959,4 +905,20 @@ func (b *DefaultGraphRAGQueryBridge) createHierarchyRelationships(ctx context.Co
 			}
 		}
 	}
+}
+
+// nodeExistsInGraph checks if a node exists in the graph by attempting to retrieve it.
+// Returns true if the node exists, false otherwise.
+// This is used during batch validation to check for cross-batch relationships.
+func (b *DefaultGraphRAGQueryBridge) nodeExistsInGraph(ctx context.Context, nodeID string) bool {
+	// Parse the node ID
+	id, err := types.ParseID(nodeID)
+	if err != nil {
+		return false
+	}
+
+	// Use the store's GetNode method to check existence
+	// GetNode returns an error if the node is not found
+	_, err = b.store.GetNode(ctx, id)
+	return err == nil
 }

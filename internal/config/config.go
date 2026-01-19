@@ -10,23 +10,23 @@ import (
 
 // Config is the root configuration for the Gibson Framework.
 type Config struct {
-	Core         CoreConfig          `mapstructure:"core" yaml:"core" validate:"required"`
-	Database     DBConfig            `mapstructure:"database" yaml:"database" validate:"required"`
-	Security     SecurityConfig      `mapstructure:"security" yaml:"security" validate:"required"`
-	LLM          LLMConfig           `mapstructure:"llm" yaml:"llm"`
-	Memory       memory.MemoryConfig `mapstructure:"memory" yaml:"memory"`
-	Prompt       prompt.PromptConfig `mapstructure:"prompt" yaml:"prompt"`
-	Logging      LoggingConfig       `mapstructure:"logging" yaml:"logging"`
-	Tracing      TracingConfig       `mapstructure:"tracing" yaml:"tracing"`
-	Metrics      MetricsConfig       `mapstructure:"metrics" yaml:"metrics"`
-	Registration RegistrationConfig  `mapstructure:"registration" yaml:"registration,omitempty"`
-	Registry     RegistryConfig      `mapstructure:"registry" yaml:"registry"`
-	Callback     CallbackConfig        `mapstructure:"callback" yaml:"callback,omitempty"`
-	Daemon       DaemonConfig          `mapstructure:"daemon" yaml:"daemon,omitempty"`
+	Core         CoreConfig              `mapstructure:"core" yaml:"core" validate:"required"`
+	Database     DBConfig                `mapstructure:"database" yaml:"database" validate:"required"`
+	Security     SecurityConfig          `mapstructure:"security" yaml:"security" validate:"required"`
+	LLM          LLMConfig               `mapstructure:"llm" yaml:"llm"`
+	Memory       memory.MemoryConfig     `mapstructure:"memory" yaml:"memory"`
+	Prompt       prompt.PromptConfig     `mapstructure:"prompt" yaml:"prompt"`
+	Logging      LoggingConfig           `mapstructure:"logging" yaml:"logging"`
+	Tracing      TracingConfig           `mapstructure:"tracing" yaml:"tracing"`
+	Metrics      MetricsConfig           `mapstructure:"metrics" yaml:"metrics"`
+	Registration RegistrationConfig      `mapstructure:"registration" yaml:"registration,omitempty"`
+	Registry     RegistryConfig          `mapstructure:"registry" yaml:"registry"`
+	Callback     CallbackConfig          `mapstructure:"callback" yaml:"callback,omitempty"`
+	Daemon       DaemonConfig            `mapstructure:"daemon" yaml:"daemon,omitempty"`
 	Embedder     embedder.EmbedderConfig `mapstructure:"embedder" yaml:"embedder"`
-	Langfuse     LangfuseConfig        `mapstructure:"langfuse" yaml:"langfuse"`
-	GraphRAG     GraphRAGConfig        `mapstructure:"graphrag" yaml:"graphrag"`
-	Plugins      PluginsConfig         `mapstructure:"plugins" yaml:"plugins,omitempty"`
+	Langfuse     LangfuseConfig          `mapstructure:"langfuse" yaml:"langfuse"`
+	GraphRAG     GraphRAGConfig          `mapstructure:"graphrag" yaml:"graphrag"`
+	Plugins      PluginsConfig           `mapstructure:"plugins" yaml:"plugins,omitempty"`
 }
 
 // PluginsConfig contains configuration for all plugins.

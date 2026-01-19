@@ -346,7 +346,6 @@ func (t *Thinker) buildPrompt(state *ObservationState, attemptNum int) (string, 
 	return b.String(), nil
 }
 
-
 // parseError is a retryable error for parse failures.
 type parseError struct {
 	msg string

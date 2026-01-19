@@ -13,9 +13,9 @@ import (
 func ExampleOrchestrator() {
 	// Create orchestrator components (observer, thinker, actor would be initialized here)
 	// For this example, we're showing the configuration pattern
-	var observer *orchestrator.Observer   // Would be initialized with graph queries
-	var thinker *orchestrator.Thinker     // Would be initialized with LLM client
-	var actor *orchestrator.Actor         // Would be initialized with harness
+	var observer *orchestrator.Observer // Would be initialized with graph queries
+	var thinker *orchestrator.Thinker   // Would be initialized with LLM client
+	var actor *orchestrator.Actor       // Would be initialized with harness
 
 	// Create orchestrator with configuration
 	orch := orchestrator.NewOrchestrator(
@@ -23,9 +23,9 @@ func ExampleOrchestrator() {
 		thinker,
 		actor,
 		orchestrator.WithMaxIterations(100),
-		orchestrator.WithBudget(100000),              // 100k token budget
-		orchestrator.WithMaxConcurrent(5),            // Max 5 parallel executions
-		orchestrator.WithTimeout(30*time.Minute),     // 30 minute timeout
+		orchestrator.WithBudget(100000),   // 100k token budget
+		orchestrator.WithMaxConcurrent(5), // Max 5 parallel executions
+		orchestrator.WithTimeout(30*time.Minute), // 30 minute timeout
 		orchestrator.WithLogger(slog.Default()),
 	)
 

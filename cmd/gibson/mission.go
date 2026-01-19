@@ -479,7 +479,12 @@ func runMissionList(cmd *cobra.Command, args []string) error {
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "ID\tSTATUS\tWORKFLOW\tSTARTED\tFINDINGS")
 			for _, m := range missions {
-				startTime := m.StartTime.Format("2006-01-02 15:04")
+				var startTime string
+				if m.StartTime.IsZero() {
+					startTime = "-"
+				} else {
+					startTime = m.StartTime.Format("2006-01-02 15:04")
+				}
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n",
 					m.ID, m.Status, m.WorkflowPath, startTime, m.FindingCount)
 			}
@@ -694,24 +699,71 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 			fmt.Sprintf("mission source type '%s' not yet fully implemented (use file path with -f flag for now)", sourceType), nil)
 	}
 
+	// Extract mission name from workflow to check for paused missions
+	missionName := getMissionNameFromWorkflow(source)
+
+	// Check for paused missions with this name and auto-resume
+	if missionName != "" {
+		pausedMissions, _, err := client.ListMissions(ctx, true, "paused", missionName, 1, 0)
+		if err == nil && len(pausedMissions) > 0 {
+			m := pausedMissions[0]
+			if verbose {
+				fmt.Printf("Found paused mission %s, auto-resuming...\n", m.ID)
+			} else {
+				fmt.Printf("Resuming paused mission %s...\n", m.ID)
+			}
+
+			// Auto-resume the paused mission
+			eventChan, err := client.ResumeMission(ctx, m.ID, "")
+			if err != nil {
+				// If resume fails (e.g., no checkpoint), cancel the orphaned mission and start fresh
+				fmt.Fprintf(os.Stderr, "Warning: Cannot resume paused mission %s: %v\n", m.ID, err)
+				fmt.Fprintf(os.Stderr, "Cancelling orphaned mission and starting fresh...\n")
+
+				// Try to stop/cancel the paused mission to clean up
+				if stopErr := client.StopMission(ctx, m.ID, true); stopErr != nil {
+					if verbose {
+						fmt.Fprintf(os.Stderr, "Note: Could not cancel orphaned mission: %v\n", stopErr)
+					}
+				}
+				// Fall through to start a new mission
+			} else {
+				// Stream resumed mission events
+				return streamMissionEvents(cmd, eventChan, m.ID, verbose)
+			}
+		}
+	}
+
 	// Start mission execution via daemon
 	eventChan, err := client.RunMission(ctx, source, missionMemoryContinuity)
 	if err != nil {
 		return internal.WrapError(internal.ExitError, "failed to start mission", err)
 	}
 
-	// Stream and display events as they occur
-	var missionID string
-	nodeEvents := 0
+	// Stream and display events
+	return streamMissionEvents(cmd, eventChan, "", verbose)
+}
+
+// streamMissionEvents handles streaming mission events to the console.
+// If initialMissionID is provided, it's used instead of extracting from mission.started event.
+func streamMissionEvents(cmd *cobra.Command, eventChan <-chan dclient.MissionEvent, initialMissionID string, verbose bool) error {
+	missionID := initialMissionID
 
 	for event := range eventChan {
 		switch event.Type {
 		case "mission.started":
-			missionID = getEventData(event.Data, "mission_id")
+			if missionID == "" {
+				missionID = getEventData(event.Data, "mission_id")
+			}
 			fmt.Printf("Mission %s started\n", missionID)
 
+		case "mission.resumed":
+			if missionID == "" {
+				missionID = getEventData(event.Data, "mission_id")
+			}
+			fmt.Printf("Mission %s resumed\n", missionID)
+
 		case "node.started":
-			nodeEvents++
 			if verbose {
 				nodeID := getEventData(event.Data, "node_id")
 				fmt.Printf("  [%s] Node %s started\n", event.Timestamp.Format("15:04:05"), nodeID)
@@ -742,6 +794,16 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// getMissionNameFromWorkflow parses a workflow file and extracts the mission name.
+// Returns empty string if parsing fails.
+func getMissionNameFromWorkflow(workflowPath string) string {
+	def, err := mission.ParseDefinition(workflowPath)
+	if err != nil {
+		return ""
+	}
+	return def.Name
 }
 
 // detectMissionSourceType determines if a source string is a URL, file path, or mission name
@@ -869,16 +931,17 @@ func runMissionStop(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	// First, find the mission ID from the name
-	missions, _, err := client.ListMissions(ctx, true, "", missionName, 10, 0)
+	// First, find the mission ID from the name or ID
+	// Try activeOnly=true first to find running/paused missions
+	missions, _, err := client.ListMissions(ctx, true, "", "", 100, 0)
 	if err != nil {
 		return internal.WrapError(internal.ExitError, "failed to query missions", err)
 	}
 
-	// Find matching mission
+	// Find matching mission by ID, Name, or WorkflowPath
 	var missionID string
 	for _, m := range missions {
-		if strings.Contains(m.ID, missionName) || strings.Contains(m.WorkflowPath, missionName) {
+		if strings.Contains(m.ID, missionName) || strings.Contains(m.Name, missionName) || strings.Contains(m.WorkflowPath, missionName) {
 			missionID = m.ID
 			break
 		}

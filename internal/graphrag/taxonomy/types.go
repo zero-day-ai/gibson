@@ -27,42 +27,42 @@ type PropertyDefinition struct {
 // NodeTypeDefinition defines a node type in the taxonomy.
 // Each node type has a unique identifier, type string, and property schema.
 type NodeTypeDefinition struct {
-	ID          string               `yaml:"id"`           // Unique identifier (e.g., "node.asset.domain")
-	Name        string               `yaml:"name"`         // Human-readable name (e.g., "Domain")
-	Type        string               `yaml:"type"`         // GraphRAG node type string (e.g., "domain")
-	Category    string               `yaml:"category"`     // Grouping category (e.g., "asset", "finding")
-	Description string               `yaml:"description"`  // Purpose and usage description
-	IDTemplate  string               `yaml:"id_template"`  // Format string for generating node IDs (e.g., "domain:{name}")
-	Properties  []PropertyDefinition `yaml:"properties"`   // Property definitions
+	ID          string               `yaml:"id"`                 // Unique identifier (e.g., "node.asset.domain")
+	Name        string               `yaml:"name"`               // Human-readable name (e.g., "Domain")
+	Type        string               `yaml:"type"`               // GraphRAG node type string (e.g., "domain")
+	Category    string               `yaml:"category"`           // Grouping category (e.g., "asset", "finding")
+	Description string               `yaml:"description"`        // Purpose and usage description
+	IDTemplate  string               `yaml:"id_template"`        // Format string for generating node IDs (e.g., "domain:{name}")
+	Properties  []PropertyDefinition `yaml:"properties"`         // Property definitions
 	Examples    []map[string]any     `yaml:"examples,omitempty"` // Example node definitions
 }
 
 // RelationshipTypeDefinition defines a relationship type in the taxonomy.
 // Relationships have from/to type constraints to ensure graph consistency.
 type RelationshipTypeDefinition struct {
-	ID            string               `yaml:"id"`          // Unique identifier (e.g., "rel.asset.has_subdomain")
-	Name          string               `yaml:"name"`        // Human-readable name (e.g., "HAS_SUBDOMAIN")
-	Type          string               `yaml:"type"`        // GraphRAG relationship type string (e.g., "HAS_SUBDOMAIN")
-	Category      string               `yaml:"category"`    // Grouping category (e.g., "asset_hierarchy", "finding")
-	Description   string               `yaml:"description"` // Purpose and usage description
-	FromTypes     []string             `yaml:"from_types"`  // Valid source node types
-	ToTypes       []string             `yaml:"to_types"`    // Valid target node types
+	ID            string               `yaml:"id"`                   // Unique identifier (e.g., "rel.asset.has_subdomain")
+	Name          string               `yaml:"name"`                 // Human-readable name (e.g., "HAS_SUBDOMAIN")
+	Type          string               `yaml:"type"`                 // GraphRAG relationship type string (e.g., "HAS_SUBDOMAIN")
+	Category      string               `yaml:"category"`             // Grouping category (e.g., "asset_hierarchy", "finding")
+	Description   string               `yaml:"description"`          // Purpose and usage description
+	FromTypes     []string             `yaml:"from_types"`           // Valid source node types
+	ToTypes       []string             `yaml:"to_types"`             // Valid target node types
 	Properties    []PropertyDefinition `yaml:"properties,omitempty"` // Optional properties on the relationship
-	Bidirectional bool                 `yaml:"bidirectional"` // Whether relationship should be created in both directions
+	Bidirectional bool                 `yaml:"bidirectional"`        // Whether relationship should be created in both directions
 }
 
 // TechniqueDefinition defines an attack technique (MITRE ATT&CK or Arcanum PI).
 // Techniques can be mapped to findings to track attack patterns.
 type TechniqueDefinition struct {
-	TechniqueID         string   `yaml:"technique_id"`         // e.g., "T1190" or "ARC-T001"
-	Name                string   `yaml:"name"`                 // Technique name
-	Taxonomy            string   `yaml:"taxonomy"`             // "mitre" or "arcanum"
-	Category            string   `yaml:"category"`             // e.g., "initial_access" or "attack_technique"
-	Description         string   `yaml:"description"`          // Detailed description
-	Tactic              string   `yaml:"tactic,omitempty"`     // For MITRE (e.g., "Initial Access")
-	Platforms           []string `yaml:"platforms,omitempty"`  // Applicable platforms (e.g., ["Windows", "Linux"])
-	Examples            []string `yaml:"examples,omitempty"`   // Example applications
-	MITREMapping        []string `yaml:"mitre_mapping,omitempty"` // For Arcanum cross-reference to MITRE
+	TechniqueID         string   `yaml:"technique_id"`                   // e.g., "T1190" or "ARC-T001"
+	Name                string   `yaml:"name"`                           // Technique name
+	Taxonomy            string   `yaml:"taxonomy"`                       // "mitre" or "arcanum"
+	Category            string   `yaml:"category"`                       // e.g., "initial_access" or "attack_technique"
+	Description         string   `yaml:"description"`                    // Detailed description
+	Tactic              string   `yaml:"tactic,omitempty"`               // For MITRE (e.g., "Initial Access")
+	Platforms           []string `yaml:"platforms,omitempty"`            // Applicable platforms (e.g., ["Windows", "Linux"])
+	Examples            []string `yaml:"examples,omitempty"`             // Example applications
+	MITREMapping        []string `yaml:"mitre_mapping,omitempty"`        // For Arcanum cross-reference to MITRE
 	DetectionStrategies []string `yaml:"detection_strategies,omitempty"` // How to detect this technique
 }
 
@@ -76,11 +76,11 @@ type ConnectionSchema struct {
 // TargetTypeDefinition defines a target type in the taxonomy.
 // Target types represent systems, services, or applications that can be tested.
 type TargetTypeDefinition struct {
-	ID               string            `yaml:"id"`          // Unique identifier (e.g., "target.web.http_api")
-	Type             string            `yaml:"type"`        // Target type string (e.g., "http_api")
-	Name             string            `yaml:"name"`        // Human-readable name (e.g., "HTTP API")
-	Category         string            `yaml:"category"`    // Grouping category (e.g., "web", "ai", "cloud")
-	Description      string            `yaml:"description"` // Purpose and usage description
+	ID               string            `yaml:"id"`                          // Unique identifier (e.g., "target.web.http_api")
+	Type             string            `yaml:"type"`                        // Target type string (e.g., "http_api")
+	Name             string            `yaml:"name"`                        // Human-readable name (e.g., "HTTP API")
+	Category         string            `yaml:"category"`                    // Grouping category (e.g., "web", "ai", "cloud")
+	Description      string            `yaml:"description"`                 // Purpose and usage description
 	ConnectionSchema *ConnectionSchema `yaml:"connection_schema,omitempty"` // Connection configuration schema
 }
 
@@ -109,8 +109,8 @@ type CapabilityDefinition struct {
 // relationship types, and techniques. This is the in-memory representation
 // that gets built from the embedded YAML files.
 type Taxonomy struct {
-	Version  string           `yaml:"version"`  // Taxonomy version (matches Gibson binary version)
-	Metadata TaxonomyMetadata `yaml:"metadata"` // Descriptive metadata
+	Version  string           `yaml:"version"`            // Taxonomy version (matches Gibson binary version)
+	Metadata TaxonomyMetadata `yaml:"metadata"`           // Descriptive metadata
 	Includes []string         `yaml:"includes,omitempty"` // List of included YAML files (from root)
 
 	// Primary collections - keyed by Type field for fast lookup
@@ -124,11 +124,11 @@ type Taxonomy struct {
 	ToolOutputSchemas map[string]*ToolOutputSchema           `yaml:"-"` // Keyed by Tool field (tool name)
 
 	// Secondary indices for alternative lookups - built at load time
-	nodeTypesByID         map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by ID field
-	relationshipsByID     map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by ID field
-	targetTypesByID       map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by ID field
-	techniqueTypesByID    map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by ID field
-	capabilitiesByID      map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
+	nodeTypesByID      map[string]*NodeTypeDefinition         `yaml:"-"` // Keyed by ID field
+	relationshipsByID  map[string]*RelationshipTypeDefinition `yaml:"-"` // Keyed by ID field
+	targetTypesByID    map[string]*TargetTypeDefinition       `yaml:"-"` // Keyed by ID field
+	techniqueTypesByID map[string]*TechniqueTypeDefinition    `yaml:"-"` // Keyed by ID field
+	capabilitiesByID   map[string]*CapabilityDefinition       `yaml:"-"` // Keyed by ID field
 
 	// Extension tracking
 	isCustomLoaded bool `yaml:"-"` // Whether custom taxonomy has been merged

@@ -18,11 +18,12 @@ import (
 // by the harness configuration.
 //
 // Architecture:
-//   Neo4jClient (graph database) + VectorStore + Embedder
-//     -> GraphRAGProvider (local or remote)
-//       -> GraphRAGStore (orchestration layer)
-//         -> GraphRAGBridge (async storage)
-//         -> GraphRAGQueryBridge (query operations)
+//
+//	Neo4jClient (graph database) + VectorStore + Embedder
+//	  -> GraphRAGProvider (local or remote)
+//	    -> GraphRAGStore (orchestration layer)
+//	      -> GraphRAGBridge (async storage)
+//	      -> GraphRAGQueryBridge (query operations)
 //
 // The adapter holds references to both bridge implementations and provides
 // unified lifecycle management (initialization, health checks, shutdown).
@@ -72,15 +73,16 @@ type GraphRAGBridgeConfig struct {
 //   - error: If configuration is invalid
 //
 // Example usage in daemon:
-//   adapter, err := daemon.NewGraphRAGBridgeAdapter(config)
-//   if err != nil {
-//       return err
-//   }
-//   harnessConfig := &harness.HarnessConfig{
-//       GraphRAGBridge:      adapter.Bridge(),
-//       GraphRAGQueryBridge: adapter.QueryBridge(),
-//       // ... other config
-//   }
+//
+//	adapter, err := daemon.NewGraphRAGBridgeAdapter(config)
+//	if err != nil {
+//	    return err
+//	}
+//	harnessConfig := &harness.HarnessConfig{
+//	    GraphRAGBridge:      adapter.Bridge(),
+//	    GraphRAGQueryBridge: adapter.QueryBridge(),
+//	    // ... other config
+//	}
 func NewGraphRAGBridgeAdapter(config GraphRAGBridgeConfig) (*GraphRAGBridgeAdapter, error) {
 	// Validate required fields
 	if config.GraphRAGStore == nil {
@@ -135,7 +137,6 @@ func NewGraphRAGBridgeAdapter(config GraphRAGBridgeConfig) (*GraphRAGBridgeAdapt
 	}
 
 	logger.Info("graphrag bridge adapter created",
-		"bridge_enabled", bridgeConfig.Enabled,
 		"max_concurrent", bridgeConfig.MaxConcurrent,
 		"similarity_threshold", bridgeConfig.SimilarityThreshold,
 	)

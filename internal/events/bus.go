@@ -404,9 +404,9 @@ func noopErrorHandler(err error, context map[string]interface{}) {}
 // noopMetricsRecorder is the default metrics recorder that does nothing.
 type noopMetricsRecorder struct{}
 
-func (noopMetricsRecorder) RecordEventPublished(eventType string, subscriberCount int)      {}
-func (noopMetricsRecorder) RecordEventDropped(eventType string, subscriberID string)        {}
-func (noopMetricsRecorder) RecordSubscriberAdded(subscriberID string)                       {}
+func (noopMetricsRecorder) RecordEventPublished(eventType string, subscriberCount int) {}
+func (noopMetricsRecorder) RecordEventDropped(eventType string, subscriberID string)   {}
+func (noopMetricsRecorder) RecordSubscriberAdded(subscriberID string)                  {}
 func (noopMetricsRecorder) RecordSubscriberRemoved(subscriberID string, duration time.Duration) {
 }
 

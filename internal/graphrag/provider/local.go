@@ -85,15 +85,9 @@ func (l *LocalGraphRAGProvider) Initialize(ctx context.Context) error {
 		l.graphHealthy = true
 	}
 
-	// Initialize vector store if enabled
-	if l.config.Vector.Enabled {
-		// Note: Vector store should be injected or created based on config
-		// For now, we assume it's already available via dependency injection
-		// In production, you'd create the vector store here based on config
-		if l.vectorStore == nil {
-			return graphrag.NewConfigError("vector store is enabled but not provided", nil)
-		}
-
+	// Initialize vector store if provided
+	// Vector store is optional - if not provided, vector search will be unavailable
+	if l.vectorStore != nil {
 		// Validate vector store connectivity
 		health := l.vectorStore.Health(ctx)
 		if !health.IsHealthy() {
@@ -128,23 +122,26 @@ func (l *LocalGraphRAGProvider) SetVectorStore(store vector.VectorStore) {
 // Creates indices on node IDs, labels, and common query patterns.
 func (l *LocalGraphRAGProvider) createIndices(ctx context.Context) error {
 	// Create index on node ID for fast lookups
+	// Note: Uses label-agnostic syntax (n) to index all nodes regardless of label.
+	// This is critical because Gibson nodes have dynamic labels from the taxonomy
+	// (e.g., :Target, :Agent, :Finding), not a fixed :GraphNode label.
+	// The CreateRelationship query uses MATCH (n {id: $id}) without a label,
+	// so this index must cover all nodes.
 	_, err := l.graphClient.Query(ctx, `
-		CREATE INDEX node_id_index IF NOT EXISTS
-		FOR (n:GraphNode)
+		CREATE INDEX node_id_lookup IF NOT EXISTS
+		FOR (n)
 		ON (n.id)
 	`, nil)
 	if err != nil {
 		return err
 	}
 
-	// Create index on mission_id for mission-scoped queries
-	_, err = l.graphClient.Query(ctx, `
-		CREATE INDEX mission_id_index IF NOT EXISTS
-		FOR (n:GraphNode)
-		ON (n.mission_id)
-	`, nil)
+	// Note: mission_id index removed because it was also incorrectly scoped to :GraphNode.
+	// If mission-scoped queries become a performance bottleneck, we should either:
+	// 1. Add a label-agnostic mission_id index: FOR (n) ON (n.mission_id)
+	// 2. Or add per-label indices if Neo4j version doesn't support label-agnostic property indices
 
-	return err
+	return nil
 }
 
 // StoreNode stores a graph node in both Neo4j and vector store.
@@ -190,8 +187,8 @@ func (l *LocalGraphRAGProvider) StoreNode(ctx context.Context, node graphrag.Gra
 		}
 	}
 
-	// Store in vector store if enabled and node has embedding
-	if l.config.Vector.Enabled && l.vectorStore != nil && len(node.Embedding) > 0 {
+	// Store in vector store if available and node has embedding
+	if l.vectorStore != nil && len(node.Embedding) > 0 {
 		// Create vector record from node
 		metadata := make(map[string]any)
 		metadata["node_id"] = node.ID.String()
@@ -286,7 +283,7 @@ func (l *LocalGraphRAGProvider) QueryNodes(ctx context.Context, query graphrag.N
 	}
 
 	// Fallback to vector store if available
-	if l.config.Vector.Enabled && l.vectorStore != nil {
+	if l.vectorStore != nil {
 		return l.queryNodesFromVectorStore(ctx, query)
 	}
 
@@ -571,8 +568,8 @@ func (l *LocalGraphRAGProvider) VectorSearch(ctx context.Context, embedding []fl
 		return nil, graphrag.NewGraphRAGError(graphrag.ErrCodeConnectionFailed, "provider not initialized")
 	}
 
-	if !l.config.Vector.Enabled || l.vectorStore == nil {
-		return nil, graphrag.NewGraphRAGError(graphrag.ErrCodeProviderUnavailable, "vector search is disabled")
+	if l.vectorStore == nil {
+		return nil, graphrag.NewGraphRAGError(graphrag.ErrCodeProviderUnavailable, "vector search is unavailable (no vector store configured)")
 	}
 
 	// Create vector query
@@ -623,9 +620,9 @@ func (l *LocalGraphRAGProvider) Health(ctx context.Context) types.HealthStatus {
 		graphHealthy = graphStatus.IsHealthy()
 	}
 
-	// Check vector health
-	vectorHealthy := true // Vector is optional
-	if l.config.Vector.Enabled && l.vectorStore != nil {
+	// Check vector health (optional component)
+	vectorHealthy := true // Vector is optional - default to healthy if not configured
+	if l.vectorStore != nil {
 		vectorStatus := l.vectorStore.Health(ctx)
 		vectorHealthy = vectorStatus.IsHealthy()
 	}

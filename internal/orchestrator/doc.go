@@ -5,7 +5,7 @@
 // decisions about workflow execution. The Decision type represents the output
 // of the orchestrator's reasoning process.
 //
-// Decision Actions
+// # Decision Actions
 //
 // The orchestrator can take several types of actions:
 //
@@ -16,7 +16,7 @@
 //   - spawn_agent: Dynamically create and add a new node to the workflow
 //   - complete: Mark the workflow as complete and stop orchestration
 //
-// JSON Schema
+// # JSON Schema
 //
 // The Decision type is designed to be JSON serializable for LLM structured output.
 // Example decision JSON:
@@ -28,7 +28,7 @@
 //	  "confidence": 0.92
 //	}
 //
-// Usage Example
+// # Usage Example
 //
 // Parse an LLM's structured output:
 //
@@ -50,7 +50,7 @@
 //	// ... handle other actions
 //	}
 //
-// Validation
+// # Validation
 //
 // All decisions are validated to ensure required fields are present:
 //
@@ -59,7 +59,7 @@
 //   - Confidence must be between 0.0 and 1.0
 //   - Action-specific fields are validated (e.g., target_node_id for execute_agent)
 //
-// Thread Safety
+// # Thread Safety
 //
 // Decision types are immutable after creation and safe for concurrent use.
 // ParseDecision performs validation and returns an error for invalid input.

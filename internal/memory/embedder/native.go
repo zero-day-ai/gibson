@@ -9,6 +9,13 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
+// Singleton for the native embedder - ONNX Runtime can only be initialized once per process
+var (
+	nativeEmbedderInstance *NativeEmbedder
+	nativeEmbedderOnce     sync.Once
+	nativeEmbedderErr      error
+)
+
 // NativeEmbedder uses all-MiniLM-L6-v2 for local embedding generation.
 // This embedder runs entirely offline without requiring external API calls.
 // The model is embedded in the binary and uses ONNX Runtime for inference.
@@ -20,13 +27,18 @@ import (
 //   - Performance: ~100ms per embedding on CPU
 //
 // Thread-safety: All methods are safe for concurrent use.
+// Singleton: ONNX Runtime can only be initialized once per process, so
+// CreateNativeEmbedder returns a shared instance.
 type NativeEmbedder struct {
 	model *all_minilm_l6_v2.Model
 	mu    sync.RWMutex
 }
 
-// CreateNativeEmbedder creates a new native embedder using all-MiniLM-L6-v2.
+// CreateNativeEmbedder creates or returns the singleton native embedder using all-MiniLM-L6-v2.
 // Returns an error if ONNX Runtime is not available or model initialization fails.
+//
+// IMPORTANT: ONNX Runtime can only be initialized once per process. This function
+// returns a shared singleton instance. All callers receive the same embedder.
 //
 // Requirements:
 //   - ONNX Runtime library must be available (libonnxruntime.so or onnxruntime.dll)
@@ -39,17 +51,26 @@ type NativeEmbedder struct {
 //	    return nil, fmt.Errorf("embedder required: %w", err)
 //	}
 func CreateNativeEmbedder() (*NativeEmbedder, error) {
-	// Initialize the all-MiniLM-L6-v2 model
-	// This loads the ONNX model and creates the runtime session
-	model, err := all_minilm_l6_v2.NewModel()
-	if err != nil {
-		return nil, types.WrapError(ErrCodeEmbedderUnavailable,
-			"failed to initialize native embedder (ONNX Runtime may be unavailable)", err)
+	nativeEmbedderOnce.Do(func() {
+		// Initialize the all-MiniLM-L6-v2 model
+		// This loads the ONNX model and creates the runtime session
+		model, err := all_minilm_l6_v2.NewModel()
+		if err != nil {
+			nativeEmbedderErr = types.WrapError(ErrCodeEmbedderUnavailable,
+				"failed to initialize native embedder (ONNX Runtime may be unavailable)", err)
+			return
+		}
+
+		nativeEmbedderInstance = &NativeEmbedder{
+			model: model,
+		}
+	})
+
+	if nativeEmbedderErr != nil {
+		return nil, nativeEmbedderErr
 	}
 
-	return &NativeEmbedder{
-		model: model,
-	}, nil
+	return nativeEmbedderInstance, nil
 }
 
 // Embed generates an embedding vector for a single text.

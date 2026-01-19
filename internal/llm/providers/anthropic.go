@@ -227,4 +227,3 @@ func (p *AnthropicProvider) CompleteStructured(ctx context.Context, req llm.Comp
 
 	return resp, nil
 }
-

@@ -53,7 +53,6 @@ func TestIntegration_ScopedGraphRAGQueries(t *testing.T) {
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
 
 	config := GraphRAGConfig{
-		Enabled:  true,
 		Provider: "local",
 		Query: QueryConfig{
 			DefaultTopK:    10,
@@ -355,7 +354,7 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 		scoper := NewQueryScoper(mockLister, logger)
 		processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
 
-		config := GraphRAGConfig{Enabled: true}
+		config := GraphRAGConfig{}
 		store := &DefaultGraphRAGStore{
 			provider:  provider,
 			processor: processor,
@@ -414,7 +413,7 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 		scoper := NewQueryScoper(mockLister, logger)
 		processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
 
-		config := GraphRAGConfig{Enabled: true}
+		config := GraphRAGConfig{}
 		store := &DefaultGraphRAGStore{
 			provider:  provider,
 			processor: processor,
@@ -459,7 +458,7 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 		scoper := NewQueryScoper(mockLister, logger)
 		processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
 
-		config := GraphRAGConfig{Enabled: true}
+		config := GraphRAGConfig{}
 		store := &DefaultGraphRAGStore{
 			provider:  provider,
 			processor: processor,
@@ -553,7 +552,7 @@ func TestIntegration_ScopedFindingsSimilarity(t *testing.T) {
 	scoper := NewQueryScoper(mockLister, logger)
 	processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
 
-	config := GraphRAGConfig{Enabled: true}
+	config := GraphRAGConfig{}
 	store := &DefaultGraphRAGStore{
 		provider:  provider,
 		processor: processor,

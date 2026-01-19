@@ -189,10 +189,10 @@ type MissionInstaller interface {
 
 // DefaultMissionInstaller implements MissionInstaller using git and MissionStore
 type DefaultMissionInstaller struct {
-	git              git.GitOperations
-	store            MissionStore
-	missionsDir      string
-	componentStore   ComponentStore
+	git                git.GitOperations
+	store              MissionStore
+	missionsDir        string
+	componentStore     ComponentStore
 	componentInstaller ComponentInstaller
 }
 

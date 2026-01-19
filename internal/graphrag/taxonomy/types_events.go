@@ -41,45 +41,52 @@ type PropertyMapping struct {
 
 // EventRelationshipCreation defines how to create a relationship from an event.
 type EventRelationshipCreation struct {
-	Type         string            `yaml:"type"`          // Type of relationship (must match taxonomy)
-	FromTemplate string            `yaml:"from_template"` // Template for source node ID
-	ToTemplate   string            `yaml:"to_template"`   // Template for target node ID
+	Type         string            `yaml:"type"`                 // Type of relationship (must match taxonomy)
+	FromTemplate string            `yaml:"from_template"`        // Template for source node ID
+	ToTemplate   string            `yaml:"to_template"`          // Template for target node ID
 	Properties   []PropertyMapping `yaml:"properties,omitempty"` // Property mappings for the relationship
 }
 
 // ToolOutputSchema defines how to parse tool output and create graph nodes/relationships.
 // This enables automatic asset discovery and graphing from tool outputs.
 type ToolOutputSchema struct {
-	Tool         string                  `yaml:"tool"`          // Name of the tool (e.g., "nmap", "subfinder")
-	Description  string                  `yaml:"description"`   // Description of what this schema extracts
-	OutputFormat string                  `yaml:"output_format"` // Output format (json, xml, text, line-delimited, etc.)
-	Extracts     []ToolOutputExtraction  `yaml:"extracts"`      // What data to extract and how to create nodes
+	Tool         string                 `yaml:"tool"`          // Name of the tool (e.g., "nmap", "subfinder")
+	Description  string                 `yaml:"description"`   // Description of what this schema extracts
+	OutputFormat string                 `yaml:"output_format"` // Output format (json, xml, text, line-delimited, etc.)
+	Extracts     []ToolOutputExtraction `yaml:"extracts"`      // What data to extract and how to create nodes
 }
 
 // ToolOutputExtraction defines a single extraction rule for tool output.
 type ToolOutputExtraction struct {
-	NodeType      string                      `yaml:"node_type"`       // Type of node to create (must match taxonomy)
-	JSONPath      string                      `yaml:"json_path"`       // JSONPath expression to locate data
-	IDTemplate    string                      `yaml:"id_template"`     // Template for generating node ID
-	Condition     string                      `yaml:"condition,omitempty"` // Optional condition to filter extractions
-	Properties    []ToolOutputProperty        `yaml:"properties"`      // Property mappings from JSON to node
-	Relationships []ToolOutputRelationship    `yaml:"relationships,omitempty"` // Relationships to create
+	NodeType              string                   `yaml:"node_type"`                        // Type of node to create (must match taxonomy)
+	JSONPath              string                   `yaml:"json_path"`                        // JSONPath expression to locate data
+	IdentifyingProperties map[string]string        `yaml:"identifying_properties,omitempty"` // Property name -> JSONPath for ID generation
+	Condition             string                   `yaml:"condition,omitempty"`              // Optional condition to filter extractions
+	Properties            []ToolOutputProperty     `yaml:"properties"`                       // Property mappings from JSON to node
+	Relationships         []ToolOutputRelationship `yaml:"relationships,omitempty"`          // Relationships to create
 }
 
 // ToolOutputProperty defines a property mapping from tool output to node property.
 type ToolOutputProperty struct {
-	JSONPath string `yaml:"json_path"`        // JSONPath to extract value from
-	Target   string `yaml:"target"`           // Target property name on node
+	JSONPath string `yaml:"json_path"`          // JSONPath to extract value from
+	Target   string `yaml:"target"`             // Target property name on node
 	Template string `yaml:"template,omitempty"` // Optional template for formatting value
 	Default  any    `yaml:"default,omitempty"`  // Default value if JSONPath yields nothing
 }
 
 // ToolOutputRelationship defines a relationship to create from extracted tool output.
 type ToolOutputRelationship struct {
-	Type         string                `yaml:"type"`          // Type of relationship (must match taxonomy)
-	FromTemplate string                `yaml:"from_template"` // Template for source node ID
-	ToTemplate   string                `yaml:"to_template"`   // Template for target node ID
-	Properties   []RelationshipProperty `yaml:"properties,omitempty"` // Property mappings for the relationship
+	Type       string                 `yaml:"type"`                 // Type of relationship (must match taxonomy)
+	From       NodeReferenceConfig    `yaml:"from"`                 // Source node reference (type + properties)
+	To         NodeReferenceConfig    `yaml:"to"`                   // Target node reference (type + properties)
+	Condition  string                 `yaml:"condition,omitempty"`  // Optional condition for this relationship
+	Properties []RelationshipProperty `yaml:"properties,omitempty"` // Property mappings for the relationship
+}
+
+// NodeReferenceConfig identifies a node by type and property mappings.
+type NodeReferenceConfig struct {
+	Type       string            `yaml:"type"`                 // Node type (e.g., "host", "port") or "self" for current node
+	Properties map[string]string `yaml:"properties,omitempty"` // Property name -> JSONPath for locating the node
 }
 
 // RelationshipProperty defines a property on a relationship.
@@ -305,11 +312,11 @@ func (e *ToolOutputExtraction) Validate() error {
 		}
 	}
 
-	if e.IDTemplate == "" {
+	if len(e.IdentifyingProperties) == 0 {
 		return &TaxonomyError{
 			Type:    ErrorTypeMissingField,
-			Message: "id_template is required",
-			Field:   "id_template",
+			Message: "identifying_properties is required (at least one property for deterministic ID generation)",
+			Field:   "identifying_properties",
 		}
 	}
 
@@ -361,19 +368,39 @@ func (r *ToolOutputRelationship) Validate() error {
 		}
 	}
 
-	if r.FromTemplate == "" {
+	// Validate From reference - must have type set
+	if r.From.Type == "" {
 		return &TaxonomyError{
 			Type:    ErrorTypeMissingField,
-			Message: "from_template is required",
-			Field:   "from_template",
+			Message: "from.type is required",
+			Field:   "from.type",
 		}
 	}
 
-	if r.ToTemplate == "" {
+	// Validate To reference - must have type set
+	if r.To.Type == "" {
 		return &TaxonomyError{
 			Type:    ErrorTypeMissingField,
-			Message: "to_template is required",
-			Field:   "to_template",
+			Message: "to.type is required",
+			Field:   "to.type",
+		}
+	}
+
+	// If From is not "self", it needs properties for ID lookup
+	if r.From.Type != "self" && len(r.From.Properties) == 0 {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "from.properties is required when from.type != 'self'",
+			Field:   "from.properties",
+		}
+	}
+
+	// If To is not "self", it needs properties for ID lookup
+	if r.To.Type != "self" && len(r.To.Properties) == 0 {
+		return &TaxonomyError{
+			Type:    ErrorTypeMissingField,
+			Message: "to.properties is required when to.type != 'self'",
+			Field:   "to.properties",
 		}
 	}
 

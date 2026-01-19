@@ -78,10 +78,10 @@ func TestDecisionAction_IsTerminal(t *testing.T) {
 
 func TestDecision_Validate(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		decision *Decision
-		wantErr bool
-		errMsg  string
+		wantErr  bool
+		errMsg   string
 	}{
 		{
 			name:     "nil_decision",
@@ -588,9 +588,9 @@ func TestDecision_String(t *testing.T) {
 
 func TestDecision_ToJSON(t *testing.T) {
 	tests := []struct {
-		name    string
+		name     string
 		decision *Decision
-		wantErr bool
+		wantErr  bool
 	}{
 		{
 			name:     "nil_decision",

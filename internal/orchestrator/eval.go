@@ -8,7 +8,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// WithEvalOptions adds evaluation capabilities to the SOTA orchestrator.
+// WithEvalOptions adds evaluation capabilities to the orchestrator.
 // When eval options are provided, the orchestrator will wrap the harness factory
 // with an EvalHarnessFactory that enables trajectory recording, real-time feedback,
 // and result aggregation across all agents in the mission.
@@ -26,17 +26,17 @@ import (
 //	evalOpts.FeedbackEnabled = true
 //	evalOpts.GroundTruthPath = "/path/to/ground_truth.json"
 //
-//	config := orchestrator.SOTAOrchestratorConfig{
+//	config := orchestrator.Config{
 //	    GraphRAGClient: graphClient,
 //	    HarnessFactory: baseFactory,
 //	    EvalOptions: evalOpts,
 //	    // ... other config
 //	}
-//	orch, err := orchestrator.NewSOTAMissionOrchestrator(config)
+//	orch, err := orchestrator.NewMissionAdapter(config)
 //
-// NOTE: This should be called before NewSOTAMissionOrchestrator. The config
+// NOTE: This should be called before NewMissionAdapter. The config
 // will automatically wrap the harness factory if eval options are provided.
-func WithEvalOptions(opts *eval.EvalOptions, config *SOTAOrchestratorConfig) error {
+func WithEvalOptions(opts *eval.EvalOptions, config *Config) error {
 	if opts == nil || !opts.Enabled {
 		return nil
 	}
@@ -66,11 +66,11 @@ func WithEvalOptions(opts *eval.EvalOptions, config *SOTAOrchestratorConfig) err
 	return nil
 }
 
-// EvalOrchestrator wraps SOTAMissionOrchestrator with evaluation capabilities.
+// EvalOrchestrator wraps MissionAdapter with evaluation capabilities.
 // It extends the base orchestrator to provide access to evaluation results and
 // finalization methods.
 type EvalOrchestrator struct {
-	*SOTAMissionOrchestrator
+	*MissionAdapter
 	evalOptions   *eval.EvalOptions
 	evalCollector *eval.EvalResultCollector
 }
@@ -79,23 +79,23 @@ type EvalOrchestrator struct {
 // This is a convenience function that wraps the configuration and factory setup.
 //
 // Parameters:
-//   - config: Base SOTA orchestrator configuration
+//   - config: Base orchestrator configuration
 //   - evalOptions: Evaluation options (if nil or disabled, returns regular orchestrator)
 //
 // Returns:
 //   - *EvalOrchestrator: Orchestrator with eval capabilities
 //   - error: Non-nil if creation fails
-func NewEvalOrchestrator(config SOTAOrchestratorConfig, evalOptions *eval.EvalOptions) (*EvalOrchestrator, error) {
+func NewEvalOrchestrator(config Config, evalOptions *eval.EvalOptions) (*EvalOrchestrator, error) {
 	if evalOptions == nil || !evalOptions.Enabled {
 		// Eval not enabled, create regular orchestrator
-		baseOrch, err := NewSOTAMissionOrchestrator(config)
+		baseOrch, err := NewMissionAdapter(config)
 		if err != nil {
 			return nil, err
 		}
 		return &EvalOrchestrator{
-			SOTAMissionOrchestrator: baseOrch,
-			evalOptions:             nil,
-			evalCollector:           nil,
+			MissionAdapter: baseOrch,
+			evalOptions:    nil,
+			evalCollector:  nil,
 		}, nil
 	}
 
@@ -122,16 +122,16 @@ func NewEvalOrchestrator(config SOTAOrchestratorConfig, evalOptions *eval.EvalOp
 	config.HarnessFactory = evalFactory
 
 	// Create base orchestrator with wrapped factory
-	baseOrch, err := NewSOTAMissionOrchestrator(config)
+	baseOrch, err := NewMissionAdapter(config)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create eval orchestrator wrapper
 	return &EvalOrchestrator{
-		SOTAMissionOrchestrator: baseOrch,
-		evalOptions:             evalOptions,
-		evalCollector:           evalFactory.Results(),
+		MissionAdapter: baseOrch,
+		evalOptions:    evalOptions,
+		evalCollector:  evalFactory.Results(),
 	}, nil
 }
 

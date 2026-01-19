@@ -8,10 +8,10 @@ import (
 // TestNewInventoryPromptFormatter tests constructor with default and custom options
 func TestNewInventoryPromptFormatter(t *testing.T) {
 	tests := []struct {
-		name             string
-		opts             []FormatterOption
-		expectedBudget   int
-		expectedVerbose  bool
+		name            string
+		opts            []FormatterOption
+		expectedBudget  int
+		expectedVerbose bool
 	}{
 		{
 			name:            "default options",
@@ -75,8 +75,8 @@ func TestFormatAgents(t *testing.T) {
 		wantNotContains   []string
 	}{
 		{
-			name:   "empty agents list",
-			agents: []AgentSummary{},
+			name:         "empty agents list",
+			agents:       []AgentSummary{},
 			wantContains: []string{},
 		},
 		{
@@ -113,9 +113,9 @@ func TestFormatAgents(t *testing.T) {
 			},
 			missionTargetType: "llm_chat",
 			wantContains: []string{
-				"**davinci**",       // Agent name should be bold
-				"**llm_chat**",      // Matching target type should be bold
-				"llm_api",           // Non-matching target type should not be bold
+				"**davinci**",  // Agent name should be bold
+				"**llm_chat**", // Matching target type should be bold
+				"llm_api",      // Non-matching target type should not be bold
 			},
 		},
 		{
@@ -138,8 +138,8 @@ func TestFormatAgents(t *testing.T) {
 			},
 			missionTargetType: "llm_chat",
 			wantContains: []string{
-				"**davinci**",  // Matching agent bold
-				"k8skiller",    // Non-matching agent not bold
+				"**davinci**", // Matching agent bold
+				"k8skiller",   // Non-matching agent not bold
 				"healthy",
 				"degraded",
 			},

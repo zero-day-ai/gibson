@@ -17,6 +17,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/memory/embedder"
 	"github.com/zero-day-ai/gibson/internal/memory/vector"
 	"github.com/zero-day-ai/gibson/internal/mission"
+	"github.com/zero-day-ai/gibson/internal/observability"
 	"github.com/zero-day-ai/gibson/internal/plan"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -65,6 +66,9 @@ type Infrastructure struct {
 
 	// taxonomyEngine processes execution events and creates graph nodes/relationships
 	taxonomyEngine engine.TaxonomyGraphEngine
+
+	// missionTracer provides mission-aware Langfuse tracing (nil when disabled)
+	missionTracer *observability.MissionTracer
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -112,31 +116,21 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 	}
 	d.logger.Info("initialized memory manager factory")
 
-	// Initialize Neo4j GraphRAG first if enabled (needed by tracer provider)
-	var graphRAGClient *graph.Neo4jClient
-	var graphRAGBridge harness.GraphRAGBridge
-	var graphRAGQueryBridge harness.GraphRAGQueryBridge
-	var taxonomyEngine engine.TaxonomyGraphEngine
-	if d.config != nil && d.config.GraphRAG.Enabled {
-		var err error
-		graphRAGClient, err = d.initGraphRAG(ctx)
-		if err != nil {
-			d.logger.Warn("failed to initialize Neo4j GraphRAG, continuing without knowledge graph",
-				"error", err)
-		} else {
-			d.logger.Info("initialized Neo4j GraphRAG",
-				"uri", d.config.GraphRAG.Neo4j.URI)
-
-			// Create the full GraphRAG stack: Provider -> Store -> BridgeAdapter
-			graphRAGBridge, graphRAGQueryBridge, taxonomyEngine, err = d.initGraphRAGBridges(ctx, graphRAGClient)
-			if err != nil {
-				d.logger.Warn("failed to initialize GraphRAG bridges, continuing without knowledge graph",
-					"error", err)
-			} else {
-				d.logger.Info("initialized GraphRAG bridges with full store support")
-			}
-		}
+	// Initialize Neo4j GraphRAG - this is REQUIRED as GraphRAG is a core component
+	// GraphRAG is always required - fail fast if initialization fails
+	graphRAGClient, err := d.initGraphRAG(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Neo4j GraphRAG (required): %w", err)
 	}
+	d.logger.Info("initialized Neo4j GraphRAG",
+		"uri", d.config.GraphRAG.Neo4j.URI)
+
+	// Create the full GraphRAG stack: Provider -> Store -> BridgeAdapter
+	graphRAGBridge, graphRAGQueryBridge, taxonomyEngine, err := d.initGraphRAGBridges(ctx, graphRAGClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize GraphRAG bridges (required): %w", err)
+	}
+	d.logger.Info("initialized GraphRAG bridges with full store support")
 
 	// Initialize Langfuse tracing if enabled
 	// Pass Neo4j client to enable dual export (Langfuse + Neo4j graph recording)
@@ -156,6 +150,10 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 			}
 		}
 	}
+
+	// Initialize MissionTracer for mission-aware Langfuse tracing
+	// This is separate from OTEL tracing and provides mission-level observability
+	missionTracer := d.initMissionTracer(ctx)
 
 	// Create plan executor with dependencies
 	// TODO: Add executor config to Config struct when implementing
@@ -177,6 +175,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		graphRAGBridge:       graphRAGBridge,
 		graphRAGQueryBridge:  graphRAGQueryBridge,
 		taxonomyEngine:       taxonomyEngine,
+		missionTracer:        missionTracer,
 	}
 	d.infrastructure = infra
 
@@ -329,9 +328,9 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	// Convert daemon config.GraphRAGConfig to graphrag.GraphRAGConfig
 	// Provider specifies the graph database type (neo4j, neptune, memgraph)
 	// The factory maps these to the appropriate provider implementation
+	// GraphRAG is a required core component - always configured
 	graphRAGConfig := graphrag.GraphRAGConfig{
-		Enabled:  d.config.GraphRAG.Enabled,
-		Provider: "neo4j", // Graph database type
+		Provider: "neo4j", // Graph database type (required)
 		Neo4j: graphrag.Neo4jConfig{
 			URI:      d.config.GraphRAG.Neo4j.URI,
 			Username: d.config.GraphRAG.Neo4j.Username,
@@ -340,7 +339,7 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 			PoolSize: d.config.GraphRAG.Neo4j.MaxConnections,
 		},
 		Vector: graphrag.VectorConfig{
-			Enabled: true, // Enable vector search with the native embedder
+			// Vector search is always enabled as part of GraphRAG
 		},
 	}
 	graphRAGConfig.ApplyDefaults()
@@ -353,16 +352,16 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	d.logger.Info("created GraphRAG provider",
 		"type", graphRAGConfig.Provider)
 
-	// Initialize the provider
-	if err := prov.Initialize(ctx); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
-	}
-
-	// Inject vector store into the provider if it supports it
-	// The LocalGraphRAGProvider has a SetVectorStore method for this
+	// Inject vector store into the provider BEFORE initialization
+	// The LocalGraphRAGProvider requires the vector store to be set before Initialize() is called
 	if localProv, ok := prov.(*provider.LocalGraphRAGProvider); ok {
 		localProv.SetVectorStore(vectorStore)
 		d.logger.Info("injected vector store into GraphRAG provider")
+	}
+
+	// Initialize the provider (after vector store is set)
+	if err := prov.Initialize(ctx); err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
 	}
 
 	// Create GraphRAG store with the provider and embedder
@@ -398,4 +397,51 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	}
 
 	return adapter.Bridge(), adapter.QueryBridge(), taxonomyEngine, nil
+}
+
+// initMissionTracer initializes the MissionTracer for Langfuse observability.
+// Returns the tracer or nil if Langfuse is disabled or initialization fails.
+// Errors are logged as warnings - tracing failures should not prevent daemon startup.
+func (d *daemonImpl) initMissionTracer(ctx context.Context) *observability.MissionTracer {
+	// Check if Langfuse is enabled in configuration
+	if d.config == nil || !d.config.Langfuse.Enabled {
+		d.logger.Debug("Langfuse MissionTracer disabled in configuration")
+		return nil
+	}
+
+	d.logger.Info("initializing Langfuse MissionTracer",
+		"host", d.config.Langfuse.Host)
+
+	// Create LangfuseConfig for the MissionTracer
+	langfuseCfg := observability.LangfuseConfig{
+		PublicKey: d.config.Langfuse.PublicKey,
+		SecretKey: d.config.Langfuse.SecretKey,
+		Host:      d.config.Langfuse.Host,
+	}
+
+	// Create the MissionTracer
+	tracer, err := observability.NewMissionTracer(langfuseCfg)
+	if err != nil {
+		d.logger.Warn("failed to initialize MissionTracer, continuing without mission tracing",
+			"error", err)
+		return nil
+	}
+
+	// Verify connectivity on startup
+	if err := tracer.CheckConnectivity(ctx); err != nil {
+		d.logger.Warn("Langfuse connectivity check failed - traces may not be recorded",
+			"host", d.config.Langfuse.Host,
+			"error", err,
+		)
+		// Continue anyway - fail open for observability
+	} else {
+		d.logger.Info("Langfuse connectivity verified",
+			"host", d.config.Langfuse.Host,
+		)
+	}
+
+	d.logger.Info("MissionTracer initialized successfully",
+		"host", d.config.Langfuse.Host)
+
+	return tracer
 }

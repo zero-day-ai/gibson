@@ -94,11 +94,11 @@ func TestBuildObservationPrompt(t *testing.T) {
 				CompletedNodes: 3,
 				FailedNodes:    1,
 			},
-			ReadyNodes:       []NodeSummary{},
-			RunningNodes:     []NodeSummary{},
-			CompletedNodes:   []NodeSummary{},
-			FailedNodes:      []NodeSummary{},
-			RecentDecisions:  []DecisionSummary{},
+			ReadyNodes:      []NodeSummary{},
+			RunningNodes:    []NodeSummary{},
+			CompletedNodes:  []NodeSummary{},
+			FailedNodes:     []NodeSummary{},
+			RecentDecisions: []DecisionSummary{},
 			ResourceConstraints: ResourceConstraints{
 				MaxConcurrent: 10,
 			},
@@ -787,12 +787,12 @@ func TestEstimatePromptTokens(t *testing.T) {
 		{
 			name:          "~400 character prompt",
 			prompt:        strings.Repeat("test ", 80), // 400 chars
-			expectedRange: [2]int{95, 105},            // ~100 tokens
+			expectedRange: [2]int{95, 105},             // ~100 tokens
 		},
 		{
 			name:          "~4000 character prompt",
 			prompt:        strings.Repeat("test ", 800), // 4000 chars
-			expectedRange: [2]int{950, 1050},           // ~1000 tokens
+			expectedRange: [2]int{950, 1050},            // ~1000 tokens
 		},
 	}
 

@@ -48,12 +48,9 @@ type GraphRAGBridge interface {
 }
 
 // GraphRAGBridgeConfig holds configuration options for the GraphRAG bridge.
+// GraphRAG is a required core component - the bridge is always active.
 // All fields have sensible defaults that can be overridden.
 type GraphRAGBridgeConfig struct {
-	// Enabled controls whether GraphRAG storage is active.
-	// When false, the bridge becomes a no-op.
-	Enabled bool
-
 	// SimilarityThreshold is the minimum similarity score (0.0-1.0) required
 	// for creating SIMILAR_TO relationships between findings.
 	// Default: 0.85
@@ -76,9 +73,9 @@ type GraphRAGBridgeConfig struct {
 }
 
 // DefaultGraphRAGBridgeConfig returns a GraphRAGBridgeConfig with sensible defaults.
+// GraphRAG is always active as a core component.
 func DefaultGraphRAGBridgeConfig() GraphRAGBridgeConfig {
 	return GraphRAGBridgeConfig{
-		Enabled:             true,
 		SimilarityThreshold: 0.85,
 		MaxSimilarLinks:     5,
 		MaxConcurrent:       10,
@@ -169,12 +166,8 @@ func NewGraphRAGBridge(engine engine.TaxonomyGraphEngine, logger *slog.Logger, c
 // It acquires a semaphore slot, increments the WaitGroup, and spawns a goroutine
 // to handle the actual storage. The method returns immediately without blocking.
 //
-// If the bridge is disabled via config, this is a no-op.
+// GraphRAG is a required core component - storage is always attempted.
 func (b *DefaultGraphRAGBridge) StoreAsync(ctx context.Context, finding agent.Finding, missionID types.ID, targetID *types.ID) {
-	if !b.config.Enabled {
-		return
-	}
-
 	// Increment WaitGroup before acquiring semaphore to ensure Shutdown tracks this operation
 	b.wg.Add(1)
 
@@ -271,32 +264,8 @@ func (b *DefaultGraphRAGBridge) storeToGraphRAG(ctx context.Context, finding age
 	)
 }
 
-
 // Compile-time interface check for DefaultGraphRAGBridge
 var _ GraphRAGBridge = (*DefaultGraphRAGBridge)(nil)
-
-// NoopGraphRAGBridge is a no-op implementation of GraphRAGBridge.
-// Use this when GraphRAG is not configured or disabled.
-// All methods return immediately with zero overhead.
-type NoopGraphRAGBridge struct{}
-
-// Compile-time interface check for NoopGraphRAGBridge
-var _ GraphRAGBridge = (*NoopGraphRAGBridge)(nil)
-
-// StoreAsync is a no-op that returns immediately.
-func (n *NoopGraphRAGBridge) StoreAsync(_ context.Context, _ agent.Finding, _ types.ID, _ *types.ID) {
-	// No-op: do nothing
-}
-
-// Shutdown is a no-op that returns nil immediately.
-func (n *NoopGraphRAGBridge) Shutdown(_ context.Context) error {
-	return nil
-}
-
-// Health returns a healthy status since no-op bridge has no failure modes.
-func (n *NoopGraphRAGBridge) Health(_ context.Context) types.HealthStatus {
-	return types.Healthy("graphrag bridge disabled (noop)")
-}
 
 // initTaxonomy initializes the SDK's taxonomy integration by passing the
 // Gibson taxonomy registry to the SDK. This enables agents to validate

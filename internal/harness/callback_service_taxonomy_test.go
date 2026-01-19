@@ -8,9 +8,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
+	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	"log/slog"
 	"os"
 )
@@ -23,15 +23,15 @@ type mockTaxonomyEngine struct {
 }
 
 type mockToolOutputCall struct {
-	toolName    string
-	output      map[string]any
-	agentRunID  string
+	toolName   string
+	output     map[string]any
+	agentRunID string
 }
 
 type mockEventCall struct {
-	eventType   string
-	eventData   map[string]any
-	agentRunID  string
+	eventType  string
+	eventData  map[string]any
+	agentRunID string
 }
 
 func newMockTaxonomyEngine() *mockTaxonomyEngine {
@@ -466,10 +466,10 @@ func TestCallbackService_ValidateFinding(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name            string
-		req             *pb.ValidateFindingRequest
-		wantError       bool   // Expect some error in response.Error
-		errorContains   string // Optional: check error message contains this string
+		name          string
+		req           *pb.ValidateFindingRequest
+		wantError     bool   // Expect some error in response.Error
+		errorContains string // Optional: check error message contains this string
 	}{
 		{
 			name: "valid finding json (registry not initialized)",
