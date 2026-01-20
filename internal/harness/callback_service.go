@@ -623,10 +623,14 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 
 			// Check if output is a DiscoveryResult and use GraphLoader
 			if s.graphLoader != nil {
-				// Try to unmarshal the output map into a DiscoveryResult
-				// Tools return map[string]any, but if they used DiscoveryResult,
-				// we can reconstruct it by marshaling to JSON and unmarshaling back
-				outputJSON, marshalErr := json.Marshal(output)
+				// Tools return map[string]any with DiscoveryResult under "discovery_result" key.
+				// Extract it if present, otherwise try to unmarshal the entire output.
+				var toMarshal any = output
+				if dr, ok := output["discovery_result"]; ok {
+					toMarshal = dr
+				}
+
+				outputJSON, marshalErr := json.Marshal(toMarshal)
 				if marshalErr == nil {
 					var discoveryResult domain.DiscoveryResult
 					if unmarshalErr := json.Unmarshal(outputJSON, &discoveryResult); unmarshalErr == nil {
