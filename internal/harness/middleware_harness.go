@@ -188,10 +188,10 @@ func (h *MiddlewareHarness) SubmitFinding(ctx context.Context, finding agent.Fin
 func (h *MiddlewareHarness) GetFindings(ctx context.Context, filter FindingFilter) ([]agent.Finding, error) {
 	return h.inner.GetFindings(ctx, filter)
 }
-func (h *MiddlewareHarness) Memory() memory.MemoryStore      { return h.inner.Memory() }
-func (h *MiddlewareHarness) Mission() MissionContext         { return h.inner.Mission() }
-func (h *MiddlewareHarness) MissionID() types.ID             { return h.inner.MissionID() }
-func (h *MiddlewareHarness) Target() TargetInfo              { return h.inner.Target() }
+func (h *MiddlewareHarness) Memory() memory.MemoryStore  { return h.inner.Memory() }
+func (h *MiddlewareHarness) Mission() MissionContext     { return h.inner.Mission() }
+func (h *MiddlewareHarness) MissionID() types.ID         { return h.inner.MissionID() }
+func (h *MiddlewareHarness) Target() TargetInfo          { return h.inner.Target() }
 func (h *MiddlewareHarness) ListTools() []ToolDescriptor { return h.inner.ListTools() }
 func (h *MiddlewareHarness) GetToolDescriptor(ctx context.Context, name string) (*ToolDescriptor, error) {
 	return h.inner.GetToolDescriptor(ctx, name)

@@ -50,7 +50,7 @@ func (m *MockEmbedder) Embed(ctx context.Context, text string) ([]float64, error
 		byteIndex := (i * 8) % len(hash)
 		value := binary.BigEndian.Uint64(hash[byteIndex:])
 		// Normalize to [-1, 1] range
-		embedding[i] = (float64(value) / float64(math.MaxUint64)) * 2.0 - 1.0
+		embedding[i] = (float64(value)/float64(math.MaxUint64))*2.0 - 1.0
 	}
 
 	// Normalize the vector to unit length (L2 normalization)

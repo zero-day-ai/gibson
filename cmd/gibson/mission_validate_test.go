@@ -185,7 +185,7 @@ nodes:
 				require.NoError(t, os.WriteFile(workflowFile, []byte(content), 0644))
 				return workflowFile
 			},
-			flags: map[string]string{},
+			flags:         map[string]string{},
 			wantError:     true,
 			errorContains: "daemon",
 		},
@@ -284,9 +284,9 @@ func TestMissionValidateOutputFormats(t *testing.T) {
 			errorContains: "invalid output format",
 		},
 		{
-			name:          "empty format falls back to default",
-			outputFormat:  "",
-			wantError:     false, // Should use default "text"
+			name:         "empty format falls back to default",
+			outputFormat: "",
+			wantError:    false, // Should use default "text"
 		},
 	}
 

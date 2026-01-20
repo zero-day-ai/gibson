@@ -460,4 +460,3 @@ func (m *CallbackManager) SetGraphLoader(gl *loader.GraphLoader) {
 		m.logger.Debug("set graph loader on callback service")
 	}
 }
-

@@ -17,26 +17,28 @@ import (
 // MockGraphRAGStore implements graphrag.GraphRAGStore for testing
 type MockGraphRAGStore struct {
 	// Control flags
-	ShouldFailQuery               bool
-	ShouldFailFindSimilarAttacks  bool
-	ShouldFailFindSimilarFindings bool
-	ShouldFailGetAttackChains     bool
-	ShouldFailGetRelatedFindings  bool
-	ShouldFailStore               bool
-	ShouldFailStoreBatch          bool
-	IsHealthy                     bool
-	HealthMessage                 string
+	ShouldFailQuery                 bool
+	ShouldFailFindSimilarAttacks    bool
+	ShouldFailFindSimilarFindings   bool
+	ShouldFailGetAttackChains       bool
+	ShouldFailGetRelatedFindings    bool
+	ShouldFailStore                 bool
+	ShouldFailStoreWithoutEmbedding bool
+	ShouldFailStoreBatch            bool
+	IsHealthy                       bool
+	HealthMessage                   string
 
 	// Capture method calls
-	QueryCalled               bool
-	FindSimilarAttacksCalled  bool
-	FindSimilarFindingsCalled bool
-	GetAttackChainsCalled     bool
-	GetRelatedFindingsCalled  bool
-	StoreCalled               bool
-	StoreBatchCalled          bool
-	HealthCalled              bool
-	CloseCalled               bool
+	QueryCalled                 bool
+	FindSimilarAttacksCalled    bool
+	FindSimilarFindingsCalled   bool
+	GetAttackChainsCalled       bool
+	GetRelatedFindingsCalled    bool
+	StoreCalled                 bool
+	StoreWithoutEmbeddingCalled bool
+	StoreBatchCalled            bool
+	HealthCalled                bool
+	CloseCalled                 bool
 
 	// Captured arguments
 	LastQuery              *graphrag.GraphRAGQuery
@@ -129,6 +131,23 @@ func (m *MockGraphRAGStore) Store(ctx context.Context, record graphrag.GraphReco
 
 	if m.ShouldFailStore {
 		return errors.New("mock store error")
+	}
+
+	// Set node ID if not set
+	if m.StoredNodeID == "" {
+		m.StoredNodeID = record.Node.ID
+	}
+
+	return nil
+}
+
+// StoreWithoutEmbedding stores a node directly without embedding generation
+func (m *MockGraphRAGStore) StoreWithoutEmbedding(ctx context.Context, record graphrag.GraphRecord) error {
+	m.StoreWithoutEmbeddingCalled = true
+	m.LastStoreRecord = &record
+
+	if m.ShouldFailStoreWithoutEmbedding {
+		return errors.New("mock store without embedding error")
 	}
 
 	// Set node ID if not set
@@ -1298,4 +1317,244 @@ func TestStoreBatch_MultipleInvalid(t *testing.T) {
 	assert.Contains(t, errorMsg, "HAS_PORT")
 	assert.Contains(t, errorMsg, "CONNECTS_TO")
 	assert.Contains(t, errorMsg, "SIMILAR_TO")
+}
+
+// TestStoreSemantic tests the StoreSemantic method
+func TestStoreSemantic(t *testing.T) {
+	tests := []struct {
+		name       string
+		node       sdkgraphrag.GraphNode
+		shouldFail bool
+		checkError func(t *testing.T, err error)
+	}{
+		{
+			name: "successful semantic store with content",
+			node: sdkgraphrag.GraphNode{
+				Type:    "Finding",
+				Content: "This is a test finding with semantic content",
+				Properties: map[string]any{
+					"severity": "high",
+				},
+			},
+			shouldFail: false,
+		},
+		{
+			name: "fails without content",
+			node: sdkgraphrag.GraphNode{
+				Type: "Finding",
+				Properties: map[string]any{
+					"severity": "high",
+				},
+			},
+			shouldFail: true,
+			checkError: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "Content is required")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockStore := &MockGraphRAGStore{
+				IsHealthy:     true,
+				HealthMessage: "healthy",
+			}
+			bridge := NewGraphRAGQueryBridge(mockStore)
+
+			nodeID, err := bridge.StoreSemantic(context.Background(), tt.node, "test-mission", "test-agent")
+
+			if tt.shouldFail {
+				assert.Error(t, err)
+				if tt.checkError != nil {
+					tt.checkError(t, err)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotEmpty(t, nodeID)
+				assert.True(t, mockStore.StoreCalled, "Store should be called for semantic storage")
+			}
+		})
+	}
+}
+
+// TestStoreStructured tests the StoreStructured method
+func TestStoreStructured(t *testing.T) {
+	tests := []struct {
+		name       string
+		node       sdkgraphrag.GraphNode
+		shouldFail bool
+	}{
+		{
+			name: "successful structured store without content",
+			node: sdkgraphrag.GraphNode{
+				Type: "Host",
+				Properties: map[string]any{
+					"ip_address": "192.168.1.1",
+					"hostname":   "test-host",
+				},
+			},
+			shouldFail: false,
+		},
+		{
+			name: "successful structured store with content (ignored)",
+			node: sdkgraphrag.GraphNode{
+				Type:    "Port",
+				Content: "This content is ignored for structured storage",
+				Properties: map[string]any{
+					"port_number": 443,
+					"protocol":    "tcp",
+				},
+			},
+			shouldFail: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockStore := &MockGraphRAGStore{
+				IsHealthy:     true,
+				HealthMessage: "healthy",
+			}
+			bridge := NewGraphRAGQueryBridge(mockStore)
+
+			nodeID, err := bridge.StoreStructured(context.Background(), tt.node, "test-mission", "test-agent")
+
+			if tt.shouldFail {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.NotEmpty(t, nodeID)
+				assert.True(t, mockStore.StoreWithoutEmbeddingCalled, "StoreWithoutEmbedding should be called")
+			}
+		})
+	}
+}
+
+// TestQuerySemantic tests the QuerySemantic method
+func TestQuerySemantic(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      sdkgraphrag.Query
+		shouldFail bool
+		checkError func(t *testing.T, err error)
+		checkQuery func(t *testing.T, query *graphrag.GraphRAGQuery)
+	}{
+		{
+			name: "successful semantic query with text",
+			query: sdkgraphrag.Query{
+				Text:         "test semantic query",
+				TopK:         5,
+				MaxHops:      2,
+				VectorWeight: 0.8,
+				GraphWeight:  0.2,
+			},
+			shouldFail: false,
+			checkQuery: func(t *testing.T, query *graphrag.GraphRAGQuery) {
+				assert.True(t, query.ForceSemanticOnly, "ForceSemanticOnly should be set")
+				assert.Equal(t, "test semantic query", query.Text)
+			},
+		},
+		{
+			name: "fails without text or embedding",
+			query: sdkgraphrag.Query{
+				TopK:    5,
+				MaxHops: 2,
+			},
+			shouldFail: true,
+			checkError: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "Text or Embedding is required")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockStore := &MockGraphRAGStore{
+				IsHealthy:     true,
+				HealthMessage: "healthy",
+			}
+			bridge := NewGraphRAGQueryBridge(mockStore)
+
+			results, err := bridge.QuerySemantic(context.Background(), tt.query)
+
+			if tt.shouldFail {
+				assert.Error(t, err)
+				if tt.checkError != nil {
+					tt.checkError(t, err)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, results)
+				assert.True(t, mockStore.QueryCalled, "Query should be called")
+				if tt.checkQuery != nil && mockStore.LastQuery != nil {
+					tt.checkQuery(t, mockStore.LastQuery)
+				}
+			}
+		})
+	}
+}
+
+// TestQueryStructured tests the QueryStructured method
+func TestQueryStructured(t *testing.T) {
+	tests := []struct {
+		name       string
+		query      sdkgraphrag.Query
+		shouldFail bool
+		checkError func(t *testing.T, err error)
+		checkQuery func(t *testing.T, query *graphrag.GraphRAGQuery)
+	}{
+		{
+			name: "successful structured query with node types",
+			query: sdkgraphrag.Query{
+				NodeTypes:    []string{"Host", "Port"},
+				TopK:         10,
+				VectorWeight: 0.5,
+				GraphWeight:  0.5,
+			},
+			shouldFail: false,
+			checkQuery: func(t *testing.T, query *graphrag.GraphRAGQuery) {
+				assert.True(t, query.ForceStructuredOnly, "ForceStructuredOnly should be set")
+				assert.Len(t, query.NodeTypes, 2)
+			},
+		},
+		{
+			name: "fails without node types",
+			query: sdkgraphrag.Query{
+				TopK: 10,
+			},
+			shouldFail: true,
+			checkError: func(t *testing.T, err error) {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "NodeTypes is required")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockStore := &MockGraphRAGStore{
+				IsHealthy:     true,
+				HealthMessage: "healthy",
+			}
+			bridge := NewGraphRAGQueryBridge(mockStore)
+
+			results, err := bridge.QueryStructured(context.Background(), tt.query)
+
+			if tt.shouldFail {
+				assert.Error(t, err)
+				if tt.checkError != nil {
+					tt.checkError(t, err)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, results)
+				assert.True(t, mockStore.QueryCalled, "Query should be called")
+				if tt.checkQuery != nil && mockStore.LastQuery != nil {
+					tt.checkQuery(t, mockStore.LastQuery)
+				}
+			}
+		})
+	}
 }

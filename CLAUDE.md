@@ -43,6 +43,9 @@ Implements `agent.Harness` interface from SDK:
 - Manages agent memory
 - Submits findings
 - GraphRAG integration
+  - `StoreSemantic()` - Store with embeddings for similarity search
+  - `StoreStructured()` - Store without embeddings for property-based queries
+  - `QuerySemantic()`, `QueryStructured()`, `QueryGraphRAG()` - Query routing
 
 ### internal/graphrag
 
@@ -52,10 +55,22 @@ Knowledge graph engine for semantic search:
 - Taxonomy-driven node/relationship types
 - Hybrid scoring (vector + graph)
 
+**Storage Modes:**
+- **Semantic Storage**: Generates embeddings for similarity search (findings, insights)
+- **Structured Storage**: Direct graph storage without embeddings (hosts, ports, IPs)
+- **Auto-routing**: Intelligent fallback between semantic and structured queries
+
+**Query Routing:**
+- `QuerySemantic()`: Vector similarity search only
+- `QueryStructured()`: Direct Cypher queries by type/properties
+- `QueryGraphRAG()`: Auto-routing with fallback (semantic → structured)
+
 Key files:
 - `engine/` - Core GraphRAG engine
 - `provider/` - Embedding providers
 - `queries/` - Graph query builders
+- `processor.go` - Query routing logic
+- `store.go` - Storage implementations
 
 ### internal/daemon
 

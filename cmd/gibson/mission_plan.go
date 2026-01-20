@@ -474,4 +474,3 @@ func (l *stubLifecycleManager) GetStatus(ctx context.Context, comp *component.Co
 	// In planning mode, we read the stored status without checking actual runtime state
 	return comp.Status, nil
 }
-

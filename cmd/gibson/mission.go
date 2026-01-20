@@ -333,13 +333,13 @@ Examples:
 
 // Flags
 var (
-	missionStatusFilter     string
-	missionWorkflowFile     string
-	missionTargetFlag       string
-	missionForceDelete      bool
-	missionForcePause       bool
-	missionFromCheckpoint   string
-	missionMemoryContinuity string
+	missionStatusFilter      string
+	missionWorkflowFile      string
+	missionTargetFlag        string
+	missionForceDelete       bool
+	missionForcePause        bool
+	missionFromCheckpoint    string
+	missionMemoryContinuity  string
 	missionStartDependencies bool
 
 	// Mission install/update flags

@@ -172,9 +172,9 @@ func (e *NativeEmbedder) Embed(ctx context.Context, text string) ([]float64, err
 	// Extract input tensors from feature
 	// BERT models expect: input_ids, attention_mask, token_type_ids
 	// The tokenizer produces int32, but ONNX model expects int64
-	inputIDsInt32 := feature.TokenIDs      // Shape: [seq_len]
-	attentionMaskInt32 := feature.Mask     // Shape: [seq_len]
-	tokenTypeIDsInt32 := feature.TypeIDs   // Shape: [seq_len]
+	inputIDsInt32 := feature.TokenIDs    // Shape: [seq_len]
+	attentionMaskInt32 := feature.Mask   // Shape: [seq_len]
+	tokenTypeIDsInt32 := feature.TypeIDs // Shape: [seq_len]
 
 	// Convert int32 to int64 for ONNX model
 	inputIDs := make([]int64, len(inputIDsInt32))
@@ -228,7 +228,7 @@ func (e *NativeEmbedder) Embed(ctx context.Context, text string) ([]float64, err
 		sumHiddenState := ReduceSum(maskedHiddenState, 1) // Shape: [batch_size, hidden_size]
 
 		// Count non-padding tokens for averaging
-		sumMask := ReduceSum(attentionMaskExpanded, 1) // Shape: [batch_size, hidden_size]
+		sumMask := ReduceSum(attentionMaskExpanded, 1)  // Shape: [batch_size, hidden_size]
 		sumMask = Add(sumMask, Const(g, float32(1e-9))) // Avoid division by zero
 
 		// Mean pooling: divide by number of non-padding tokens

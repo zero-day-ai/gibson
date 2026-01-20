@@ -111,6 +111,22 @@ func (m *mockGraphRAGQueryBridge) Traverse(ctx context.Context, startNodeID stri
 	return nil, nil
 }
 
+func (m *mockGraphRAGQueryBridge) StoreSemantic(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error) {
+	return "", nil
+}
+
+func (m *mockGraphRAGQueryBridge) StoreStructured(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error) {
+	return "", nil
+}
+
+func (m *mockGraphRAGQueryBridge) QuerySemantic(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	return nil, nil
+}
+
+func (m *mockGraphRAGQueryBridge) QueryStructured(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	return nil, nil
+}
+
 func (m *mockGraphRAGQueryBridge) Health(ctx context.Context) types.HealthStatus {
 	m.healthCalled = true
 	return m.healthStatus

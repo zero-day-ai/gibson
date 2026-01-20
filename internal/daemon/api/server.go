@@ -477,22 +477,22 @@ type DependencyNodeData struct {
 
 // ValidationResultData contains the outcome of dependency validation.
 type ValidationResultData struct {
-	Valid              bool
-	Summary            string
-	TotalComponents    int
-	InstalledCount     int
-	RunningCount       int
-	HealthyCount       int
-	NotInstalledCount  int
+	Valid                bool
+	Summary              string
+	TotalComponents      int
+	InstalledCount       int
+	RunningCount         int
+	HealthyCount         int
+	NotInstalledCount    int
 	NotRunningCount      int
 	UnhealthyCount       int
 	VersionMismatchCount int
-	ValidatedAt        time.Time
-	DurationMs         int64
-	NotInstalled       []DependencyNodeData
-	NotRunning         []DependencyNodeData
-	Unhealthy          []DependencyNodeData
-	VersionMismatch    []VersionMismatchData
+	ValidatedAt          time.Time
+	DurationMs           int64
+	NotInstalled         []DependencyNodeData
+	NotRunning           []DependencyNodeData
+	Unhealthy            []DependencyNodeData
+	VersionMismatch      []VersionMismatchData
 }
 
 // VersionMismatchData describes a version constraint violation.

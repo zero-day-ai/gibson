@@ -59,6 +59,22 @@ type GraphRAGQueryBridge interface {
 	// Returns all nodes visited during traversal with path information.
 	Traverse(ctx context.Context, startNodeID string, opts sdkgraphrag.TraversalOptions) ([]sdkgraphrag.TraversalResult, error)
 
+	// StoreSemantic stores a node with semantic search capabilities (requires Content).
+	// Validates that node.Content is non-empty, then generates embeddings and stores.
+	StoreSemantic(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error)
+
+	// StoreStructured stores a node without semantic search (no embedding required).
+	// Used for structured data like hosts, ports, services.
+	StoreStructured(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error)
+
+	// QuerySemantic performs a semantic-only query (no structured fallback).
+	// Validates that Text or Embedding is present, sets ForceSemanticOnly=true.
+	QuerySemantic(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error)
+
+	// QueryStructured performs a structured-only query (no vector search).
+	// Validates that NodeTypes is present, sets ForceStructuredOnly=true.
+	QueryStructured(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error)
+
 	// Health returns the health status of the GraphRAG bridge.
 	Health(ctx context.Context) types.HealthStatus
 }
@@ -541,6 +557,178 @@ func (b *DefaultGraphRAGQueryBridge) Traverse(ctx context.Context, startNodeID s
 	// For now, we'll return an error indicating this needs provider access
 	_ = filters
 	return nil, fmt.Errorf("traverse not yet implemented: requires direct provider access")
+}
+
+// StoreSemantic stores a node with semantic search capabilities (requires Content).
+// Validates that node.Content is non-empty, then generates embeddings and stores.
+func (b *DefaultGraphRAGQueryBridge) StoreSemantic(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error) {
+	ctx, span := b.tracer.Start(ctx, "GraphRAGQueryBridge.StoreSemantic",
+		trace.WithAttributes(
+			attribute.String("node.type", node.Type),
+			attribute.String("mission_id", missionID),
+			attribute.String("agent_name", agentName),
+		))
+	defer span.End()
+
+	// Validate that Content is present for semantic storage
+	if node.Content == "" {
+		return "", fmt.Errorf("%w: Content is required for semantic storage", sdkgraphrag.ErrInvalidQuery)
+	}
+
+	// Validate node
+	if err := node.Validate(); err != nil {
+		return "", fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
+	}
+
+	// Use existing StoreNode which handles embedding generation
+	return b.StoreNode(ctx, node, missionID, agentName)
+}
+
+// StoreStructured stores a node without semantic search (no embedding required).
+// Used for structured data like hosts, ports, services.
+func (b *DefaultGraphRAGQueryBridge) StoreStructured(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error) {
+	ctx, span := b.tracer.Start(ctx, "GraphRAGQueryBridge.StoreStructured",
+		trace.WithAttributes(
+			attribute.String("node.type", node.Type),
+			attribute.String("mission_id", missionID),
+			attribute.String("agent_name", agentName),
+		))
+	defer span.End()
+
+	// Validate node
+	if err := node.Validate(); err != nil {
+		return "", fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
+	}
+
+	// Get agent_run_id from context for provenance
+	agentRunID := AgentRunIDFromContext(ctx)
+
+	// Convert SDK node to internal node (with provenance metadata)
+	internalNode := sdkNodeToInternal(node, missionID, agentName, agentRunID)
+
+	// Create graph record without embedding content
+	record := graphrag.NewGraphRecord(*internalNode)
+
+	// Store node without embedding generation
+	if err := b.store.StoreWithoutEmbedding(ctx, record); err != nil {
+		return "", fmt.Errorf("%w: %v", sdkgraphrag.ErrStorageFailed, err)
+	}
+
+	nodeID := internalNode.ID.String()
+	span.SetAttributes(attribute.String("node.id", nodeID))
+
+	// Create hierarchy relationships based on reference properties (host_id, port_id, etc)
+	b.createHierarchyRelationships(ctx, node, nodeID)
+
+	// Create DISCOVERED relationship from agent_run to this node (if applicable)
+	// Skip execution nodes as they are part of the execution chain
+	if agentRunID != "" && !isExecutionNode(node.Type) {
+		discoveredRel := sdkgraphrag.Relationship{
+			FromID: agentRunID,
+			ToID:   nodeID,
+			Type:   sdkgraphrag.RelTypeDiscovered,
+			Properties: map[string]any{
+				"discovered_at":    time.Now().UTC(),
+				"discovery_method": agentName,
+			},
+		}
+
+		// Create the DISCOVERED relationship (log warning on failure but don't fail the operation)
+		if err := b.CreateRelationship(ctx, discoveredRel); err != nil {
+			span.AddEvent("discovered_relationship_failed",
+				trace.WithAttributes(
+					attribute.String("agent_run_id", agentRunID),
+					attribute.String("error", err.Error()),
+				))
+		} else {
+			span.AddEvent("discovered_relationship_created",
+				trace.WithAttributes(
+					attribute.String("agent_run_id", agentRunID),
+				))
+		}
+	}
+
+	return nodeID, nil
+}
+
+// QuerySemantic performs a semantic-only query (no structured fallback).
+// Validates that Text or Embedding is present, sets ForceSemanticOnly=true.
+func (b *DefaultGraphRAGQueryBridge) QuerySemantic(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	ctx, span := b.tracer.Start(ctx, "GraphRAGQueryBridge.QuerySemantic",
+		trace.WithAttributes(
+			attribute.String("query.text", query.Text),
+			attribute.Int("query.top_k", query.TopK),
+		))
+	defer span.End()
+
+	// Validate that Text or Embedding is present
+	if query.Text == "" && len(query.Embedding) == 0 {
+		return nil, fmt.Errorf("%w: Text or Embedding is required for semantic query", sdkgraphrag.ErrInvalidQuery)
+	}
+
+	// Validate query
+	if err := query.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
+	}
+
+	// Convert SDK query to internal query with ForceSemanticOnly=true
+	internalQuery := sdkQueryToInternal(query)
+	internalQuery.ForceSemanticOnly = true
+
+	// Execute query
+	internalResults, err := b.store.Query(ctx, internalQuery)
+	if err != nil {
+		return nil, fmt.Errorf("semantic query execution failed: %w", err)
+	}
+
+	// Convert results back to SDK types
+	results := make([]sdkgraphrag.Result, len(internalResults))
+	for i, r := range internalResults {
+		results[i] = internalResultToSDK(r)
+	}
+
+	span.SetAttributes(attribute.Int("results.count", len(results)))
+	return results, nil
+}
+
+// QueryStructured performs a structured-only query (no vector search).
+// Validates that NodeTypes is present, sets ForceStructuredOnly=true.
+func (b *DefaultGraphRAGQueryBridge) QueryStructured(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	ctx, span := b.tracer.Start(ctx, "GraphRAGQueryBridge.QueryStructured",
+		trace.WithAttributes(
+			attribute.StringSlice("query.node_types", query.NodeTypes),
+			attribute.Int("query.top_k", query.TopK),
+		))
+	defer span.End()
+
+	// Validate that NodeTypes is present
+	if len(query.NodeTypes) == 0 {
+		return nil, fmt.Errorf("%w: NodeTypes is required for structured query", sdkgraphrag.ErrInvalidQuery)
+	}
+
+	// Validate query
+	if err := query.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
+	}
+
+	// Convert SDK query to internal query with ForceStructuredOnly=true
+	internalQuery := sdkQueryToInternal(query)
+	internalQuery.ForceStructuredOnly = true
+
+	// Execute query
+	internalResults, err := b.store.Query(ctx, internalQuery)
+	if err != nil {
+		return nil, fmt.Errorf("structured query execution failed: %w", err)
+	}
+
+	// Convert results back to SDK types
+	results := make([]sdkgraphrag.Result, len(internalResults))
+	for i, r := range internalResults {
+		results[i] = internalResultToSDK(r)
+	}
+
+	span.SetAttributes(attribute.Int("results.count", len(results)))
+	return results, nil
 }
 
 // Health returns the health status of the GraphRAG bridge.

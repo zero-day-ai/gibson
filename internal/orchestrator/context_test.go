@@ -99,9 +99,9 @@ func TestPayloadContextInjector_InjectPayloadContext(t *testing.T) {
 				return &payload.PayloadSummary{
 					Total: 47,
 					ByCategory: map[payload.PayloadCategory]int{
-						payload.CategoryJailbreak:       12,
-						payload.CategoryPromptInjection: 23,
-						payload.CategoryDataExtraction:  8,
+						payload.CategoryJailbreak:           12,
+						payload.CategoryPromptInjection:     23,
+						payload.CategoryDataExtraction:      8,
 						payload.CategoryPrivilegeEscalation: 4,
 					},
 					BySeverity: map[agent.FindingSeverity]int{

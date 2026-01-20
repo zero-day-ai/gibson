@@ -60,6 +60,11 @@ type GraphRAGStore interface {
 	// graph database and vector store.
 	Store(ctx context.Context, record GraphRecord) error
 
+	// StoreWithoutEmbedding stores a node directly without embedding generation.
+	// Used for structured data that doesn't need semantic search (e.g., hosts, ports).
+	// The node is stored in the graph but not indexed for vector search.
+	StoreWithoutEmbedding(ctx context.Context, record GraphRecord) error
+
 	// StoreBatch efficiently stores multiple graph records in a single operation.
 	// Uses batch embedding generation and bulk upsert for optimal performance.
 	StoreBatch(ctx context.Context, records []GraphRecord) error
@@ -195,6 +200,33 @@ func (s *DefaultGraphRAGStore) Store(ctx context.Context, record GraphRecord) er
 	}
 
 	// Store node
+	if err := s.provider.StoreNode(ctx, record.Node); err != nil {
+		return NewQueryError("failed to store node", err)
+	}
+
+	// Store relationships
+	for _, rel := range record.Relationships {
+		if err := rel.Validate(); err != nil {
+			return NewInvalidQueryError(fmt.Sprintf("invalid relationship: %v", err))
+		}
+		if err := s.provider.StoreRelationship(ctx, rel); err != nil {
+			return NewRelationshipError("failed to store relationship", err)
+		}
+	}
+
+	return nil
+}
+
+// StoreWithoutEmbedding stores a node directly without embedding generation.
+// Used for structured data that doesn't need semantic search (e.g., hosts, ports).
+// The node is stored in the graph but not indexed for vector search.
+func (s *DefaultGraphRAGStore) StoreWithoutEmbedding(ctx context.Context, record GraphRecord) error {
+	// Validate node
+	if err := record.Node.Validate(); err != nil {
+		return NewInvalidQueryError(fmt.Sprintf("invalid graph node: %v", err))
+	}
+
+	// Store node directly without embedding
 	if err := s.provider.StoreNode(ctx, record.Node); err != nil {
 		return NewQueryError("failed to store node", err)
 	}

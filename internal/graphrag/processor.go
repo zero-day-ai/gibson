@@ -99,7 +99,12 @@ func (p *DefaultQueryProcessor) WithScoper(scoper QueryScoper) *DefaultQueryProc
 
 // ProcessQuery executes the full GraphRAG hybrid query pipeline.
 //
-// Pipeline:
+// Query routing:
+// - If query has NodeTypes but no Text/Embedding → structured query (direct Cypher)
+// - If query has Text/Embedding but no NodeTypes → semantic query (vector search)
+// - If query has both → hybrid query (vector search + type filter)
+//
+// Pipeline for semantic/hybrid queries:
 // 1. Validate query
 // 2. Resolve mission scope (if specified)
 // 3. Generate embedding (if query.Text is set)
@@ -119,7 +124,21 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 		return nil, NewInvalidQueryError(fmt.Sprintf("query validation failed: %v", err))
 	}
 
-	// Step 2: Resolve mission scope filtering
+	// Step 2: Check for explicit routing flags (SDK v0.26.0+)
+	if query.ForceStructuredOnly {
+		// Explicit structured-only query: skip vector search entirely
+		return p.processStructuredQuery(ctx, query, provider)
+	}
+
+	// Step 3: Route query based on type
+	// If query has NodeTypes but no semantic content (Text/Embedding), use direct graph query
+	isStructuredQuery := len(query.NodeTypes) > 0 && query.Text == "" && len(query.Embedding) == 0
+	if isStructuredQuery {
+		return p.processStructuredQuery(ctx, query, provider)
+	}
+
+	// Continue with semantic/hybrid query pipeline...
+	// Step 3: Resolve mission scope filtering
 	// Only apply scope filtering if:
 	// - Scope is not empty and not "all"
 	// - Scoper is configured
@@ -190,8 +209,18 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 		return nil, NewQueryError(fmt.Sprintf("vector search failed: %v", err), err)
 	}
 
-	// If no vector results, return empty (can't expand graph without starting points)
+	// If no vector results but NodeTypes are specified, fall back to structured query.
+	// This handles the case where nodes exist in the graph but don't have embeddings
+	// (e.g., hosts/ports from network discovery that were stored without semantic content).
+	// Skip fallback if ForceSemanticOnly is set (explicit semantic-only mode).
 	if len(vectorResults) == 0 {
+		if len(query.NodeTypes) > 0 && !query.ForceSemanticOnly {
+			p.logger.Debug("vector search returned 0 results, falling back to structured query",
+				"node_types", query.NodeTypes,
+				"query_text", query.Text)
+			return p.processStructuredQuery(ctx, query, provider)
+		}
+		// No NodeTypes specified or ForceSemanticOnly set, return empty
 		return []GraphRAGResult{}, nil
 	}
 
@@ -433,4 +462,56 @@ func (p *DefaultQueryProcessor) EnsureEmbedderHealth(ctx context.Context) error 
 	}
 
 	return nil
+}
+
+// processStructuredQuery handles queries that filter by NodeTypes without semantic search.
+// This bypasses vector search entirely and uses direct Cypher queries against Neo4j.
+//
+// Use cases:
+// - "Get all hosts" → NodeTypes=["host"]
+// - "Get all ports for mission X" → NodeTypes=["port"], MissionID=X
+// - "Get hosts and services" → NodeTypes=["host", "service"]
+//
+// This is more efficient than vector search for structured data retrieval
+// where semantic similarity is not needed.
+func (p *DefaultQueryProcessor) processStructuredQuery(ctx context.Context, query GraphRAGQuery, provider GraphRAGProvider) ([]GraphRAGResult, error) {
+	p.logger.Debug("processing structured query (no vector search)",
+		"node_types", query.NodeTypes,
+		"top_k", query.TopK,
+		"mission_id", query.MissionID)
+
+	// Build NodeQuery from GraphRAGQuery
+	nodeQuery := NewNodeQuery().
+		WithNodeTypes(query.NodeTypes...).
+		WithLimit(query.TopK)
+
+	// Apply mission filter if specified
+	if query.MissionID != nil {
+		nodeQuery.WithMission(*query.MissionID)
+	}
+
+	// Execute direct graph query
+	nodes, err := provider.QueryNodes(ctx, *nodeQuery)
+	if err != nil {
+		return nil, NewQueryError(fmt.Sprintf("structured query failed: %v", err), err)
+	}
+
+	p.logger.Debug("structured query completed",
+		"results_count", len(nodes))
+
+	// Convert GraphNodes to GraphRAGResults
+	// Score is 1.0 for all results (no ranking in structured queries)
+	results := make([]GraphRAGResult, len(nodes))
+	for i, node := range nodes {
+		result := NewGraphRAGResult(node, 1.0, 1.0) // Full score for direct matches
+		result.ComputeScore(0.5, 0.5)               // Equal weights since no semantic component
+		results[i] = *result
+	}
+
+	// Apply TopK limit
+	if len(results) > query.TopK {
+		results = results[:query.TopK]
+	}
+
+	return results, nil
 }

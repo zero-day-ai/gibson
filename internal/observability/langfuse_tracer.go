@@ -114,12 +114,12 @@ type MessageLog struct {
 // RequestMetadata captures LLM request configuration for observability.
 // This enables full visibility into the parameters used for each LLM call.
 type RequestMetadata struct {
-	Model       string  `json:"model"`                // LLM model name
-	Temperature float64 `json:"temperature"`          // Temperature parameter (0.0-1.0)
-	MaxTokens   int     `json:"max_tokens"`           // Maximum tokens to generate
-	TopP        float64 `json:"top_p,omitempty"`      // Top-p nucleus sampling parameter
-	SlotName    string  `json:"slot_name"`            // LLM slot name used
-	Provider    string  `json:"provider,omitempty"`   // LLM provider (e.g., "openai", "anthropic")
+	Model       string  `json:"model"`              // LLM model name
+	Temperature float64 `json:"temperature"`        // Temperature parameter (0.0-1.0)
+	MaxTokens   int     `json:"max_tokens"`         // Maximum tokens to generate
+	TopP        float64 `json:"top_p,omitempty"`    // Top-p nucleus sampling parameter
+	SlotName    string  `json:"slot_name"`          // LLM slot name used
+	Provider    string  `json:"provider,omitempty"` // LLM provider (e.g., "openai", "anthropic")
 }
 
 // DecisionLog captures orchestrator decision information for Langfuse.
@@ -284,8 +284,8 @@ func (mt *MissionTracer) LogDecision(ctx context.Context, trace *MissionTrace, l
 				"latency_seconds": latencySec,
 				"total_tokens":    decision.TotalTokens(),
 				"otel_trace_id":   log.OTELTraceID,
-				"messages":        log.Messages,     // Structured message array
-				"request_config":  log.RequestMeta,  // Request configuration parameters
+				"messages":        log.Messages,    // Structured message array
+				"request_config":  log.RequestMeta, // Request configuration parameters
 			},
 		},
 	}

@@ -438,9 +438,9 @@ func runKnowledgeSearch(cmd *cobra.Command, args []string) error {
 // outputKnowledgeSearchJSON outputs search results as JSON
 func outputKnowledgeSearchJSON(cmd *cobra.Command, query string, results []knowledge.KnowledgeResult) error {
 	output := struct {
-		Query   string                     `json:"query"`
+		Query   string                      `json:"query"`
 		Results []knowledge.KnowledgeResult `json:"results"`
-		Count   int                        `json:"count"`
+		Count   int                         `json:"count"`
 	}{
 		Query:   query,
 		Results: results,

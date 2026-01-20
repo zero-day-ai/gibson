@@ -1071,9 +1071,9 @@ func TestRangeConstraintBoundaries(t *testing.T) {
 // TestVersionConstraintParsing tests that parsed constraints have correct fields.
 func TestVersionConstraintParsing(t *testing.T) {
 	tests := []struct {
-		name           string
-		constraint     string
-		checkFunc      func(*testing.T, *VersionConstraint)
+		name       string
+		constraint string
+		checkFunc  func(*testing.T, *VersionConstraint)
 	}{
 		{
 			name:       "exact version sets only ExactVersion",

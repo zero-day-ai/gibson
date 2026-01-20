@@ -97,6 +97,26 @@ func (n *NoopGraphRAGQueryBridge) Traverse(ctx context.Context, startNodeID stri
 	return nil, ErrGraphRAGNotEnabled
 }
 
+// StoreSemantic returns ErrGraphRAGNotEnabled.
+func (n *NoopGraphRAGQueryBridge) StoreSemantic(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error) {
+	return "", ErrGraphRAGNotEnabled
+}
+
+// StoreStructured returns ErrGraphRAGNotEnabled.
+func (n *NoopGraphRAGQueryBridge) StoreStructured(ctx context.Context, node sdkgraphrag.GraphNode, missionID, agentName string) (string, error) {
+	return "", ErrGraphRAGNotEnabled
+}
+
+// QuerySemantic returns ErrGraphRAGNotEnabled.
+func (n *NoopGraphRAGQueryBridge) QuerySemantic(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	return nil, ErrGraphRAGNotEnabled
+}
+
+// QueryStructured returns ErrGraphRAGNotEnabled.
+func (n *NoopGraphRAGQueryBridge) QueryStructured(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
+	return nil, ErrGraphRAGNotEnabled
+}
+
 // Health returns healthy status (no-op).
 func (n *NoopGraphRAGQueryBridge) Health(ctx context.Context) types.HealthStatus {
 	return types.NewHealthStatus(types.HealthStateHealthy, "GraphRAG disabled (no-op query bridge)")

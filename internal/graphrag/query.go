@@ -41,6 +41,10 @@ type GraphRAGQuery struct {
 	// Scoring weights
 	VectorWeight float64 `json:"vector_weight,omitempty"` // Weight for vector similarity (0-1)
 	GraphWeight  float64 `json:"graph_weight,omitempty"`  // Weight for graph proximity (0-1)
+
+	// Explicit routing flags (SDK v0.26.0+)
+	ForceSemanticOnly   bool `json:"force_semantic_only,omitempty"`   // Skip structured fallback
+	ForceStructuredOnly bool `json:"force_structured_only,omitempty"` // Skip vector search entirely
 }
 
 // NewGraphRAGQuery creates a new query from text.
@@ -132,9 +136,14 @@ func (q *GraphRAGQuery) WithMissionIDFilter(ids []types.ID) *GraphRAGQuery {
 
 // Validate validates the GraphRAGQuery fields.
 func (q *GraphRAGQuery) Validate() error {
-	// Must have either Text or Embedding
-	if q.Text == "" && len(q.Embedding) == 0 {
-		return NewInvalidQueryError("query must have either text or embedding")
+	// Check for conflicting routing flags
+	if q.ForceSemanticOnly && q.ForceStructuredOnly {
+		return NewInvalidQueryError("cannot set both force_semantic_only and force_structured_only")
+	}
+
+	// Must have either Text or Embedding (or NodeTypes for structured-only queries)
+	if q.Text == "" && len(q.Embedding) == 0 && len(q.NodeTypes) == 0 {
+		return NewInvalidQueryError("query must have either text, embedding, or node_types")
 	}
 	if q.Text != "" && len(q.Embedding) > 0 {
 		return NewInvalidQueryError("query cannot have both text and embedding")

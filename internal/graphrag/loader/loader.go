@@ -375,7 +375,7 @@ func (l *GraphLoader) LoadBatch(ctx context.Context, execCtx ExecContext, nodes 
 			WITH collect({
 				element_id: elementId(n),
 				operation: operation,
-				node_type: '` + nodeType + `',
+				node_type: '`+nodeType+`',
 				index: nodeData.index
 			}) as batch_result
 		`)

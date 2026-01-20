@@ -639,6 +639,26 @@ func (a *GibsonHarnessAdapter) QueryGraphRAGScoped(ctx context.Context, query gr
 	return nil, ErrNotImplemented
 }
 
+// StoreSemantic stores a node with semantic search capabilities (requires Content).
+func (a *GibsonHarnessAdapter) StoreSemantic(ctx context.Context, node graphrag.GraphNode) (string, error) {
+	return "", ErrNotImplemented
+}
+
+// StoreStructured stores a node without semantic search (no embedding required).
+func (a *GibsonHarnessAdapter) StoreStructured(ctx context.Context, node graphrag.GraphNode) (string, error) {
+	return "", ErrNotImplemented
+}
+
+// QuerySemantic performs a semantic-only query (no structured fallback).
+func (a *GibsonHarnessAdapter) QuerySemantic(ctx context.Context, query graphrag.Query) ([]graphrag.Result, error) {
+	return nil, ErrNotImplemented
+}
+
+// QueryStructured performs a structured-only query (no vector search).
+func (a *GibsonHarnessAdapter) QueryStructured(ctx context.Context, query graphrag.Query) ([]graphrag.Result, error) {
+	return nil, ErrNotImplemented
+}
+
 // CallToolsParallel executes multiple tool calls concurrently.
 func (a *GibsonHarnessAdapter) CallToolsParallel(ctx context.Context, calls []agent.ToolCall, maxConcurrency int) ([]agent.ToolResult, error) {
 	// Not yet implemented - requires parallel execution support

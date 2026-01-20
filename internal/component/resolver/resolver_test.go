@@ -156,10 +156,10 @@ func (m *mockMissionDependency) Version() string {
 // Helper functions for creating test components and manifests
 func createTestComponent(kind component.ComponentKind, name, version string, status component.ComponentStatus) *component.Component {
 	return &component.Component{
-		Kind:    kind,
-		Name:    name,
-		Version: version,
-		Status:  status,
+		Kind:     kind,
+		Name:     name,
+		Version:  version,
+		Status:   status,
 		RepoPath: "/test/repo/" + name,
 		BinPath:  "/test/bin/" + name,
 		Source:   component.ComponentSourceExternal,
@@ -790,20 +790,20 @@ func TestEnsureRunning_StartsStoppedComponents(t *testing.T) {
 	lifecycle.setStatus(component.ComponentKindAgent, "stopped-agent", component.ComponentStatusStopped)
 
 	runningNode := &DependencyNode{
-		Kind:       component.ComponentKindAgent,
-		Name:       "running-agent",
-		Installed:  true,
-		Running:    true,
-		Healthy:    true,
-		Component:  runningAgent,
+		Kind:      component.ComponentKindAgent,
+		Name:      "running-agent",
+		Installed: true,
+		Running:   true,
+		Healthy:   true,
+		Component: runningAgent,
 	}
 	stoppedNode := &DependencyNode{
-		Kind:       component.ComponentKindAgent,
-		Name:       "stopped-agent",
-		Installed:  true,
-		Running:    false,
-		Healthy:    false,
-		Component:  stoppedAgent,
+		Kind:      component.ComponentKindAgent,
+		Name:      "stopped-agent",
+		Installed: true,
+		Running:   false,
+		Healthy:   false,
+		Component: stoppedAgent,
 	}
 
 	tree.AddNode(runningNode)
@@ -842,25 +842,25 @@ func TestEnsureRunning_RespectsTopologicalOrder(t *testing.T) {
 	store.add(plugin)
 
 	pluginNode := &DependencyNode{
-		Kind:       component.ComponentKindPlugin,
-		Name:       "plugin-c",
-		Installed:  true,
-		Running:    false,
-		Component:  plugin,
+		Kind:      component.ComponentKindPlugin,
+		Name:      "plugin-c",
+		Installed: true,
+		Running:   false,
+		Component: plugin,
 	}
 	toolNode := &DependencyNode{
-		Kind:       component.ComponentKindTool,
-		Name:       "tool-b",
-		Installed:  true,
-		Running:    false,
-		Component:  tool,
+		Kind:      component.ComponentKindTool,
+		Name:      "tool-b",
+		Installed: true,
+		Running:   false,
+		Component: tool,
 	}
 	agentNode := &DependencyNode{
-		Kind:       component.ComponentKindAgent,
-		Name:       "agent-a",
-		Installed:  true,
-		Running:    false,
-		Component:  agent,
+		Kind:      component.ComponentKindAgent,
+		Name:      "agent-a",
+		Installed: true,
+		Running:   false,
+		Component: agent,
 	}
 
 	tree.AddNode(pluginNode)
@@ -902,12 +902,12 @@ func TestEnsureRunning_SkipsAlreadyRunning(t *testing.T) {
 	lifecycle.setStatus(component.ComponentKindAgent, "running-agent", component.ComponentStatusRunning)
 
 	agentNode := &DependencyNode{
-		Kind:       component.ComponentKindAgent,
-		Name:       "running-agent",
-		Installed:  true,
-		Running:    true,
-		Healthy:    true,
-		Component:  agent,
+		Kind:      component.ComponentKindAgent,
+		Name:      "running-agent",
+		Installed: true,
+		Running:   true,
+		Healthy:   true,
+		Component: agent,
 	}
 
 	tree.AddNode(agentNode)
@@ -940,11 +940,11 @@ func TestEnsureRunning_FailsFastOnStartError(t *testing.T) {
 	store.add(agent)
 
 	agentNode := &DependencyNode{
-		Kind:       component.ComponentKindAgent,
-		Name:       "failing-agent",
-		Installed:  true,
-		Running:    false,
-		Component:  agent,
+		Kind:      component.ComponentKindAgent,
+		Name:      "failing-agent",
+		Installed: true,
+		Running:   false,
+		Component: agent,
 	}
 
 	tree.AddNode(agentNode)
@@ -974,11 +974,11 @@ func TestEnsureRunning_SkipsNotInstalledComponents(t *testing.T) {
 	tree := NewDependencyTree("test-mission")
 
 	agentNode := &DependencyNode{
-		Kind:       component.ComponentKindAgent,
-		Name:       "not-installed-agent",
-		Installed:  false,
-		Running:    false,
-		Component:  nil,
+		Kind:      component.ComponentKindAgent,
+		Name:      "not-installed-agent",
+		Installed: false,
+		Running:   false,
+		Component: nil,
 	}
 
 	tree.AddNode(agentNode)

@@ -14,11 +14,11 @@ import (
 
 // mockGraphNode is a test implementation of domain.GraphNode
 type mockGraphNode struct {
-	nodeType     string
-	idProps      map[string]any
-	props        map[string]any
-	parentRef    *domain.NodeRef
-	relType      string
+	nodeType  string
+	idProps   map[string]any
+	props     map[string]any
+	parentRef *domain.NodeRef
+	relType   string
 }
 
 func (m *mockGraphNode) NodeType() string {
