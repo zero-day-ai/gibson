@@ -252,6 +252,20 @@ type AgentHarness interface {
 	//   }
 	ListTools() []ToolDescriptor
 
+	// GetToolDescriptor returns the descriptor for a specific tool by name.
+	// This enables retrieval of tool metadata including output schema with taxonomy mappings.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - name: Name of the tool to retrieve
+	//
+	// Returns:
+	//   - *ToolDescriptor: Metadata for the tool (name, description, schema with taxonomy)
+	//   - error: Non-nil if tool is not found
+	//
+	// The output schema's Taxonomy field contains mappings for entity extraction.
+	GetToolDescriptor(ctx context.Context, name string) (*ToolDescriptor, error)
+
 	// ────────────────────────────────────────────────────────────────────────────
 	// Plugin Access
 	// ────────────────────────────────────────────────────────────────────────────

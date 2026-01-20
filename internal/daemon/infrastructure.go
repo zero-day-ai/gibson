@@ -7,7 +7,6 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/graphrag"
-	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/graphrag/provider"
 	"github.com/zero-day-ai/gibson/internal/harness"
@@ -63,9 +62,6 @@ type Infrastructure struct {
 
 	// graphRAGQueryBridge for querying the knowledge graph
 	graphRAGQueryBridge harness.GraphRAGQueryBridge
-
-	// taxonomyEngine processes execution events and creates graph nodes/relationships
-	taxonomyEngine engine.TaxonomyGraphEngine
 
 	// missionTracer provides mission-aware Langfuse tracing (nil when disabled)
 	missionTracer *observability.MissionTracer
@@ -126,7 +122,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		"uri", d.config.GraphRAG.Neo4j.URI)
 
 	// Create the full GraphRAG stack: Provider -> Store -> BridgeAdapter
-	graphRAGBridge, graphRAGQueryBridge, taxonomyEngine, err := d.initGraphRAGBridges(ctx, graphRAGClient)
+	graphRAGBridge, graphRAGQueryBridge, err := d.initGraphRAGBridges(ctx, graphRAGClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize GraphRAG bridges (required): %w", err)
 	}
@@ -174,7 +170,6 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		graphRAGClient:       graphRAGClient,
 		graphRAGBridge:       graphRAGBridge,
 		graphRAGQueryBridge:  graphRAGQueryBridge,
-		taxonomyEngine:       taxonomyEngine,
 		missionTracer:        missionTracer,
 	}
 	d.infrastructure = infra
@@ -306,12 +301,12 @@ func (d *daemonImpl) checkInfrastructureHealth(ctx context.Context, infra *Infra
 //  4. A GraphRAG store that orchestrates the provider and embedder
 //  5. A bridge adapter that provides both GraphRAGBridge and GraphRAGQueryBridge interfaces
 //
-// Returns the bridge, query bridge, and taxonomy engine, or an error if initialization fails.
-func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph.Neo4jClient) (harness.GraphRAGBridge, harness.GraphRAGQueryBridge, engine.TaxonomyGraphEngine, error) {
+// Returns the bridge and query bridge, or an error if initialization fails.
+func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph.Neo4jClient) (harness.GraphRAGBridge, harness.GraphRAGQueryBridge, error) {
 	// Create embedder from config - fail fast if unavailable
 	emb, err := embedder.CreateEmbedder(d.config.Embedder)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create embedder: %w", err)
+		return nil, nil, fmt.Errorf("failed to create embedder: %w", err)
 	}
 	d.logger.Info("created embedder for GraphRAG",
 		"provider", d.config.Embedder.Provider,
@@ -347,7 +342,7 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 	// Create GraphRAG provider from config
 	prov, err := provider.NewProvider(graphRAGConfig)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create GraphRAG provider: %w", err)
+		return nil, nil, fmt.Errorf("failed to create GraphRAG provider: %w", err)
 	}
 	d.logger.Info("created GraphRAG provider",
 		"type", graphRAGConfig.Provider)
@@ -361,42 +356,27 @@ func (d *daemonImpl) initGraphRAGBridges(ctx context.Context, neo4jClient *graph
 
 	// Initialize the provider (after vector store is set)
 	if err := prov.Initialize(ctx); err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
+		return nil, nil, fmt.Errorf("failed to initialize GraphRAG provider: %w", err)
 	}
 
 	// Create GraphRAG store with the provider and embedder
 	store, err := graphrag.NewGraphRAGStoreWithProvider(graphRAGConfig, emb, prov)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create GraphRAG store: %w", err)
+		return nil, nil, fmt.Errorf("failed to create GraphRAG store: %w", err)
 	}
 	d.logger.Info("created GraphRAG store")
 
-	// Load taxonomy registry for event-driven graph operations
-	registry, err := d.getTaxonomyRegistry(ctx)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to load taxonomy registry: %w", err)
-	}
-
-	// Create taxonomy engine for event processing
-	taxonomyEngine := engine.NewTaxonomyGraphEngine(
-		registry,
-		neo4jClient,
-		d.logger.With("component", "taxonomy-engine"),
-	)
-	d.logger.Info("created taxonomy graph engine")
-
-	// Create bridge adapter with the store and engine
+	// Create bridge adapter with the store
 	adapter, err := NewGraphRAGBridgeAdapter(GraphRAGBridgeConfig{
-		Neo4jClient:    neo4jClient,
-		GraphRAGStore:  store,
-		TaxonomyEngine: taxonomyEngine,
-		Logger:         d.logger.With("component", "graphrag-bridge"),
+		Neo4jClient:   neo4jClient,
+		GraphRAGStore: store,
+		Logger:        d.logger.With("component", "graphrag-bridge"),
 	})
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to create GraphRAG bridge adapter: %w", err)
+		return nil, nil, fmt.Errorf("failed to create GraphRAG bridge adapter: %w", err)
 	}
 
-	return adapter.Bridge(), adapter.QueryBridge(), taxonomyEngine, nil
+	return adapter.Bridge(), adapter.QueryBridge(), nil
 }
 
 // initMissionTracer initializes the MissionTracer for Langfuse observability.

@@ -130,6 +130,18 @@ service DaemonService {
   // UpdateMission updates an installed mission to the latest version.
   // Pulls latest changes and rebuilds the mission definition.
   rpc UpdateMission(UpdateMissionRequest) returns (UpdateMissionResponse);
+
+  // ResolveMissionDependencies resolves the complete dependency tree for a mission.
+  // Walks all transitive dependencies from agents, tools, and plugins.
+  rpc ResolveMissionDependencies(ResolveMissionDependenciesRequest) returns (ResolveMissionDependenciesResponse);
+
+  // ValidateMissionDependencies validates that all mission dependencies are installed and running.
+  // Returns detailed validation results with component status and any issues found.
+  rpc ValidateMissionDependencies(ValidateMissionDependenciesRequest) returns (ValidateMissionDependenciesResponse);
+
+  // EnsureDependenciesRunning starts any stopped dependencies in the correct topological order.
+  // Ensures all components required by a mission are running before execution.
+  rpc EnsureDependenciesRunning(EnsureDependenciesRunningRequest) returns (EnsureDependenciesRunningResponse);
 }
 
 // ConnectRequest initiates a client connection to the daemon.
@@ -1481,4 +1493,190 @@ message UpdateMissionResponse {
 
   // message provides additional context or error information
   string message = 6;
+}
+
+// ResolveMissionDependenciesRequest requests dependency resolution for a mission.
+message ResolveMissionDependenciesRequest {
+  // workflow_path is the path to the mission workflow YAML file
+  string workflow_path = 1;
+}
+
+// ResolveMissionDependenciesResponse returns the complete dependency tree.
+message ResolveMissionDependenciesResponse {
+  // success indicates if resolution was successful
+  bool success = 1;
+
+  // tree is the complete resolved dependency tree
+  DependencyTree tree = 2;
+
+  // message provides additional context or error information
+  string message = 3;
+}
+
+// ValidateMissionDependenciesRequest requests validation of mission dependencies.
+message ValidateMissionDependenciesRequest {
+  // workflow_path is the path to the mission workflow YAML file
+  string workflow_path = 1;
+}
+
+// ValidateMissionDependenciesResponse returns validation results.
+message ValidateMissionDependenciesResponse {
+  // success indicates if validation check was performed (not if dependencies are valid)
+  bool success = 1;
+
+  // result contains the detailed validation results
+  ValidationResult result = 2;
+
+  // message provides additional context or error information
+  string message = 3;
+}
+
+// EnsureDependenciesRunningRequest requests starting stopped dependencies.
+message EnsureDependenciesRunningRequest {
+  // workflow_path is the path to the mission workflow YAML file
+  string workflow_path = 1;
+
+  // timeout_ms is the timeout for starting all dependencies in milliseconds (0 = default 5 minutes)
+  int64 timeout_ms = 2;
+}
+
+// EnsureDependenciesRunningResponse returns the result of starting dependencies.
+message EnsureDependenciesRunningResponse {
+  // success indicates if all dependencies were started successfully
+  bool success = 1;
+
+  // started_count is the number of components that were started
+  int32 started_count = 2;
+
+  // skipped_count is the number of components that were already running
+  int32 skipped_count = 3;
+
+  // message provides additional context or error information
+  string message = 4;
+}
+
+// DependencyTree represents the complete resolved dependency graph.
+message DependencyTree {
+  // roots are the root nodes (direct mission dependencies)
+  repeated DependencyNode roots = 1;
+
+  // nodes maps component keys (kind:name) to dependency nodes
+  map<string, DependencyNode> nodes = 2;
+
+  // agents is a flattened list of all agent dependencies
+  repeated DependencyNode agents = 3;
+
+  // tools is a flattened list of all tool dependencies
+  repeated DependencyNode tools = 4;
+
+  // plugins is a flattened list of all plugin dependencies
+  repeated DependencyNode plugins = 5;
+
+  // resolved_at is when the tree was resolved (Unix timestamp)
+  int64 resolved_at = 6;
+
+  // mission_ref is the mission name or path that was resolved
+  string mission_ref = 7;
+}
+
+// DependencyNode represents a single component in the dependency tree.
+message DependencyNode {
+  // kind is the component kind (agent, tool, plugin)
+  string kind = 1;
+
+  // name is the component name
+  string name = 2;
+
+  // version is the required version (may be a constraint like ">=2.0")
+  string version = 3;
+
+  // required_by lists component keys that depend on this component
+  repeated string required_by = 4;
+
+  // depends_on lists component keys this component depends on
+  repeated string depends_on = 5;
+
+  // source indicates where this dependency was discovered
+  DependencySource source = 6;
+
+  // source_ref is a reference to the source (node ID, manifest path, etc.)
+  string source_ref = 7;
+
+  // installed indicates if the component is installed
+  bool installed = 8;
+
+  // running indicates if the component is currently running
+  bool running = 9;
+
+  // healthy indicates if the component is healthy (if running)
+  bool healthy = 10;
+
+  // actual_version is the installed version (may differ from required version)
+  string actual_version = 11;
+}
+
+// DependencySource indicates where a dependency was discovered.
+enum DependencySource {
+  // SOURCE_UNKNOWN is the default unspecified source
+  SOURCE_UNKNOWN = 0;
+
+  // SOURCE_MISSION_EXPLICIT means the dependency is explicitly listed in mission dependencies
+  SOURCE_MISSION_EXPLICIT = 1;
+
+  // SOURCE_MISSION_NODE means the dependency is referenced by a mission node
+  SOURCE_MISSION_NODE = 2;
+
+  // SOURCE_MANIFEST means the dependency is from a component's manifest dependencies
+  SOURCE_MANIFEST = 3;
+}
+
+// ValidationResult contains the outcome of dependency validation.
+message ValidationResult {
+  // valid indicates if all dependencies are satisfied and running
+  bool valid = 1;
+
+  // summary is a human-readable validation summary
+  string summary = 2;
+
+  // total_components is the total number of components in the tree
+  int32 total_components = 3;
+
+  // installed_count is the number of installed components
+  int32 installed_count = 4;
+
+  // running_count is the number of running components
+  int32 running_count = 5;
+
+  // healthy_count is the number of healthy components
+  int32 healthy_count = 6;
+
+  // not_installed lists components that are not installed
+  repeated DependencyNode not_installed = 7;
+
+  // not_running lists components that are installed but not running
+  repeated DependencyNode not_running = 8;
+
+  // unhealthy lists components that are running but unhealthy
+  repeated DependencyNode unhealthy = 9;
+
+  // version_mismatches lists components with version constraint violations
+  repeated VersionMismatchInfo version_mismatches = 10;
+
+  // validated_at is when validation was performed (Unix timestamp)
+  int64 validated_at = 11;
+
+  // duration_ms is how long validation took in milliseconds
+  int64 duration_ms = 12;
+}
+
+// VersionMismatchInfo describes a version constraint violation.
+message VersionMismatchInfo {
+  // node is the component with the version mismatch
+  DependencyNode node = 1;
+
+  // required_version is the version constraint that was required
+  string required_version = 2;
+
+  // actual_version is the version that is actually installed
+  string actual_version = 3;
 }

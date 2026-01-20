@@ -5,20 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zero-day-ai/gibson/internal/agent"
-	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
-	"github.com/zero-day-ai/gibson/internal/graphrag/taxonomy"
-	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
+	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	sdkfinding "github.com/zero-day-ai/sdk/finding"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
+	"github.com/zero-day-ai/sdk/graphrag/domain"
 	"github.com/zero-day-ai/sdk/schema"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
@@ -36,11 +34,6 @@ type CredentialStore interface {
 	// Returns the credential with its secret value populated.
 	GetCredential(ctx context.Context, name string) (*types.Credential, string, error)
 }
-
-// TaxonomyGraphEngine processes tool outputs and execution events to automatically
-// create graph nodes and relationships based on taxonomy schemas.
-// This is an alias to the engine.TaxonomyGraphEngine interface.
-type TaxonomyGraphEngine = engine.TaxonomyGraphEngine
 
 // EventBusPublisher is an interface for publishing daemon-wide events.
 // This allows the callback service to publish tool and LLM events
@@ -83,8 +76,8 @@ type HarnessCallbackService struct {
 	// credentialStore provides access to stored credentials
 	credentialStore CredentialStore
 
-	// taxonomyEngine processes tool outputs and graphs them based on taxonomy schemas
-	taxonomyEngine TaxonomyGraphEngine
+	// graphLoader loads domain nodes into Neo4j using the GraphNode interface
+	graphLoader *loader.GraphLoader
 
 	// eventBus publishes tool and LLM events for graph processing
 	eventBus EventBusPublisher
@@ -129,20 +122,21 @@ func WithCredentialStore(store CredentialStore) CallbackServiceOption {
 	}
 }
 
-// WithTaxonomyEngine sets the taxonomy graph engine for automatic tool output graphing.
-// When set, tool outputs are automatically parsed and graphed based on taxonomy schemas.
-func WithTaxonomyEngine(engine TaxonomyGraphEngine) CallbackServiceOption {
-	return func(s *HarnessCallbackService) {
-		s.taxonomyEngine = engine
-	}
-}
-
 // WithEventBus sets the event bus for publishing tool and LLM events.
 // When set, the callback service publishes events for tool calls and LLM requests
 // that can be consumed by the execution graph engine.
 func WithEventBus(eventBus EventBusPublisher) CallbackServiceOption {
 	return func(s *HarnessCallbackService) {
 		s.eventBus = eventBus
+	}
+}
+
+// WithGraphLoader sets the GraphLoader for processing DiscoveryResult tool outputs.
+// When set, the callback service will check if tool output is a DiscoveryResult
+// and use the loader to create nodes and relationships in Neo4j.
+func WithGraphLoader(graphLoader *loader.GraphLoader) CallbackServiceOption {
+	return func(s *HarnessCallbackService) {
+		s.graphLoader = graphLoader
 	}
 }
 
@@ -615,8 +609,8 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 		"parent_span_id": req.Context.SpanId,
 	})
 
-	// Graph tool output automatically (if engine is configured)
-	if s.taxonomyEngine != nil && output != nil {
+	// Graph tool output automatically
+	if output != nil {
 		// Get agent run ID from context - try multiple sources
 		agentRunID := s.extractAgentRunID(ctx, req.Context)
 
@@ -627,12 +621,58 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 			graphCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			if err := s.taxonomyEngine.HandleToolOutput(graphCtx, req.Name, output, agentRunID); err != nil {
-				// Log error but don't fail - graphing is best-effort
-				s.logger.Warn("failed to graph tool output",
-					"tool", req.Name,
-					"agent_run_id", agentRunID,
-					"error", err)
+			// Check if output is a DiscoveryResult and use GraphLoader
+			if s.graphLoader != nil {
+				// Try to unmarshal the output map into a DiscoveryResult
+				// Tools return map[string]any, but if they used DiscoveryResult,
+				// we can reconstruct it by marshaling to JSON and unmarshaling back
+				outputJSON, marshalErr := json.Marshal(output)
+				if marshalErr == nil {
+					var discoveryResult domain.DiscoveryResult
+					if unmarshalErr := json.Unmarshal(outputJSON, &discoveryResult); unmarshalErr == nil {
+						// Check if this is actually a non-empty DiscoveryResult
+						if !discoveryResult.IsEmpty() {
+							s.logger.Info("processing DiscoveryResult with GraphLoader",
+								"tool", req.Name,
+								"node_count", discoveryResult.NodeCount(),
+								"agent_run_id", agentRunID,
+								"mission_id", req.Context.MissionId)
+
+							// Construct execution context
+							execCtx := loader.ExecContext{
+								AgentRunID:      agentRunID,
+								ToolExecutionID: req.Context.TaskId, // Use task ID as tool execution ID
+								MissionID:       req.Context.MissionId,
+							}
+
+							// Load all discovered nodes into the graph
+							result, err := s.graphLoader.Load(graphCtx, execCtx, discoveryResult.AllNodes())
+							if err != nil {
+								s.logger.Warn("GraphLoader failed to load nodes",
+									"tool", req.Name,
+									"agent_run_id", agentRunID,
+									"error", err)
+							} else {
+								s.logger.Info("GraphLoader successfully loaded nodes",
+									"tool", req.Name,
+									"nodes_created", result.NodesCreated,
+									"nodes_updated", result.NodesUpdated,
+									"relationships_created", result.RelationshipsCreated,
+									"errors", len(result.Errors))
+
+								// Log any partial errors
+								if result.HasErrors() {
+									for i, err := range result.Errors {
+										s.logger.Warn("GraphLoader partial error",
+											"tool", req.Name,
+											"error_index", i,
+											"error", err)
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 		}()
 	}
@@ -2443,221 +2483,34 @@ func (s *HarnessCallbackService) publishEvent(ctx context.Context, eventType str
 // ============================================================================
 
 // GetTaxonomySchema returns the full taxonomy schema to agents.
-// This enables standalone agents to access taxonomy for validation and introspection.
+// NOTE: Taxonomy has been removed. This returns an empty response.
 func (s *HarnessCallbackService) GetTaxonomySchema(ctx context.Context, req *pb.GetTaxonomySchemaRequest) (*pb.GetTaxonomySchemaResponse, error) {
-	s.logger.Debug("GetTaxonomySchema called")
-
-	registry := taxonomyinit.GetTaxonomyRegistry()
-	if registry == nil {
-		return &pb.GetTaxonomySchemaResponse{
-			Error: &pb.HarnessError{
-				Code:    codes.FailedPrecondition.String(),
-				Message: "taxonomy registry not initialized",
-			},
-		}, nil
-	}
-
-	resp := &pb.GetTaxonomySchemaResponse{
-		Version: registry.Version(),
-	}
-
-	// Convert node types
-	for _, nt := range registry.NodeTypes() {
-		protoNT := &pb.TaxonomyNodeType{
-			Id:          nt.ID,
-			Name:        nt.Name,
-			Type:        nt.Type,
-			Category:    nt.Category,
-			Description: nt.Description,
-		}
-		// Convert IDTemplate to IdentifyingProperties by extracting property names from template
-		if nt.IDTemplate != "" {
-			protoNT.IdentifyingProperties = extractPropertiesFromTemplate(nt.IDTemplate)
-		}
-		for _, p := range nt.Properties {
-			protoNT.Properties = append(protoNT.Properties, s.convertPropertyToProto(p))
-		}
-		resp.NodeTypes = append(resp.NodeTypes, protoNT)
-	}
-
-	// Convert relationship types
-	for _, rt := range registry.RelationshipTypes() {
-		protoRT := &pb.TaxonomyRelationshipType{
-			Id:            rt.ID,
-			Name:          rt.Name,
-			Type:          rt.Type,
-			Category:      rt.Category,
-			Description:   rt.Description,
-			FromTypes:     rt.FromTypes,
-			ToTypes:       rt.ToTypes,
-			Bidirectional: rt.Bidirectional,
-		}
-		for _, p := range rt.Properties {
-			protoRT.Properties = append(protoRT.Properties, s.convertPropertyToProto(p))
-		}
-		resp.RelationshipTypes = append(resp.RelationshipTypes, protoRT)
-	}
-
-	// Convert techniques (all sources)
-	for _, t := range registry.Techniques("") {
-		protoT := &pb.TaxonomyTechnique{
-			TechniqueId:  t.TechniqueID,
-			Name:         t.Name,
-			Taxonomy:     t.Taxonomy,
-			Category:     t.Category,
-			Description:  t.Description,
-			Tactic:       t.Tactic,
-			Platforms:    t.Platforms,
-			MitreMapping: t.MITREMapping,
-		}
-		resp.Techniques = append(resp.Techniques, protoT)
-	}
-
-	// Convert target types
-	for _, tt := range registry.ListTargetTypes() {
-		protoTT := &pb.TaxonomyTargetType{
-			Id:          tt.ID,
-			Type:        tt.Type,
-			Name:        tt.Name,
-			Category:    tt.Category,
-			Description: tt.Description,
-		}
-		if tt.ConnectionSchema != nil {
-			protoTT.RequiredFields = tt.ConnectionSchema.Required
-			protoTT.OptionalFields = tt.ConnectionSchema.Optional
-		}
-		resp.TargetTypes = append(resp.TargetTypes, protoTT)
-	}
-
-	// Convert technique types
-	for _, tt := range registry.ListTechniqueTypes() {
-		protoTT := &pb.TaxonomyTechniqueType{
-			Id:              tt.ID,
-			Type:            tt.Type,
-			Name:            tt.Name,
-			Category:        tt.Category,
-			Description:     tt.Description,
-			MitreIds:        tt.MITREIDs,
-			DefaultSeverity: tt.DefaultSeverity,
-		}
-		resp.TechniqueTypes = append(resp.TechniqueTypes, protoTT)
-	}
-
-	// Convert capabilities
-	for _, c := range registry.ListCapabilities() {
-		protoC := &pb.TaxonomyCapability{
-			Id:             c.ID,
-			Name:           c.Name,
-			Description:    c.Description,
-			TechniqueTypes: c.TechniqueTypes,
-		}
-		resp.Capabilities = append(resp.Capabilities, protoC)
-	}
-
-	s.logger.Debug("GetTaxonomySchema succeeded",
-		"version", resp.Version,
-		"node_types", len(resp.NodeTypes),
-		"relationship_types", len(resp.RelationshipTypes),
-		"techniques", len(resp.Techniques))
-
-	return resp, nil
-}
-
-// convertPropertyToProto converts a taxonomy PropertyDefinition to proto TaxonomyProperty.
-func (s *HarnessCallbackService) convertPropertyToProto(p taxonomy.PropertyDefinition) *pb.TaxonomyProperty {
-	prop := &pb.TaxonomyProperty{
-		Name:        p.Name,
-		Type:        p.Type,
-		Required:    p.Required,
-		Description: p.Description,
-	}
-
-	// Convert enum values to strings
-	for _, v := range p.Enum {
-		prop.EnumValues = append(prop.EnumValues, fmt.Sprintf("%v", v))
-	}
-
-	// Convert default value to JSON
-	if p.Default != nil {
-		if data, err := json.Marshal(p.Default); err == nil {
-			str := string(data)
-			prop.DefaultValue = str
-		}
-	}
-
-	return prop
-}
-
-// GenerateNodeID generates a deterministic node ID using taxonomy ID templates.
-func (s *HarnessCallbackService) GenerateNodeID(ctx context.Context, req *pb.GenerateNodeIDRequest) (*pb.GenerateNodeIDResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
-	}
-
-	if req.NodeType == "" {
-		return nil, status.Error(codes.InvalidArgument, "node_type is required")
-	}
-
-	s.logger.Debug("GenerateNodeID called", "node_type", req.NodeType)
-
-	registry := taxonomyinit.GetTaxonomyRegistry()
-	if registry == nil {
-		return &pb.GenerateNodeIDResponse{
-			Error: &pb.HarnessError{
-				Code:    codes.FailedPrecondition.String(),
-				Message: "taxonomy registry not initialized",
-			},
-		}, nil
-	}
-
-	// Parse properties from JSON
-	var properties map[string]any
-	if req.PropertiesJson != "" {
-		if err := json.Unmarshal([]byte(req.PropertiesJson), &properties); err != nil {
-			return &pb.GenerateNodeIDResponse{
-				Error: &pb.HarnessError{
-					Code:    codes.InvalidArgument.String(),
-					Message: fmt.Sprintf("failed to parse properties JSON: %v", err),
-				},
-			}, nil
-		}
-	}
-
-	// Generate node ID using taxonomy template
-	nodeID, err := registry.GenerateNodeID(req.NodeType, properties)
-	if err != nil {
-		return &pb.GenerateNodeIDResponse{
-			Error: &pb.HarnessError{
-				Code:    codes.InvalidArgument.String(),
-				Message: fmt.Sprintf("failed to generate node ID: %v", err),
-			},
-		}, nil
-	}
-
-	s.logger.Debug("GenerateNodeID succeeded", "node_type", req.NodeType, "node_id", nodeID)
-
-	return &pb.GenerateNodeIDResponse{
-		NodeId: nodeID,
+	s.logger.Debug("GetTaxonomySchema called (taxonomy removed)")
+	return &pb.GetTaxonomySchemaResponse{
+		Version: "0.0.0",
 	}, nil
 }
 
-// ValidateFinding validates a finding against the taxonomy schema.
+// GenerateNodeID generates a deterministic node ID.
+// NOTE: Taxonomy has been removed. Use domain types instead which generate their own IDs.
+func (s *HarnessCallbackService) GenerateNodeID(ctx context.Context, req *pb.GenerateNodeIDRequest) (*pb.GenerateNodeIDResponse, error) {
+	s.logger.Debug("GenerateNodeID called (taxonomy removed)")
+	return &pb.GenerateNodeIDResponse{
+		Error: &pb.HarnessError{
+			Code:    codes.Unimplemented.String(),
+			Message: "taxonomy has been removed; use domain types which generate their own IDs",
+		},
+	}, nil
+}
+
+// ValidateFinding validates a finding.
+// NOTE: Taxonomy-based validation has been removed. Basic validation is still performed.
 func (s *HarnessCallbackService) ValidateFinding(ctx context.Context, req *pb.ValidateFindingRequest) (*pb.ValidationResponse, error) {
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
 	}
 
 	s.logger.Debug("ValidateFinding called")
-
-	registry := taxonomyinit.GetTaxonomyRegistry()
-	if registry == nil {
-		return &pb.ValidationResponse{
-			Error: &pb.HarnessError{
-				Code:    codes.FailedPrecondition.String(),
-				Message: "taxonomy registry not initialized",
-			},
-		}, nil
-	}
 
 	// Parse finding from JSON
 	var finding sdkfinding.Finding
@@ -2675,8 +2528,8 @@ func (s *HarnessCallbackService) ValidateFinding(ctx context.Context, req *pb.Va
 	// Validate severity
 	validSeverities := []string{"critical", "high", "medium", "low", "informational"}
 	severityValid := false
-	for _, s := range validSeverities {
-		if string(finding.Severity) == s {
+	for _, sev := range validSeverities {
+		if string(finding.Severity) == sev {
 			severityValid = true
 			break
 		}
@@ -2688,14 +2541,6 @@ func (s *HarnessCallbackService) ValidateFinding(ctx context.Context, req *pb.Va
 			Message: fmt.Sprintf("invalid severity: %s", finding.Severity),
 			Code:    "INVALID_ENUM",
 		})
-	}
-
-	// Validate technique reference if present
-	if finding.Technique != "" {
-		if _, ok := registry.Technique(finding.Technique); !ok {
-			resp.Warnings = append(resp.Warnings,
-				fmt.Sprintf("technique '%s' not found in taxonomy", finding.Technique))
-		}
 	}
 
 	// Validate required fields
@@ -2713,215 +2558,22 @@ func (s *HarnessCallbackService) ValidateFinding(ctx context.Context, req *pb.Va
 	return resp, nil
 }
 
-// ValidateGraphNode validates a graph node against the taxonomy schema.
+// ValidateGraphNode validates a graph node.
+// NOTE: Taxonomy-based validation has been removed. Returns success with a warning.
 func (s *HarnessCallbackService) ValidateGraphNode(ctx context.Context, req *pb.ValidateGraphNodeRequest) (*pb.ValidationResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
-	}
-
-	s.logger.Debug("ValidateGraphNode called", "node_type", req.NodeType)
-
-	// Check for empty node type first
-	if req.NodeType == "" {
-		return &pb.ValidationResponse{
-			Valid: false,
-			Errors: []*pb.ValidationError{
-				{
-					Field:   "node_type",
-					Message: "node_type is required",
-					Code:    "REQUIRED_FIELD",
-				},
-			},
-		}, nil
-	}
-
-	registry := taxonomyinit.GetTaxonomyRegistry()
-	if registry == nil {
-		return &pb.ValidationResponse{
-			Error: &pb.HarnessError{
-				Code:    codes.FailedPrecondition.String(),
-				Message: "taxonomy registry not initialized",
-			},
-		}, nil
-	}
-
-	resp := &pb.ValidationResponse{Valid: true}
-
-	// Check if node type exists
-	nodeTypeDef, ok := registry.NodeType(req.NodeType)
-	if !ok {
-		resp.Valid = false
-		resp.Errors = append(resp.Errors, &pb.ValidationError{
-			Field:   "node_type",
-			Message: fmt.Sprintf("unknown node type: %s", req.NodeType),
-			Code:    "UNKNOWN_TYPE",
-		})
-		return resp, nil
-	}
-
-	// Parse properties from JSON
-	var properties map[string]any
-	if req.PropertiesJson != "" {
-		if err := json.Unmarshal([]byte(req.PropertiesJson), &properties); err != nil {
-			return &pb.ValidationResponse{
-				Error: &pb.HarnessError{
-					Code:    codes.InvalidArgument.String(),
-					Message: fmt.Sprintf("failed to parse properties JSON: %v", err),
-				},
-			}, nil
-		}
-	}
-
-	// Validate required properties
-	for _, propDef := range nodeTypeDef.Properties {
-		if propDef.Required {
-			if _, exists := properties[propDef.Name]; !exists {
-				resp.Valid = false
-				resp.Errors = append(resp.Errors, &pb.ValidationError{
-					Field:   propDef.Name,
-					Message: fmt.Sprintf("required property '%s' is missing", propDef.Name),
-					Code:    "MISSING_REQUIRED",
-				})
-			}
-		}
-	}
-
-	s.logger.Debug("ValidateGraphNode completed", "valid", resp.Valid, "errors", len(resp.Errors))
-
-	return resp, nil
+	s.logger.Debug("ValidateGraphNode called (taxonomy removed)")
+	return &pb.ValidationResponse{
+		Valid:    true,
+		Warnings: []string{"taxonomy-based validation has been removed; use domain types for type-safe node creation"},
+	}, nil
 }
 
-// ValidateRelationship validates a relationship against the taxonomy schema.
+// ValidateRelationship validates a relationship.
+// NOTE: Taxonomy-based validation has been removed. Returns success with a warning.
 func (s *HarnessCallbackService) ValidateRelationship(ctx context.Context, req *pb.ValidateRelationshipRequest) (*pb.ValidationResponse, error) {
-	if req == nil {
-		return nil, status.Error(codes.InvalidArgument, "request cannot be nil")
-	}
-
-	s.logger.Debug("ValidateRelationship called",
-		"rel_type", req.RelationshipType,
-		"from_type", req.FromNodeType,
-		"to_type", req.ToNodeType)
-
-	// Check for required fields first
-	var validationErrors []*pb.ValidationError
-	if req.RelationshipType == "" {
-		validationErrors = append(validationErrors, &pb.ValidationError{
-			Field:   "relationship_type",
-			Message: "relationship_type is required",
-			Code:    "REQUIRED_FIELD",
-		})
-	}
-	if req.FromNodeType == "" {
-		validationErrors = append(validationErrors, &pb.ValidationError{
-			Field:   "from_node_type",
-			Message: "from_node_type is required",
-			Code:    "REQUIRED_FIELD",
-		})
-	}
-	if req.ToNodeType == "" {
-		validationErrors = append(validationErrors, &pb.ValidationError{
-			Field:   "to_node_type",
-			Message: "to_node_type is required",
-			Code:    "REQUIRED_FIELD",
-		})
-	}
-	if len(validationErrors) > 0 {
-		return &pb.ValidationResponse{
-			Valid:  false,
-			Errors: validationErrors,
-		}, nil
-	}
-
-	registry := taxonomyinit.GetTaxonomyRegistry()
-	if registry == nil {
-		return &pb.ValidationResponse{
-			Error: &pb.HarnessError{
-				Code:    codes.FailedPrecondition.String(),
-				Message: "taxonomy registry not initialized",
-			},
-		}, nil
-	}
-
-	resp := &pb.ValidationResponse{Valid: true}
-
-	// Check if relationship type exists
-	relTypeDef, ok := registry.RelationshipType(req.RelationshipType)
-	if !ok {
-		resp.Valid = false
-		resp.Errors = append(resp.Errors, &pb.ValidationError{
-			Field:   "relationship_type",
-			Message: fmt.Sprintf("unknown relationship type: %s", req.RelationshipType),
-			Code:    "UNKNOWN_TYPE",
-		})
-		return resp, nil
-	}
-
-	// Validate from_type is in the allowed list
-	fromTypeValid := false
-	for _, ft := range relTypeDef.FromTypes {
-		if ft == req.FromNodeType {
-			fromTypeValid = true
-			break
-		}
-	}
-	if !fromTypeValid && len(relTypeDef.FromTypes) > 0 {
-		resp.Valid = false
-		resp.Errors = append(resp.Errors, &pb.ValidationError{
-			Field:   "from_node_type",
-			Message: fmt.Sprintf("node type '%s' is not valid as source for relationship '%s' (allowed: %v)", req.FromNodeType, req.RelationshipType, relTypeDef.FromTypes),
-			Code:    "INVALID_FROM_TYPE",
-		})
-	}
-
-	// Validate to_type is in the allowed list
-	toTypeValid := false
-	for _, tt := range relTypeDef.ToTypes {
-		if tt == req.ToNodeType {
-			toTypeValid = true
-			break
-		}
-	}
-	if !toTypeValid && len(relTypeDef.ToTypes) > 0 {
-		resp.Valid = false
-		resp.Errors = append(resp.Errors, &pb.ValidationError{
-			Field:   "to_node_type",
-			Message: fmt.Sprintf("node type '%s' is not valid as target for relationship '%s' (allowed: %v)", req.ToNodeType, req.RelationshipType, relTypeDef.ToTypes),
-			Code:    "INVALID_TO_TYPE",
-		})
-	}
-
-	s.logger.Debug("ValidateRelationship completed", "valid", resp.Valid, "errors", len(resp.Errors))
-
-	return resp, nil
-}
-
-// extractPropertiesFromTemplate extracts property names from an ID template string.
-// Templates use {property} syntax, e.g., "host:{ip}:{port}" -> ["ip", "port"]
-// This is used to convert legacy IDTemplate to the new IdentifyingProperties format.
-func extractPropertiesFromTemplate(template string) []string {
-	var properties []string
-	inBrace := false
-	var currentProp strings.Builder
-
-	for _, ch := range template {
-		switch ch {
-		case '{':
-			inBrace = true
-			currentProp.Reset()
-		case '}':
-			if inBrace {
-				prop := currentProp.String()
-				if prop != "" {
-					properties = append(properties, prop)
-				}
-			}
-			inBrace = false
-		default:
-			if inBrace {
-				currentProp.WriteRune(ch)
-			}
-		}
-	}
-
-	return properties
+	s.logger.Debug("ValidateRelationship called (taxonomy removed)")
+	return &pb.ValidationResponse{
+		Valid:    true,
+		Warnings: []string{"taxonomy-based validation has been removed; use domain types for type-safe relationship creation"},
+	}, nil
 }

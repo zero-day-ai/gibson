@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -339,6 +340,7 @@ var (
 	missionForcePause       bool
 	missionFromCheckpoint   string
 	missionMemoryContinuity string
+	missionStartDependencies bool
 
 	// Mission install/update flags
 	missionInstallBranch  string
@@ -432,6 +434,7 @@ func init() {
 	missionRunCmd.Flags().StringVarP(&missionWorkflowFile, "file", "f", "", "Workflow YAML file (overrides positional argument)")
 	missionRunCmd.Flags().StringVar(&missionTargetFlag, "target", "", "Target name or ID (overrides YAML target if specified)")
 	missionRunCmd.Flags().StringVar(&missionMemoryContinuity, "memory-continuity", "isolated", "Memory continuity mode: isolated (default), inherit, shared")
+	missionRunCmd.Flags().BoolVar(&missionStartDependencies, "start-dependencies", false, "Automatically start stopped component dependencies before running the mission")
 
 	// Delete flags
 	missionDeleteCmd.Flags().BoolVar(&missionForceDelete, "force", false, "Skip confirmation prompt")
@@ -697,6 +700,11 @@ func runMissionRun(cmd *cobra.Command, args []string) error {
 	if sourceType != "file" {
 		return internal.WrapError(internal.ExitError,
 			fmt.Sprintf("mission source type '%s' not yet fully implemented (use file path with -f flag for now)", sourceType), nil)
+	}
+
+	// Check dependencies before starting the mission
+	if err := checkAndStartDependencies(ctx, client, source, verbose); err != nil {
+		return internal.WrapError(internal.ExitError, "dependency check failed", err)
 	}
 
 	// Extract mission name from workflow to check for paused missions
@@ -1711,6 +1719,214 @@ func runMissionDefinitionShow(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(tw, "EDGES:\t%d\n", len(definition.Edges))
 	fmt.Fprintf(tw, "ENTRY POINTS:\t%d\n", len(definition.EntryPoints))
 	fmt.Fprintf(tw, "EXIT POINTS:\t%d\n", len(definition.ExitPoints))
+
+	return nil
+}
+
+// checkAndStartDependencies verifies that all mission dependencies are installed and running.
+// If --start-dependencies flag is set, it will automatically start any stopped dependencies.
+// Otherwise, it will print a warning about stopped dependencies.
+func checkAndStartDependencies(ctx context.Context, client *dclient.Client, workflowPath string, verbose bool) error {
+	// Parse mission definition to extract dependencies
+	def, err := mission.ParseDefinition(workflowPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse mission definition: %w", err)
+	}
+
+	// Build dependency map from mission definition
+	dependencies := make(map[string]string) // map[name]kind
+
+	// Extract dependencies from mission nodes
+	for _, node := range def.Nodes {
+		switch node.Type {
+		case mission.NodeTypeAgent:
+			if node.AgentName != "" {
+				dependencies[node.AgentName] = "agent"
+			}
+		case mission.NodeTypeTool:
+			if node.ToolName != "" {
+				dependencies[node.ToolName] = "tool"
+			}
+		case mission.NodeTypePlugin:
+			if node.PluginName != "" {
+				dependencies[node.PluginName] = "plugin"
+			}
+		}
+	}
+
+	// Extract explicit dependencies from mission definition
+	if def.Dependencies != nil {
+		for _, agent := range def.Dependencies.Agents {
+			dependencies[agent] = "agent"
+		}
+		for _, tool := range def.Dependencies.Tools {
+			dependencies[tool] = "tool"
+		}
+		for _, plugin := range def.Dependencies.Plugins {
+			dependencies[plugin] = "plugin"
+		}
+	}
+
+	// If no dependencies, nothing to check
+	if len(dependencies) == 0 {
+		if verbose {
+			fmt.Println("No component dependencies to check")
+		}
+		return nil
+	}
+
+	// Query component status from daemon
+	notInstalled := make([]string, 0)
+	notRunning := make([]string, 0)
+
+	// Check agents
+	agents, err := client.ListAgents(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list agents: %w", err)
+	}
+	agentMap := make(map[string]dclient.AgentInfo)
+	for _, agent := range agents {
+		agentMap[agent.Name] = agent
+	}
+
+	// Check tools
+	tools, err := client.ListTools(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+	toolMap := make(map[string]dclient.ToolInfo)
+	for _, tool := range tools {
+		toolMap[tool.Name] = tool
+	}
+
+	// Check plugins
+	plugins, err := client.ListPlugins(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to list plugins: %w", err)
+	}
+	pluginMap := make(map[string]dclient.PluginInfo)
+	for _, plugin := range plugins {
+		pluginMap[plugin.Name] = plugin
+	}
+
+	// Verify each dependency
+	for name, kind := range dependencies {
+		switch kind {
+		case "agent":
+			if agent, exists := agentMap[name]; exists {
+				if agent.Status != "running" {
+					notRunning = append(notRunning, fmt.Sprintf("%s (agent)", name))
+				}
+			} else {
+				notInstalled = append(notInstalled, fmt.Sprintf("%s (agent)", name))
+			}
+		case "tool":
+			if tool, exists := toolMap[name]; exists {
+				if tool.Status != "running" {
+					notRunning = append(notRunning, fmt.Sprintf("%s (tool)", name))
+				}
+			} else {
+				notInstalled = append(notInstalled, fmt.Sprintf("%s (tool)", name))
+			}
+		case "plugin":
+			if plugin, exists := pluginMap[name]; exists {
+				if plugin.Status != "running" {
+					notRunning = append(notRunning, fmt.Sprintf("%s (plugin)", name))
+				}
+			} else {
+				notInstalled = append(notInstalled, fmt.Sprintf("%s (plugin)", name))
+			}
+		}
+	}
+
+	// Report not installed components (fatal)
+	if len(notInstalled) > 0 {
+		fmt.Fprintf(os.Stderr, "Error: The following required components are not installed:\n")
+		for _, comp := range notInstalled {
+			fmt.Fprintf(os.Stderr, "  - %s\n", comp)
+		}
+		fmt.Fprintf(os.Stderr, "\nPlease install missing components before running the mission.\n")
+		return fmt.Errorf("%d required component(s) not installed", len(notInstalled))
+	}
+
+	// Handle not running components
+	if len(notRunning) > 0 {
+		if missionStartDependencies {
+			// Auto-start stopped dependencies
+			fmt.Printf("Starting stopped dependencies:\n")
+			for _, comp := range notRunning {
+				// Extract name and kind
+				parts := strings.Split(comp, " (")
+				if len(parts) != 2 {
+					continue
+				}
+				name := parts[0]
+				kind := strings.TrimSuffix(parts[1], ")")
+
+				fmt.Printf("  - %s: ", comp)
+
+				var startErr error
+				switch kind {
+				case "agent":
+					_, startErr = client.StartAgent(ctx, name)
+				case "tool":
+					_, startErr = client.StartTool(ctx, name)
+				case "plugin":
+					_, startErr = client.StartPlugin(ctx, name)
+				}
+
+				if startErr != nil {
+					fmt.Printf("failed (%v)\n", startErr)
+					return fmt.Errorf("failed to start %s: %w", comp, startErr)
+				}
+				fmt.Printf("started\n")
+			}
+			fmt.Println("All dependencies running. Executing mission...")
+		} else {
+			// Warn about stopped dependencies
+			fmt.Fprintf(os.Stderr, "Warning: The following components are installed but not running:\n")
+			for _, comp := range notRunning {
+				fmt.Fprintf(os.Stderr, "  - %s\n", comp)
+			}
+			fmt.Fprintf(os.Stderr, "\nUse --start-dependencies to start them automatically, or run:\n")
+
+			// Group by kind for cleaner instructions
+			agentNames := make([]string, 0)
+			toolNames := make([]string, 0)
+			pluginNames := make([]string, 0)
+
+			for _, comp := range notRunning {
+				parts := strings.Split(comp, " (")
+				if len(parts) != 2 {
+					continue
+				}
+				name := parts[0]
+				kind := strings.TrimSuffix(parts[1], ")")
+
+				switch kind {
+				case "agent":
+					agentNames = append(agentNames, name)
+				case "tool":
+					toolNames = append(toolNames, name)
+				case "plugin":
+					pluginNames = append(pluginNames, name)
+				}
+			}
+
+			for _, name := range agentNames {
+				fmt.Fprintf(os.Stderr, "  gibson agent start %s\n", name)
+			}
+			for _, name := range toolNames {
+				fmt.Fprintf(os.Stderr, "  gibson tool start %s\n", name)
+			}
+			for _, name := range pluginNames {
+				fmt.Fprintf(os.Stderr, "  gibson plugin start %s\n", name)
+			}
+			fmt.Fprintf(os.Stderr, "\nProceeding with mission execution anyway...\n\n")
+		}
+	} else if verbose {
+		fmt.Printf("All %d dependencies are running\n", len(dependencies))
+	}
 
 	return nil
 }

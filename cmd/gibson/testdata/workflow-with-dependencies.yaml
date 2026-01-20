@@ -1,0 +1,27 @@
+name: Workflow with Dependencies
+description: Workflow with explicit dependencies section
+version: 1.0.0
+
+dependencies:
+  agents:
+    - recon-agent
+    - scan-agent
+  tools:
+    - nmap
+    - nikto
+  plugins:
+    - kubernetes-plugin
+
+nodes:
+  - id: recon
+    type: agent
+    agent: recon-agent
+    task:
+      target: example.com
+
+  - id: scan
+    type: agent
+    agent: scan-agent
+    depends_on: [recon]
+    task:
+      target: example.com

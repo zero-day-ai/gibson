@@ -869,6 +869,59 @@ Gibson supports environment variable substitution in configuration:
 - `${GIBSON_REGISTRY_ENDPOINTS}` - Registry endpoints for component discovery
 - Any other environment variable using `${VAR_NAME}` syntax
 
+### Remote Daemon Access
+
+Gibson supports connecting to a daemon running on a remote host. This enables centralized daemon deployment with distributed CLI access.
+
+#### Environment Variable Method
+
+```bash
+# On remote host - start daemon bound to all interfaces
+GIBSON_DAEMON_GRPC_ADDR="0.0.0.0:50002" gibson daemon start
+
+# On local machine - connect to remote daemon
+GIBSON_DAEMON_GRPC_ADDR="remote-host:50002" gibson agent list
+GIBSON_DAEMON_GRPC_ADDR="remote-host:50002" gibson mission list
+```
+
+#### Config File Method
+
+Set the daemon address in `~/.gibson/config.yaml`:
+
+```yaml
+daemon:
+  grpc_address: "remote-host:50002"
+```
+
+#### Manual daemon.json Method
+
+Create a `~/.gibson/daemon.json` file pointing to the remote daemon:
+
+```bash
+mkdir -p ~/.gibson
+cat > ~/.gibson/daemon.json <<EOF
+{
+  "grpc_address": "remote-host:50002",
+  "pid": 0,
+  "start_time": "2024-01-01T00:00:00Z"
+}
+EOF
+
+# Now all CLI commands connect to the remote daemon
+gibson agent list
+gibson mission run -f workflow.yaml
+```
+
+#### Ports and Security
+
+| Port | Service | Description |
+|------|---------|-------------|
+| 50002 | gRPC API | Daemon control plane (CLI commands) |
+| 50001 | Callback | Agent-to-daemon communication |
+| 2379 | etcd | Component registry (service discovery) |
+
+**Note:** Gibson uses unencrypted gRPC by default and assumes a trusted network. For production remote access, use VPN, network policies, or a reverse proxy with TLS.
+
 ### Registry System
 
 Gibson uses an etcd-based registry for component discovery. When you run `gibson init`, an embedded etcd instance is configured automatically.

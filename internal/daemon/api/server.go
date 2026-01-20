@@ -127,6 +127,15 @@ type DaemonInterface interface {
 
 	// UpdateMission updates an installed mission to the latest version
 	UpdateMission(ctx context.Context, name string, timeoutMs int64) (UpdateMissionResult, error)
+
+	// ResolveMissionDependencies resolves and returns the dependency tree for a mission workflow
+	ResolveMissionDependencies(ctx context.Context, missionPath string) (DependencyTreeData, error)
+
+	// ValidateMissionDependencies validates the state of all dependencies for a mission workflow
+	ValidateMissionDependencies(ctx context.Context, missionPath string) (ValidationResultData, error)
+
+	// EnsureMissionDependencies ensures all dependencies for a mission workflow are running
+	EnsureMissionDependencies(ctx context.Context, missionPath string) error
 }
 
 // DaemonStatus represents daemon status information.
@@ -440,6 +449,58 @@ type MissionDefinitionData struct {
 	InstalledAt time.Time
 	UpdatedAt   time.Time
 	NodeCount   int
+}
+
+// DependencyTreeData represents the complete dependency graph for a mission.
+type DependencyTreeData struct {
+	MissionRef  string
+	ResolvedAt  time.Time
+	TotalNodes  int
+	AgentCount  int
+	ToolCount   int
+	PluginCount int
+	Nodes       []DependencyNodeData
+}
+
+// DependencyNodeData represents a single component in the dependency tree.
+type DependencyNodeData struct {
+	Kind          string
+	Name          string
+	Version       string
+	Source        string
+	SourceRef     string
+	Installed     bool
+	Running       bool
+	Healthy       bool
+	ActualVersion string
+}
+
+// ValidationResultData contains the outcome of dependency validation.
+type ValidationResultData struct {
+	Valid              bool
+	Summary            string
+	TotalComponents    int
+	InstalledCount     int
+	RunningCount       int
+	HealthyCount       int
+	NotInstalledCount  int
+	NotRunningCount      int
+	UnhealthyCount       int
+	VersionMismatchCount int
+	ValidatedAt        time.Time
+	DurationMs         int64
+	NotInstalled       []DependencyNodeData
+	NotRunning         []DependencyNodeData
+	Unhealthy          []DependencyNodeData
+	VersionMismatch    []VersionMismatchData
+}
+
+// VersionMismatchData describes a version constraint violation.
+type VersionMismatchData struct {
+	ComponentKind   string
+	ComponentName   string
+	RequiredVersion string
+	ActualVersion   string
 }
 
 // NewDaemonServer creates a new gRPC server that exposes daemon functionality.

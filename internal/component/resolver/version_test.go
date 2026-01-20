@@ -776,3 +776,500 @@ func TestEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+// TestParseVersionConstraintErrors tests error messages from ParseVersionConstraint.
+func TestParseVersionConstraintErrors(t *testing.T) {
+	tests := []struct {
+		name            string
+		constraint      string
+		wantErrContains string
+	}{
+		{
+			name:            "invalid exact version - malformed",
+			constraint:      "not.a.version",
+			wantErrContains: "invalid exact version",
+		},
+		{
+			name:            "invalid minimum version",
+			constraint:      ">=bad.version",
+			wantErrContains: "invalid minimum version",
+		},
+		{
+			name:            "invalid maximum version",
+			constraint:      "<=bad.version",
+			wantErrContains: "invalid maximum version",
+		},
+		{
+			name:            "invalid range - too many commas",
+			constraint:      ">=1.0.0,<2.0.0,<3.0.0",
+			wantErrContains: "expected exactly 2 parts",
+		},
+		{
+			name:            "invalid range - missing min operator",
+			constraint:      "1.0.0,<2.0.0",
+			wantErrContains: "first part must start with",
+		},
+		{
+			name:            "invalid range - missing max operator",
+			constraint:      ">=1.0.0,2.0.0",
+			wantErrContains: "second part must start with",
+		},
+		{
+			name:            "invalid range - min greater than max",
+			constraint:      ">=5.0.0,<2.0.0",
+			wantErrContains: "must be less than maximum version",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseVersionConstraint(tt.constraint)
+			if err == nil {
+				t.Errorf("expected error containing %q but got none", tt.wantErrContains)
+				return
+			}
+			if !containsString(err.Error(), tt.wantErrContains) {
+				t.Errorf("error = %v, want error containing %q", err, tt.wantErrContains)
+			}
+		})
+	}
+}
+
+// TestSatisfiesConstraintEdgeCases tests edge cases for SatisfiesConstraint.
+func TestSatisfiesConstraintEdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		actual      string
+		constraint  string
+		want        bool
+		shouldError bool
+	}{
+		{
+			name:       "version 0.0.0",
+			actual:     "0.0.0",
+			constraint: ">=0.0.0",
+			want:       true,
+		},
+		{
+			name:       "version 0.0.1 vs 0.0.0",
+			actual:     "0.0.1",
+			constraint: ">0.0.0",
+			want:       true,
+		},
+		{
+			name:       "exact 0.0.0",
+			actual:     "0.0.0",
+			constraint: "0.0.0",
+			want:       true,
+		},
+		{
+			name:       "large version numbers",
+			actual:     "999.888.777",
+			constraint: ">=100.0.0",
+			want:       true,
+		},
+		{
+			name:       "single digit versions",
+			actual:     "1.0.0",
+			constraint: ">=0.0.1",
+			want:       true,
+		},
+		{
+			name:       "v prefix in actual",
+			actual:     "v2.0.0",
+			constraint: ">=2.0.0",
+			want:       true,
+		},
+		{
+			name:       "v prefix in constraint",
+			actual:     "2.0.0",
+			constraint: ">=v2.0.0",
+			want:       true,
+		},
+		{
+			name:       "both with v prefix",
+			actual:     "v2.0.0",
+			constraint: ">=v2.0.0",
+			want:       true,
+		},
+		{
+			name:        "empty actual version",
+			actual:      "",
+			constraint:  ">=1.0.0",
+			shouldError: true,
+		},
+		{
+			name:        "actual with only spaces",
+			actual:      "   ",
+			constraint:  ">=1.0.0",
+			shouldError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := SatisfiesConstraint(tt.actual, tt.constraint)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("expected error but got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if result != tt.want {
+				t.Errorf("SatisfiesConstraint(%q, %q) = %v, want %v", tt.actual, tt.constraint, result, tt.want)
+			}
+		})
+	}
+}
+
+// TestCompareVersionsSymmetry tests that version comparison is symmetric.
+func TestCompareVersionsSymmetry(t *testing.T) {
+	tests := []struct {
+		v1 string
+		v2 string
+	}{
+		{"1.0.0", "2.0.0"},
+		{"1.5.0", "1.3.0"},
+		{"1.0.5", "1.0.3"},
+		{"10.0.0", "2.0.0"},
+		{"v1.0.0", "2.0.0"},
+		{"1.0.0", "v2.0.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.v1+" vs "+tt.v2, func(t *testing.T) {
+			result1 := CompareVersions(tt.v1, tt.v2)
+			result2 := CompareVersions(tt.v2, tt.v1)
+
+			// If v1 < v2 (result1 = -1), then v2 > v1 (result2 = 1)
+			// If v1 > v2 (result1 = 1), then v2 < v1 (result2 = -1)
+			// If v1 == v2 (result1 = 0), then v2 == v1 (result2 = 0)
+			if result1+result2 != 0 {
+				t.Errorf("CompareVersions is not symmetric: CompareVersions(%q, %q) = %d, CompareVersions(%q, %q) = %d",
+					tt.v1, tt.v2, result1, tt.v2, tt.v1, result2)
+			}
+		})
+	}
+}
+
+// TestCompareVersionsTransitivity tests transitivity of version comparison.
+func TestCompareVersionsTransitivity(t *testing.T) {
+	versions := []string{"1.0.0", "1.5.0", "2.0.0", "3.0.0"}
+
+	for i := 0; i < len(versions)-2; i++ {
+		for j := i + 1; j < len(versions)-1; j++ {
+			for k := j + 1; k < len(versions); k++ {
+				v1, v2, v3 := versions[i], versions[j], versions[k]
+
+				cmp12 := CompareVersions(v1, v2)
+				cmp23 := CompareVersions(v2, v3)
+				cmp13 := CompareVersions(v1, v3)
+
+				// If v1 < v2 and v2 < v3, then v1 < v3
+				if cmp12 < 0 && cmp23 < 0 {
+					if cmp13 >= 0 {
+						t.Errorf("Transitivity violated: %s < %s < %s but CompareVersions(%s, %s) = %d",
+							v1, v2, v3, v1, v3, cmp13)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestNormalizeVersion tests the normalizeVersion function indirectly.
+func TestNormalizeVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		v1   string
+		v2   string
+	}{
+		{
+			name: "with and without v prefix",
+			v1:   "v1.0.0",
+			v2:   "1.0.0",
+		},
+		{
+			name: "both with v prefix",
+			v1:   "v2.5.3",
+			v2:   "v2.5.3",
+		},
+		{
+			name: "both without v prefix",
+			v1:   "3.1.4",
+			v2:   "3.1.4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CompareVersions(tt.v1, tt.v2)
+			if result != 0 {
+				t.Errorf("CompareVersions(%q, %q) = %d, want 0 (versions should be equal after normalization)",
+					tt.v1, tt.v2, result)
+			}
+		})
+	}
+}
+
+// TestRangeConstraintBoundaries tests all combinations of range boundaries.
+func TestRangeConstraintBoundaries(t *testing.T) {
+	tests := []struct {
+		name       string
+		version    string
+		constraint string
+		want       bool
+	}{
+		// Inclusive-Exclusive range: [1.0.0, 2.0.0)
+		{"IE: below range", "0.9.9", ">=1.0.0,<2.0.0", false},
+		{"IE: at min boundary", "1.0.0", ">=1.0.0,<2.0.0", true},
+		{"IE: in range", "1.5.0", ">=1.0.0,<2.0.0", true},
+		{"IE: at max boundary", "2.0.0", ">=1.0.0,<2.0.0", false},
+		{"IE: above range", "2.0.1", ">=1.0.0,<2.0.0", false},
+
+		// Exclusive-Inclusive range: (1.0.0, 2.0.0]
+		{"EI: below range", "0.9.9", ">1.0.0,<=2.0.0", false},
+		{"EI: at min boundary", "1.0.0", ">1.0.0,<=2.0.0", false},
+		{"EI: in range", "1.5.0", ">1.0.0,<=2.0.0", true},
+		{"EI: at max boundary", "2.0.0", ">1.0.0,<=2.0.0", true},
+		{"EI: above range", "2.0.1", ">1.0.0,<=2.0.0", false},
+
+		// Exclusive-Exclusive range: (1.0.0, 2.0.0)
+		{"EE: below range", "0.9.9", ">1.0.0,<2.0.0", false},
+		{"EE: at min boundary", "1.0.0", ">1.0.0,<2.0.0", false},
+		{"EE: in range", "1.5.0", ">1.0.0,<2.0.0", true},
+		{"EE: at max boundary", "2.0.0", ">1.0.0,<2.0.0", false},
+		{"EE: above range", "2.0.1", ">1.0.0,<2.0.0", false},
+
+		// Inclusive-Inclusive range: [1.0.0, 2.0.0]
+		{"II: below range", "0.9.9", ">=1.0.0,<=2.0.0", false},
+		{"II: at min boundary", "1.0.0", ">=1.0.0,<=2.0.0", true},
+		{"II: in range", "1.5.0", ">=1.0.0,<=2.0.0", true},
+		{"II: at max boundary", "2.0.0", ">=1.0.0,<=2.0.0", true},
+		{"II: above range", "2.0.1", ">=1.0.0,<=2.0.0", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := SatisfiesConstraint(tt.version, tt.constraint)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != tt.want {
+				t.Errorf("SatisfiesConstraint(%q, %q) = %v, want %v", tt.version, tt.constraint, result, tt.want)
+			}
+		})
+	}
+}
+
+// TestVersionConstraintParsing tests that parsed constraints have correct fields.
+func TestVersionConstraintParsing(t *testing.T) {
+	tests := []struct {
+		name           string
+		constraint     string
+		checkFunc      func(*testing.T, *VersionConstraint)
+	}{
+		{
+			name:       "exact version sets only ExactVersion",
+			constraint: "1.0.0",
+			checkFunc: func(t *testing.T, vc *VersionConstraint) {
+				if vc.ExactVersion != "1.0.0" {
+					t.Errorf("ExactVersion = %q, want %q", vc.ExactVersion, "1.0.0")
+				}
+				if vc.MinVersion != "" {
+					t.Errorf("MinVersion should be empty, got %q", vc.MinVersion)
+				}
+				if vc.MaxVersion != "" {
+					t.Errorf("MaxVersion should be empty, got %q", vc.MaxVersion)
+				}
+			},
+		},
+		{
+			name:       "minimum sets MinVersion and MinInclusive",
+			constraint: ">=2.0.0",
+			checkFunc: func(t *testing.T, vc *VersionConstraint) {
+				if vc.MinVersion != "2.0.0" {
+					t.Errorf("MinVersion = %q, want %q", vc.MinVersion, "2.0.0")
+				}
+				if !vc.MinInclusive {
+					t.Errorf("MinInclusive = false, want true")
+				}
+				if vc.MaxVersion != "" {
+					t.Errorf("MaxVersion should be empty, got %q", vc.MaxVersion)
+				}
+				if vc.ExactVersion != "" {
+					t.Errorf("ExactVersion should be empty, got %q", vc.ExactVersion)
+				}
+			},
+		},
+		{
+			name:       "exclusive minimum sets MinInclusive false",
+			constraint: ">2.0.0",
+			checkFunc: func(t *testing.T, vc *VersionConstraint) {
+				if vc.MinVersion != "2.0.0" {
+					t.Errorf("MinVersion = %q, want %q", vc.MinVersion, "2.0.0")
+				}
+				if vc.MinInclusive {
+					t.Errorf("MinInclusive = true, want false")
+				}
+			},
+		},
+		{
+			name:       "maximum sets MaxVersion and MaxInclusive",
+			constraint: "<=3.0.0",
+			checkFunc: func(t *testing.T, vc *VersionConstraint) {
+				if vc.MaxVersion != "3.0.0" {
+					t.Errorf("MaxVersion = %q, want %q", vc.MaxVersion, "3.0.0")
+				}
+				if !vc.MaxInclusive {
+					t.Errorf("MaxInclusive = false, want true")
+				}
+				if vc.MinVersion != "" {
+					t.Errorf("MinVersion should be empty, got %q", vc.MinVersion)
+				}
+			},
+		},
+		{
+			name:       "exclusive maximum sets MaxInclusive false",
+			constraint: "<3.0.0",
+			checkFunc: func(t *testing.T, vc *VersionConstraint) {
+				if vc.MaxVersion != "3.0.0" {
+					t.Errorf("MaxVersion = %q, want %q", vc.MaxVersion, "3.0.0")
+				}
+				if vc.MaxInclusive {
+					t.Errorf("MaxInclusive = true, want false")
+				}
+			},
+		},
+		{
+			name:       "range sets all fields",
+			constraint: ">=1.0.0,<2.0.0",
+			checkFunc: func(t *testing.T, vc *VersionConstraint) {
+				if vc.MinVersion != "1.0.0" {
+					t.Errorf("MinVersion = %q, want %q", vc.MinVersion, "1.0.0")
+				}
+				if vc.MaxVersion != "2.0.0" {
+					t.Errorf("MaxVersion = %q, want %q", vc.MaxVersion, "2.0.0")
+				}
+				if !vc.MinInclusive {
+					t.Errorf("MinInclusive = false, want true")
+				}
+				if vc.MaxInclusive {
+					t.Errorf("MaxInclusive = true, want false")
+				}
+			},
+		},
+		{
+			name:       "any version has no fields set",
+			constraint: "*",
+			checkFunc: func(t *testing.T, vc *VersionConstraint) {
+				if vc.MinVersion != "" {
+					t.Errorf("MinVersion should be empty, got %q", vc.MinVersion)
+				}
+				if vc.MaxVersion != "" {
+					t.Errorf("MaxVersion should be empty, got %q", vc.MaxVersion)
+				}
+				if vc.ExactVersion != "" {
+					t.Errorf("ExactVersion should be empty, got %q", vc.ExactVersion)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vc, err := ParseVersionConstraint(tt.constraint)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			tt.checkFunc(t, vc)
+		})
+	}
+}
+
+// TestCompareVersionsZeroValues tests comparison with zero versions.
+func TestCompareVersionsZeroValues(t *testing.T) {
+	tests := []struct {
+		name string
+		v1   string
+		v2   string
+		want int
+	}{
+		{"0.0.0 vs 0.0.0", "0.0.0", "0.0.0", 0},
+		{"0.0.0 vs 0.0.1", "0.0.0", "0.0.1", -1},
+		{"0.0.1 vs 0.0.0", "0.0.1", "0.0.0", 1},
+		{"0.0.0 vs 1.0.0", "0.0.0", "1.0.0", -1},
+		{"0.1.0 vs 0.0.1", "0.1.0", "0.0.1", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CompareVersions(tt.v1, tt.v2)
+			if result != tt.want {
+				t.Errorf("CompareVersions(%q, %q) = %d, want %d", tt.v1, tt.v2, result, tt.want)
+			}
+		})
+	}
+}
+
+// TestMultipleConstraintsSatisfaction tests a version against multiple constraints.
+func TestMultipleConstraintsSatisfaction(t *testing.T) {
+	version := "1.5.0"
+	constraints := []struct {
+		constraint string
+		want       bool
+	}{
+		{">=1.0.0", true},
+		{">=1.5.0", true},
+		{">1.5.0", false},
+		{"<2.0.0", true},
+		{"<=1.5.0", true},
+		{">=1.0.0,<2.0.0", true},
+		{">=1.5.0,<=1.5.0", false}, // Invalid range
+		{"1.5.0", true},
+		{"1.4.0", false},
+		{"*", true},
+	}
+
+	for _, tc := range constraints {
+		t.Run("version "+version+" vs "+tc.constraint, func(t *testing.T) {
+			result, err := SatisfiesConstraint(version, tc.constraint)
+
+			// Handle invalid range case
+			if tc.constraint == ">=1.5.0,<=1.5.0" {
+				if err == nil {
+					t.Errorf("expected error for invalid range, got none")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result != tc.want {
+				t.Errorf("SatisfiesConstraint(%q, %q) = %v, want %v", version, tc.constraint, result, tc.want)
+			}
+		})
+	}
+}
+
+// Helper function to check if a string contains a substring.
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && contains(s, substr)))
+}
+
+func contains(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

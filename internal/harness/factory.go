@@ -5,10 +5,8 @@ import (
 	"log/slog"
 
 	"github.com/zero-day-ai/gibson/internal/harness/middleware"
-	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
-	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 )
 
 // HarnessFactory is a function type for creating child harnesses.
@@ -210,22 +208,6 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		)
 	} else {
 		logger.Debug("mission management disabled for harness (no mission client configured)")
-	}
-
-	// Inject taxonomy into SDK (one-time global setup)
-	// This bridges Gibson's taxonomy system to the SDK for agent use
-	if sdkgraphrag.Taxonomy() == nil {
-		registry := taxonomyinit.GetTaxonomyRegistry()
-		if registry != nil {
-			sdkgraphrag.SetTaxonomy(registry)
-			logger.Debug("injected taxonomy into SDK",
-				slog.String("version", registry.Version()),
-				slog.Int("node_types", len(registry.NodeTypes())),
-				slog.Int("relationship_types", len(registry.RelationshipTypes())),
-			)
-		} else {
-			logger.Warn("taxonomy registry not initialized, SDK will have no taxonomy validation")
-		}
 	}
 
 	return harness, nil

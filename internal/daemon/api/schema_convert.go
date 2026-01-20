@@ -66,63 +66,7 @@ func SchemaToProto(s schema.JSON) *JSONSchemaNode {
 		}
 	}
 
-	// Convert taxonomy (THE KEY FEATURE)
-	if s.Taxonomy != nil {
-		node.Taxonomy = TaxonomyToProto(*s.Taxonomy)
-	}
-
 	return node
-}
-
-// TaxonomyToProto converts SDK TaxonomyMapping to proto TaxonomyMapping.
-func TaxonomyToProto(t schema.TaxonomyMapping) *TaxonomyMapping {
-	proto := &TaxonomyMapping{
-		NodeType:              t.NodeType,
-		IdentifyingProperties: t.IdentifyingProperties,
-	}
-
-	// Convert property mappings
-	for _, p := range t.Properties {
-		propProto := &PropertyMapping{
-			Source:    p.Source,
-			Target:    p.Target,
-			Transform: p.Transform,
-		}
-		// Convert default value (JSON encode)
-		if p.Default != nil {
-			if data, err := json.Marshal(p.Default); err == nil {
-				propProto.DefaultValue = string(data)
-			}
-		}
-		proto.Properties = append(proto.Properties, propProto)
-	}
-
-	// Convert relationship mappings
-	for _, r := range t.Relationships {
-		relProto := &RelationshipMapping{
-			Type:      r.Type,
-			Condition: r.Condition,
-			From: &NodeReference{
-				Type:       r.From.Type,
-				Properties: r.From.Properties,
-			},
-			To: &NodeReference{
-				Type:       r.To.Type,
-				Properties: r.To.Properties,
-			},
-		}
-		// Convert relationship properties
-		for _, p := range r.Properties {
-			relProto.RelProperties = append(relProto.RelProperties, &PropertyMapping{
-				Source:    p.Source,
-				Target:    p.Target,
-				Transform: p.Transform,
-			})
-		}
-		proto.Relationships = append(proto.Relationships, relProto)
-	}
-
-	return proto
 }
 
 // ProtoToSchema converts proto JSONSchemaNode to SDK schema.JSON.
@@ -188,75 +132,5 @@ func ProtoToSchema(node *JSONSchemaNode) schema.JSON {
 		}
 	}
 
-	// Convert taxonomy (THE KEY FEATURE)
-	if node.Taxonomy != nil {
-		s.Taxonomy = ProtoToTaxonomy(node.Taxonomy)
-	}
-
 	return s
-}
-
-// ProtoToTaxonomy converts proto TaxonomyMapping to SDK TaxonomyMapping.
-func ProtoToTaxonomy(proto *TaxonomyMapping) *schema.TaxonomyMapping {
-	if proto == nil {
-		return nil
-	}
-
-	t := &schema.TaxonomyMapping{
-		NodeType:              proto.NodeType,
-		IdentifyingProperties: proto.IdentifyingProperties,
-	}
-
-	// Convert property mappings
-	for _, p := range proto.Properties {
-		prop := schema.PropertyMapping{
-			Source:    p.Source,
-			Target:    p.Target,
-			Transform: p.Transform,
-		}
-		// Convert default value (JSON decode)
-		if p.DefaultValue != "" {
-			var def any
-			if err := json.Unmarshal([]byte(p.DefaultValue), &def); err == nil {
-				prop.Default = def
-			}
-		}
-		t.Properties = append(t.Properties, prop)
-	}
-
-	// Convert relationship mappings
-	for _, r := range proto.Relationships {
-		rel := schema.RelationshipMapping{
-			Type:      r.Type,
-			Condition: r.Condition,
-		}
-
-		// Convert From NodeReference
-		if r.From != nil {
-			rel.From = schema.NodeReference{
-				Type:       r.From.Type,
-				Properties: r.From.Properties,
-			}
-		}
-
-		// Convert To NodeReference
-		if r.To != nil {
-			rel.To = schema.NodeReference{
-				Type:       r.To.Type,
-				Properties: r.To.Properties,
-			}
-		}
-
-		// Convert relationship properties
-		for _, p := range r.RelProperties {
-			rel.Properties = append(rel.Properties, schema.PropertyMapping{
-				Source:    p.Source,
-				Target:    p.Target,
-				Transform: p.Transform,
-			})
-		}
-		t.Relationships = append(t.Relationships, rel)
-	}
-
-	return t
 }

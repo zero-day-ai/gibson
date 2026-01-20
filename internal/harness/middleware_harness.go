@@ -192,7 +192,10 @@ func (h *MiddlewareHarness) Memory() memory.MemoryStore      { return h.inner.Me
 func (h *MiddlewareHarness) Mission() MissionContext         { return h.inner.Mission() }
 func (h *MiddlewareHarness) MissionID() types.ID             { return h.inner.MissionID() }
 func (h *MiddlewareHarness) Target() TargetInfo              { return h.inner.Target() }
-func (h *MiddlewareHarness) ListTools() []ToolDescriptor     { return h.inner.ListTools() }
+func (h *MiddlewareHarness) ListTools() []ToolDescriptor { return h.inner.ListTools() }
+func (h *MiddlewareHarness) GetToolDescriptor(ctx context.Context, name string) (*ToolDescriptor, error) {
+	return h.inner.GetToolDescriptor(ctx, name)
+}
 func (h *MiddlewareHarness) ListPlugins() []PluginDescriptor { return h.inner.ListPlugins() }
 func (h *MiddlewareHarness) ListAgents() []AgentDescriptor   { return h.inner.ListAgents() }
 func (h *MiddlewareHarness) Tracer() trace.Tracer            { return h.inner.Tracer() }

@@ -8,10 +8,7 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
-	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
-	taxonomyinit "github.com/zero-day-ai/gibson/internal/init"
 	"github.com/zero-day-ai/gibson/internal/types"
-	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 )
 
 // GraphRAGBridge defines the interface for storing findings to the GraphRAG
@@ -125,8 +122,11 @@ func (e *ConfigError) Error() string {
 // DefaultGraphRAGBridge is the default implementation of GraphRAGBridge.
 // It handles async storage of findings to the GraphRAG knowledge graph,
 // with bounded concurrency and graceful shutdown support.
+//
+// NOTE: Finding storage to the graph is currently a no-op after the taxonomy engine
+// removal. This will be re-implemented using domain types and GraphLoader when
+// Finding domain types are added to the SDK.
 type DefaultGraphRAGBridge struct {
-	engine    engine.TaxonomyGraphEngine
 	logger    *slog.Logger
 	config    GraphRAGBridgeConfig
 	wg        sync.WaitGroup
@@ -136,26 +136,20 @@ type DefaultGraphRAGBridge struct {
 // NewGraphRAGBridge creates a new DefaultGraphRAGBridge with the given dependencies.
 // The semaphore channel is initialized with size MaxConcurrent to limit concurrent operations.
 //
-// This function also initializes the SDK's taxonomy integration by calling SetTaxonomy
-// with the global taxonomy registry from the init package.
+// NOTE: Finding storage is currently not implemented after the taxonomy engine removal.
+// This will be re-implemented when Finding domain types are added to the SDK.
 //
 // Parameters:
-//   - engine: The TaxonomyGraphEngine for taxonomy-driven graph operations
 //   - logger: Logger for diagnostic output (if nil, uses default logger)
 //   - config: Configuration options (use DefaultGraphRAGBridgeConfig() for defaults)
 //
 // Returns a configured GraphRAGBridge ready for use.
-func NewGraphRAGBridge(engine engine.TaxonomyGraphEngine, logger *slog.Logger, config GraphRAGBridgeConfig) *DefaultGraphRAGBridge {
+func NewGraphRAGBridge(logger *slog.Logger, config GraphRAGBridgeConfig) *DefaultGraphRAGBridge {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	// Initialize SDK taxonomy integration
-	// Get the taxonomy registry from the init package and pass it to the SDK
-	initTaxonomy()
-
 	return &DefaultGraphRAGBridge{
-		engine:    engine,
 		logger:    logger.With("component", "graphrag_bridge"),
 		config:    config,
 		semaphore: make(chan struct{}, config.MaxConcurrent),
@@ -221,42 +215,21 @@ func (b *DefaultGraphRAGBridge) Shutdown(ctx context.Context) error {
 }
 
 // Health returns the health status of the GraphRAG bridge.
-// Delegates to the underlying TaxonomyGraphEngine's health check.
+// Since the taxonomy engine has been removed, this just returns healthy.
+// Real health checking will be added when GraphLoader-based finding storage is implemented.
 func (b *DefaultGraphRAGBridge) Health(ctx context.Context) types.HealthStatus {
-	if b.engine == nil {
-		return types.Unhealthy("graphrag engine is nil")
-	}
-
-	engineHealth := b.engine.Health(ctx)
-	if !engineHealth.Healthy {
-		return types.Unhealthy(engineHealth.Message)
-	}
-
 	return types.Healthy("graphrag bridge operational")
 }
 
-// storeToGraphRAG performs the actual storage operation using the TaxonomyGraphEngine.
-// This is called in a goroutine and delegates to engine.HandleFinding which:
-// 1. Creates Finding node with taxonomy-driven properties
-// 2. Creates AFFECTS relationship to target (if provided)
-// 3. Creates USES_TECHNIQUE relationships for CWEs
-// 4. Creates PART_OF relationship to mission
+// storeToGraphRAG performs the actual storage operation for findings.
 //
-// All errors are logged at WARN level and do not propagate (fire-and-forget semantics).
+// NOTE: Finding storage is currently a no-op after the taxonomy engine removal.
+// This will be re-implemented using Finding domain types and GraphLoader when available.
+// For now, findings are still stored in SQLite via the finding store - this method
+// would add them to the graph for relationship queries.
 func (b *DefaultGraphRAGBridge) storeToGraphRAG(ctx context.Context, finding agent.Finding, missionID types.ID, targetID *types.ID) {
-	// Use the TaxonomyGraphEngine to handle finding storage
-	// The engine handles all node creation and relationships based on taxonomy definitions
-	if err := b.engine.HandleFinding(ctx, finding, missionID.String()); err != nil {
-		b.logger.Warn("failed to store finding to graphrag",
-			"finding_id", finding.ID,
-			"mission_id", missionID,
-			"error", err,
-			"operation", "handle_finding",
-		)
-		return
-	}
-
-	b.logger.Debug("successfully stored finding to graphrag",
+	// TODO: Re-implement using GraphLoader when Finding domain types are added to SDK
+	b.logger.Debug("finding graph storage skipped (taxonomy engine removed, pending GraphLoader implementation)",
 		"finding_id", finding.ID,
 		"mission_id", missionID,
 		"has_target", targetID != nil,
@@ -266,20 +239,3 @@ func (b *DefaultGraphRAGBridge) storeToGraphRAG(ctx context.Context, finding age
 
 // Compile-time interface check for DefaultGraphRAGBridge
 var _ GraphRAGBridge = (*DefaultGraphRAGBridge)(nil)
-
-// initTaxonomy initializes the SDK's taxonomy integration by passing the
-// Gibson taxonomy registry to the SDK. This enables agents to validate
-// node and relationship types against the canonical taxonomy.
-//
-// This function is called once during GraphRAGBridge initialization.
-// It's safe to call multiple times (the SDK maintains a global instance).
-func initTaxonomy() {
-	// Get the taxonomy registry from Gibson's init package
-	registry := taxonomyinit.GetTaxonomyRegistry()
-
-	// Pass it to the SDK for agent access
-	// The registry implements the SDK's TaxonomyReader interface
-	if registry != nil {
-		sdkgraphrag.SetTaxonomy(registry)
-	}
-}

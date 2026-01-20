@@ -1833,3 +1833,197 @@ func (d *daemonImpl) UpdateMission(ctx context.Context, name string, timeoutMs i
 		DurationMs: result.Duration.Milliseconds(),
 	}, nil
 }
+
+// ResolveMissionDependencies resolves and returns the dependency tree for a mission workflow.
+func (d *daemonImpl) ResolveMissionDependencies(ctx context.Context, missionPath string) (api.DependencyTreeData, error) {
+	d.logger.Debug("ResolveMissionDependencies called", "mission_path", missionPath)
+
+	// Check if dependency resolver is available
+	if d.dependencyResolver == nil {
+		d.logger.Error("dependency resolver not available")
+		return api.DependencyTreeData{}, fmt.Errorf("dependency resolver not initialized")
+	}
+
+	// Resolve dependencies from workflow file
+	tree, err := d.dependencyResolver.ResolveFromWorkflow(ctx, missionPath)
+	if err != nil {
+		d.logger.Error("failed to resolve mission dependencies", "error", err, "mission_path", missionPath)
+		return api.DependencyTreeData{}, fmt.Errorf("failed to resolve dependencies: %w", err)
+	}
+
+	// Convert DependencyTree to API format
+	nodes := make([]api.DependencyNodeData, 0, len(tree.Nodes))
+	for _, node := range tree.Nodes {
+		nodes = append(nodes, api.DependencyNodeData{
+			Kind:          node.Kind.String(),
+			Name:          node.Name,
+			Version:       node.Version,
+			Source:        string(node.Source),
+			SourceRef:     node.SourceRef,
+			Installed:     node.Installed,
+			Running:       node.Running,
+			Healthy:       node.Healthy,
+			ActualVersion: node.ActualVersion,
+		})
+	}
+
+	result := api.DependencyTreeData{
+		MissionRef:  tree.MissionRef,
+		ResolvedAt:  tree.ResolvedAt,
+		TotalNodes:  len(tree.Nodes),
+		AgentCount:  len(tree.Agents),
+		ToolCount:   len(tree.Tools),
+		PluginCount: len(tree.Plugins),
+		Nodes:       nodes,
+	}
+
+	d.logger.Debug("mission dependencies resolved",
+		"mission_path", missionPath,
+		"total_nodes", result.TotalNodes,
+		"agents", result.AgentCount,
+		"tools", result.ToolCount,
+		"plugins", result.PluginCount,
+	)
+
+	return result, nil
+}
+
+// ValidateMissionDependencies validates the state of all dependencies for a mission workflow.
+func (d *daemonImpl) ValidateMissionDependencies(ctx context.Context, missionPath string) (api.ValidationResultData, error) {
+	d.logger.Debug("ValidateMissionDependencies called", "mission_path", missionPath)
+
+	// Check if dependency resolver is available
+	if d.dependencyResolver == nil {
+		d.logger.Error("dependency resolver not available")
+		return api.ValidationResultData{}, fmt.Errorf("dependency resolver not initialized")
+	}
+
+	// First resolve the dependency tree
+	tree, err := d.dependencyResolver.ResolveFromWorkflow(ctx, missionPath)
+	if err != nil {
+		d.logger.Error("failed to resolve mission dependencies", "error", err, "mission_path", missionPath)
+		return api.ValidationResultData{}, fmt.Errorf("failed to resolve dependencies: %w", err)
+	}
+
+	// Validate the state of all components in the tree
+	validationResult, err := d.dependencyResolver.ValidateState(ctx, tree)
+	if err != nil {
+		d.logger.Error("failed to validate mission dependencies", "error", err, "mission_path", missionPath)
+		return api.ValidationResultData{}, fmt.Errorf("failed to validate dependencies: %w", err)
+	}
+
+	// Convert ValidationResult to API format
+	notInstalled := make([]api.DependencyNodeData, len(validationResult.NotInstalled))
+	for i, node := range validationResult.NotInstalled {
+		notInstalled[i] = api.DependencyNodeData{
+			Kind:          node.Kind.String(),
+			Name:          node.Name,
+			Version:       node.Version,
+			Source:        string(node.Source),
+			SourceRef:     node.SourceRef,
+			Installed:     node.Installed,
+			Running:       node.Running,
+			Healthy:       node.Healthy,
+			ActualVersion: node.ActualVersion,
+		}
+	}
+
+	notRunning := make([]api.DependencyNodeData, len(validationResult.NotRunning))
+	for i, node := range validationResult.NotRunning {
+		notRunning[i] = api.DependencyNodeData{
+			Kind:          node.Kind.String(),
+			Name:          node.Name,
+			Version:       node.Version,
+			Source:        string(node.Source),
+			SourceRef:     node.SourceRef,
+			Installed:     node.Installed,
+			Running:       node.Running,
+			Healthy:       node.Healthy,
+			ActualVersion: node.ActualVersion,
+		}
+	}
+
+	unhealthy := make([]api.DependencyNodeData, len(validationResult.Unhealthy))
+	for i, node := range validationResult.Unhealthy {
+		unhealthy[i] = api.DependencyNodeData{
+			Kind:          node.Kind.String(),
+			Name:          node.Name,
+			Version:       node.Version,
+			Source:        string(node.Source),
+			SourceRef:     node.SourceRef,
+			Installed:     node.Installed,
+			Running:       node.Running,
+			Healthy:       node.Healthy,
+			ActualVersion: node.ActualVersion,
+		}
+	}
+
+	versionMismatch := make([]api.VersionMismatchData, len(validationResult.VersionMismatch))
+	for i, mismatch := range validationResult.VersionMismatch {
+		versionMismatch[i] = api.VersionMismatchData{
+			ComponentKind:   mismatch.Node.Kind.String(),
+			ComponentName:   mismatch.Node.Name,
+			RequiredVersion: mismatch.RequiredVersion,
+			ActualVersion:   mismatch.ActualVersion,
+		}
+	}
+
+	result := api.ValidationResultData{
+		Valid:              validationResult.Valid,
+		Summary:            validationResult.Summary,
+		TotalComponents:    validationResult.TotalComponents,
+		InstalledCount:     validationResult.InstalledCount,
+		RunningCount:       validationResult.RunningCount,
+		HealthyCount:       validationResult.HealthyCount,
+		NotInstalledCount:    len(validationResult.NotInstalled),
+		NotRunningCount:      len(validationResult.NotRunning),
+		UnhealthyCount:       len(validationResult.Unhealthy),
+		VersionMismatchCount: len(validationResult.VersionMismatch),
+		ValidatedAt:        validationResult.ValidatedAt,
+		DurationMs:         validationResult.Duration.Milliseconds(),
+		NotInstalled:       notInstalled,
+		NotRunning:         notRunning,
+		Unhealthy:          unhealthy,
+		VersionMismatch:    versionMismatch,
+	}
+
+	d.logger.Debug("mission dependencies validated",
+		"mission_path", missionPath,
+		"valid", result.Valid,
+		"total", result.TotalComponents,
+		"installed", result.InstalledCount,
+		"running", result.RunningCount,
+		"healthy", result.HealthyCount,
+	)
+
+	return result, nil
+}
+
+// EnsureMissionDependencies ensures all dependencies for a mission workflow are running.
+func (d *daemonImpl) EnsureMissionDependencies(ctx context.Context, missionPath string) error {
+	d.logger.Info("EnsureMissionDependencies called", "mission_path", missionPath)
+
+	// Check if dependency resolver is available
+	if d.dependencyResolver == nil {
+		d.logger.Error("dependency resolver not available")
+		return fmt.Errorf("dependency resolver not initialized")
+	}
+
+	// First resolve the dependency tree
+	tree, err := d.dependencyResolver.ResolveFromWorkflow(ctx, missionPath)
+	if err != nil {
+		d.logger.Error("failed to resolve mission dependencies", "error", err, "mission_path", missionPath)
+		return fmt.Errorf("failed to resolve dependencies: %w", err)
+	}
+
+	// Ensure all components are running
+	err = d.dependencyResolver.EnsureRunning(ctx, tree)
+	if err != nil {
+		d.logger.Error("failed to ensure mission dependencies are running", "error", err, "mission_path", missionPath)
+		return fmt.Errorf("failed to start dependencies: %w", err)
+	}
+
+	d.logger.Info("mission dependencies are running", "mission_path", missionPath, "total_nodes", len(tree.Nodes))
+
+	return nil
+}

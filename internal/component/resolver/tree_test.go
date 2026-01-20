@@ -11,40 +11,47 @@ import (
 
 func TestDependencySource(t *testing.T) {
 	tests := []struct {
-		name   string
-		source DependencySource
-		valid  bool
+		name         string
+		source       DependencySource
+		valid        bool
+		expectString string
 	}{
 		{
-			name:   "mission explicit is valid",
-			source: SourceMissionExplicit,
-			valid:  true,
+			name:         "mission explicit is valid",
+			source:       SourceMissionExplicit,
+			valid:        true,
+			expectString: "mission_explicit",
 		},
 		{
-			name:   "mission node is valid",
-			source: SourceMissionNode,
-			valid:  true,
+			name:         "mission node is valid",
+			source:       SourceMissionNode,
+			valid:        true,
+			expectString: "mission_node",
 		},
 		{
-			name:   "manifest is valid",
-			source: SourceManifest,
-			valid:  true,
+			name:         "manifest is valid",
+			source:       SourceManifest,
+			valid:        true,
+			expectString: "manifest",
 		},
 		{
-			name:   "empty is invalid",
-			source: DependencySource(""),
-			valid:  false,
+			name:         "empty is invalid",
+			source:       DependencySource(""),
+			valid:        false,
+			expectString: "",
 		},
 		{
-			name:   "unknown is invalid",
-			source: DependencySource("unknown"),
-			valid:  false,
+			name:         "unknown is invalid",
+			source:       DependencySource("unknown"),
+			valid:        false,
+			expectString: "unknown",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.valid, tt.source.IsValid())
+			assert.Equal(t, tt.expectString, tt.source.String())
 		})
 	}
 }
@@ -313,163 +320,588 @@ func TestDependencyTree(t *testing.T) {
 }
 
 func TestTopologicalOrder(t *testing.T) {
-	t.Run("Simple linear dependency chain", func(t *testing.T) {
+	tests := []struct {
+		name          string
+		setupTree     func() *DependencyTree
+		expectError   bool
+		errorContains string
+		validate      func(t *testing.T, order []*DependencyNode)
+	}{
+		{
+			name: "simple chain A -> B -> C",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				// Create chain: A -> B -> C
+				nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
+				nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
+				nodeC := &DependencyNode{Kind: component.ComponentKindPlugin, Name: "C"}
+
+				tree.AddNode(nodeA)
+				tree.AddNode(nodeB)
+				tree.AddNode(nodeC)
+
+				nodeA.AddDependency(nodeB)
+				nodeB.AddDependency(nodeC)
+				return tree
+			},
+			expectError: false,
+			validate: func(t *testing.T, order []*DependencyNode) {
+				require.Len(t, order, 3)
+				// C should come first (no dependencies), then B, then A
+				assert.Equal(t, "C", order[0].Name)
+				assert.Equal(t, "B", order[1].Name)
+				assert.Equal(t, "A", order[2].Name)
+			},
+		},
+		{
+			name: "diamond pattern A -> B,C -> D",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				//     A
+				//    / \
+				//   B   C
+				//    \ /
+				//     D
+				nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
+				nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
+				nodeC := &DependencyNode{Kind: component.ComponentKindTool, Name: "C"}
+				nodeD := &DependencyNode{Kind: component.ComponentKindPlugin, Name: "D"}
+
+				tree.AddNode(nodeA)
+				tree.AddNode(nodeB)
+				tree.AddNode(nodeC)
+				tree.AddNode(nodeD)
+
+				nodeA.AddDependency(nodeB)
+				nodeA.AddDependency(nodeC)
+				nodeB.AddDependency(nodeD)
+				nodeC.AddDependency(nodeD)
+				return tree
+			},
+			expectError: false,
+			validate: func(t *testing.T, order []*DependencyNode) {
+				require.Len(t, order, 4)
+				// D should come first, then B and C (in either order), then A
+				assert.Equal(t, "D", order[0].Name)
+				assert.Equal(t, "A", order[3].Name)
+
+				// B and C can be in either order, but both should be before A
+				middleNames := []string{order[1].Name, order[2].Name}
+				assert.Contains(t, middleNames, "B")
+				assert.Contains(t, middleNames, "C")
+			},
+		},
+		{
+			name: "multiple roots - separate trees",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				// Tree 1: A -> B
+				nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
+				nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
+
+				// Tree 2: X -> Y
+				nodeX := &DependencyNode{Kind: component.ComponentKindAgent, Name: "X"}
+				nodeY := &DependencyNode{Kind: component.ComponentKindTool, Name: "Y"}
+
+				tree.AddNode(nodeA)
+				tree.AddNode(nodeB)
+				tree.AddNode(nodeX)
+				tree.AddNode(nodeY)
+
+				nodeA.AddDependency(nodeB)
+				nodeX.AddDependency(nodeY)
+				return tree
+			},
+			expectError: false,
+			validate: func(t *testing.T, order []*DependencyNode) {
+				require.Len(t, order, 4)
+				// Create position map
+				pos := make(map[string]int)
+				for i, node := range order {
+					pos[node.Name] = i
+				}
+
+				// Verify dependencies come before dependents within each tree
+				assert.Less(t, pos["B"], pos["A"], "B must come before A")
+				assert.Less(t, pos["Y"], pos["X"], "Y must come before X")
+			},
+		},
+		{
+			name: "single node with no dependencies",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				node := &DependencyNode{Kind: component.ComponentKindAgent, Name: "standalone"}
+				tree.AddNode(node)
+				return tree
+			},
+			expectError: false,
+			validate: func(t *testing.T, order []*DependencyNode) {
+				require.Len(t, order, 1)
+				assert.Equal(t, "standalone", order[0].Name)
+			},
+		},
+		{
+			name: "empty tree",
+			setupTree: func() *DependencyTree {
+				return NewDependencyTree("test")
+			},
+			expectError: false,
+			validate: func(t *testing.T, order []*DependencyNode) {
+				assert.Empty(t, order)
+			},
+		},
+		{
+			name: "circular dependency A -> B -> C -> A",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
+				nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
+				nodeC := &DependencyNode{Kind: component.ComponentKindPlugin, Name: "C"}
+
+				tree.AddNode(nodeA)
+				tree.AddNode(nodeB)
+				tree.AddNode(nodeC)
+
+				nodeA.AddDependency(nodeB)
+				nodeB.AddDependency(nodeC)
+				nodeC.AddDependency(nodeA) // Creates cycle
+				return tree
+			},
+			expectError:   true,
+			errorContains: "cycle",
+			validate: func(t *testing.T, order []*DependencyNode) {
+				assert.Nil(t, order)
+			},
+		},
+		{
+			name: "self-referential cycle A -> A",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
+				tree.AddNode(nodeA)
+				nodeA.AddDependency(nodeA) // Self-cycle
+				return tree
+			},
+			expectError:   true,
+			errorContains: "cycle",
+			validate: func(t *testing.T, order []*DependencyNode) {
+				assert.Nil(t, order)
+			},
+		},
+		{
+			name: "complex graph with multiple paths",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				// Create a more complex dependency graph
+				//       A
+				//      /|\
+				//     B C D
+				//     |/  |
+				//     E   F
+				//      \ /
+				//       G
+
+				nodes := make(map[string]*DependencyNode)
+				for _, name := range []string{"A", "B", "C", "D", "E", "F", "G"} {
+					node := &DependencyNode{Kind: component.ComponentKindAgent, Name: name}
+					tree.AddNode(node)
+					nodes[name] = node
+				}
+
+				nodes["A"].AddDependency(nodes["B"])
+				nodes["A"].AddDependency(nodes["C"])
+				nodes["A"].AddDependency(nodes["D"])
+				nodes["B"].AddDependency(nodes["E"])
+				nodes["C"].AddDependency(nodes["E"])
+				nodes["D"].AddDependency(nodes["F"])
+				nodes["E"].AddDependency(nodes["G"])
+				nodes["F"].AddDependency(nodes["G"])
+				return tree
+			},
+			expectError: false,
+			validate: func(t *testing.T, order []*DependencyNode) {
+				require.Len(t, order, 7)
+				// G should be first, A should be last
+				assert.Equal(t, "G", order[0].Name)
+				assert.Equal(t, "A", order[6].Name)
+
+				// Create position map for validation
+				pos := make(map[string]int)
+				for i, node := range order {
+					pos[node.Name] = i
+				}
+
+				// Verify all dependencies come before their dependents
+				assert.Less(t, pos["B"], pos["A"])
+				assert.Less(t, pos["C"], pos["A"])
+				assert.Less(t, pos["D"], pos["A"])
+				assert.Less(t, pos["E"], pos["B"])
+				assert.Less(t, pos["E"], pos["C"])
+				assert.Less(t, pos["F"], pos["D"])
+				assert.Less(t, pos["G"], pos["E"])
+				assert.Less(t, pos["G"], pos["F"])
+			},
+		},
+		{
+			name: "all nodes independent - no dependencies",
+			setupTree: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				for _, name := range []string{"A", "B", "C", "D"} {
+					node := &DependencyNode{Kind: component.ComponentKindAgent, Name: name}
+					tree.AddNode(node)
+				}
+				return tree
+			},
+			expectError: false,
+			validate: func(t *testing.T, order []*DependencyNode) {
+				require.Len(t, order, 4)
+				// All nodes should be present (order doesn't matter)
+				names := make([]string, len(order))
+				for i, node := range order {
+					names[i] = node.Name
+				}
+				assert.ElementsMatch(t, []string{"A", "B", "C", "D"}, names)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := tt.setupTree()
+			order, err := tree.TopologicalOrder()
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+
+			if tt.validate != nil {
+				tt.validate(t, order)
+			}
+		})
+	}
+}
+
+func TestDependencyTree_GetMissing(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func() *DependencyTree
+		expected []string
+	}{
+		{
+			name: "returns only uninstalled components",
+			setup: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "installed-agent",
+					Installed: true,
+					Running:   true,
+					Healthy:   true,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "missing-agent",
+					Installed: false,
+					Running:   false,
+					Healthy:   false,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindTool,
+					Name:      "missing-tool",
+					Installed: false,
+					Running:   false,
+					Healthy:   false,
+				})
+				return tree
+			},
+			expected: []string{"missing-agent", "missing-tool"},
+		},
+		{
+			name: "returns empty when all installed",
+			setup: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "agent1",
+					Installed: true,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindTool,
+					Name:      "tool1",
+					Installed: true,
+				})
+				return tree
+			},
+			expected: []string{},
+		},
+		{
+			name: "returns all when none installed",
+			setup: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "agent1",
+					Installed: false,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindTool,
+					Name:      "tool1",
+					Installed: false,
+				})
+				return tree
+			},
+			expected: []string{"agent1", "tool1"},
+		},
+		{
+			name: "empty tree returns empty list",
+			setup: func() *DependencyTree {
+				return NewDependencyTree("test")
+			},
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := tt.setup()
+			missing := tree.GetMissing()
+
+			names := make([]string, len(missing))
+			for i, node := range missing {
+				names[i] = node.Name
+			}
+
+			assert.ElementsMatch(t, tt.expected, names)
+		})
+	}
+}
+
+func TestDependencyTree_GetStopped(t *testing.T) {
+	tests := []struct {
+		name     string
+		setup    func() *DependencyTree
+		expected []string
+	}{
+		{
+			name: "returns only installed but not running components",
+			setup: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "running-agent",
+					Installed: true,
+					Running:   true,
+					Healthy:   true,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "stopped-agent",
+					Installed: true,
+					Running:   false,
+					Healthy:   false,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindTool,
+					Name:      "stopped-tool",
+					Installed: true,
+					Running:   false,
+					Healthy:   false,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindPlugin,
+					Name:      "missing-plugin",
+					Installed: false,
+					Running:   false,
+					Healthy:   false,
+				})
+				return tree
+			},
+			expected: []string{"stopped-agent", "stopped-tool"},
+		},
+		{
+			name: "returns empty when all running or missing",
+			setup: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "running",
+					Installed: true,
+					Running:   true,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindTool,
+					Name:      "missing",
+					Installed: false,
+					Running:   false,
+				})
+				return tree
+			},
+			expected: []string{},
+		},
+		{
+			name: "returns all installed but stopped",
+			setup: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "agent1",
+					Installed: true,
+					Running:   false,
+				})
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindTool,
+					Name:      "tool1",
+					Installed: true,
+					Running:   false,
+				})
+				return tree
+			},
+			expected: []string{"agent1", "tool1"},
+		},
+		{
+			name: "empty tree returns empty list",
+			setup: func() *DependencyTree {
+				return NewDependencyTree("test")
+			},
+			expected: []string{},
+		},
+		{
+			name: "excludes missing components",
+			setup: func() *DependencyTree {
+				tree := NewDependencyTree("test")
+				// Stopped (should be included)
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "stopped",
+					Installed: true,
+					Running:   false,
+				})
+				// Missing (should NOT be included - not installed)
+				tree.AddNode(&DependencyNode{
+					Kind:      component.ComponentKindAgent,
+					Name:      "missing",
+					Installed: false,
+					Running:   false,
+				})
+				return tree
+			},
+			expected: []string{"stopped"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := tt.setup()
+			stopped := tree.GetStopped()
+
+			names := make([]string, len(stopped))
+			for i, node := range stopped {
+				names[i] = node.Name
+			}
+
+			assert.ElementsMatch(t, tt.expected, names)
+		})
+	}
+}
+
+func TestDependencyTree_FilterCombinations(t *testing.T) {
+	t.Run("filters work independently", func(t *testing.T) {
 		tree := NewDependencyTree("test")
 
-		// Create chain: A -> B -> C
-		nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
-		nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
-		nodeC := &DependencyNode{Kind: component.ComponentKindPlugin, Name: "C"}
-
-		tree.AddNode(nodeA)
-		tree.AddNode(nodeB)
-		tree.AddNode(nodeC)
-
-		nodeA.AddDependency(nodeB)
-		nodeB.AddDependency(nodeC)
-
-		order, err := tree.TopologicalOrder()
-		require.NoError(t, err)
-		require.Len(t, order, 3)
-
-		// C should come first (no dependencies), then B, then A
-		assert.Equal(t, "C", order[0].Name)
-		assert.Equal(t, "B", order[1].Name)
-		assert.Equal(t, "A", order[2].Name)
-	})
-
-	t.Run("Diamond dependency", func(t *testing.T) {
-		tree := NewDependencyTree("test")
-
-		//     A
-		//    / \
-		//   B   C
-		//    \ /
-		//     D
-		nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
-		nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
-		nodeC := &DependencyNode{Kind: component.ComponentKindTool, Name: "C"}
-		nodeD := &DependencyNode{Kind: component.ComponentKindPlugin, Name: "D"}
-
-		tree.AddNode(nodeA)
-		tree.AddNode(nodeB)
-		tree.AddNode(nodeC)
-		tree.AddNode(nodeD)
-
-		nodeA.AddDependency(nodeB)
-		nodeA.AddDependency(nodeC)
-		nodeB.AddDependency(nodeD)
-		nodeC.AddDependency(nodeD)
-
-		order, err := tree.TopologicalOrder()
-		require.NoError(t, err)
-		require.Len(t, order, 4)
-
-		// D should come first, then B and C (in either order), then A
-		assert.Equal(t, "D", order[0].Name)
-		assert.Equal(t, "A", order[3].Name)
-
-		// B and C can be in either order, but both should be before A
-		middleNames := []string{order[1].Name, order[2].Name}
-		assert.Contains(t, middleNames, "B")
-		assert.Contains(t, middleNames, "C")
-	})
-
-	t.Run("No dependencies", func(t *testing.T) {
-		tree := NewDependencyTree("test")
-
-		nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
-		nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
-
-		tree.AddNode(nodeA)
-		tree.AddNode(nodeB)
-
-		order, err := tree.TopologicalOrder()
-		require.NoError(t, err)
-		assert.Len(t, order, 2)
-	})
-
-	t.Run("Cycle detection", func(t *testing.T) {
-		tree := NewDependencyTree("test")
-
-		// Create cycle: A -> B -> C -> A
-		nodeA := &DependencyNode{Kind: component.ComponentKindAgent, Name: "A"}
-		nodeB := &DependencyNode{Kind: component.ComponentKindTool, Name: "B"}
-		nodeC := &DependencyNode{Kind: component.ComponentKindPlugin, Name: "C"}
-
-		tree.AddNode(nodeA)
-		tree.AddNode(nodeB)
-		tree.AddNode(nodeC)
-
-		nodeA.AddDependency(nodeB)
-		nodeB.AddDependency(nodeC)
-		nodeC.AddDependency(nodeA) // Creates cycle
-
-		order, err := tree.TopologicalOrder()
-		assert.Error(t, err)
-		assert.Nil(t, order)
-		assert.Contains(t, err.Error(), "cycle")
-	})
-
-	t.Run("Empty tree", func(t *testing.T) {
-		tree := NewDependencyTree("test")
-
-		order, err := tree.TopologicalOrder()
-		require.NoError(t, err)
-		assert.Empty(t, order)
-	})
-
-	t.Run("Complex graph", func(t *testing.T) {
-		tree := NewDependencyTree("test")
-
-		// Create a more complex dependency graph
-		//       A
-		//      /|\
-		//     B C D
-		//     |/  |
-		//     E   F
-		//      \ /
-		//       G
-
-		nodes := make(map[string]*DependencyNode)
-		for _, name := range []string{"A", "B", "C", "D", "E", "F", "G"} {
-			node := &DependencyNode{Kind: component.ComponentKindAgent, Name: name}
-			tree.AddNode(node)
-			nodes[name] = node
+		// Missing (not installed)
+		missing := &DependencyNode{
+			Kind:      component.ComponentKindAgent,
+			Name:      "missing",
+			Installed: false,
+			Running:   false,
+			Healthy:   false,
+		}
+		// Stopped (installed but not running)
+		stopped := &DependencyNode{
+			Kind:      component.ComponentKindAgent,
+			Name:      "stopped",
+			Installed: true,
+			Running:   false,
+			Healthy:   false,
+		}
+		// Unhealthy (running but not healthy)
+		unhealthy := &DependencyNode{
+			Kind:      component.ComponentKindAgent,
+			Name:      "unhealthy",
+			Installed: true,
+			Running:   true,
+			Healthy:   false,
+		}
+		// Satisfied (fully operational)
+		satisfied := &DependencyNode{
+			Kind:      component.ComponentKindAgent,
+			Name:      "satisfied",
+			Installed: true,
+			Running:   true,
+			Healthy:   true,
 		}
 
-		nodes["A"].AddDependency(nodes["B"])
-		nodes["A"].AddDependency(nodes["C"])
-		nodes["A"].AddDependency(nodes["D"])
-		nodes["B"].AddDependency(nodes["E"])
-		nodes["C"].AddDependency(nodes["E"])
-		nodes["D"].AddDependency(nodes["F"])
-		nodes["E"].AddDependency(nodes["G"])
-		nodes["F"].AddDependency(nodes["G"])
+		tree.AddNode(missing)
+		tree.AddNode(stopped)
+		tree.AddNode(unhealthy)
+		tree.AddNode(satisfied)
 
-		order, err := tree.TopologicalOrder()
-		require.NoError(t, err)
-		require.Len(t, order, 7)
+		// Test GetMissing
+		missingNodes := tree.GetMissing()
+		assert.Len(t, missingNodes, 1)
+		assert.Equal(t, "missing", missingNodes[0].Name)
 
-		// G should be first, A should be last
-		assert.Equal(t, "G", order[0].Name)
-		assert.Equal(t, "A", order[6].Name)
+		// Test GetStopped
+		stoppedNodes := tree.GetStopped()
+		assert.Len(t, stoppedNodes, 1)
+		assert.Equal(t, "stopped", stoppedNodes[0].Name)
 
-		// Create position map for validation
-		pos := make(map[string]int)
-		for i, node := range order {
-			pos[node.Name] = i
+		// Test GetUnhealthy
+		unhealthyNodes := tree.GetUnhealthy()
+		assert.Len(t, unhealthyNodes, 1)
+		assert.Equal(t, "unhealthy", unhealthyNodes[0].Name)
+
+		// Test GetUnsatisfied (should include missing, stopped, and unhealthy)
+		unsatisfied := tree.GetUnsatisfied()
+		assert.Len(t, unsatisfied, 3)
+		unsatisfiedNames := make([]string, len(unsatisfied))
+		for i, node := range unsatisfied {
+			unsatisfiedNames[i] = node.Name
 		}
+		assert.ElementsMatch(t, []string{"missing", "stopped", "unhealthy"}, unsatisfiedNames)
 
-		// Verify all dependencies come before their dependents
-		assert.Less(t, pos["B"], pos["A"])
-		assert.Less(t, pos["C"], pos["A"])
-		assert.Less(t, pos["D"], pos["A"])
-		assert.Less(t, pos["E"], pos["B"])
-		assert.Less(t, pos["E"], pos["C"])
-		assert.Less(t, pos["F"], pos["D"])
-		assert.Less(t, pos["G"], pos["E"])
-		assert.Less(t, pos["G"], pos["F"])
+		// Test IsFullySatisfied
+		assert.False(t, tree.IsFullySatisfied())
+	})
+
+	t.Run("fully satisfied tree", func(t *testing.T) {
+		tree := NewDependencyTree("test")
+
+		tree.AddNode(&DependencyNode{
+			Kind:      component.ComponentKindAgent,
+			Name:      "agent1",
+			Installed: true,
+			Running:   true,
+			Healthy:   true,
+		})
+		tree.AddNode(&DependencyNode{
+			Kind:      component.ComponentKindTool,
+			Name:      "tool1",
+			Installed: true,
+			Running:   true,
+			Healthy:   true,
+		})
+
+		assert.Empty(t, tree.GetMissing())
+		assert.Empty(t, tree.GetStopped())
+		assert.Empty(t, tree.GetUnhealthy())
+		assert.Empty(t, tree.GetUnsatisfied())
+		assert.True(t, tree.IsFullySatisfied())
 	})
 }
 

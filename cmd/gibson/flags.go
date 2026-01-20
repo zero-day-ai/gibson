@@ -17,15 +17,13 @@ const (
 
 // GlobalFlags holds global flags available to all commands
 type GlobalFlags struct {
-	Verbose          bool
-	VeryVerbose      bool
-	DebugVerbose     bool
-	Quiet            bool
-	OutputFormat     string
-	ConfigFile       string
-	HomeDir          string
-	TaxonomyPath     string
-	ValidateTaxonomy bool
+	Verbose      bool
+	VeryVerbose  bool
+	DebugVerbose bool
+	Quiet        bool
+	OutputFormat string
+	ConfigFile   string
+	HomeDir      string
 }
 
 var globalFlags = &GlobalFlags{}
@@ -39,8 +37,6 @@ func RegisterGlobalFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVarP(&globalFlags.OutputFormat, "output", "o", "text", "Output format (text|json)")
 	cmd.PersistentFlags().StringVar(&globalFlags.ConfigFile, "config", "", "Path to config file (default: $GIBSON_HOME/config.yaml)")
 	cmd.PersistentFlags().StringVar(&globalFlags.HomeDir, "home", "", "Gibson home directory (default: ~/.gibson)")
-	cmd.PersistentFlags().StringVar(&globalFlags.TaxonomyPath, "taxonomy-path", "", "Path to custom taxonomy YAML file (extends embedded taxonomy)")
-	cmd.PersistentFlags().BoolVar(&globalFlags.ValidateTaxonomy, "validate-taxonomy", false, "Validate taxonomy and exit (useful for CI)")
 }
 
 // ParseGlobalFlags parses and validates global flags from the command

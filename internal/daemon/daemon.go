@@ -13,6 +13,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/component"
 	"github.com/zero-day-ai/gibson/internal/component/build"
 	"github.com/zero-day-ai/gibson/internal/component/git"
+	"github.com/zero-day-ai/gibson/internal/component/resolver"
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/database"
@@ -24,6 +25,13 @@ import (
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
+)
+
+// Type aliases to avoid exposing resolver types directly through the daemon API
+type (
+	dependencyTree     = resolver.DependencyTree
+	validationResult   = resolver.ValidationResult
+	dependencyResolver = resolver.DependencyResolver
 )
 
 // targetStore is an interface for target data access
@@ -64,9 +72,6 @@ type daemonImpl struct {
 	// eventBus manages event distribution to subscribers
 	eventBus *EventBus
 
-	// graphSubscriber routes execution events to the taxonomy graph engine
-	graphSubscriber *GraphEventSubscriber
-
 	// db is the database connection
 	db *database.DB
 
@@ -81,6 +86,9 @@ type daemonImpl struct {
 
 	// componentLogWriter manages component log files
 	componentLogWriter component.LogWriter
+
+	// componentLifecycleManager manages component start/stop operations
+	componentLifecycleManager component.LifecycleManager
 
 	// missionStore provides access to mission persistence
 	missionStore mission.MissionStore
@@ -116,6 +124,9 @@ type daemonImpl struct {
 	// toolExecutorService manages tool execution and discovery
 	// This will be wired in Task 8
 	toolExecutorService toolexec.ToolExecutorService
+
+	// dependencyResolver manages mission dependency resolution and validation
+	dependencyResolver dependencyResolver
 
 	// pidFile is the path to the PID file (~/.gibson/daemon.pid)
 	pidFile string
@@ -303,6 +314,7 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 			d.logger.Warn("failed to create log writer, component lifecycle management may be limited", "error", err)
 		} else {
 			lifecycleManager := component.NewLifecycleManager(d.componentStore, logWriter)
+			d.componentLifecycleManager = lifecycleManager
 			d.componentInstaller = component.NewDefaultInstaller(gitOps, buildExecutor, d.componentStore, lifecycleManager)
 			d.componentBuildExecutor = buildExecutor
 			d.componentLogWriter = logWriter
@@ -359,6 +371,21 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	d.infrastructure = infra
 	d.logger.Info("infrastructure components initialized")
 
+	// Initialize dependency resolver for mission dependency validation
+	// The resolver needs component store, lifecycle manager, and a manifest loader
+	if d.componentStore != nil && d.componentLifecycleManager != nil {
+		d.logger.Info("initializing dependency resolver")
+		manifestLoader := newManifestLoader(d.componentStore)
+		d.dependencyResolver = resolver.NewResolver(
+			d.componentStore,
+			d.componentLifecycleManager,
+			manifestLoader,
+		)
+		d.logger.Info("dependency resolver initialized")
+	} else {
+		d.logger.Warn("dependency resolver not initialized - component store or lifecycle manager unavailable")
+	}
+
 	// Configure callback service with span processors for distributed tracing
 	if len(infra.spanProcessors) > 0 {
 		d.callback.AddSpanProcessors(infra.spanProcessors...)
@@ -387,12 +414,6 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	if d.eventBus != nil {
 		d.callback.SetEventBus(NewEventBusAdapter(d.eventBus))
 		d.logger.Info("configured callback service with event bus")
-	}
-
-	// Configure callback service with taxonomy engine for automatic tool output graphing
-	if d.infrastructure != nil && d.infrastructure.taxonomyEngine != nil {
-		d.callback.SetTaxonomyEngine(d.infrastructure.taxonomyEngine)
-		d.logger.Info("configured callback service with taxonomy engine")
 	}
 
 	// Perform crash recovery: find any missions that were running when daemon stopped
@@ -483,20 +504,6 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		attack.WithLogger(d.logger),
 	)
 	d.logger.Info("initialized attack runner")
-
-	// Start graph event subscriber if both taxonomy engine and event bus are available
-	if d.infrastructure != nil && d.infrastructure.taxonomyEngine != nil && d.eventBus != nil {
-		d.logger.Info("starting graph event subscriber")
-		d.graphSubscriber = NewGraphEventSubscriber(
-			d.infrastructure.taxonomyEngine,
-			d.eventBus,
-			d.logger.With("component", "graph-subscriber"),
-		)
-		d.graphSubscriber.Start(ctx)
-		d.logger.Info("graph event subscriber started")
-	} else {
-		d.logger.Debug("graph event subscriber not started - taxonomy engine or event bus unavailable")
-	}
 
 	// Start callback server
 	if d.config.Callback.Enabled {
@@ -636,12 +643,6 @@ func (d *daemonImpl) stopServices(ctx context.Context) {
 	if d.config.Callback.Enabled && d.callback.IsRunning() {
 		d.logger.Info("stopping callback server")
 		d.callback.Stop()
-	}
-
-	// Stop graph event subscriber (stop routing events to graph engine)
-	if d.graphSubscriber != nil {
-		d.logger.Info("stopping graph event subscriber")
-		d.graphSubscriber.Stop()
 	}
 
 	// Close event bus (no more event subscriptions)

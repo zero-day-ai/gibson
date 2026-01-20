@@ -443,21 +443,3 @@ func (m *CallbackManager) SetEventBus(eventBus interface{}) {
 	}
 }
 
-// SetTaxonomyEngine sets the taxonomy graph engine on the callback service.
-// This enables automatic extraction and graphing of entities from tool outputs
-// based on taxonomy definitions in tool output schemas.
-//
-// This method should be called after NewCallbackManager but before Start().
-//
-// Parameters:
-//   - engine: TaxonomyGraphEngine for processing tool outputs
-//
-// Thread-safe: Can be called from multiple goroutines.
-func (m *CallbackManager) SetTaxonomyEngine(engine TaxonomyGraphEngine) {
-	if m.server != nil && m.server.service != nil {
-		m.server.service.mu.Lock()
-		defer m.server.service.mu.Unlock()
-		m.server.service.taxonomyEngine = engine
-		m.logger.Debug("set taxonomy engine on callback service")
-	}
-}

@@ -566,6 +566,66 @@ func (h *DefaultAgentHarness) ListTools() []ToolDescriptor {
 	return descriptors
 }
 
+// GetToolDescriptor returns the descriptor for a specific tool by name.
+// This retrieves tool metadata including output schema with taxonomy mappings
+// for entity extraction.
+func (h *DefaultAgentHarness) GetToolDescriptor(ctx context.Context, name string) (*ToolDescriptor, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.GetToolDescriptor")
+	defer span.End()
+
+	// Try to get tool from local registry first
+	t, err := h.toolRegistry.Get(name)
+	if err == nil {
+		desc := ToolDescriptor{
+			Name:         t.Name(),
+			Description:  t.Description(),
+			Version:      t.Version(),
+			Tags:         t.Tags(),
+			InputSchema:  t.InputSchema(),
+			OutputSchema: t.OutputSchema(),
+		}
+		return &desc, nil
+	}
+
+	// Tool not found locally - try to discover via registry adapter
+	if h.registryAdapter != nil {
+		h.logger.Debug("tool not found locally, attempting remote discovery for descriptor",
+			"tool", name)
+
+		remoteTool, discErr := h.registryAdapter.DiscoverTool(ctx, name)
+		if discErr != nil {
+			h.logger.Error("tool not found (local or remote)",
+				"tool", name,
+				"local_error", err,
+				"discovery_error", discErr)
+			return nil, types.WrapError(
+				ErrHarnessToolExecutionFailed,
+				fmt.Sprintf("tool not found: %s", name),
+				err,
+			)
+		}
+
+		// Build descriptor from discovered remote tool
+		desc := ToolDescriptor{
+			Name:         remoteTool.Name(),
+			Description:  remoteTool.Description(),
+			Version:      remoteTool.Version(),
+			Tags:         remoteTool.Tags(),
+			InputSchema:  remoteTool.InputSchema(),
+			OutputSchema: remoteTool.OutputSchema(),
+		}
+		return &desc, nil
+	}
+
+	// No registry adapter available
+	return nil, types.WrapError(
+		ErrHarnessToolExecutionFailed,
+		fmt.Sprintf("tool not found: %s", name),
+		err,
+	)
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Plugin Access Methods
 // ────────────────────────────────────────────────────────────────────────────

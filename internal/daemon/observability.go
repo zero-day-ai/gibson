@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zero-day-ai/gibson/internal/graphrag/engine"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
-	"github.com/zero-day-ai/gibson/internal/graphrag/taxonomy"
 	"github.com/zero-day-ai/gibson/internal/observability"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -55,41 +53,9 @@ func (d *daemonImpl) initLangfuseTracing(ctx context.Context, neo4jClient *graph
 	}
 
 	// Track span processors for callback service
+	// NOTE: GraphSpanProcessor has been removed along with the taxonomy engine.
+	// When GraphLoader-based span recording is implemented, it can be added here.
 	var spanProcessors []sdktrace.SpanProcessor
-
-	// If Neo4j client is available, register GraphSpanProcessor for dual export
-	if neo4jClient != nil {
-		d.logger.Info("registering GraphSpanProcessor for Neo4j span recording")
-
-		// Load the taxonomy registry
-		registry, err := d.getTaxonomyRegistry(ctx)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to load taxonomy registry: %w", err)
-		}
-
-		// Create the taxonomy-driven graph engine using the engine package
-		// This version uses the graph.GraphClient directly instead of GraphRAGStore
-		taxonomyEngine := engine.NewTaxonomyGraphEngine(
-			registry,
-			neo4jClient,
-			d.logger.With("component", "taxonomy-graph-engine"),
-		)
-
-		// Create the graph span processor with the engine
-		graphProcessor := observability.NewGraphSpanProcessor(
-			taxonomyEngine,
-			d.logger.With("component", "graph-span-processor"),
-		)
-
-		// Register the processor with the tracer provider
-		// This enables dual export: spans go to both Langfuse (via exporter) and Neo4j (via processor)
-		tracerProvider.RegisterSpanProcessor(graphProcessor)
-
-		// Track the processor so it can be passed to callback service
-		spanProcessors = append(spanProcessors, graphProcessor)
-
-		d.logger.Info("GraphSpanProcessor registered successfully")
-	}
 
 	return tracerProvider, spanProcessors, nil
 }
@@ -127,17 +93,4 @@ func (d *daemonImpl) initGraphRAG(ctx context.Context) (*graph.Neo4jClient, erro
 	}
 
 	return client, nil
-}
-
-// getTaxonomyRegistry loads and returns the taxonomy registry.
-// This is used by the TaxonomyGraphEngine to look up event definitions.
-func (d *daemonImpl) getTaxonomyRegistry(ctx context.Context) (taxonomy.TaxonomyRegistry, error) {
-	// Load default taxonomy (custom taxonomy path support can be added later if needed)
-	registry, err := taxonomy.LoadAndValidateTaxonomy()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load default taxonomy: %w", err)
-	}
-	d.logger.Info("loaded default taxonomy")
-
-	return registry, nil
 }

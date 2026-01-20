@@ -2159,3 +2159,101 @@ func (c *Client) ListMissionDefinitions(ctx context.Context) ([]*MissionDefiniti
 	// TODO: This will be implemented when the gRPC methods are added (task 7.1/7.2)
 	return nil, fmt.Errorf("mission definition listing via daemon not yet implemented (requires gRPC methods from task 7.1/7.2)")
 }
+
+// ValidationResult contains the outcome of dependency validation.
+// It provides comprehensive information about the state of all components
+// in a dependency tree, including counts, problem components, and version mismatches.
+type ValidationResult struct {
+	// Valid is true if all dependencies are satisfied and running
+	Valid bool `json:"valid" yaml:"valid"`
+
+	// Summary is a human-readable summary of the validation result
+	Summary string `json:"summary" yaml:"summary"`
+
+	// TotalComponents is the total number of components in the dependency tree
+	TotalComponents int `json:"totalComponents" yaml:"totalComponents"`
+
+	// InstalledCount is the number of components that are installed
+	InstalledCount int `json:"installedCount" yaml:"installedCount"`
+
+	// RunningCount is the number of components that are currently running
+	RunningCount int `json:"runningCount" yaml:"runningCount"`
+
+	// HealthyCount is the number of components that are healthy
+	HealthyCount int `json:"healthyCount" yaml:"healthyCount"`
+
+	// NotInstalled contains components that are not installed
+	NotInstalled []*DependencyNode `json:"notInstalled,omitempty" yaml:"notInstalled,omitempty"`
+
+	// NotRunning contains components that are installed but not running
+	NotRunning []*DependencyNode `json:"notRunning,omitempty" yaml:"notRunning,omitempty"`
+
+	// Unhealthy contains components that are running but not healthy
+	Unhealthy []*DependencyNode `json:"unhealthy,omitempty" yaml:"unhealthy,omitempty"`
+
+	// VersionMismatch contains components with version constraint violations
+	VersionMismatch []*VersionMismatchInfo `json:"versionMismatch,omitempty" yaml:"versionMismatch,omitempty"`
+
+	// ValidatedAt is the timestamp when validation was performed
+	ValidatedAt time.Time `json:"validatedAt" yaml:"validatedAt"`
+
+	// Duration is how long the validation took
+	Duration time.Duration `json:"duration" yaml:"duration"`
+}
+
+// DependencyNode represents a single component in the dependency tree.
+type DependencyNode struct {
+	// Identity fields
+	Kind    string `json:"kind" yaml:"kind"`       // Type of component (agent, tool, plugin)
+	Name    string `json:"name" yaml:"name"`       // Component name
+	Version string `json:"version" yaml:"version"` // Required version (semantic version or constraint)
+
+	// Source tracking
+	Source    string `json:"source" yaml:"source"`         // Where this dependency requirement came from
+	SourceRef string `json:"source_ref" yaml:"source_ref"` // Reference to the source (mission ID, node ID, component name)
+
+	// Current state (populated by resolution)
+	Installed     bool   `json:"installed" yaml:"installed"`                     // True if component is registered in the component store
+	Running       bool   `json:"running" yaml:"running"`                         // True if component is currently running
+	Healthy       bool   `json:"healthy" yaml:"healthy"`                         // True if component passed health checks
+	ActualVersion string `json:"actual_version,omitempty" yaml:"actual_version"` // Actual installed version (may differ from required)
+}
+
+// VersionMismatchInfo describes a version constraint violation.
+type VersionMismatchInfo struct {
+	// Node is the dependency node with the version mismatch
+	Node *DependencyNode `json:"node" yaml:"node"`
+
+	// RequiredVersion is the version constraint that was specified
+	RequiredVersion string `json:"requiredVersion" yaml:"requiredVersion"`
+
+	// ActualVersion is the version that is actually installed
+	ActualVersion string `json:"actualVersion" yaml:"actualVersion"`
+}
+
+// ValidateMissionDependencies validates that all dependencies required by a mission workflow
+// are installed, running, and healthy. This method connects to the daemon's dependency
+// resolver to build a complete dependency tree and validate component state.
+//
+// Parameters:
+//   - ctx: Context for the RPC call
+//   - workflowPath: Absolute path to the workflow YAML file
+//
+// Returns:
+//   - *ValidationResult: Detailed validation results with component states
+//   - error: Non-nil if the validation process fails (not if validation finds issues)
+//
+// Example:
+//
+//	result, err := client.ValidateMissionDependencies(ctx, "/path/to/workflow.yaml")
+//	if err != nil {
+//	    return fmt.Errorf("validation failed: %w", err)
+//	}
+//	if !result.Valid {
+//	    fmt.Printf("Validation issues: %s\n", result.Summary)
+//	}
+func (c *Client) ValidateMissionDependencies(ctx context.Context, workflowPath string) (*ValidationResult, error) {
+	// TODO: This will be implemented when the gRPC methods are added
+	// For now, return an error indicating the feature is not yet available
+	return nil, fmt.Errorf("mission dependency validation via daemon not yet implemented (requires gRPC methods and daemon integration)")
+}

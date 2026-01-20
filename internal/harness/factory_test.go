@@ -231,8 +231,7 @@ func TestNewHarnessFactory_PreservesProvidedConfig(t *testing.T) {
 func TestNewHarnessFactory_FullConfiguration(t *testing.T) {
 	// Test with all fields specified
 	// Note: GraphRAGBridge and GraphRAGQueryBridge are required - use mock implementations
-	mockEngine := newMockTaxonomyGraphEngine()
-	graphRAGBridge := NewGraphRAGBridge(mockEngine, nil, DefaultGraphRAGBridgeConfig())
+	graphRAGBridge := NewGraphRAGBridge(nil, DefaultGraphRAGBridgeConfig())
 	mockStore := &MockGraphRAGStore{IsHealthy: true}
 	graphRAGQueryBridge := NewGraphRAGQueryBridge(mockStore)
 

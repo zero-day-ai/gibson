@@ -204,6 +204,10 @@ func (m *mockAgentHarness) ListTools() []harness.ToolDescriptor {
 	return nil
 }
 
+func (m *mockAgentHarness) GetToolDescriptor(ctx context.Context, name string) (*harness.ToolDescriptor, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
 func (m *mockAgentHarness) QueryPlugin(ctx context.Context, name string, method string, params map[string]any) (any, error) {
 	return nil, fmt.Errorf("not implemented in mock")
 }
