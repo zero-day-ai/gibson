@@ -21,13 +21,13 @@ func TestPayloadMigrations(t *testing.T) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
-	// Verify current version is 11 (all migrations applied)
+	// Verify current version is 13 (all migrations applied)
 	version, err := migrator.CurrentVersion(ctx)
 	if err != nil {
 		t.Fatalf("failed to get current version: %v", err)
 	}
-	if version != 11 {
-		t.Errorf("expected version 11, got %d", version)
+	if version != 13 {
+		t.Errorf("expected version 13, got %d", version)
 	}
 
 	// Verify all payload tables exist

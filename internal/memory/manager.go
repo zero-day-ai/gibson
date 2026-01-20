@@ -1,6 +1,8 @@
 package memory
 
 import (
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/zero-day-ai/gibson/internal/database"
@@ -78,20 +80,28 @@ func NewMemoryManager(missionID types.ID, db *database.DB, config *MemoryConfig)
 		return nil, NewInvalidConfigError("unknown embedder provider: " + config.LongTerm.Embedder.Provider)
 	}
 
-	// Initialize vector store based on config
-	var vectorStore vector.VectorStore
-	switch config.LongTerm.Backend {
-	case "embedded":
-		// For now, use mock vector store as a placeholder
-		// Real embedded implementation will be added by other agents
-		vectorStore = vector.NewMockVectorStore()
-	case "qdrant", "milvus":
-		// For now, use mock vector store as a placeholder
-		// Real implementations will be added by other agents
-		vectorStore = vector.NewMockVectorStore()
-	default:
-		// Default to mock vector store
-		vectorStore = vector.NewMockVectorStore()
+	// Get embedding dimensions from embedder
+	dims := emb.Dimensions()
+
+	// Determine storage path for sqlite backend
+	storagePath := config.LongTerm.StoragePath
+	if storagePath == "" && config.LongTerm.Backend == "sqlite" {
+		// Default: use mission-scoped database in ~/.gibson/vectors/
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return nil, NewInvalidConfigError("failed to determine home directory: " + err.Error())
+		}
+		storagePath = filepath.Join(homeDir, ".gibson", "vectors", string(missionID)+".db")
+	}
+
+	// Initialize vector store using factory
+	vectorStore, err := vector.NewVectorStore(vector.VectorStoreConfig{
+		Backend:     config.LongTerm.Backend,
+		StoragePath: storagePath,
+		Dimensions:  dims,
+	})
+	if err != nil {
+		return nil, NewVectorStoreError("failed to create vector store", err)
 	}
 
 	// Initialize long-term memory

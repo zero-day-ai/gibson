@@ -1,20 +1,22 @@
 # Gibson GraphRAG Taxonomy
 
-Comprehensive documentation of the Gibson taxonomy system, including file structure, Neo4j integration, loading mechanisms, and extension guides.
+Comprehensive documentation of the Gibson taxonomy system, including node types, relationship types, domain types, and the GraphLoader system.
 
-**Version:** 0.15.0 (tied to Gibson binary version)
-**Last Updated:** 2026-01-18
+**Version:** 0.20.0 (tied to Gibson/SDK version)
+**Last Updated:** 2026-01-20
 
 ---
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [File Structure](#file-structure)
+- [Domain Types System (NEW)](#domain-types-system-new)
+- [Node Types](#node-types)
+- [Relationship Types](#relationship-types)
 - [Neo4j Integration](#neo4j-integration)
-- [Loading Mechanism](#loading-mechanism)
-- [Making Updates](#making-updates)
-- [Improving the Taxonomy](#improving-the-taxonomy)
+- [GraphLoader](#graphloader)
+- [Custom Types and Extensibility](#custom-types-and-extensibility)
+- [Migration from Old System](#migration-from-old-system)
 - [Runtime Queries](#runtime-queries)
 - [Troubleshooting](#troubleshooting)
 - [Reference](#reference)
@@ -25,141 +27,202 @@ Comprehensive documentation of the Gibson taxonomy system, including file struct
 
 ### Purpose
 
-The Gibson Taxonomy is a YAML-driven, compile-time embedded system that provides declarative configuration for GraphRAG node types, relationship types, attack techniques, target types, capabilities, and execution event mappings.
+The Gibson Taxonomy defines the schema for the GraphRAG knowledge graph, including:
+- **Node types**: Assets, findings, execution tracking
+- **Relationship types**: How nodes connect to each other
+- **Domain types**: Strongly-typed Go structs for graph entities (SDK)
+- **GraphLoader**: Generic loader that accepts domain types (Gibson)
 
-The taxonomy enables:
-- Consistent graph schema across all Gibson deployments
-- Declarative event-to-graph mappings for audit trails
-- Tool output parsing for automatic asset extraction
-- MITRE ATT&CK and custom technique mappings
-- Type-safe property definitions with validation
+### Architecture Change (v0.20.0)
+
+In v0.20.0, the taxonomy system was significantly simplified:
+
+**Old System (Deprecated):**
+- Complex JSONPath-based taxonomy mappings
+- YAML schema definitions with template-based IDs
+- ~19,000 lines of parsing/extraction code
+
+**New System (Current):**
+- **SDK owns the types**: All domain types (`Host`, `Port`, `Service`) live in `sdk/graphrag/domain/`
+- **Tools emit typed objects**: No raw JSON with taxonomy mappings
+- **Gibson loads generically**: Single `GraphLoader` accepts any `GraphNode` implementer
+- **Extensibility via CustomEntity**: Custom types use prefixes like `k8s:pod`
 
 ### Design Principles
 
 | Principle | Description |
 |-----------|-------------|
-| **YAML-Driven** | Human-readable YAML source files for easy editing |
-| **Compile-Time Embedding** | Embedded in binary using Go's `embed.FS` |
-| **Version-Tied** | Taxonomy version matches Gibson binary version |
-| **Additive Custom** | Custom extensions add to, never override, bundled types |
-| **Thread-Safe** | Registry uses `RWMutex` for concurrent access |
-| **Graceful Degradation** | Missing definitions log warnings, don't crash |
+| **Type-Safe** | Domain types provide compile-time checking |
+| **SDK-First** | Types defined in SDK, loaded by Gibson |
+| **Simple Interface** | `GraphNode` interface is the contract |
+| **Extensible** | `CustomEntity` for agent-specific types |
+| **Deterministic IDs** | Content-addressable IDs from identifying properties |
+| **Automatic Relationships** | Parent references create relationships automatically |
 
 ---
 
-## File Structure
+## Domain Types System (NEW)
 
-**Root Directory:** `internal/graphrag/taxonomy/`
+The domain types system replaces the old JSONPath-based taxonomy mapping with strongly-typed Go structs. This provides compile-time safety and a simpler, more maintainable codebase.
 
-### YAML Files
+### GraphNode Interface
 
-#### `taxonomy.yaml`
+All domain types implement this interface (defined in SDK):
 
-Root configuration file that orchestrates includes.
+```go
+type GraphNode interface {
+    // NodeType returns the canonical node type (e.g., "host", "port")
+    NodeType() string
 
-```yaml
-version: "0.15.0"
-metadata:
-  name: "Gibson GraphRAG Taxonomy"
-  description: "Canonical node and relationship types..."
-includes:
-  - "nodes/assets.yaml"
-  - "nodes/findings.yaml"
-  - "relationships/asset_hierarchy.yaml"
-  # ... more includes
+    // IdentifyingProperties returns properties that uniquely identify this node
+    IdentifyingProperties() map[string]any
+
+    // Properties returns all properties to set on the node
+    Properties() map[string]any
+
+    // ParentRef returns reference to parent node for relationship creation
+    ParentRef() *NodeRef
+
+    // RelationshipType returns the relationship type to parent
+    RelationshipType() string
+}
 ```
 
-#### `nodes/` Directory
+### Using Domain Types in Tools
 
-| File | Purpose | Node Types |
-|------|---------|------------|
-| `assets.yaml` | Asset node types discovered during reconnaissance | `domain`, `subdomain`, `host`, `port`, `service`, `endpoint`, `api`, `technology`, `cloud_asset`, `certificate` |
-| `findings.yaml` | Security finding node types | `finding`, `evidence`, `mitigation` |
-| `execution.yaml` | Execution tracking node types | `mission`, `agent_run`, `tool_execution`, `llm_call`, `intelligence` |
-| `attack.yaml` | Attack pattern node types | (if present) |
+```go
+import "github.com/zero-day-ai/sdk/graphrag/domain"
 
-#### `relationships/` Directory
+func executeScan(ctx context.Context, input map[string]any) (*domain.DiscoveryResult, error) {
+    result := domain.NewDiscoveryResult()
 
-| File | Purpose | Relationship Types |
-|------|---------|-------------------|
-| `asset_hierarchy.yaml` | Asset traversal relationships | `HAS_SUBDOMAIN`, `RESOLVES_TO`, `HAS_PORT`, `RUNS_SERVICE`, `HAS_ENDPOINT`, `USES_TECHNOLOGY`, `SERVES_CERTIFICATE`, `HOSTS` |
-| `finding_links.yaml` | Finding analysis relationships | `AFFECTS`, `USES_TECHNIQUE`, `HAS_EVIDENCE`, `LEADS_TO`, `MITIGATES`, `SIMILAR_TO`, `EXPLOITS` |
-| `execution_context.yaml` | Provenance and audit trail | `PART_OF`, `EXECUTED_BY`, `MADE_CALL`, `DISCOVERED`, `PRODUCED`, `DELEGATED_TO`, `ANALYZES`, `GENERATED_BY`, `PART_OF_MISSION` |
+    // Create strongly-typed host
+    result.Hosts = append(result.Hosts, &domain.Host{
+        IP:       "192.168.1.10",
+        Hostname: "web-server.example.com",
+        State:    "up",
+    })
 
-#### `techniques/` Directory
+    // Create port with automatic parent relationship
+    result.Ports = append(result.Ports, &domain.Port{
+        HostID:   "192.168.1.10",
+        Number:   443,
+        Protocol: "tcp",
+        State:    "open",
+    })
 
-| File | Purpose |
-|------|---------|
-| `mitre_enterprise.yaml` | MITRE ATT&CK Enterprise technique mappings |
-| `arcanum_pi.yaml` | Arcanum PI framework technique mappings |
+    // Create service
+    result.Services = append(result.Services, &domain.Service{
+        PortID:  "192.168.1.10:443:tcp",
+        Name:    "https",
+        Version: "nginx/1.18.0",
+    })
 
-#### `targets/targets.yaml`
+    return result, nil
+}
+```
 
-Target type definitions for testable systems:
+### DiscoveryResult Container
 
-| Category | Types |
-|----------|-------|
-| **web** | `http_api`, `graphql`, `web_app` |
-| **ai** | `llm_chat`, `llm_api`, `rag`, `ai_agent`, `ai_copilot` |
-| **infrastructure** | `kubernetes`, `database`, `network_service` |
-| **cloud** | `cloud_service` |
-| **blockchain** | `smart_contract` |
+The `DiscoveryResult` is the standard container for tool and agent output:
 
-#### `technique-types/technique-types.yaml`
+```go
+type DiscoveryResult struct {
+    Hosts         []*Host
+    Ports         []*Port
+    Services      []*Service
+    Endpoints     []*Endpoint
+    Domains       []*Domain
+    Subdomains    []*Subdomain
+    Technologies  []*Technology
+    Certificates  []*Certificate
+    CloudAssets   []*CloudAsset
+    APIs          []*API
+    Custom        []GraphNode  // For CustomEntity and custom implementations
+}
+```
 
-Technique type categories mapped to MITRE ATT&CK:
+### Benefits Over Old System
 
-| Category | Techniques |
-|----------|------------|
-| **initial_access** | `ssrf`, `sqli`, `xss`, `xxe`, `rce`, `lfi`, `rfi`, `auth_bypass`, `idor`, `csrf`, `ssti`, `deserialization`, `prompt_injection`, `jailbreak` |
-| **collection** | `data_extraction` |
-| **exfiltration** | `data_exfiltration` |
-| **impact** | `dos` |
-| **privilege_escalation** | `privesc`, `container_escape` |
-| **lateral_movement** | `lateral_movement` |
-| **credential_access** | `credential_theft` |
-| **discovery** | `cloud_metadata` |
+| Aspect | Old System | New System |
+|--------|-----------|-----------|
+| **Type Safety** | Runtime validation | Compile-time checking |
+| **Error Detection** | Silent failures possible | Explicit errors with context |
+| **Code Size** | ~19,000 lines | ~500 lines |
+| **Relationships** | Manual template strings | Automatic via ParentRef() |
+| **Extensibility** | YAML schema changes | CustomEntity for new types |
+| **Debugging** | Complex JSONPath traces | Standard Go debugging |
 
-#### `capabilities/capabilities.yaml`
+---
 
-High-level testing capabilities bundling technique types:
+## Node Types
 
-- `web_vulnerability_scanning` - Common web vulnerabilities
-- `api_security_testing` - API-focused security testing
-- `llm_security_testing` - LLM security testing
-- `infrastructure_testing` - Infrastructure security
-- `cloud_security_testing` - Cloud-specific testing
-- `dos_testing` - Denial of service testing
+### Asset Node Types
 
-#### `execution_events.yaml`
+| Node Type | Description | Identifying Properties |
+|-----------|-------------|----------------------|
+| `host` | Network host/IP address | `ip` |
+| `port` | Network port on a host | `host_id`, `number`, `protocol` |
+| `service` | Service running on a port | `port_id`, `name` |
+| `endpoint` | HTTP/API endpoint | `service_id`, `url`, `method` |
+| `domain` | DNS domain name | `name` |
+| `subdomain` | Subdomain of a domain | `name`, `domain_name` |
+| `api` | Web API service | `base_url` |
+| `technology` | Detected technology/framework | `name`, `version` |
+| `certificate` | TLS/SSL certificate | `serial_number` |
+| `cloud_asset` | Cloud infrastructure resource | `provider`, `region`, `resource_id` |
 
-Maps Gibson events to graph node/relationship creation:
+### Execution Node Types
 
-| Lifecycle | Events |
-|-----------|--------|
-| **Mission** | `mission.started`, `mission.completed`, `mission.failed` |
-| **Agent** | `agent.started`, `agent.completed`, `agent.failed`, `agent.delegated`, `agent.finding_submitted` |
-| **LLM** | `llm.request.started`, `llm.request.completed`, `llm.request.failed`, `llm.stream.started`, `llm.stream.completed` |
-| **Tool** | `tool.call.started`, `tool.call.completed`, `tool.call.failed` |
-| **Plugin** | `plugin.query.started`, `plugin.query.completed`, `plugin.query.failed` |
-| **Finding** | `finding.discovered` |
+| Node Type | Description | Identifying Properties |
+|-----------|-------------|----------------------|
+| `mission` | Mission execution | `name`, `timestamp` |
+| `agent_run` | Agent execution in a mission | `mission_id`, `agent_name`, `run_number` |
+| `tool_execution` | Tool invocation | `agent_run_id`, `tool_name`, `sequence` |
+| `llm_call` | LLM API call | `agent_run_id`, `sequence` |
 
-#### `tool_outputs.yaml`
+### Finding Node Types
 
-Tool output parsing schemas for legacy/third-party tools.
+| Node Type | Description | Identifying Properties |
+|-----------|-------------|----------------------|
+| `finding` | Security finding | `mission_id`, `fingerprint` |
+| `evidence` | Evidence for a finding | `finding_id`, `type`, `fingerprint` |
+| `mitigation` | Mitigation for a finding | `finding_id`, `title` |
 
-> **Note:** Modern tools embed taxonomy using `schema.TaxonomyMapping` in their Go code. Tools like `nmap`, `subfinder`, `httpx`, `nuclei`, `amass`, `masscan` have their schema loaded automatically from tool binaries via `--schema` flag. This file is for tools that cannot be modified or legacy tools not yet migrated.
+---
 
-### Go Files
+## Relationship Types
 
-| File | Purpose |
-|------|---------|
-| `types.go` | Core type definitions (`Taxonomy`, `NodeTypeDefinition`, `RelationshipTypeDefinition`, etc.) |
-| `types_events.go` | Execution event type definitions (`ExecutionEventDefinition`, `ToolOutputSchema`, etc.) |
-| `embed.go` | Embeds YAML files into binary at compile time |
-| `loader.go` | Loads and parses taxonomy from embedded FS |
-| `registry.go` | Thread-safe runtime access to taxonomy |
-| `schema_loader.go` | Loads taxonomy from tool binaries with embedded schemas |
+### Asset Hierarchy
+
+| Relationship | From | To | Description |
+|--------------|------|----|----|
+| `HAS_SUBDOMAIN` | Domain | Subdomain | Domain contains subdomain |
+| `RESOLVES_TO` | Subdomain | Host | DNS resolution |
+| `HAS_PORT` | Host | Port | Host has open port |
+| `RUNS_SERVICE` | Port | Service | Port runs service |
+| `HAS_ENDPOINT` | Service | Endpoint | Service exposes endpoint |
+| `USES_TECHNOLOGY` | * | Technology | Uses a technology |
+| `SERVES_CERTIFICATE` | Host | Certificate | TLS certificate |
+
+### Finding Links
+
+| Relationship | From | To | Description |
+|--------------|------|----|----|
+| `AFFECTS` | Finding | * | Finding affects asset |
+| `USES_TECHNIQUE` | Finding | Technique | Attack technique used |
+| `HAS_EVIDENCE` | Finding | Evidence | Supporting evidence |
+| `LEADS_TO` | Finding | Finding | Finding chain |
+| `MITIGATES` | Mitigation | Finding | Remediation |
+
+### Execution Context
+
+| Relationship | From | To | Description |
+|--------------|------|----|----|
+| `PART_OF_MISSION` | AgentRun | Mission | Agent in mission |
+| `EXECUTED` | AgentRun | ToolExecution | Agent executed tool |
+| `DISCOVERED` | ToolExecution | * | Tool discovered asset |
+| `PRODUCED` | ToolExecution | Finding | Tool produced finding |
 
 ---
 
@@ -167,7 +230,7 @@ Tool output parsing schemas for legacy/third-party tools.
 
 ### Overview
 
-The taxonomy system integrates with Neo4j through the `TaxonomyGraphEngine`. Events and tool outputs are processed according to taxonomy definitions, creating nodes and relationships in Neo4j with consistent schemas.
+The GraphLoader integrates with Neo4j to store discovered assets and their relationships. The loader accepts `GraphNode` implementations and creates nodes/relationships using MERGE operations for idempotency.
 
 ### Graph Client
 
@@ -180,611 +243,547 @@ Features:
 - Relationship operations: `CreateRelationship` with type safety
 - Health checking with 5-second connectivity verification
 
-### Taxonomy Engine
-
-**Location:** `internal/graphrag/engine/taxonomy_engine.go`
-
-```go
-type TaxonomyGraphEngine interface {
-    HandleEvent(ctx, eventType string, data map[string]any) error
-    HandleToolOutput(ctx, toolName string, output map[string]any, agentRunID string) error
-    HandleFinding(ctx, finding agent.Finding, missionID string) error
-    Health(ctx) HealthStatus
-}
-```
-
-### Event Processing Flow
-
-1. Event arrives (e.g., `mission.started`)
-2. Lookup event definition in registry
-3. If `creates_node`: MERGE node with ID template
-4. If `updates_node`: MATCH + SET properties
-5. For each relationship: MERGE relationship
-
 ### Cypher Patterns
 
-**Create Node:**
+**Create Node (MERGE for idempotency):**
 ```cypher
-MERGE (n:Mission {id: $id})
-SET n += $props
-RETURN n
-```
-
-**Update Node:**
-```cypher
-MATCH (n:Mission {id: $id})
+MERGE (n:Host {ip: $ip})
 SET n += $props
 RETURN n
 ```
 
 **Create Relationship:**
 ```cypher
-MATCH (from {id: $from_id})
-MATCH (to {id: $to_id})
-MERGE (from)-[r:PART_OF]->(to)
-SET r += $props
+MATCH (from:Host {ip: $from_ip})
+MATCH (to:Port {host_id: $host_id, number: $number, protocol: $protocol})
+MERGE (from)-[r:HAS_PORT]->(to)
 RETURN r
 ```
 
 ### Node Labels
 
-Neo4j labels use PascalCase names from `NodeTypeDefinition.Name`:
+Neo4j labels use PascalCase:
 
 | Type | Neo4j Label |
 |------|-------------|
-| `domain` | `Domain` |
-| `subdomain` | `Subdomain` |
 | `host` | `Host` |
 | `port` | `Port` |
 | `service` | `Service` |
 | `endpoint` | `Endpoint` |
+| `domain` | `Domain` |
+| `subdomain` | `Subdomain` |
 | `api` | `API` |
 | `technology` | `Technology` |
-| `cloud_asset` | `CloudAsset` |
 | `certificate` | `Certificate` |
+| `cloud_asset` | `CloudAsset` |
 | `finding` | `Finding` |
-| `evidence` | `Evidence` |
-| `mitigation` | `Mitigation` |
-| `mission` | `Mission` |
 | `agent_run` | `AgentRun` |
 | `tool_execution` | `ToolExecution` |
-| `llm_call` | `LLMCall` |
-| `intelligence` | `Intelligence` |
 
-### Node ID Patterns
+### Deterministic Node IDs
 
-Gibson uses string IDs in the `id` property, not Neo4j's `elementId()`:
-
-| Type | ID Template |
-|------|-------------|
-| `domain` | `domain:{name}` |
-| `subdomain` | `subdomain:{name}` |
-| `host` | `host:{ip}` |
-| `port` | `port:{host_id}:{number}:{protocol}` |
-| `service` | `service:{port_id}:{name}` |
-| `endpoint` | `endpoint:{sha256(method:url)[:16]}` |
-| `api` | `api:{base_url}` |
-| `technology` | `technology:{name}:{version}` |
-| `cloud_asset` | `cloud_asset:{provider}:{resource_type}:{arn_or_id}` |
-| `certificate` | `certificate:{fingerprint}` |
-| `finding` | `finding:{uuid}` |
-| `evidence` | `evidence:{uuid}` |
-| `mitigation` | `mitigation:{uuid}` |
-| `mission` | `mission:{name}` |
-| `agent_run` | `agent_run:{trace_id}:{span_id}` |
-| `tool_execution` | `tool_execution:{trace_id}:{span_id}:{timestamp}` |
-| `llm_call` | `llm_call:{trace_id}:{span_id}:{timestamp}` |
-| `intelligence` | `intelligence:{mission_id}:{phase}:{timestamp}` |
-
-### Relationship Types
-
-All uppercase for Neo4j:
-
-**Asset Hierarchy:** `HAS_SUBDOMAIN`, `RESOLVES_TO`, `HAS_PORT`, `RUNS_SERVICE`, `HAS_ENDPOINT`, `USES_TECHNOLOGY`, `SERVES_CERTIFICATE`, `HOSTS`
-
-**Finding Links:** `AFFECTS`, `USES_TECHNIQUE`, `HAS_EVIDENCE`, `LEADS_TO`, `MITIGATES`, `SIMILAR_TO`, `EXPLOITS`
-
-**Execution Context:** `PART_OF`, `EXECUTED_BY`, `MADE_CALL`, `DISCOVERED`, `PRODUCED`, `DELEGATED_TO`, `ANALYZES`, `GENERATED_BY`, `PART_OF_MISSION`
-
----
-
-## Loading Mechanism
-
-### At Compile Time
-
-YAML files are embedded into the binary using Go's `embed.FS` directive:
+IDs are generated from identifying properties using SHA-256 hashing:
 
 ```go
-//go:embed *.yaml nodes/*.yaml relationships/*.yaml techniques/*.yaml targets/*.yaml technique-types/*.yaml capabilities/*.yaml
-var taxonomyFS embed.FS
+// Generate deterministic ID from properties
+hostID := generator.Generate("host", map[string]any{"ip": "192.168.1.1"})
+// Returns: "host:a1b2c3d4e5f6" (deterministic hash)
+
+portID := generator.Generate("port", map[string]any{
+    "host_id":  hostID,
+    "number":   443,
+    "protocol": "tcp",
+})
+// Returns: "port:x7y8z9w0v1u2"
 ```
 
-**Benefits:**
-- No external file dependencies at runtime
-- Version consistency (taxonomy matches binary version)
-- Secure (cannot be modified after build)
+**Key properties:**
+- Same inputs always produce same ID
+- Property order doesn't affect result
+- Strings are normalized to lowercase
+- Collision-resistant (SHA-256 based)
 
-### At Runtime
+---
 
-**Location:** `internal/init/taxonomy.go`
+## GraphLoader
 
-**Functions:**
-- `InitTaxonomy(customPath)` - Load at startup
-- `GetTaxonomyRegistry()` - Get loaded registry
-- `ValidateTaxonomyOnly(path)` - CI validation mode
+The `GraphLoader` is Gibson's component that accepts `GraphNode` implementations and writes them to Neo4j.
 
-**Standard Loading:**
+**Location:** `internal/graphrag/loader/loader.go`
+
+### Interface
 
 ```go
-// Load embedded taxonomy only
-registry, err := taxonomy.LoadAndValidateTaxonomy()
+type GraphLoader struct {
+    client   *neo4j.Client
+    registry *graphrag.NodeTypeRegistry
+}
 
-// Load with custom extensions
-registry, err := taxonomy.LoadAndValidateTaxonomyWithCustom(customPath)
+type ExecContext struct {
+    AgentRunID      string
+    ToolExecutionID string
+    MissionID       string
+}
 
-// Load with tool schemas from binaries
-registry, err := taxonomy.LoadAndValidateTaxonomyWithTools(ctx, toolsDir, logger)
+type LoadResult struct {
+    NodesCreated         int
+    NodesUpdated         int
+    RelationshipsCreated int
+    Errors               []error
+}
+
+// Load writes nodes to the graph with automatic relationship creation
+func (l *GraphLoader) Load(ctx context.Context, execCtx *ExecContext, nodes []graphrag.GraphNode) (*LoadResult, error)
+
+// LoadBatch writes nodes in a single transaction for performance
+func (l *GraphLoader) LoadBatch(ctx context.Context, execCtx *ExecContext, nodes []graphrag.GraphNode) (*LoadResult, error)
 ```
 
-**Loading Flow:**
+### Loading Flow
 
-1. Read `taxonomy.yaml` for version and includes list
-2. For each included file:
-   - Detect file type from path (`nodes/`, `relationships/`, etc.)
-   - Parse YAML into appropriate struct
-   - Add definitions to taxonomy (checking for duplicates)
-3. Build secondary indices (byID maps)
-4. If custom path: merge custom definitions (additive only)
-5. Validate all definitions
-6. Create `TaxonomyRegistry` wrapper
-
-### Custom Taxonomy
-
-Extend taxonomy with custom types:
-
-```yaml
-# ~/.gibson/custom-taxonomy/taxonomy.yaml
-version: "1.0.0"
-includes:
-  - "nodes/my-nodes.yaml"
-  - "relationships/my-rels.yaml"
+```
+1. Tool returns DiscoveryResult{Hosts, Ports, Services}
+2. Harness calls GraphLoader.Load(ctx, execCtx, result.AllNodes())
+3. For each GraphNode:
+   a. Generate deterministic ID from IdentifyingProperties()
+   b. Build MERGE query with Properties()
+   c. Execute against Neo4j
+   d. If ParentRef() != nil, create relationship
+   e. If execCtx provided, create DISCOVERED relationship
+4. Return LoadResult with statistics
 ```
 
-**Rules:**
-- Custom types are additive only
-- Cannot override bundled types (error thrown)
-- Cannot remove bundled types
-- Must pass validation against bundled types
+### Example Usage
 
-**Usage:**
-```bash
-gibson daemon start --custom-taxonomy ~/.gibson/custom-taxonomy/taxonomy.yaml
+```go
+// In harness callback service
+result, err := tool.Execute(ctx, input)
+if err != nil {
+    return err
+}
+
+// Load discoveries into graph
+loadResult, err := loader.Load(ctx, &ExecContext{
+    AgentRunID:      agentRun.ID,
+    ToolExecutionID: toolExec.ID,
+    MissionID:       mission.ID,
+}, result.AllNodes())
+
+if err != nil {
+    return fmt.Errorf("failed to load discoveries: %w", err)
+}
+
+log.Printf("Created %d nodes, %d relationships",
+    loadResult.NodesCreated, loadResult.RelationshipsCreated)
 ```
-
-### Tool Schema Loading
-
-Tools that embed `schema.TaxonomyMapping` are queried at runtime:
-
-1. Gibson scans tools directory for binaries
-2. Each binary is executed with `--schema` flag
-3. JSON output parsed as `schema.TaxonomyMapping`
-4. Converted to `ToolOutputSchema`
-5. Added to registry (takes precedence over YAML)
-
-**Tools with embedded schema:** `nmap`, `subfinder`, `httpx`, `nuclei`, `amass`, `masscan`
 
 ---
 
-## Making Updates
+## Custom Types and Extensibility
 
-### Adding a Node Type
+The domain types system supports custom node types via `CustomEntity`. This enables agents to define domain-specific types without modifying the SDK.
 
-1. Create/edit appropriate file in `nodes/` directory
-2. Define node type following schema
-3. Add to includes in `taxonomy.yaml` if new file
-4. Run validation: `make test`
+### CustomEntity
 
-**Example:**
+```go
+// CustomEntity provides a base for agent-specific custom types
+type CustomEntity struct {
+    Namespace  string         // e.g., "k8s", "aws"
+    Type       string         // e.g., "pod", "security_group"
+    IDProps    map[string]any // Identifying properties
+    AllProps   map[string]any // All properties
+    Parent     *NodeRef       // Optional parent reference
+    ParentRel  string         // Relationship type to parent
+}
 
-```yaml
-# nodes/assets.yaml
-node_types:
-  - id: node.asset.container
-    name: Container
-    type: container
-    category: asset
-    description: "Container instance in a cluster"
-    id_template: "container:{namespace}:{name}"
-    properties:
-      - name: name
-        type: string
-        required: true
-        description: "Container name"
-      - name: namespace
-        type: string
-        required: true
-        description: "Kubernetes namespace"
-      - name: image
-        type: string
-        required: false
-        description: "Container image reference"
-    examples:
-      - name: "my-app"
-        namespace: "production"
-        image: "myregistry/myapp:v1.2.3"
+func (c *CustomEntity) NodeType() string {
+    return c.Namespace + ":" + c.Type // e.g., "k8s:pod"
+}
 ```
 
-### Adding a Relationship Type
+### Namespace Conventions
 
-1. Create/edit appropriate file in `relationships/` directory
-2. Define relationship with `from_types` and `to_types`
-3. Ensure referenced node types exist
-4. Run validation
+| Namespace | Purpose | Examples |
+|-----------|---------|----------|
+| `k8s:` | Kubernetes resources | `k8s:pod`, `k8s:service`, `k8s:deployment` |
+| `aws:` | AWS-specific resources | `aws:security_group`, `aws:iam_role` |
+| `azure:` | Azure-specific resources | `azure:resource_group` |
+| `gcp:` | GCP-specific resources | `gcp:compute_instance` |
+| `vuln:` | Vulnerability types | `vuln:cve`, `vuln:exploit` |
+| `custom:` | Agent-specific types | `custom:my_type` |
 
-**Example:**
+### Example: Kubernetes Agent
 
-```yaml
-# relationships/asset_hierarchy.yaml
-relationship_types:
-  - id: rel.asset.contains
-    name: CONTAINS
-    type: CONTAINS
-    category: asset_hierarchy
-    description: "Container runs inside a pod"
-    from_types: [pod]
-    to_types: [container]
-    bidirectional: false
-    properties:
-      - name: restart_count
-        type: int
-        required: false
-        description: "Number of container restarts"
+```go
+import "github.com/zero-day-ai/sdk/graphrag/domain"
+
+func discoverKubernetesPods() *domain.DiscoveryResult {
+    result := domain.NewDiscoveryResult()
+
+    // Create Kubernetes node (custom type)
+    node := domain.NewCustomEntity("k8s", "node").
+        WithIDProps(map[string]any{
+            "name": "worker-node-01",
+        }).
+        WithAllProps(map[string]any{
+            "name":     "worker-node-01",
+            "status":   "Ready",
+            "version":  "v1.28.0",
+        })
+    result.Custom = append(result.Custom, node)
+
+    // Create pod with parent relationship
+    pod := domain.NewCustomEntity("k8s", "pod").
+        WithIDProps(map[string]any{
+            "namespace": "default",
+            "name":      "web-server-abc123",
+        }).
+        WithAllProps(map[string]any{
+            "namespace": "default",
+            "name":      "web-server-abc123",
+            "status":    "Running",
+            "image":     "nginx:1.21",
+        }).
+        WithParent(&domain.NodeRef{
+            NodeType: "k8s:node",
+            Properties: map[string]any{
+                "name": "worker-node-01",
+            },
+        }, "RUNS_ON")
+    result.Custom = append(result.Custom, pod)
+
+    return result
+}
 ```
 
-### Adding an Execution Event
+### Mixing Canonical and Custom Types
 
-1. Add event definition to `execution_events.yaml`
-2. Ensure referenced node types exist in `nodes/*.yaml`
-3. Ensure referenced relationship types exist in `relationships/*.yaml`
-4. Run validation
+Custom types and canonical types work together seamlessly:
 
-**Example:**
+```go
+result := domain.NewDiscoveryResult()
 
-```yaml
-# execution_events.yaml
-execution_events:
-  - event_type: custom.event.started
-    creates_node:
-      type: custom_execution
-      id_template: "custom:{trace_id}:{span_id}"
-      properties:
-        - source: custom_field
-          target: custom_property
-        - value: "custom_value"
-          target: status
-    creates_relationships:
-      - type: PART_OF
-        from_template: "custom:{trace_id}:{span_id}"
-        to_template: "{mission_id}"
+// Canonical: Standard network assets
+result.Hosts = append(result.Hosts, &domain.Host{
+    IP:       "10.0.1.50",
+    Hostname: "k8s-node-01",
+})
+
+result.Ports = append(result.Ports, &domain.Port{
+    HostID:   "10.0.1.50",
+    Number:   6443,
+    Protocol: "tcp",
+})
+
+// Custom: Kubernetes-specific
+result.Custom = append(result.Custom, domain.NewCustomEntity("k8s", "apiserver").
+    WithIDProps(map[string]any{"endpoint": "https://10.0.1.50:6443"}).
+    WithAllProps(map[string]any{
+        "endpoint": "https://10.0.1.50:6443",
+        "version":  "v1.28.0",
+    }))
 ```
-
-### Adding a Tool Output Schema
-
-**Recommended Approach:** Embed taxonomy in the tool binary using `schema.TaxonomyMapping`. See `opensource/tools/` for examples.
-
-**Legacy Approach:**
-
-```yaml
-# tool_outputs.yaml
-tool_outputs:
-  - tool: my-scanner
-    description: "Extract hosts from my-scanner output"
-    output_format: json
-    extracts:
-      - node_type: host
-        json_path: "results.hosts[*]"
-        id_template: "host:{ip}"
-        properties:
-          - json_path: "ip_address"
-            target: "ip"
-          - json_path: "hostname"
-            target: "hostname"
-        relationships:
-          - type: DISCOVERED
-            to_template: "{_context.agent_run_id}"
-```
-
-### Adding a Technique Type
-
-1. Add to `technique-types/technique-types.yaml`
-2. Map to MITRE ATT&CK IDs
-3. Add to appropriate capability if applicable
-
-**Example:**
-
-```yaml
-# technique-types/technique-types.yaml
-technique_types:
-  - id: "technique.initial_access.graphql_injection"
-    type: "graphql_injection"
-    name: "GraphQL Injection"
-    category: "initial_access"
-    mitre_ids:
-      - "T1190"
-    description: "GraphQL injection allowing query manipulation"
-    default_severity: "high"
-```
-
-### Adding a Capability
-
-1. Add to `capabilities/capabilities.yaml`
-2. Reference existing technique type IDs
-
-**Example:**
-
-```yaml
-# capabilities/capabilities.yaml
-capabilities:
-  - id: "capability.graphql_security_testing"
-    name: "GraphQL Security Testing"
-    description: "GraphQL-specific security testing"
-    technique_types:
-      - "graphql_injection"
-      - "idor"
-      - "auth_bypass"
-```
-
-### Adding a Target Type
-
-1. Add to `targets/targets.yaml`
-2. Define connection schema with required/optional fields
-
-**Example:**
-
-```yaml
-# targets/targets.yaml
-target_types:
-  - id: "target.messaging.kafka"
-    type: "kafka"
-    name: "Apache Kafka"
-    category: "messaging"
-    description: "Apache Kafka message broker"
-    connection_schema:
-      required:
-        - "bootstrap_servers"
-      optional:
-        - "security_protocol"
-        - "sasl_mechanism"
-        - "username"
-        - "password"
-```
-
-### Version Bump
-
-**When:** After significant taxonomy changes
-
-**Steps:**
-1. Update version in `taxonomy.yaml`
-2. Update Gibson version (they're tied)
-3. Run full test suite
-4. Update downstream consumers
 
 ---
 
-## Improving the Taxonomy
+## Migration from Old System
 
-### When to Add Types
+### What Changed
 
-- New asset category discovered in security testing
-- New relationship pattern needed for attack chains
-- New technique category not covered by existing types
-- New target system type to support
+The old taxonomy system used:
+- YAML files with JSONPath-based extraction rules
+- Template-based ID generation (`id_template: "host:{{.ip}}"`)
+- Tool output parsing via `schema.TaxonomyMapping`
+- ~19,000 lines of extraction code
 
-### When NOT to Add Types
+The new system uses:
+- Strongly-typed Go structs in `sdk/graphrag/domain/`
+- Automatic ID generation from `IdentifyingProperties()`
+- `DiscoveryResult` container for tool output
+- Simple `GraphLoader` (~500 lines)
 
-- One-off custom needs (use custom taxonomy instead)
-- Temporary testing purposes
-- Types that duplicate existing functionality
+### Migrating Tools
 
-### Best Practices
+**Before (Old System):**
+```go
+// Tool returned raw JSON with taxonomy mapping
+func executeTool(input map[string]any) (map[string]any, error) {
+    return map[string]any{
+        "hosts": []map[string]any{
+            {"ip": "192.168.1.1", "hostname": "server"},
+        },
+    }, nil
+}
 
-**Node Types:**
-- Use clear, domain-specific type names
-- Include descriptive `id_template` for deterministic IDs
-- Mark truly required properties as `required: true`
-- Provide examples for documentation
-- Group related types in the same file
+// Required separate schema.TaxonomyMapping definition
+```
 
-**Relationships:**
-- Use uppercase `SCREAMING_SNAKE_CASE` names
-- Clearly define `from_types` and `to_types` constraints
-- Use `bidirectional: true` only when semantically appropriate
-- Add relationship properties for timestamps and context
+**After (New System):**
+```go
+import "github.com/zero-day-ai/sdk/graphrag/domain"
 
-**ID Templates:**
-- Use deterministic templates for idempotent MERGE
-- Include enough fields to ensure uniqueness
-- Use `sha256()` for collision-prone combinations
-- Use `uuid` for globally unique items (findings)
+func executeTool(input map[string]any) (*domain.DiscoveryResult, error) {
+    result := domain.NewDiscoveryResult()
 
-**Event Mappings:**
-- Map all relevant event data to node properties
-- Mark optional fields as `optional: true`
-- Create relationships to establish provenance
-- Use MERGE for idempotent operations
+    result.Hosts = append(result.Hosts, &domain.Host{
+        IP:       "192.168.1.1",
+        Hostname: "server",
+        State:    "up",
+    })
 
-### Validation
+    return result, nil
+}
 
-**Automatic:**
-- Duplicate ID detection
-- Duplicate Type detection
-- Reference validation (nodes, relationships)
-- Event schema validation
-- Tool output schema validation
+// No separate schema needed - types are self-describing
+```
 
-**Manual Review:**
-- Semantic correctness of relationships
-- Appropriate property types
-- Complete examples
-- Documentation accuracy
+### Deleted Code
+
+The following files were removed in v0.20.0:
+- `gibson/internal/graphrag/engine/taxonomy_engine.go`
+- `gibson/internal/graphrag/engine/jsonpath.go`
+- `gibson/internal/graphrag/engine/template.go`
+- `gibson/internal/graphrag/taxonomy/` directory
+- `sdk/schema/taxonomy.go`
+
+### Backward Compatibility
+
+Tools using the old `schema.TaxonomyMapping` system are **not compatible** with v0.20.0+. They must be migrated to return `DiscoveryResult`.
+
+---
+
+## Adding New Domain Types
+
+### Adding a Canonical Type to SDK
+
+To add a new canonical domain type (e.g., `Container`):
+
+1. Create file in `sdk/graphrag/domain/container.go`
+2. Implement the `GraphNode` interface
+3. Add to `DiscoveryResult` struct
+4. Add to `AllNodes()` method in proper dependency order
+
+**Example:**
+
+```go
+// container.go
+package domain
+
+type Container struct {
+    Namespace string `json:"namespace"`
+    Name      string `json:"name"`
+    Image     string `json:"image,omitempty"`
+    Status    string `json:"status,omitempty"`
+    PodID     string `json:"pod_id"` // Parent reference
+}
+
+func (c *Container) NodeType() string { return "container" }
+
+func (c *Container) IdentifyingProperties() map[string]any {
+    return map[string]any{
+        "namespace": c.Namespace,
+        "name":      c.Name,
+    }
+}
+
+func (c *Container) Properties() map[string]any {
+    return map[string]any{
+        "namespace": c.Namespace,
+        "name":      c.Name,
+        "image":     c.Image,
+        "status":    c.Status,
+        "pod_id":    c.PodID,
+    }
+}
+
+func (c *Container) ParentRef() *NodeRef {
+    return &NodeRef{
+        NodeType:   "k8s:pod",
+        Properties: map[string]any{"id": c.PodID},
+    }
+}
+
+func (c *Container) RelationshipType() string { return "CONTAINS" }
+```
+
+### Using CustomEntity for Agent-Specific Types
+
+For types specific to a single agent, use `CustomEntity` instead:
+
+```go
+// No SDK changes needed - just use CustomEntity
+container := domain.NewCustomEntity("k8s", "container").
+    WithIDProps(map[string]any{
+        "namespace": "default",
+        "name":      "my-container",
+    }).
+    WithAllProps(map[string]any{
+        "namespace": "default",
+        "name":      "my-container",
+        "image":     "nginx:1.21",
+    }).
+    WithParent(&domain.NodeRef{
+        NodeType: "k8s:pod",
+        Properties: map[string]any{
+            "namespace": "default",
+            "name":      "my-pod",
+        },
+    }, "CONTAINS")
+
+result.Custom = append(result.Custom, container)
+```
+
+### When to Use Canonical vs Custom Types
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Used by multiple agents | Add canonical type to SDK |
+| Specific to one agent | Use `CustomEntity` |
+| Standard network/web assets | Use existing canonical types |
+| Cloud provider specific | Use `CustomEntity` with namespace |
+| Kubernetes resources | Use `CustomEntity` with `k8s:` namespace |
 
 ---
 
 ## Runtime Queries
 
-### Getting the Registry
+### Using the NodeTypeRegistry
 
 ```go
-import "github.com/zero-day-ai/gibson/internal/init"
+import "github.com/zero-day-ai/sdk/graphrag"
 
-// Get the loaded registry
-registry := init.GetTaxonomyRegistry()
+// Get the global registry
+registry := graphrag.Registry()
+
+// Check identifying properties for a node type
+props, err := registry.GetIdentifyingProperties("host")
+if err != nil {
+    log.Fatalf("Unknown node type: %v", err)
+}
+// props = ["ip"]
+
+// Validate properties before creating a node
+properties := map[string]any{
+    "ip":       "192.168.1.1",
+    "hostname": "web-server",
+}
+missing, err := registry.ValidateProperties("host", properties)
+if err != nil {
+    log.Fatalf("Missing properties: %v", missing)
+}
+
+// Check if a node type is registered
+if registry.IsRegistered("custom_type") {
+    // Type exists in registry
+}
+
+// List all registered types
+allTypes := registry.AllNodeTypes()
 ```
 
-### Querying Node Types
+### Generating Deterministic IDs
 
 ```go
-// Get specific node type
-nodeDef, found := registry.NodeType("host")
-if found {
-    fmt.Printf("ID Template: %s\n", nodeDef.IDTemplate)
-    fmt.Printf("Properties: %v\n", nodeDef.Properties)
-}
+import (
+    "github.com/zero-day-ai/sdk/graphrag"
+    "github.com/zero-day-ai/sdk/graphrag/id"
+)
 
-// Check if type is canonical
-if registry.IsCanonicalNodeType("my_custom_type") {
-    // It's in the official taxonomy
-}
+// Create generator with registry
+generator := id.NewGenerator(graphrag.Registry())
 
-// List all node types
-for _, nodeType := range registry.NodeTypes() {
-    fmt.Printf("%s: %s\n", nodeType.Type, nodeType.Description)
-}
-```
-
-### Querying Relationships
-
-```go
-// Get specific relationship
-relDef, found := registry.RelationshipType("HAS_PORT")
-if found {
-    fmt.Printf("From: %v, To: %v\n", relDef.FromTypes, relDef.ToTypes)
-}
-
-// List all relationships
-for _, relType := range registry.RelationshipTypes() {
-    fmt.Printf("%s: %s -> %s\n", relType.Type, relType.FromTypes, relType.ToTypes)
-}
-```
-
-### Generating Node IDs
-
-```go
-// Generate deterministic node ID from template
-nodeID, err := registry.GenerateNodeID("host", map[string]any{
+// Generate ID for a host
+hostID, err := generator.Generate("host", map[string]any{
     "ip": "192.168.1.1",
 })
-// Result: "host:192.168.1.1"
+// hostID = "host:a1b2c3d4e5f6" (deterministic)
 
-// With hash function
-nodeID, err := registry.GenerateNodeID("endpoint", map[string]any{
-    "method": "GET",
-    "url": "https://api.example.com/users",
+// Generate ID for a port (compound key)
+portID, err := generator.Generate("port", map[string]any{
+    "host_id":  hostID,
+    "number":   443,
+    "protocol": "tcp",
 })
-// Result: "endpoint:a1b2c3d4e5f6..."
+// portID = "port:x7y8z9w0v1u2"
+
+// Same inputs always produce same ID
+portID2, _ := generator.Generate("port", map[string]any{
+    "protocol": "tcp",        // Order doesn't matter
+    "number":   443,
+    "host_id":  hostID,
+})
+// portID == portID2 (guaranteed)
 ```
 
-### Querying Techniques
+### Using Domain Types Directly
 
 ```go
-// Get MITRE technique
-technique, found := registry.Technique("T1190")
+import "github.com/zero-day-ai/sdk/graphrag/domain"
 
-// Get all techniques from a source
-mitreTechniques := registry.Techniques("mitre")
-arcanumTechniques := registry.Techniques("arcanum")
-allTechniques := registry.Techniques("")
-```
-
-### Querying Capabilities
-
-```go
-// Get capability
-cap, found := registry.GetCapability("capability.web_vulnerability_scanning")
-if found {
-    fmt.Printf("Technique Types: %v\n", cap.TechniqueTypes)
+// Domain types implement GraphNode interface
+host := &domain.Host{
+    IP:       "192.168.1.1",
+    Hostname: "web-server",
 }
 
-// Get technique types for a capability
-techniqueTypes := registry.GetTechniqueTypesForCapability("capability.llm_security_testing")
-```
+// Get node type
+nodeType := host.NodeType() // "host"
 
-### Checking Event Support
+// Get identifying properties
+idProps := host.IdentifyingProperties()
+// {"ip": "192.168.1.1"}
 
-```go
-// Check if event type is supported
-if registry.HasExecutionEvent("mission.started") {
-    eventDef := registry.GetExecutionEvent("mission.started")
-    // Process event definition
+// Get all properties
+allProps := host.Properties()
+// {"ip": "192.168.1.1", "hostname": "web-server", ...}
+
+// Check for parent (Host has no parent)
+parent := host.ParentRef() // nil
+
+// Port has a parent (Host)
+port := &domain.Port{
+    HostID:   "192.168.1.1",
+    Number:   443,
+    Protocol: "tcp",
 }
+parentRef := port.ParentRef()
+// {NodeType: "host", Properties: {"ip": "192.168.1.1"}}
 
-// List all supported events
-eventTypes := registry.ListExecutionEvents()
-```
-
-### Checking Tool Schemas
-
-```go
-// Check if tool has output schema
-if registry.HasToolOutputSchema("nmap") {
-    schema := registry.GetToolOutputSchema("nmap")
-    fmt.Printf("Extracts: %d rules\n", len(schema.Extracts))
-}
-
-// Check if schema came from binary
-if registry.IsSchemaBasedToolSchema("nmap") {
-    // Schema was loaded from tool binary via --schema
-}
+relType := port.RelationshipType()
+// "HAS_PORT"
 ```
 
 ---
 
-## Tool Output Extraction Deep Dive
+## Tool Output Flow
 
-### Architecture Overview
+### Architecture Overview (New System)
 
-Tool output extraction is the process by which Gibson automatically populates the knowledge graph from tool outputs. This happens transparently when agents call tools via the harness.
+Tool output flows directly to Neo4j via the GraphLoader:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        TOOL OUTPUT EXTRACTION FLOW                          │
+│                        TOOL OUTPUT FLOW (v0.20.0+)                          │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  1. Agent calls h.CallTool(ctx, "nmap", input)                             │
 │                    │                                                        │
 │                    ▼                                                        │
-│  2. Gibson Harness executes tool, gets JSON output                         │
+│  2. Tool returns DiscoveryResult with typed domain objects                 │
+│     {Hosts: []*Host, Ports: []*Port, Services: []*Service}                │
 │                    │                                                        │
 │                    ▼                                                        │
-│  3. TaxonomyGraphEngine.HandleToolOutput() is called                       │
+│  3. Harness calls GraphLoader.Load(ctx, execCtx, result.AllNodes())        │
 │                    │                                                        │
 │                    ▼                                                        │
-│  4. Lookup ToolOutputSchema from registry (embedded or YAML)               │
+│  4. For each GraphNode:                                                    │
+│     - Call IdentifyingProperties() to get ID components                    │
+│     - Generate deterministic ID                                            │
+│     - MERGE node into Neo4j                                                │
+│     - If ParentRef() != nil, create relationship                           │
 │                    │                                                        │
 │                    ▼                                                        │
-│  5. For each extraction rule in schema:                                    │
-│     ┌─────────────────────────────────────────────────────────────┐        │
-│     │  a. Extract items using JSONPath (e.g., $.hosts[*])        │        │
-│     │  b. For each item:                                          │        │
-│     │     - Extract identifying properties (with _parent context) │        │
-│     │     - Generate deterministic node ID                        │        │
-│     │     - MERGE node into Neo4j                                 │        │
-│     │     - Create relationships                                  │        │
-│     │  c. Recursively process nested arrays (ports, services)     │        │
-│     └─────────────────────────────────────────────────────────────┘        │
-│                    │                                                        │
-│                    ▼                                                        │
-│  6. Return original tool output to agent (extraction is transparent)       │
+│  5. Return LoadResult with statistics                                      │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -793,366 +792,131 @@ Tool output extraction is the process by which Gibson automatically populates th
 
 | File | Purpose |
 |------|---------|
-| `internal/graphrag/engine/taxonomy_engine.go` | Core extraction logic |
-| `internal/graphrag/taxonomy/schema_loader.go` | Loads taxonomy from tool binaries |
-| `internal/graphrag/taxonomy/types.go` | Type definitions |
-| `internal/graphrag/taxonomy/types_events.go` | ToolOutputSchema, ToolOutputExtraction |
-| `internal/harness/callback_service.go` | Harness integration point |
+| `sdk/graphrag/domain/*.go` | Domain type definitions |
+| `sdk/graphrag/domain/discovery.go` | DiscoveryResult container |
+| `gibson/internal/graphrag/loader/loader.go` | GraphLoader implementation |
+| `gibson/internal/harness/callback_service.go` | Harness integration |
 
-### Embedded vs YAML Schemas
-
-**Embedded Schemas (Preferred):**
-- Defined in tool's Go code using `schema.TaxonomyMapping`
-- Extracted from binaries via `--schema` flag at runtime
-- Tools: `nmap`, `subfinder`, `httpx`, `nuclei`, `amass`, `masscan`
-
-**YAML Schemas (Legacy):**
-- Defined in `tool_outputs.yaml`
-- For third-party binaries that cannot be modified
-- Should be avoided for new tools
-
-### The `_parent` Reference System
-
-Nested data structures (like ports inside hosts) require referencing parent context. The `_parent` system enables this.
-
-#### How It Works
-
-When processing nested arrays, Gibson maintains a **parent stack**:
-- `parentStack[0]` = immediate parent object
-- `parentStack[1]` = grandparent object
-- etc.
-
-The `_parent` prefix in JSONPath expressions resolves against this stack:
-
-```
-_parent.ip           → parentStack[0]["ip"]        (immediate parent)
-_parent._parent.ip   → parentStack[1]["ip"]        (grandparent)
-_parent.hostname     → parentStack[0]["hostname"]
-```
-
-#### Example: nmap Tool Output
-
-**Tool Output Structure:**
-```json
-{
-  "hosts": [
-    {
-      "ip": "192.168.1.100",
-      "hostname": "server.local",
-      "ports": [
-        {
-          "port": 22,
-          "protocol": "tcp",
-          "state": "open",
-          "service_details": {
-            "name": "ssh",
-            "product": "OpenSSH",
-            "version": "8.2"
-          }
-        },
-        {
-          "port": 80,
-          "protocol": "tcp",
-          "state": "open"
-        }
-      ]
-    }
-  ]
-}
-```
-
-**Host Schema (No Parent Needed):**
-```go
-hostSchema := schema.Object(map[string]schema.JSON{
-    "ip":       schema.String(),
-    "hostname": schema.String(),
-    "ports":    schema.Array(portSchema),
-}).WithTaxonomy(schema.TaxonomyMapping{
-    NodeType: "host",
-    IdentifyingProperties: map[string]string{
-        "ip": "ip",  // Direct field access
-    },
-    Properties: []schema.PropertyMapping{
-        schema.PropMap("ip", "ip"),
-        schema.PropMap("hostname", "hostname"),
-    },
-})
-```
-
-**Port Schema (Uses `_parent`):**
-```go
-portSchema := schema.Object(map[string]schema.JSON{
-    "port":     schema.Int(),
-    "protocol": schema.String(),
-    "state":    schema.String(),
-}).WithTaxonomy(schema.TaxonomyMapping{
-    NodeType: "port",
-    IdentifyingProperties: map[string]string{
-        "host_id":  "_parent.ip",      // Reference parent host's IP
-        "number":   "port",
-        "protocol": "protocol",
-    },
-    Properties: []schema.PropertyMapping{
-        schema.PropMap("port", "number"),
-        schema.PropMap("protocol", "protocol"),
-        schema.PropMap("state", "state"),
-    },
-    Relationships: []schema.RelationshipMapping{
-        schema.Rel("HAS_PORT",
-            schema.Node("host", map[string]string{
-                "ip": "_parent.ip",  // Parent reference in relationship
-            }),
-            schema.SelfNode(),
-        ),
-    },
-})
-```
-
-**Service Schema (Uses `_parent._parent` for Grandparent):**
-```go
-serviceSchema := schema.Object(map[string]schema.JSON{
-    "name":    schema.String(),
-    "product": schema.String(),
-    "version": schema.String(),
-}).WithTaxonomy(schema.TaxonomyMapping{
-    NodeType: "service",
-    IdentifyingProperties: map[string]string{
-        "host_id":  "_parent._parent.ip",  // Grandparent (host) IP
-        "port":     "_parent.port",         // Parent (port) number
-        "protocol": "_parent.protocol",     // Parent (port) protocol
-        "name":     "name",                 // Own field
-    },
-    // ...
-})
-```
-
-### Recursive Nested Array Processing
-
-The extraction engine automatically processes nested arrays with parent context:
-
-1. Extract host nodes from `$.hosts[*]`
-2. For each host, push onto parent stack
-3. Extract port nodes from `host.ports[*]` with host as parent
-4. For each port, push onto parent stack
-5. Extract service nodes from `port.service_details` with port as parent, host as grandparent
-
-**Nested Array Keys Processed:**
-- `ports`
-- `services`
-- `endpoints`
-- `technologies`
-- `subdomains`
-- `findings`
-- `hosts`
-
-### Adding Taxonomy to a New Tool
-
-#### Step 1: Define Output Schema with Taxonomy
+### Creating a Tool with Domain Types
 
 ```go
-// In your tool's schema.go file
-func OutputSchema() schema.JSON {
-    // Define nested schemas from innermost to outermost
+import "github.com/zero-day-ai/sdk/graphrag/domain"
 
-    // Innermost: Service (if applicable)
-    serviceSchema := schema.Object(map[string]schema.JSON{
-        "name":    schema.String(),
-        "version": schema.String(),
-    }).WithTaxonomy(schema.TaxonomyMapping{
-        NodeType: "service",
-        IdentifyingProperties: map[string]string{
-            "host_id":  "_parent._parent.ip",  // Grandparent
-            "port":     "_parent.port",
-            "protocol": "_parent.protocol",
-            "name":     "name",
-        },
-        Properties: []schema.PropertyMapping{
-            schema.PropMap("name", "name"),
-            schema.PropMap("version", "version"),
-        },
-        Relationships: []schema.RelationshipMapping{
-            schema.Rel("RUNS_SERVICE",
-                schema.Node("port", map[string]string{
-                    "host_id":  "_parent._parent.ip",
-                    "number":   "_parent.port",
-                    "protocol": "_parent.protocol",
-                }),
-                schema.SelfNode(),
-            ),
-        },
+func Execute(ctx context.Context, input map[string]any) (*domain.DiscoveryResult, error) {
+    result := domain.NewDiscoveryResult()
+
+    // Discover hosts
+    result.Hosts = append(result.Hosts, &domain.Host{
+        IP:       "192.168.1.100",
+        Hostname: "server.local",
+        State:    "up",
     })
 
-    // Middle: Port
-    portSchema := schema.Object(map[string]schema.JSON{
-        "port":     schema.Int(),
-        "protocol": schema.String(),
-        "service":  serviceSchema,  // Nested
-    }).WithTaxonomy(schema.TaxonomyMapping{
-        NodeType: "port",
-        IdentifyingProperties: map[string]string{
-            "host_id":  "_parent.ip",
-            "number":   "port",
-            "protocol": "protocol",
-        },
-        // ...
+    // Discover ports (parent relationship is automatic)
+    result.Ports = append(result.Ports, &domain.Port{
+        HostID:   "192.168.1.100",
+        Number:   22,
+        Protocol: "tcp",
+        State:    "open",
     })
 
-    // Outermost: Host
-    hostSchema := schema.Object(map[string]schema.JSON{
-        "ip":    schema.String(),
-        "ports": schema.Array(portSchema),  // Nested array
-    }).WithTaxonomy(schema.TaxonomyMapping{
-        NodeType: "host",
-        IdentifyingProperties: map[string]string{
-            "ip": "ip",
-        },
-        // ...
+    // Discover services
+    result.Services = append(result.Services, &domain.Service{
+        PortID:  "192.168.1.100:22:tcp",
+        Name:    "ssh",
+        Version: "OpenSSH 8.2",
     })
 
-    return schema.Object(map[string]schema.JSON{
-        "hosts": schema.Array(hostSchema),
-    })
+    return result, nil
 }
 ```
 
-#### Step 2: Implement `--schema` Flag
+### Node Ordering
 
-```go
-func main() {
-    if len(os.Args) > 1 && os.Args[1] == "--schema" {
-        outputSchema()
-        os.Exit(0)
-    }
-    // Normal tool execution
-}
+`AllNodes()` returns nodes in dependency order (parents before children):
 
-func outputSchema() {
-    schema := struct {
-        Name         string      `json:"name"`
-        Description  string      `json:"description"`
-        InputSchema  schema.JSON `json:"input_schema"`
-        OutputSchema schema.JSON `json:"output_schema"`
-    }{
-        Name:         "my-tool",
-        Description:  "Description of my tool",
-        InputSchema:  InputSchema(),
-        OutputSchema: OutputSchema(),
-    }
+1. Root nodes: Hosts, Domains, Technologies, Certificates, CloudAssets, APIs
+2. First-level: Ports, Subdomains
+3. Second-level: Services
+4. Leaf nodes: Endpoints
+5. Custom nodes (order preserved)
 
-    json.NewEncoder(os.Stdout).Encode(schema)
-}
-```
-
-#### Step 3: Verify Schema Loading
-
-```bash
-# Test that schema is extracted
-./my-tool --schema | jq '.output_schema'
-
-# Look for taxonomy mappings
-./my-tool --schema | jq '.. | .taxonomy? // empty'
-```
-
-### Special JSONPath Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `_parent` | Immediate parent object | `_parent.ip` |
-| `_parent._parent` | Grandparent object | `_parent._parent.ip` |
-| `_context` | Execution context (injected by Gibson) | `_context.agent_run_id` |
-| `_context.mission_id` | Current mission ID | |
-| `_context.agent_run_id` | Current agent run ID | |
-| `_context.timestamp` | Execution timestamp | |
-
-### Debugging Extraction Issues
-
-**1. Check if schema is loaded:**
-```go
-registry := init.GetTaxonomyRegistry()
-if schema, ok := registry.GetToolOutputSchema("my-tool"); ok {
-    fmt.Printf("Extracts: %d\n", len(schema.Extracts))
-}
-```
-
-**2. Enable debug logging:**
-```bash
-GIBSON_LOG_LEVEL=debug gibson daemon start
-```
-
-**3. Verify tool output structure:**
-```bash
-./my-tool --input '{"target": "example.com"}' | jq .
-```
-
-**4. Check for missing parent context:**
-```
-WARN "skipping node creation - requires parent context" node_type=port
-```
-This means the port extraction is being attempted at root level instead of nested under hosts.
-
-**5. Check for missing identifying properties:**
-```
-DEBUG "skipping node due to missing identifying properties" node_type=port expected_count=3 found_count=2
-```
-This means `_parent.ip` couldn't resolve because there's no parent in the stack.
+This ensures parents exist before relationship creation.
 
 ---
 
 ## Troubleshooting
 
-### Taxonomy Not Loading
+### Missing Identifying Properties
 
 **Symptoms:**
-- `nil` registry returned
-- "taxonomy validation failed"
+- `ErrMissingIdentifyingProperties` error
+- Node creation fails
 
-**Solutions:**
-- Check YAML syntax (run `yamllint`)
-- Ensure all includes exist
-- Check for duplicate IDs or types
-- Verify reference targets exist
+**Cause:** Domain type is missing required identifying properties
 
-### Custom Taxonomy Rejected
+**Solution:**
+```go
+// Check what properties are required
+registry := graphrag.Registry()
+props, _ := registry.GetIdentifyingProperties("port")
+// props = ["host_id", "number", "protocol"]
 
-**Symptoms:**
-- "conflicts with bundled taxonomy"
+// Ensure all are set
+port := &domain.Port{
+    HostID:   "192.168.1.1",  // Required
+    Number:   443,             // Required
+    Protocol: "tcp",           // Required
+    State:    "open",          // Optional
+}
+```
 
-**Cause:** Attempting to override bundled types
-
-**Solution:** Custom types must have unique IDs and types
-
-### Event Not Creating Nodes
-
-**Symptoms:**
-- Event processed but no graph changes
-
-**Solutions:**
-- Check event type matches `execution_events.yaml`
-- Verify data contains required fields
-- Check Neo4j connectivity
-- Look for warnings in logs
-
-### Tool Schema Not Loaded
+### Parent Node Not Found
 
 **Symptoms:**
-- Tool output not extracted
+- Relationship creation fails
+- Warning: "parent node not found"
 
-**Solutions:**
-- Check if tool has embedded schema
-- Verify tool binary is executable
-- Check `--schema` flag output
-- Add YAML schema for legacy tools
+**Cause:** Parent node hasn't been created yet
 
-### Neo4j Errors
+**Solution:** Ensure nodes are loaded in dependency order. Use `DiscoveryResult.AllNodes()` which returns nodes in the correct order (parents before children).
+
+### Neo4j Connection Errors
 
 **Symptoms:**
 - "failed to create node/relationship"
+- Connection timeouts
 
 **Solutions:**
-- Check Neo4j connectivity
-- Verify Cypher syntax in engine
-- Check node ID uniqueness
-- Verify referenced nodes exist
+- Verify Neo4j is running: `neo4j status`
+- Check connection settings in Gibson config
+- Test connectivity: `cypher-shell -u neo4j -p <password>`
+- Check Neo4j logs for authentication issues
+
+### Custom Type Namespace Conflicts
+
+**Symptoms:**
+- Warning about namespace conflicts
+
+**Cause:** Using a canonical type name as custom namespace
+
+**Solution:** Use proper namespace prefixes:
+```go
+// Wrong - "host" is a canonical type
+domain.NewCustomEntity("host", "vm")  // Don't do this
+
+// Correct - use namespaced prefix
+domain.NewCustomEntity("vmware", "vm")  // ✓
+domain.NewCustomEntity("k8s", "pod")    // ✓
+```
+
+### Debug Logging
+
+Enable debug logging to see detailed information:
+
+```bash
+GIBSON_LOG_LEVEL=debug gibson daemon start
+```
 
 ---
 
@@ -1169,35 +933,33 @@ This means `_parent.ip` couldn't resolve because there's no parent in the stack.
 | `[]string` | Array of strings |
 | `map[string]any` | Arbitrary JSON object |
 
-### ID Template Functions
+### GraphNode Interface Methods
 
-| Function | Example |
-|----------|---------|
-| Simple substitution | `{field}` |
-| UUID generation | `{uuid}` |
-| Hash generation | `{sha256(expr)}` |
-| Hash truncation | `{sha256(expr)[:16]}` |
+| Method | Return Type | Description |
+|--------|-------------|-------------|
+| `NodeType()` | `string` | Canonical type (e.g., "host", "k8s:pod") |
+| `IdentifyingProperties()` | `map[string]any` | Properties that uniquely identify the node |
+| `Properties()` | `map[string]any` | All properties to set on the node |
+| `ParentRef()` | `*NodeRef` | Parent node reference (nil for root nodes) |
+| `RelationshipType()` | `string` | Relationship type to parent (e.g., "HAS_PORT") |
 
-### Event Property Mapping
+### Error Types
 
-| Type | Syntax |
-|------|--------|
-| Source-based | `source: field_name` (from event data) |
-| Static value | `value: constant` (fixed value) |
-| Optional flag | `optional: true` (don't fail if missing) |
+| Error | Description |
+|-------|-------------|
+| `ErrMissingIdentifyingProperties` | Required identifying properties not provided |
+| `ErrNodeTypeNotRegistered` | Unknown node type |
+| `ErrParentNotFound` | Parent node doesn't exist in graph |
 
-### Cypher Operations
+### Cypher Patterns
 
 | Operation | Pattern |
 |-----------|---------|
-| Node creation | `MERGE (n:Label {id: $id}) SET n += $props` |
-| Node update | `MATCH (n:Label {id: $id}) SET n += $props` |
-| Relationship creation | `MATCH ... MERGE (a)-[r:TYPE]->(b)` |
+| Node MERGE | `MERGE (n:Label {idProp: $val}) SET n += $props` |
+| Relationship | `MATCH (a), (b) MERGE (a)-[r:TYPE]->(b)` |
 
-### Gibson CLI Commands
+### See Also
 
-```bash
-gibson taxonomy validate [path]
-gibson taxonomy list-types
-gibson taxonomy show-type <type>
-```
+- `sdk/graphrag/domain/README.md` - Domain types documentation
+- `sdk/graphrag/README.md` - ID generation and registry
+- `gibson/internal/graphrag/loader/` - GraphLoader implementation

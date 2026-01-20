@@ -301,11 +301,16 @@ func parsePortFromEndpoint(endpoint string) (int, error) {
 	return port, nil
 }
 
-// findProcessByPort finds the PID of the process listening on the specified port.
+// findProcessByPort finds the PID of the process LISTENING on the specified port.
+// IMPORTANT: Uses -sTCP:LISTEN to only match listening processes, not connected clients.
+// Without this filter, lsof returns ALL processes associated with the port (listeners
+// AND clients), and we could accidentally kill the wrong process (e.g., the daemon
+// which has a gRPC client connection to an agent).
 func findProcessByPort(port int) (int, error) {
-	// Use lsof to find the process listening on the port
-	// lsof -t -i:PORT returns the PID
-	cmd := exec.Command("lsof", "-t", fmt.Sprintf("-i:%d", port))
+	// Use lsof to find the process LISTENING on the port
+	// -sTCP:LISTEN ensures we only get the listening process, not clients
+	// -t returns just the PID
+	cmd := exec.Command("lsof", "-t", "-sTCP:LISTEN", fmt.Sprintf("-i:%d", port))
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, fmt.Errorf("lsof failed: %w", err)
@@ -314,10 +319,10 @@ func findProcessByPort(port int) (int, error) {
 	// Parse PID from output
 	pidStr := strings.TrimSpace(string(output))
 	if pidStr == "" {
-		return 0, fmt.Errorf("no process found on port %d", port)
+		return 0, fmt.Errorf("no process found listening on port %d", port)
 	}
 
-	// If multiple PIDs, take the first one
+	// There should only be one listening process per port, but parse safely
 	lines := strings.Split(pidStr, "\n")
 	pid, err := strconv.Atoi(lines[0])
 	if err != nil {

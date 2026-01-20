@@ -127,6 +127,7 @@ var (
 // Flags for payload create command
 var (
 	createPayloadFromFile string
+	createPayloadForce    bool
 )
 
 // Flags for payload execute command
@@ -151,6 +152,7 @@ func init() {
 
 	// Create command flags
 	payloadCreateCmd.Flags().StringVar(&createPayloadFromFile, "from-file", "", "Create payload from YAML or JSON file")
+	payloadCreateCmd.Flags().BoolVar(&createPayloadForce, "force", false, "Overwrite existing payload if it exists")
 
 	// Execute command flags
 	payloadExecuteCmd.Flags().StringVar(&executePayloadTarget, "target", "", "Target name or ID (required)")
@@ -170,6 +172,7 @@ func init() {
 	payloadCmd.AddCommand(payloadImportCmd)
 	payloadCmd.AddCommand(payloadExportCmd)
 	payloadCmd.AddCommand(payloadSearchCmd)
+	payloadCmd.AddCommand(payloadSyncCmd)
 }
 
 // runPayloadList executes the payload list command
@@ -589,6 +592,16 @@ func runPayloadCreate(cmd *cobra.Command, args []string) error {
 	// Create payload store
 	store := payload.NewPayloadStore(db)
 
+	// Check if payload already exists by name
+	existsByName, err := store.ExistsByName(ctx, p.Name)
+	if err != nil {
+		return fmt.Errorf("failed to check payload existence: %w", err)
+	}
+
+	if existsByName && !createPayloadForce {
+		return fmt.Errorf("payload with name '%s' already exists. Use --force to overwrite", p.Name)
+	}
+
 	// Generate ID if not provided
 	if p.ID.IsZero() {
 		p.ID = types.NewID()
@@ -596,24 +609,53 @@ func runPayloadCreate(cmd *cobra.Command, args []string) error {
 
 	// Set timestamps
 	now := time.Now()
-	p.CreatedAt = now
-	p.UpdatedAt = now
 
 	// Default values
 	if p.Version == "" {
 		p.Version = "1.0.0"
 	}
 	p.BuiltIn = false
-	if !p.Enabled {
-		p.Enabled = true // Enable by default
-	}
+	p.Enabled = true // Enable by default
 
-	// Save payload
-	if err := store.Save(ctx, p); err != nil {
-		return fmt.Errorf("failed to save payload: %w", err)
-	}
+	if existsByName && createPayloadForce {
+		// Get existing payload and update it
+		payloads, err := store.List(ctx, &payload.PayloadFilter{})
+		if err != nil {
+			return fmt.Errorf("failed to list payloads: %w", err)
+		}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Successfully created payload: %s (ID: %s)\n", p.Name, p.ID.String())
+		var existingPayload *payload.Payload
+		for _, existing := range payloads {
+			if existing.Name == p.Name {
+				existingPayload = existing
+				break
+			}
+		}
+
+		if existingPayload != nil {
+			p.ID = existingPayload.ID
+			p.CreatedAt = existingPayload.CreatedAt
+		} else {
+			p.CreatedAt = now
+		}
+		p.UpdatedAt = now
+
+		if err := store.Update(ctx, p); err != nil {
+			return fmt.Errorf("failed to update payload: %w", err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Successfully updated payload: %s (ID: %s)\n", p.Name, p.ID.String())
+	} else {
+		// Create new payload
+		p.CreatedAt = now
+		p.UpdatedAt = now
+
+		if err := store.Save(ctx, p); err != nil {
+			return fmt.Errorf("failed to save payload: %w", err)
+		}
+
+		fmt.Fprintf(cmd.OutOrStdout(), "Successfully created payload: %s (ID: %s)\n", p.Name, p.ID.String())
+	}
 
 	return nil
 }
@@ -2370,15 +2412,19 @@ Examples:
 
 // Flags for search command
 var (
-	searchPayloadCategory string
-	searchPayloadSeverity string
-	searchPayloadLimit    int
-	searchPayloadOutput   string
+	searchPayloadCategory   string
+	searchPayloadTags       string
+	searchPayloadTargetType string
+	searchPayloadSeverity   string
+	searchPayloadLimit      int
+	searchPayloadOutput     string
 )
 
 func init() {
 	// Search command flags
 	payloadSearchCmd.Flags().StringVar(&searchPayloadCategory, "category", "", "Filter by category")
+	payloadSearchCmd.Flags().StringVar(&searchPayloadTags, "tags", "", "Filter by tags (comma-separated)")
+	payloadSearchCmd.Flags().StringVar(&searchPayloadTargetType, "target-type", "", "Filter by target type")
 	payloadSearchCmd.Flags().StringVar(&searchPayloadSeverity, "severity", "", "Filter by severity")
 	payloadSearchCmd.Flags().IntVar(&searchPayloadLimit, "limit", 50, "Maximum number of results")
 	payloadSearchCmd.Flags().StringVar(&searchPayloadOutput, "output", "text", "Output format (text, json)")
@@ -2423,6 +2469,18 @@ func runPayloadSearch(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid severity: %s (valid: critical, high, medium, low, info)", searchPayloadSeverity)
 		}
 		filter.Severities = []agent.FindingSeverity{severity}
+	}
+
+	if searchPayloadTags != "" {
+		tags := strings.Split(searchPayloadTags, ",")
+		for i, tag := range tags {
+			tags[i] = strings.TrimSpace(tag)
+		}
+		filter.Tags = tags
+	}
+
+	if searchPayloadTargetType != "" {
+		filter.TargetTypes = []string{searchPayloadTargetType}
 	}
 
 	// Perform search
@@ -2497,5 +2555,42 @@ func runPayloadSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to print table: %w", err)
 	}
 
+	return nil
+}
+
+// Sync command
+
+var payloadSyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Sync payloads with Zero Day AI cloud (coming soon)",
+	Long: `Sync payloads with Zero Day AI cloud service. This feature is not yet available.
+
+For now, use 'gibson payload import' to add payloads locally.
+
+Examples:
+  # Attempt to sync (will show message)
+  gibson payload sync`,
+	RunE: runPayloadSync,
+}
+
+// runPayloadSync executes the payload sync command
+func runPayloadSync(cmd *cobra.Command, args []string) error {
+	// Check if configuration exists and payloads provider is set
+	homeDir, err := getGibsonHome()
+	if err == nil {
+		// Try to read config
+		cfgPath := homeDir + "/config.yaml"
+		if data, err := os.ReadFile(cfgPath); err == nil {
+			// Check if zero-day-ai provider is configured
+			if strings.Contains(string(data), "provider: zero-day-ai") || strings.Contains(string(data), `provider: "zero-day-ai"`) {
+				fmt.Fprintf(cmd.OutOrStdout(), "Zero Day AI cloud integration coming soon.\n")
+				fmt.Fprintf(cmd.OutOrStdout(), "For now, use 'gibson payload import' to add payloads locally.\n")
+				return nil
+			}
+		}
+	}
+
+	// Default message for local provider or no configuration
+	fmt.Fprintf(cmd.OutOrStdout(), "Cloud sync not configured. Use 'gibson payload import' to add payloads locally.\n")
 	return nil
 }

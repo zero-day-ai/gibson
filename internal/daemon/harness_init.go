@@ -7,6 +7,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/harness/middleware"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/tool"
+	"github.com/zero-day-ai/gibson/internal/tool/builtins"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -61,6 +62,47 @@ func (d *daemonImpl) newHarnessFactory(ctx context.Context) (harness.HarnessFact
 				"tools_registered", registered,
 			)
 		}
+	}
+
+	// Register builtin tools - Phase 8
+	// These tools provide agent access to knowledge store and payload library
+	builtinCount := 0
+
+	// Register knowledge_search tool
+	// Pass nil for knowledge store - the tool handles this gracefully by returning empty results
+	// The knowledge store will be wired in future phases
+	knowledgeTool := builtins.NewKnowledgeSearchTool(nil)
+	if err := toolRegistry.RegisterInternal(knowledgeTool); err != nil {
+		d.logger.Warn("failed to register knowledge_search tool", "error", err.Error())
+	} else {
+		builtinCount++
+		d.logger.Debug("registered builtin tool", "name", "knowledge_search", "status", "stub")
+	}
+
+	// Register payload_search tool
+	// Pass nil for payload registry - the tool handles this gracefully
+	// The payload registry will be wired in future phases
+	payloadSearchTool := builtins.NewPayloadSearchTool(nil)
+	if err := toolRegistry.RegisterInternal(payloadSearchTool); err != nil {
+		d.logger.Warn("failed to register payload_search tool", "error", err.Error())
+	} else {
+		builtinCount++
+		d.logger.Debug("registered builtin tool", "name", "payload_search", "status", "stub")
+	}
+
+	// Register payload_execute tool
+	// Pass nil for payload executor - the tool returns an error if called
+	// The payload executor will be wired in future phases
+	payloadExecuteTool := builtins.NewPayloadExecuteTool(nil)
+	if err := toolRegistry.RegisterInternal(payloadExecuteTool); err != nil {
+		d.logger.Warn("failed to register payload_execute tool", "error", err.Error())
+	} else {
+		builtinCount++
+		d.logger.Debug("registered builtin tool", "name", "payload_execute", "status", "stub")
+	}
+
+	if builtinCount > 0 {
+		d.logger.Info("registered builtin tools", "count", builtinCount)
 	}
 
 	// Build HarnessConfig with all required dependencies

@@ -189,6 +189,7 @@ func init() {
 	rootCmd.AddCommand(findingCmd)
 	rootCmd.AddCommand(attackCmd)
 	rootCmd.AddCommand(payloadCmd)
+	rootCmd.AddCommand(knowledgeCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(completionCmd)
 	rootCmd.AddCommand(daemonCmd)

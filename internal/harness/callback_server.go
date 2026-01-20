@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -148,4 +149,10 @@ func (s *CallbackServer) UnregisterHarness(taskID string) {
 // This must be called before starting the server.
 func (s *CallbackServer) SetCredentialStore(store CredentialStore) {
 	s.service.credentialStore = store
+}
+
+// SetGraphLoader sets the GraphLoader for processing DiscoveryResult tool outputs.
+// This must be called before starting the server.
+func (s *CallbackServer) SetGraphLoader(gl *loader.GraphLoader) {
+	s.service.graphLoader = gl
 }

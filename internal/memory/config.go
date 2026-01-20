@@ -107,6 +107,7 @@ func (c *MissionMemoryConfig) ApplyDefaults() {
 type LongTermMemoryConfig struct {
 	Backend       string         `mapstructure:"backend" yaml:"backend" json:"backend"`
 	ConnectionURL string         `mapstructure:"connection_url" yaml:"connection_url" json:"connection_url"`
+	StoragePath   string         `mapstructure:"storage_path" yaml:"storage_path" json:"storage_path"`
 	Embedder      EmbedderConfig `mapstructure:"embedder" yaml:"embedder" json:"embedder"`
 }
 
@@ -114,18 +115,19 @@ type LongTermMemoryConfig struct {
 func (c *LongTermMemoryConfig) Validate() error {
 	// Validate backend type
 	validBackends := map[string]bool{
-		"embedded": true, // In-process vector store
+		"embedded": true, // In-memory vector store (non-persistent)
+		"sqlite":   true, // SQLite-backed vector store (persistent)
 		"qdrant":   true, // Qdrant vector database
 		"milvus":   true, // Milvus vector database (future support)
 	}
 
 	if c.Backend != "" && !validBackends[c.Backend] {
 		return types.NewError(types.CONFIG_VALIDATION_FAILED,
-			fmt.Sprintf("invalid backend '%s', must be one of: embedded, qdrant, milvus", c.Backend))
+			fmt.Sprintf("invalid backend '%s', must be one of: embedded, sqlite, qdrant, milvus", c.Backend))
 	}
 
 	// If using external backend, ConnectionURL is required
-	if c.Backend != "" && c.Backend != "embedded" {
+	if c.Backend != "" && c.Backend != "embedded" && c.Backend != "sqlite" {
 		if c.ConnectionURL == "" {
 			return types.NewError(types.CONFIG_VALIDATION_FAILED,
 				fmt.Sprintf("connection_url is required for backend '%s'", c.Backend))

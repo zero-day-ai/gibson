@@ -124,6 +124,12 @@ func getMigrations() []migration {
 			up:      getMissionLineageSchema(),
 			down:    getDownMigration12(),
 		},
+		{
+			version: 13,
+			name:    "knowledge_suite",
+			up:      getKnowledgeSuiteSchema(),
+			down:    getDownMigration13(),
+		},
 		// Future migrations will be added here
 	}
 
@@ -1532,5 +1538,78 @@ DROP INDEX IF EXISTS idx_missions_parent;
 -- 3. Drop old table
 -- 4. Rename new table
 -- For simplicity, we're leaving the columns in place during rollback
+`
+}
+
+// getKnowledgeSuiteSchema returns the schema for the Local Knowledge Suite
+// This includes vector-based knowledge storage and enhanced payload tables
+func getKnowledgeSuiteSchema() string {
+	return `
+-- Migration 13: Local Knowledge Suite
+-- Creates tables for knowledge vectors, sources, and enhanced payload storage
+
+-- ============================================================================
+-- Knowledge Vectors Table: Vector-based semantic search storage
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS knowledge_vectors (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    embedding BLOB NOT NULL,
+    metadata TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for knowledge vectors
+CREATE INDEX IF NOT EXISTS idx_knowledge_vectors_created_at ON knowledge_vectors(created_at DESC);
+
+-- ============================================================================
+-- Knowledge Vectors Vec Table: sqlite-vec virtual table for similarity search
+-- Note: This table will be created by SqliteVecStore when sqlite-vec extension is loaded
+-- The extension must be loaded before this migration runs
+-- CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_vectors_vec USING vec0(
+--     embedding float[384]
+-- );
+-- ============================================================================
+
+-- ============================================================================
+-- Knowledge Sources Table: Track ingested knowledge sources
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS knowledge_sources (
+    source TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    chunk_count INTEGER DEFAULT 0,
+    ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    metadata TEXT
+);
+
+-- Indexes for knowledge sources
+CREATE INDEX IF NOT EXISTS idx_knowledge_sources_hash ON knowledge_sources(source_hash);
+CREATE INDEX IF NOT EXISTS idx_knowledge_sources_type ON knowledge_sources(source_type);
+CREATE INDEX IF NOT EXISTS idx_knowledge_sources_ingested_at ON knowledge_sources(ingested_at DESC);
+`
+}
+
+// getDownMigration13 returns the rollback SQL for migration 13
+func getDownMigration13() string {
+	return `
+-- Rollback Migration 13: Local Knowledge Suite
+
+-- Drop knowledge sources indexes
+DROP INDEX IF EXISTS idx_knowledge_sources_ingested_at;
+DROP INDEX IF EXISTS idx_knowledge_sources_type;
+DROP INDEX IF EXISTS idx_knowledge_sources_hash;
+
+-- Drop knowledge sources table
+DROP TABLE IF EXISTS knowledge_sources;
+
+-- Drop sqlite-vec virtual table (if it was created)
+DROP TABLE IF EXISTS knowledge_vectors_vec;
+
+-- Drop knowledge vectors indexes
+DROP INDEX IF EXISTS idx_knowledge_vectors_created_at;
+
+-- Drop knowledge vectors table
+DROP TABLE IF EXISTS knowledge_vectors;
 `
 }

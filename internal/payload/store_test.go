@@ -698,3 +698,486 @@ func TestPayloadStore_ConcurrentAccess(t *testing.T) {
 		<-done
 	}
 }
+
+// TestPayloadStore_ImportBatch tests batch import with validation
+func TestPayloadStore_ImportBatch(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create test payloads
+	payload1 := createTestPayload("batch-import-1")
+	payload2 := createTestPayload("batch-import-2")
+	payload3 := createTestPayload("batch-import-3")
+
+	// Invalid payload (no template)
+	invalidPayload := createTestPayload("batch-invalid")
+	invalidPayload.Template = ""
+
+	payloads := []*Payload{payload1, payload2, payload3, invalidPayload}
+
+	// Import batch
+	result, err := store.ImportBatch(ctx, payloads)
+	require.NoError(t, err)
+
+	// Verify results
+	assert.Equal(t, 4, result.Total)
+	assert.Equal(t, 3, result.Imported)
+	assert.Equal(t, 0, result.Skipped)
+	assert.Equal(t, 1, result.Failed)
+	assert.Len(t, result.Errors, 1)
+
+	// Verify payloads were saved
+	retrieved, err := store.Get(ctx, payload1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, payload1.Name, retrieved.Name)
+}
+
+// TestPayloadStore_ImportBatch_Duplicates tests batch import with duplicate names
+func TestPayloadStore_ImportBatch_Duplicates(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Save initial payload
+	initial := createTestPayload("duplicate-test")
+	require.NoError(t, store.Save(ctx, initial))
+
+	// Try to import duplicate
+	duplicate := createTestPayload("duplicate-test")
+	duplicate.ID = types.NewID() // Different ID, same name
+
+	result, err := store.ImportBatch(ctx, []*Payload{duplicate})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, result.Total)
+	assert.Equal(t, 0, result.Imported)
+	assert.Equal(t, 1, result.Skipped)
+	assert.Contains(t, result.Errors[0], "already exists")
+}
+
+// TestPayloadStore_ImportBatch_NilPayload tests batch import with nil payload
+func TestPayloadStore_ImportBatch_NilPayload(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	payload1 := createTestPayload("batch-with-nil-1")
+	payload2 := createTestPayload("batch-with-nil-2")
+
+	payloads := []*Payload{payload1, nil, payload2}
+
+	result, err := store.ImportBatch(ctx, payloads)
+	require.NoError(t, err)
+
+	assert.Equal(t, 3, result.Total)
+	assert.Equal(t, 2, result.Imported)
+	assert.Equal(t, 1, result.Skipped)
+	assert.Contains(t, result.Errors[0], "is nil")
+}
+
+// TestPayloadStore_GetSummaryForTargetType tests summary generation
+func TestPayloadStore_GetSummaryForTargetType(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create diverse payloads
+	payload1 := createTestPayload("summary-test-1")
+	payload1.Categories = []PayloadCategory{CategoryJailbreak}
+	payload1.TargetTypes = []string{"openai", "anthropic"}
+	payload1.Severity = agent.SeverityHigh
+	payload1.BuiltIn = true
+
+	payload2 := createTestPayload("summary-test-2")
+	payload2.Categories = []PayloadCategory{CategoryPromptInjection, CategoryDataExtraction}
+	payload2.TargetTypes = []string{"anthropic"}
+	payload2.Severity = agent.SeverityMedium
+
+	payload3 := createTestPayload("summary-test-3")
+	payload3.Categories = []PayloadCategory{CategoryJailbreak}
+	payload3.TargetTypes = []string{} // Supports all types
+	payload3.Severity = agent.SeverityHigh
+	payload3.Enabled = false // Disabled, should not be counted
+
+	require.NoError(t, store.Save(ctx, payload1))
+	require.NoError(t, store.Save(ctx, payload2))
+	require.NoError(t, store.Save(ctx, payload3))
+
+	// Get summary for all payloads (no target type filter)
+	summary, err := store.GetSummaryForTargetType(ctx, "")
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, summary.Total) // Only enabled payloads
+	assert.Equal(t, 2, summary.EnabledCount)
+	assert.Equal(t, 1, summary.BuiltInCount)
+
+	// Check category counts
+	assert.Equal(t, 1, summary.ByCategory[CategoryJailbreak])
+	assert.Equal(t, 1, summary.ByCategory[CategoryPromptInjection])
+	assert.Equal(t, 1, summary.ByCategory[CategoryDataExtraction])
+
+	// Check target type counts
+	assert.Equal(t, 1, summary.ByTargetType["openai"])
+	assert.Equal(t, 2, summary.ByTargetType["anthropic"])
+
+	// Check severity counts
+	assert.Equal(t, 1, summary.BySeverity[agent.SeverityHigh])
+	assert.Equal(t, 1, summary.BySeverity[agent.SeverityMedium])
+
+	// Get summary filtered by target type
+	summaryAnthropic, err := store.GetSummaryForTargetType(ctx, "anthropic")
+	require.NoError(t, err)
+	assert.Equal(t, 2, summaryAnthropic.Total)
+
+	summaryOpenAI, err := store.GetSummaryForTargetType(ctx, "openai")
+	require.NoError(t, err)
+	assert.Equal(t, 1, summaryOpenAI.Total)
+}
+
+// TestPayloadStore_CreateChain tests chain creation
+func TestPayloadStore_CreateChain(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Create payloads for chain
+	payload1 := createTestPayload("chain-payload-1")
+	payload2 := createTestPayload("chain-payload-2")
+	require.NoError(t, store.Save(ctx, payload1))
+	require.NoError(t, store.Save(ctx, payload2))
+
+	// Create chain
+	chain := &PayloadChain{
+		ID:          types.NewID(),
+		Name:        "test-chain",
+		Description: "Test payload chain",
+		Steps: []ChainStep{
+			{
+				ID:        "step1",
+				PayloadID: payload1.ID,
+				Params:    map[string]any{"key": "value"},
+				OnSuccess: StepActionContinue,
+				OnFailure: StepActionAbort,
+			},
+			{
+				ID:        "step2",
+				PayloadID: payload2.ID,
+				OnSuccess: StepActionContinue,
+				OnFailure: StepActionAbort,
+				Requires:  []string{"step1"},
+			},
+		},
+		Metadata: PayloadMetadata{
+			Author: "test-author",
+		},
+	}
+
+	err := store.CreateChain(ctx, chain)
+	require.NoError(t, err)
+
+	// Verify chain was saved
+	retrieved, err := store.GetChain(ctx, chain.ID)
+	require.NoError(t, err)
+	assert.Equal(t, chain.Name, retrieved.Name)
+	assert.Equal(t, chain.Description, retrieved.Description)
+	assert.Len(t, retrieved.Steps, 2)
+	assert.Equal(t, "step1", retrieved.Steps[0].ID)
+	assert.Equal(t, payload1.ID, retrieved.Steps[0].PayloadID)
+}
+
+// TestPayloadStore_CreateChain_Validation tests chain validation
+func TestPayloadStore_CreateChain_Validation(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		chain   *PayloadChain
+		wantErr string
+	}{
+		{
+			name:    "nil chain",
+			chain:   nil,
+			wantErr: "chain cannot be nil",
+		},
+		{
+			name: "empty name",
+			chain: &PayloadChain{
+				ID:   types.NewID(),
+				Name: "",
+			},
+			wantErr: "chain name is required",
+		},
+		{
+			name: "no steps",
+			chain: &PayloadChain{
+				ID:    types.NewID(),
+				Name:  "test",
+				Steps: []ChainStep{},
+			},
+			wantErr: "chain must have at least one step",
+		},
+		{
+			name: "step without ID",
+			chain: &PayloadChain{
+				ID:   types.NewID(),
+				Name: "test",
+				Steps: []ChainStep{
+					{
+						ID:        "",
+						PayloadID: types.NewID(),
+					},
+				},
+			},
+			wantErr: "ID is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := store.CreateChain(ctx, tt.chain)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+// TestPayloadStore_GetChain tests retrieving a chain
+func TestPayloadStore_GetChain(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	payload := createTestPayload("chain-get-payload")
+	require.NoError(t, store.Save(ctx, payload))
+
+	chain := &PayloadChain{
+		ID:          types.NewID(),
+		Name:        "get-test-chain",
+		Description: "Test get chain",
+		Steps: []ChainStep{
+			{
+				ID:        "step1",
+				PayloadID: payload.ID,
+				OnSuccess: StepActionContinue,
+				OnFailure: StepActionAbort,
+			},
+		},
+	}
+
+	require.NoError(t, store.CreateChain(ctx, chain))
+
+	// Retrieve chain
+	retrieved, err := store.GetChain(ctx, chain.ID)
+	require.NoError(t, err)
+	assert.Equal(t, chain.ID, retrieved.ID)
+	assert.Equal(t, chain.Name, retrieved.Name)
+
+	// Test non-existent chain
+	_, err = store.GetChain(ctx, types.NewID())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "chain not found")
+}
+
+// TestPayloadStore_ListChains tests listing chains
+func TestPayloadStore_ListChains(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	payload := createTestPayload("list-chains-payload")
+	require.NoError(t, store.Save(ctx, payload))
+
+	// Create multiple chains
+	chain1 := &PayloadChain{
+		ID:   types.NewID(),
+		Name: "chain-1",
+		Steps: []ChainStep{
+			{ID: "step1", PayloadID: payload.ID, OnSuccess: StepActionContinue, OnFailure: StepActionAbort},
+		},
+	}
+
+	chain2 := &PayloadChain{
+		ID:   types.NewID(),
+		Name: "chain-2",
+		Steps: []ChainStep{
+			{ID: "step1", PayloadID: payload.ID, OnSuccess: StepActionContinue, OnFailure: StepActionAbort},
+		},
+	}
+
+	require.NoError(t, store.CreateChain(ctx, chain1))
+	require.NoError(t, store.CreateChain(ctx, chain2))
+
+	// List all chains
+	chains, err := store.ListChains(ctx)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(chains), 2)
+
+	// Verify chains are in the list
+	names := make([]string, len(chains))
+	for i, c := range chains {
+		names[i] = c.Name
+	}
+	assert.Contains(t, names, "chain-1")
+	assert.Contains(t, names, "chain-2")
+}
+
+// TestPayloadStore_UpdateChain tests updating a chain
+func TestPayloadStore_UpdateChain(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	payload := createTestPayload("update-chain-payload")
+	require.NoError(t, store.Save(ctx, payload))
+
+	chain := &PayloadChain{
+		ID:          types.NewID(),
+		Name:        "update-test-chain",
+		Description: "Original description",
+		Steps: []ChainStep{
+			{ID: "step1", PayloadID: payload.ID, OnSuccess: StepActionContinue, OnFailure: StepActionAbort},
+		},
+	}
+
+	require.NoError(t, store.CreateChain(ctx, chain))
+
+	// Update chain
+	chain.Description = "Updated description"
+	chain.Steps = append(chain.Steps, ChainStep{
+		ID:        "step2",
+		PayloadID: payload.ID,
+		OnSuccess: StepActionContinue,
+		OnFailure: StepActionAbort,
+	})
+
+	err := store.UpdateChain(ctx, chain)
+	require.NoError(t, err)
+
+	// Verify update
+	retrieved, err := store.GetChain(ctx, chain.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Updated description", retrieved.Description)
+	assert.Len(t, retrieved.Steps, 2)
+}
+
+// TestPayloadStore_UpdateChain_NonExistent tests updating non-existent chain
+func TestPayloadStore_UpdateChain_NonExistent(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	payload := createTestPayload("nonexistent-chain-payload")
+	require.NoError(t, store.Save(ctx, payload))
+
+	chain := &PayloadChain{
+		ID:   types.NewID(),
+		Name: "nonexistent",
+		Steps: []ChainStep{
+			{ID: "step1", PayloadID: payload.ID, OnSuccess: StepActionContinue, OnFailure: StepActionAbort},
+		},
+	}
+
+	err := store.UpdateChain(ctx, chain)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "chain not found")
+}
+
+// TestPayloadStore_DeleteChain tests deleting a chain
+func TestPayloadStore_DeleteChain(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	payload := createTestPayload("delete-chain-payload")
+	require.NoError(t, store.Save(ctx, payload))
+
+	chain := &PayloadChain{
+		ID:   types.NewID(),
+		Name: "delete-test-chain",
+		Steps: []ChainStep{
+			{ID: "step1", PayloadID: payload.ID, OnSuccess: StepActionContinue, OnFailure: StepActionAbort},
+		},
+	}
+
+	require.NoError(t, store.CreateChain(ctx, chain))
+
+	// Delete chain
+	err := store.DeleteChain(ctx, chain.ID)
+	require.NoError(t, err)
+
+	// Verify chain is deleted
+	_, err = store.GetChain(ctx, chain.ID)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "chain not found")
+}
+
+// TestPayloadStore_DeleteChain_NonExistent tests deleting non-existent chain
+func TestPayloadStore_DeleteChain_NonExistent(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	err := store.DeleteChain(ctx, types.NewID())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "chain not found")
+}
+
+// TestPayloadStore_ChainStepActions tests various step actions
+func TestPayloadStore_ChainStepActions(t *testing.T) {
+	_, store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	payload := createTestPayload("step-actions-payload")
+	require.NoError(t, store.Save(ctx, payload))
+
+	// Test all step action types
+	chain := &PayloadChain{
+		ID:   types.NewID(),
+		Name: "step-actions-chain",
+		Steps: []ChainStep{
+			{
+				ID:        "continue-step",
+				PayloadID: payload.ID,
+				OnSuccess: StepActionContinue,
+				OnFailure: StepActionAbort,
+			},
+			{
+				ID:        "try-next-step",
+				PayloadID: payload.ID,
+				OnSuccess: StepActionTryNext,
+				OnFailure: StepActionSkipTo,
+			},
+		},
+	}
+
+	err := store.CreateChain(ctx, chain)
+	require.NoError(t, err)
+
+	// Retrieve and verify step actions
+	retrieved, err := store.GetChain(ctx, chain.ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, StepActionContinue, retrieved.Steps[0].OnSuccess)
+	assert.Equal(t, StepActionAbort, retrieved.Steps[0].OnFailure)
+	assert.Equal(t, StepActionTryNext, retrieved.Steps[1].OnSuccess)
+	assert.Equal(t, StepActionSkipTo, retrieved.Steps[1].OnFailure)
+}
+
+// boolPtr is defined in test_helpers.go

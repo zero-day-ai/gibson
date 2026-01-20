@@ -639,6 +639,9 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 							s.logger.Info("processing DiscoveryResult with GraphLoader",
 								"tool", req.Name,
 								"node_count", discoveryResult.NodeCount(),
+								"hosts", len(discoveryResult.Hosts),
+								"ports", len(discoveryResult.Ports),
+								"services", len(discoveryResult.Services),
 								"agent_run_id", agentRunID,
 								"mission_id", req.Context.MissionId)
 

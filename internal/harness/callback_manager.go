@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -440,6 +441,23 @@ func (m *CallbackManager) SetEventBus(eventBus interface{}) {
 		} else {
 			m.logger.Warn("provided event bus does not implement EventBusPublisher interface")
 		}
+	}
+}
+
+// SetGraphLoader sets the GraphLoader on the callback service.
+// This enables tool outputs containing DiscoveryResult to be persisted
+// to the Neo4j knowledge graph automatically.
+//
+// This method should be called after NewCallbackManager but before Start().
+//
+// Parameters:
+//   - gl: GraphLoader instance for persisting domain nodes to Neo4j
+//
+// Thread-safe: Can be called from multiple goroutines.
+func (m *CallbackManager) SetGraphLoader(gl *loader.GraphLoader) {
+	if m.server != nil {
+		m.server.SetGraphLoader(gl)
+		m.logger.Debug("set graph loader on callback service")
 	}
 }
 

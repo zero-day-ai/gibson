@@ -141,6 +141,12 @@ func BuildObservationPrompt(state *ObservationState) string {
 		sb.WriteString("\n")
 	}
 
+	// Payload context (if available) - show available attack payloads
+	if state.PayloadContext != "" {
+		sb.WriteString(state.PayloadContext)
+		sb.WriteString("\n")
+	}
+
 	// Ready nodes (highest priority)
 	if len(state.ReadyNodes) > 0 {
 		sb.WriteString("## Ready Nodes (Dependencies Satisfied)\n")

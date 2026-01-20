@@ -17,6 +17,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/config"
 	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/database"
+	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/observability"
@@ -414,6 +415,13 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	if d.eventBus != nil {
 		d.callback.SetEventBus(NewEventBusAdapter(d.eventBus))
 		d.logger.Info("configured callback service with event bus")
+	}
+
+	// Configure callback service with GraphLoader for persisting DiscoveryResult to Neo4j
+	if d.infrastructure.graphRAGClient != nil {
+		graphLoader := loader.NewGraphLoader(d.infrastructure.graphRAGClient)
+		d.callback.SetGraphLoader(graphLoader)
+		d.logger.Info("configured callback service with GraphLoader for domain node persistence")
 	}
 
 	// Perform crash recovery: find any missions that were running when daemon stopped

@@ -44,6 +44,27 @@ type PayloadStore interface {
 
 	// Count returns the total number of payloads matching the filter
 	Count(ctx context.Context, filter *PayloadFilter) (int, error)
+
+	// ImportBatch imports multiple payloads with validation
+	ImportBatch(ctx context.Context, payloads []*Payload) (*ImportResult, error)
+
+	// GetSummaryForTargetType returns payload summary for orchestrator context
+	GetSummaryForTargetType(ctx context.Context, targetType string) (*PayloadSummary, error)
+
+	// CreateChain creates a new payload chain
+	CreateChain(ctx context.Context, chain *PayloadChain) error
+
+	// GetChain retrieves a chain by ID
+	GetChain(ctx context.Context, id types.ID) (*PayloadChain, error)
+
+	// ListChains retrieves all chains
+	ListChains(ctx context.Context) ([]*PayloadChain, error)
+
+	// UpdateChain updates an existing chain
+	UpdateChain(ctx context.Context, chain *PayloadChain) error
+
+	// DeleteChain deletes a chain by ID
+	DeleteChain(ctx context.Context, id types.ID) error
 }
 
 // PayloadVersion represents a historical version of a payload
@@ -57,6 +78,56 @@ type PayloadVersion struct {
 	ChangedBy     string    `json:"changed_by,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+// PayloadSummary provides aggregate statistics for payloads
+type PayloadSummary struct {
+	Total        int                           `json:"total"`
+	ByCategory   map[PayloadCategory]int       `json:"by_category"`
+	ByTargetType map[string]int                `json:"by_target_type"`
+	BySeverity   map[agent.FindingSeverity]int `json:"by_severity"`
+	EnabledCount int                           `json:"enabled_count"`
+	BuiltInCount int                           `json:"built_in_count"`
+}
+
+// ImportResult contains the results of a batch import operation
+type ImportResult struct {
+	Total    int      `json:"total"`
+	Imported int      `json:"imported"`
+	Skipped  int      `json:"skipped"`
+	Failed   int      `json:"failed"`
+	Errors   []string `json:"errors,omitempty"`
+}
+
+// PayloadChain represents a sequence of payloads to execute in order
+type PayloadChain struct {
+	ID          types.ID        `json:"id" yaml:"id"`
+	Name        string          `json:"name" yaml:"name"`
+	Description string          `json:"description" yaml:"description"`
+	Steps       []ChainStep     `json:"steps" yaml:"steps"`
+	Metadata    PayloadMetadata `json:"metadata" yaml:"metadata"`
+	CreatedAt   time.Time       `json:"created_at" yaml:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at" yaml:"updated_at"`
+}
+
+// ChainStep represents a single step in a payload chain
+type ChainStep struct {
+	ID        string         `json:"id" yaml:"id"`
+	PayloadID types.ID       `json:"payload_id" yaml:"payload_id"`
+	Params    map[string]any `json:"params,omitempty" yaml:"params,omitempty"`
+	OnSuccess StepAction     `json:"on_success" yaml:"on_success"`
+	OnFailure StepAction     `json:"on_failure" yaml:"on_failure"`
+	Requires  []string       `json:"requires,omitempty" yaml:"requires,omitempty"` // step IDs
+}
+
+// StepAction defines what to do after a step completes
+type StepAction string
+
+const (
+	StepActionContinue StepAction = "continue" // Continue to next step
+	StepActionAbort    StepAction = "abort"    // Stop chain execution
+	StepActionTryNext  StepAction = "try_next" // Try next alternative step
+	StepActionSkipTo   StepAction = "skip_to"  // Skip to specific step ID
+)
 
 // payloadStore implements PayloadStore interface
 type payloadStore struct {
@@ -953,4 +1024,386 @@ func nullString(s string) sql.NullString {
 		return sql.NullString{Valid: false}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+// ImportBatch imports multiple payloads with validation
+func (s *payloadStore) ImportBatch(ctx context.Context, payloads []*Payload) (*ImportResult, error) {
+	if payloads == nil {
+		return nil, fmt.Errorf("payloads slice cannot be nil")
+	}
+
+	result := &ImportResult{
+		Total:  len(payloads),
+		Errors: []string{},
+	}
+
+	for i, payload := range payloads {
+		if payload == nil {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("payload at index %d is nil", i))
+			continue
+		}
+
+		// Validate payload
+		if err := payload.Validate(); err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("payload %s: %v", payload.Name, err))
+			continue
+		}
+
+		// Check if payload already exists by name
+		exists, err := s.ExistsByName(ctx, payload.Name)
+		if err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("payload %s: failed to check existence: %v", payload.Name, err))
+			continue
+		}
+
+		if exists {
+			result.Skipped++
+			result.Errors = append(result.Errors, fmt.Sprintf("payload %s: already exists", payload.Name))
+			continue
+		}
+
+		// Save payload
+		if err := s.Save(ctx, payload); err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("payload %s: save failed: %v", payload.Name, err))
+			continue
+		}
+
+		result.Imported++
+	}
+
+	return result, nil
+}
+
+// GetSummaryForTargetType returns payload summary for orchestrator context
+func (s *payloadStore) GetSummaryForTargetType(ctx context.Context, targetType string) (*PayloadSummary, error) {
+	summary := &PayloadSummary{
+		ByCategory:   make(map[PayloadCategory]int),
+		ByTargetType: make(map[string]int),
+		BySeverity:   make(map[agent.FindingSeverity]int),
+	}
+
+	// Build query with target type filter
+	query := `
+		SELECT
+			categories, target_types, severity, enabled, built_in
+		FROM payloads
+		WHERE enabled = 1
+	`
+
+	var args []interface{}
+
+	// Add target type filter if specified
+	if targetType != "" {
+		// Empty target_types means supports all types
+		query += ` AND (target_types = '[]' OR target_types LIKE ?)`
+		args = append(args, fmt.Sprintf("%%\"%s\"%%", targetType))
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query payloads for summary: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var categoriesJSON, targetTypesJSON, severity string
+		var enabled, builtIn bool
+
+		if err := rows.Scan(&categoriesJSON, &targetTypesJSON, &severity, &enabled, &builtIn); err != nil {
+			return nil, fmt.Errorf("failed to scan payload row: %w", err)
+		}
+
+		summary.Total++
+
+		if enabled {
+			summary.EnabledCount++
+		}
+
+		if builtIn {
+			summary.BuiltInCount++
+		}
+
+		// Unmarshal and count categories
+		var categories []PayloadCategory
+		if err := json.Unmarshal([]byte(categoriesJSON), &categories); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal categories: %w", err)
+		}
+		for _, cat := range categories {
+			summary.ByCategory[cat]++
+		}
+
+		// Unmarshal and count target types
+		var targetTypes []string
+		if err := json.Unmarshal([]byte(targetTypesJSON), &targetTypes); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal target types: %w", err)
+		}
+		for _, tt := range targetTypes {
+			summary.ByTargetType[tt]++
+		}
+
+		// Count severity
+		sev := agent.FindingSeverity(severity)
+		summary.BySeverity[sev]++
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating payload rows: %w", err)
+	}
+
+	return summary, nil
+}
+
+// CreateChain creates a new payload chain
+func (s *payloadStore) CreateChain(ctx context.Context, chain *PayloadChain) error {
+	if chain == nil {
+		return fmt.Errorf("chain cannot be nil")
+	}
+
+	if chain.Name == "" {
+		return fmt.Errorf("chain name is required")
+	}
+
+	if len(chain.Steps) == 0 {
+		return fmt.Errorf("chain must have at least one step")
+	}
+
+	// Validate steps
+	for i, step := range chain.Steps {
+		if step.ID == "" {
+			return fmt.Errorf("step at index %d: ID is required", i)
+		}
+		if err := step.PayloadID.Validate(); err != nil {
+			return fmt.Errorf("step at index %d: invalid payload ID: %w", i, err)
+		}
+	}
+
+	// Marshal JSON fields
+	stepsJSON, err := json.Marshal(chain.Steps)
+	if err != nil {
+		return fmt.Errorf("failed to marshal steps: %w", err)
+	}
+
+	metadataJSON, err := json.Marshal(chain.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `
+		INSERT INTO attack_chains (
+			id, name, description, stages, metadata, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+
+	now := time.Now()
+	if chain.CreatedAt.IsZero() {
+		chain.CreatedAt = now
+	}
+	if chain.UpdatedAt.IsZero() {
+		chain.UpdatedAt = now
+	}
+
+	_, err = s.db.ExecContext(ctx, query,
+		chain.ID.String(),
+		chain.Name,
+		chain.Description,
+		string(stepsJSON),
+		string(metadataJSON),
+		chain.CreatedAt,
+		chain.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to insert chain: %w", err)
+	}
+
+	return nil
+}
+
+// GetChain retrieves a chain by ID
+func (s *payloadStore) GetChain(ctx context.Context, id types.ID) (*PayloadChain, error) {
+	query := `
+		SELECT
+			id, name, description, stages, metadata, created_at, updated_at
+		FROM attack_chains
+		WHERE id = ?
+	`
+
+	var chain PayloadChain
+	var chainID, stepsJSON, metadataJSON string
+
+	err := s.db.QueryRowContext(ctx, query, id.String()).Scan(
+		&chainID,
+		&chain.Name,
+		&chain.Description,
+		&stepsJSON,
+		&metadataJSON,
+		&chain.CreatedAt,
+		&chain.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("chain not found: %s", id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query chain: %w", err)
+	}
+
+	// Parse ID
+	chain.ID, err = types.ParseID(chainID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse chain ID: %w", err)
+	}
+
+	// Unmarshal JSON fields
+	if err := json.Unmarshal([]byte(stepsJSON), &chain.Steps); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+	}
+
+	if err := json.Unmarshal([]byte(metadataJSON), &chain.Metadata); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+	}
+
+	return &chain, nil
+}
+
+// ListChains retrieves all chains
+func (s *payloadStore) ListChains(ctx context.Context) ([]*PayloadChain, error) {
+	query := `
+		SELECT
+			id, name, description, stages, metadata, created_at, updated_at
+		FROM attack_chains
+		ORDER BY created_at DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query chains: %w", err)
+	}
+	defer rows.Close()
+
+	var chains []*PayloadChain
+	for rows.Next() {
+		var chain PayloadChain
+		var chainID, stepsJSON, metadataJSON string
+
+		err := rows.Scan(
+			&chainID,
+			&chain.Name,
+			&chain.Description,
+			&stepsJSON,
+			&metadataJSON,
+			&chain.CreatedAt,
+			&chain.UpdatedAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan chain: %w", err)
+		}
+
+		// Parse ID
+		chain.ID, err = types.ParseID(chainID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse chain ID: %w", err)
+		}
+
+		// Unmarshal JSON fields
+		if err := json.Unmarshal([]byte(stepsJSON), &chain.Steps); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal steps: %w", err)
+		}
+
+		if err := json.Unmarshal([]byte(metadataJSON), &chain.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
+		}
+
+		chains = append(chains, &chain)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating chains: %w", err)
+	}
+
+	return chains, nil
+}
+
+// UpdateChain updates an existing chain
+func (s *payloadStore) UpdateChain(ctx context.Context, chain *PayloadChain) error {
+	if chain == nil {
+		return fmt.Errorf("chain cannot be nil")
+	}
+
+	if chain.Name == "" {
+		return fmt.Errorf("chain name is required")
+	}
+
+	// Marshal JSON fields
+	stepsJSON, err := json.Marshal(chain.Steps)
+	if err != nil {
+		return fmt.Errorf("failed to marshal steps: %w", err)
+	}
+
+	metadataJSON, err := json.Marshal(chain.Metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `
+		UPDATE attack_chains SET
+			name = ?,
+			description = ?,
+			stages = ?,
+			metadata = ?,
+			updated_at = ?
+		WHERE id = ?
+	`
+
+	chain.UpdatedAt = time.Now()
+
+	result, err := s.db.ExecContext(ctx, query,
+		chain.Name,
+		chain.Description,
+		string(stepsJSON),
+		string(metadataJSON),
+		chain.UpdatedAt,
+		chain.ID.String(),
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to update chain: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("chain not found: %s", chain.ID)
+	}
+
+	return nil
+}
+
+// DeleteChain deletes a chain by ID
+func (s *payloadStore) DeleteChain(ctx context.Context, id types.ID) error {
+	query := `DELETE FROM attack_chains WHERE id = ?`
+
+	result, err := s.db.ExecContext(ctx, query, id.String())
+	if err != nil {
+		return fmt.Errorf("failed to delete chain: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("chain not found: %s", id)
+	}
+
+	return nil
 }
