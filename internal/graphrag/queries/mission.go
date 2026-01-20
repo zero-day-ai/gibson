@@ -283,6 +283,50 @@ func (mq *MissionQueries) GetNodeDependencies(ctx context.Context, nodeID types.
 	return nodes, nil
 }
 
+// GetMissionNodeDependencies returns all node dependencies for a mission in a single batch query.
+// This avoids N+1 queries by fetching all dependency relationships at once.
+// Returns a map of nodeID -> []dependencyNodeIDs.
+// Nodes with no dependencies will have an empty slice in the map.
+func (mq *MissionQueries) GetMissionNodeDependencies(ctx context.Context, missionID types.ID) (map[string][]string, error) {
+	cypher := `
+		MATCH (n:WorkflowNode)-[:PART_OF]->(m:Mission {id: $mission_id})
+		OPTIONAL MATCH (n)-[:DEPENDS_ON]->(dep:WorkflowNode)
+		RETURN n.id as node_id, collect(dep.id) as dependencies
+	`
+
+	params := map[string]any{
+		"mission_id": missionID.String(),
+	}
+
+	result, err := mq.client.Query(ctx, cypher, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query mission node dependencies: %w", err)
+	}
+
+	// Build dependency map
+	depMap := make(map[string][]string, len(result.Records))
+	for _, record := range result.Records {
+		nodeID, ok := record["node_id"].(string)
+		if !ok {
+			continue
+		}
+
+		// Handle dependencies list
+		deps := []string{}
+		if depList, ok := record["dependencies"].([]any); ok {
+			for _, dep := range depList {
+				if depID, ok := dep.(string); ok && depID != "" {
+					deps = append(deps, depID)
+				}
+			}
+		}
+
+		depMap[nodeID] = deps
+	}
+
+	return depMap, nil
+}
+
 // CreateNodeDependency creates a DEPENDS_ON relationship between two workflow nodes.
 // The relationship direction is: (fromNodeID)-[:DEPENDS_ON]->(toNodeID), meaning
 // fromNodeID depends on toNodeID (fromNodeID must wait for toNodeID to complete).

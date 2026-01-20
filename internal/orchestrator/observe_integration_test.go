@@ -34,7 +34,7 @@ func (m *mockObserverWithInventory) ObserveWithInventory(ctx context.Context, mi
 		},
 		ReadyNodes:     []NodeSummary{},
 		RunningNodes:   []NodeSummary{},
-		CompletedNodes: []NodeSummary{},
+		CompletedNodes: []CompletedNodeSummary{},
 		FailedNodes:    []NodeSummary{},
 		ObservedAt:     time.Now(),
 	}

@@ -142,7 +142,7 @@ func ExampleBuildFullPrompt() {
 			},
 		},
 		RunningNodes:    []orchestrator.NodeSummary{},
-		CompletedNodes:  []orchestrator.NodeSummary{},
+		CompletedNodes:  []orchestrator.CompletedNodeSummary{},
 		FailedNodes:     []orchestrator.NodeSummary{},
 		RecentDecisions: []orchestrator.DecisionSummary{},
 		ResourceConstraints: orchestrator.ResourceConstraints{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/harness/middleware"
@@ -99,11 +100,15 @@ func traceCompletion(
 	// Extract LLM request details
 	var messages []llm.Message
 	var slot string
+	var temperature float64
+	var maxTokens int
 
 	// Try to extract from CompletionRequest type
 	if compReq, ok := req.(*middleware.CompletionRequest); ok {
 		slot = compReq.Slot
 		messages = compReq.Messages
+		// Note: Options are not directly available in CompletionRequest
+		// They would need to be added to the struct or extracted via context
 	}
 
 	// Also try to get messages from context (set by tracing middleware)
@@ -122,8 +127,8 @@ func traceCompletion(
 		slot = middleware.GetSlotName(ctx)
 	}
 
-	// Build prompt string from messages
-	prompt := buildPromptString(messages)
+	// Build full prompt string with complete message details
+	prompt := buildFullPromptString(messages)
 
 	// Extract response details
 	var completion string
@@ -189,6 +194,9 @@ func traceCompletion(
 				"agent_name":    parentLog.AgentName,
 				"finish_reason": finishReason,
 				"duration_ms":   endTime.Sub(startTime).Milliseconds(),
+				"temperature":   temperature,
+				"max_tokens":    maxTokens,
+				"message_count": len(messages),
 			},
 		},
 	}
@@ -312,20 +320,64 @@ func traceToolCall(
 	)
 }
 
-// buildPromptString converts messages to a string representation for Langfuse prompt field.
-func buildPromptString(messages []llm.Message) string {
+// buildFullPromptString converts messages to a comprehensive string representation for Langfuse.
+// This enhanced version includes tool calls, tool call IDs, and clear role-based delimiters
+// to provide complete visibility into agent LLM interactions.
+func buildFullPromptString(messages []llm.Message) string {
 	if len(messages) == 0 {
 		return ""
 	}
 
-	var result string
+	var sb strings.Builder
 	for i, msg := range messages {
 		if i > 0 {
-			result += "\n---\n"
+			sb.WriteString("\n\n---\n\n")
 		}
-		result += fmt.Sprintf("[%s]: %s", msg.Role, msg.Content)
+
+		// Add role prefix in uppercase for clarity
+		role := strings.ToUpper(string(msg.Role))
+		sb.WriteString(fmt.Sprintf("[%s]:\n%s", role, msg.Content))
+
+		// Include tool calls if present
+		if len(msg.ToolCalls) > 0 {
+			toolCallsJSON, err := json.Marshal(msg.ToolCalls)
+			if err == nil {
+				sb.WriteString(fmt.Sprintf("\n[Tool Calls]: %s", string(toolCallsJSON)))
+			}
+		}
+
+		// Include tool call ID if present
+		if msg.ToolCallID != "" {
+			sb.WriteString(fmt.Sprintf("\n[Tool Call ID]: %s", msg.ToolCallID))
+		}
 	}
-	return result
+	return sb.String()
+}
+
+// extractCompletionOptions extracts temperature and maxTokens from completion options.
+// This handles the various option formats that may be passed to LLM completion calls.
+// Returns zero values (0.0, 0) if extraction fails or options are not in expected format.
+func extractCompletionOptions(opts any) (temperature float64, maxTokens int) {
+	// Default to zero values
+	temperature = 0.0
+	maxTokens = 0
+
+	// Try to extract from slice of options
+	if optsSlice, ok := opts.([]any); ok {
+		for _, opt := range optsSlice {
+			// Try map[string]any format
+			if optMap, ok := opt.(map[string]any); ok {
+				if temp, ok := optMap["temperature"].(float64); ok {
+					temperature = temp
+				}
+				if tokens, ok := optMap["max_tokens"].(int); ok {
+					maxTokens = tokens
+				}
+			}
+		}
+	}
+
+	return temperature, maxTokens
 }
 
 // determineLevel returns the Langfuse level based on error presence.

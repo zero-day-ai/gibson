@@ -184,6 +184,130 @@ func BuildObservationPrompt(state *ObservationState) string {
 		sb.WriteString("\n")
 	}
 
+	// Pending nodes with dependencies
+	if len(state.PendingNodes) > 0 {
+		sb.WriteString("## Pending Nodes (Waiting for Dependencies)\n")
+		sb.WriteString("These nodes are blocked until their dependencies complete:\n\n")
+		for _, node := range state.PendingNodes {
+			sb.WriteString(fmt.Sprintf("- **%s** (%s)\n", node.ID, node.Type))
+			if node.Name != "" {
+				sb.WriteString(fmt.Sprintf("  - Name: %s\n", node.Name))
+			}
+			if node.AgentName != "" {
+				sb.WriteString(fmt.Sprintf("  - Agent: %s\n", node.AgentName))
+			}
+			if node.ToolName != "" {
+				sb.WriteString(fmt.Sprintf("  - Tool: %s\n", node.ToolName))
+			}
+			if node.Description != "" {
+				desc := truncate(node.Description, 200)
+				sb.WriteString(fmt.Sprintf("  - Description: %s\n", desc))
+			}
+
+			// Show blocking dependencies
+			if len(node.BlockedByDetails) > 0 {
+				sb.WriteString("  - Blocked by:\n")
+				for _, blocker := range node.BlockedByDetails {
+					sb.WriteString(fmt.Sprintf("    - %s (%s): %s\n", blocker.Name, blocker.ID, blocker.Status))
+				}
+			} else if len(node.BlockedBy) > 0 {
+				// Fallback if details not available
+				sb.WriteString(fmt.Sprintf("  - Blocked by: %v\n", node.BlockedBy))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	// Completed nodes with outputs
+	if len(state.CompletedNodes) > 0 {
+		sb.WriteString("## Completed Nodes\n")
+		sb.WriteString("These nodes have finished execution:\n\n")
+
+		// Limit to 10 most recent if there are many
+		completedToShow := state.CompletedNodes
+		if len(completedToShow) > 10 {
+			completedToShow = completedToShow[len(completedToShow)-10:]
+			sb.WriteString(fmt.Sprintf("(Showing 10 most recent of %d completed nodes)\n\n", len(state.CompletedNodes)))
+		}
+
+		for _, node := range completedToShow {
+			sb.WriteString(fmt.Sprintf("- **%s** (%s", node.ID, node.Type))
+			if node.AgentName != "" {
+				sb.WriteString(fmt.Sprintf(": %s", node.AgentName))
+			} else if node.ToolName != "" {
+				sb.WriteString(fmt.Sprintf(": %s", node.ToolName))
+			}
+			sb.WriteString(")")
+
+			if node.Duration != "" {
+				sb.WriteString(fmt.Sprintf(" - %s", node.Duration))
+			}
+			sb.WriteString("\n")
+
+			if node.Name != "" {
+				sb.WriteString(fmt.Sprintf("  - Name: %s\n", node.Name))
+			}
+
+			if node.OutputSummary != "" {
+				sb.WriteString(fmt.Sprintf("  - Output: %s\n", node.OutputSummary))
+			}
+
+			if node.FindingsCount > 0 {
+				sb.WriteString(fmt.Sprintf("  - Findings: %d", node.FindingsCount))
+				if len(node.FindingsSeverity) > 0 {
+					sb.WriteString(" (")
+					first := true
+					for severity, count := range node.FindingsSeverity {
+						if !first {
+							sb.WriteString(", ")
+						}
+						sb.WriteString(fmt.Sprintf("%s: %d", severity, count))
+						first = false
+					}
+					sb.WriteString(")")
+				}
+				sb.WriteString("\n")
+			}
+
+			sb.WriteString("\n")
+		}
+	}
+
+	// Workflow structure
+	if state.WorkflowDAG != nil {
+		dag := state.WorkflowDAG
+		sb.WriteString("## Workflow Structure\n")
+		sb.WriteString(fmt.Sprintf("Total nodes: %d\n", dag.TotalNodes))
+
+		if len(dag.EntryPoints) > 0 {
+			sb.WriteString(fmt.Sprintf("Entry points (no dependencies): %v\n", dag.EntryPoints))
+		}
+
+		if len(dag.ExitPoints) > 0 {
+			sb.WriteString(fmt.Sprintf("Exit points (no dependents): %v\n", dag.ExitPoints))
+		}
+
+		if dag.CriticalPathLength > 0 {
+			sb.WriteString(fmt.Sprintf("Critical path length: %d nodes\n", dag.CriticalPathLength))
+		}
+
+		// Show DAG edges if not too many
+		if len(dag.Edges) > 0 && len(dag.Edges) <= 20 {
+			sb.WriteString("\nDependency graph:\n")
+			for nodeID, deps := range dag.Edges {
+				if len(deps) > 0 {
+					for _, depID := range deps {
+						sb.WriteString(fmt.Sprintf("  %s -> %s\n", nodeID, depID))
+					}
+				}
+			}
+		} else if len(dag.Edges) > 20 {
+			sb.WriteString(fmt.Sprintf("\n(Dependency graph has %d edges - too large to display)\n", len(dag.Edges)))
+		}
+
+		sb.WriteString("\n")
+	}
+
 	// Failed nodes
 	if len(state.FailedNodes) > 0 {
 		sb.WriteString("## Failed Nodes\n")

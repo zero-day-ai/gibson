@@ -867,7 +867,7 @@ func TestBuildPromptString(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildPromptString(tt.messages)
+			result := buildFullPromptString(tt.messages)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1029,4 +1029,263 @@ func TestLangfuseTracingMiddleware_ToolCallOutputPreservation(t *testing.T) {
 	resultJSON, _ := json.Marshal(resultOutput)
 	expectedJSON, _ := json.Marshal(complexOutput)
 	assert.JSONEq(t, string(expectedJSON), string(resultJSON))
+}
+
+// TestMiddleware_BuildFullPromptString tests the buildFullPromptString function with various message types.
+func TestMiddleware_BuildFullPromptString(t *testing.T) {
+	tests := []struct {
+		name     string
+		messages []llm.Message
+		expected []string // Strings that should be in output
+	}{
+		{
+			name:     "empty messages",
+			messages: []llm.Message{},
+			expected: []string{},
+		},
+		{
+			name: "messages with role prefixes",
+			messages: []llm.Message{
+				{Role: llm.RoleSystem, Content: "You are a helpful assistant"},
+				{Role: llm.RoleUser, Content: "Hello"},
+				{Role: llm.RoleAssistant, Content: "Hi there"},
+			},
+			expected: []string{
+				"[SYSTEM]:", "You are a helpful assistant",
+				"[USER]:", "Hello",
+				"[ASSISTANT]:", "Hi there",
+				"---",
+			},
+		},
+		{
+			name: "message with tool calls",
+			messages: []llm.Message{
+				{
+					Role:    llm.RoleAssistant,
+					Content: "Let me check that",
+					ToolCalls: []llm.ToolCall{
+						{ID: "call-1", Name: "get_weather", Arguments: `{"city":"Boston"}`},
+					},
+				},
+			},
+			expected: []string{
+				"[ASSISTANT]:", "Let me check that",
+				"[Tool Calls]:",
+				"get_weather",
+			},
+		},
+		{
+			name: "message with tool call ID",
+			messages: []llm.Message{
+				{
+					Role:       llm.RoleTool,
+					Content:    `{"temperature": 72}`,
+					ToolCallID: "call-1",
+				},
+			},
+			expected: []string{
+				"[TOOL]:",
+				"[Tool Call ID]:", "call-1",
+			},
+		},
+		{
+			name: "message with delimiter between messages",
+			messages: []llm.Message{
+				{Role: llm.RoleUser, Content: "First message"},
+				{Role: llm.RoleAssistant, Content: "Second message"},
+			},
+			expected: []string{
+				"[USER]:", "First message",
+				"\n\n---\n\n",
+				"[ASSISTANT]:", "Second message",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildFullPromptString(tt.messages)
+
+			for _, expected := range tt.expected {
+				assert.Contains(t, result, expected, "Output should contain expected string")
+			}
+		})
+	}
+}
+
+// TestMiddleware_ExtractCompletionOptions tests the extractCompletionOptions function.
+func TestMiddleware_ExtractCompletionOptions(t *testing.T) {
+	tests := []struct {
+		name              string
+		opts              any
+		expectedTemp      float64
+		expectedMaxTokens int
+	}{
+		{
+			name:              "nil options",
+			opts:              nil,
+			expectedTemp:      0.0,
+			expectedMaxTokens: 0,
+		},
+		{
+			name:              "empty slice",
+			opts:              []any{},
+			expectedTemp:      0.0,
+			expectedMaxTokens: 0,
+		},
+		{
+			name: "valid options with temperature and max_tokens",
+			opts: []any{
+				map[string]any{
+					"temperature": 0.7,
+					"max_tokens":  2000,
+				},
+			},
+			expectedTemp:      0.7,
+			expectedMaxTokens: 2000,
+		},
+		{
+			name: "only temperature",
+			opts: []any{
+				map[string]any{
+					"temperature": 0.5,
+				},
+			},
+			expectedTemp:      0.5,
+			expectedMaxTokens: 0,
+		},
+		{
+			name: "only max_tokens",
+			opts: []any{
+				map[string]any{
+					"max_tokens": 1500,
+				},
+			},
+			expectedTemp:      0.0,
+			expectedMaxTokens: 1500,
+		},
+		{
+			name: "multiple options - last wins",
+			opts: []any{
+				map[string]any{"temperature": 0.3},
+				map[string]any{"temperature": 0.8, "max_tokens": 3000},
+			},
+			expectedTemp:      0.8,
+			expectedMaxTokens: 3000,
+		},
+		{
+			name:              "wrong type - not a slice",
+			opts:              "invalid",
+			expectedTemp:      0.0,
+			expectedMaxTokens: 0,
+		},
+		{
+			name: "wrong value types in map",
+			opts: []any{
+				map[string]any{
+					"temperature": "not-a-float",
+					"max_tokens":  "not-an-int",
+				},
+			},
+			expectedTemp:      0.0,
+			expectedMaxTokens: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			temp, maxTokens := extractCompletionOptions(tt.opts)
+			assert.Equal(t, tt.expectedTemp, temp, "Temperature should match")
+			assert.Equal(t, tt.expectedMaxTokens, maxTokens, "MaxTokens should match")
+		})
+	}
+}
+
+// TestMiddleware_TracesFullPrompt tests end-to-end full prompt tracing in middleware.
+func TestMiddleware_TracesFullPrompt(t *testing.T) {
+	mockTracer := newMockTracer()
+	executionID := types.NewID()
+
+	parentLog := &AgentExecutionLog{
+		Execution: &schema.AgentExecution{
+			ID:        executionID,
+			StartedAt: time.Now(),
+		},
+		AgentName: "test-agent",
+		SpanID:    fmt.Sprintf("agent-exec-%s", executionID.String()),
+	}
+
+	mw := LangfuseTracingMiddleware(mockTracer, parentLog)
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "You are a security testing assistant"},
+		{Role: llm.RoleUser, Content: "Scan the target for vulnerabilities"},
+	}
+
+	mockOp := func(ctx context.Context, req any) (any, error) {
+		return &llm.CompletionResponse{
+			ID:    "test-completion",
+			Model: "gpt-4",
+			Message: llm.Message{
+				Role:    llm.RoleAssistant,
+				Content: "Starting vulnerability scan",
+			},
+			Usage: llm.CompletionTokenUsage{
+				PromptTokens:     150,
+				CompletionTokens: 75,
+				TotalTokens:      225,
+			},
+			FinishReason: llm.FinishReasonStop,
+		}, nil
+	}
+
+	wrappedOp := mw(mockOp)
+	ctx := middleware.WithOperationType(context.Background(), middleware.OpComplete)
+
+	req := &middleware.CompletionRequest{
+		Slot:     "primary",
+		Messages: messages,
+	}
+
+	result, err := wrappedOp(ctx, req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Wait for async trace
+	time.Sleep(100 * time.Millisecond)
+
+	events := mockTracer.getEvents()
+	require.Len(t, events, 1, "Should have one trace event")
+
+	event := events[0]
+	assert.Equal(t, "generation-create", event["type"])
+
+	body, ok := event["body"].(map[string]any)
+	require.True(t, ok, "Event body should be a map")
+
+	// Verify full prompt is in input field
+	input, ok := body["input"].(string)
+	require.True(t, ok, "Input should be a string")
+	assert.Contains(t, input, "[SYSTEM]:", "Input should contain system role prefix")
+	assert.Contains(t, input, "You are a security testing assistant", "Input should contain system prompt")
+	assert.Contains(t, input, "[USER]:", "Input should contain user role prefix")
+	assert.Contains(t, input, "Scan the target for vulnerabilities", "Input should contain user prompt")
+	assert.Contains(t, input, "---", "Input should contain message delimiter")
+
+	// Verify metadata contains request config
+	metadata, ok := body["metadata"].(map[string]any)
+	require.True(t, ok, "Metadata should be a map")
+
+	// Check that message_count is present
+	messageCount, ok := metadata["message_count"].(int)
+	require.True(t, ok, "message_count should be an int")
+	assert.Equal(t, 2, messageCount, "Should have 2 messages")
+
+	// Verify slot is captured
+	assert.Equal(t, "primary", metadata["slot"])
+
+	// Verify model and tokens are captured
+	assert.Equal(t, "gpt-4", body["model"])
+	assert.Equal(t, 150, body["promptTokens"])
+	assert.Equal(t, 75, body["completionTokens"])
 }

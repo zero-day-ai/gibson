@@ -35,7 +35,6 @@ func InitTaxonomy(customTaxonomyPath string) error {
 	log.Printf("  Node types: %d", len(globalTaxonomyRegistry.NodeTypes()))
 	log.Printf("  Relationships: %d", len(globalTaxonomyRegistry.RelationshipTypes()))
 	log.Printf("  MITRE techniques: %d", len(globalTaxonomyRegistry.Techniques("mitre")))
-	log.Printf("  Arcanum techniques: %d", len(globalTaxonomyRegistry.Techniques("arcanum")))
 
 	return nil
 }

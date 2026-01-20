@@ -1083,3 +1083,131 @@ func TestMissionQueries_CreateWorkflowNode_DynamicNode(t *testing.T) {
 	err = mq.CreateWorkflowNode(ctx, node)
 	require.NoError(t, err)
 }
+
+// TestMissionQueries_GetMissionNodeDependencies tests batch fetching of node dependencies.
+func TestMissionQueries_GetMissionNodeDependencies(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	missionID := types.NewID()
+	node1ID := types.NewID()
+	node2ID := types.NewID()
+	node3ID := types.NewID()
+
+	// Mock dependency data:
+	// node1 -> no dependencies (entry point)
+	// node2 -> depends on node1
+	// node3 -> depends on node1 and node2
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{
+				"node_id":      node1ID.String(),
+				"dependencies": []any{}, // No dependencies
+			},
+			{
+				"node_id":      node2ID.String(),
+				"dependencies": []any{node1ID.String()},
+			},
+			{
+				"node_id":      node3ID.String(),
+				"dependencies": []any{node1ID.String(), node2ID.String()},
+			},
+		},
+	})
+
+	depMap, err := mq.GetMissionNodeDependencies(ctx, missionID)
+	require.NoError(t, err)
+	require.NotNil(t, depMap)
+
+	// Verify dependency map structure
+	assert.Len(t, depMap, 3)
+	assert.Empty(t, depMap[node1ID.String()], "node1 should have no dependencies")
+	assert.Equal(t, []string{node1ID.String()}, depMap[node2ID.String()])
+	assert.ElementsMatch(t, []string{node1ID.String(), node2ID.String()}, depMap[node3ID.String()])
+}
+
+// TestMissionQueries_GetMissionNodeDependencies_NoDependencies tests mission with no dependencies.
+func TestMissionQueries_GetMissionNodeDependencies_NoDependencies(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	missionID := types.NewID()
+	node1ID := types.NewID()
+	node2ID := types.NewID()
+
+	// All nodes have no dependencies (parallel execution)
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{
+				"node_id":      node1ID.String(),
+				"dependencies": []any{},
+			},
+			{
+				"node_id":      node2ID.String(),
+				"dependencies": []any{},
+			},
+		},
+	})
+
+	depMap, err := mq.GetMissionNodeDependencies(ctx, missionID)
+	require.NoError(t, err)
+	require.NotNil(t, depMap)
+
+	assert.Len(t, depMap, 2)
+	assert.Empty(t, depMap[node1ID.String()])
+	assert.Empty(t, depMap[node2ID.String()])
+}
+
+// TestMissionQueries_GetMissionNodeDependencies_EmptyMission tests mission with no nodes.
+func TestMissionQueries_GetMissionNodeDependencies_EmptyMission(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	missionID := types.NewID()
+
+	// Mock empty result - no nodes in mission
+	mock.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{},
+	})
+
+	depMap, err := mq.GetMissionNodeDependencies(ctx, missionID)
+	require.NoError(t, err)
+	require.NotNil(t, depMap)
+	assert.Empty(t, depMap)
+}
+
+// TestMissionQueries_GetMissionNodeDependencies_QueryError tests error handling.
+func TestMissionQueries_GetMissionNodeDependencies_QueryError(t *testing.T) {
+	mock := graph.NewMockGraphClient()
+	ctx := context.Background()
+
+	err := mock.Connect(ctx)
+	require.NoError(t, err)
+	defer mock.Close(ctx)
+
+	mq := NewMissionQueries(mock)
+	missionID := types.NewID()
+
+	// Mock query error
+	mock.SetQueryError(assert.AnError)
+
+	depMap, err := mq.GetMissionNodeDependencies(ctx, missionID)
+	require.Error(t, err)
+	assert.Nil(t, depMap)
+	assert.Contains(t, err.Error(), "failed to query mission node dependencies")
+}

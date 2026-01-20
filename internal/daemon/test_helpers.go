@@ -192,6 +192,10 @@ func (m *mockAgentHarness) CompleteStructuredAny(ctx context.Context, slot strin
 	return nil, fmt.Errorf("not implemented in mock")
 }
 
+func (m *mockAgentHarness) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (*harness.StructuredCompletionResult, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
 func (m *mockAgentHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
 	return nil, fmt.Errorf("not implemented in mock")
 }

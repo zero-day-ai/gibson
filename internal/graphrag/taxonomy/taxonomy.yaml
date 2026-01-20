@@ -28,7 +28,6 @@ includes:
 
   # Attack technique definitions
   - "techniques/mitre_enterprise.yaml"
-  - "techniques/arcanum_pi.yaml"
 
   # Target type definitions
   - "targets/targets.yaml"

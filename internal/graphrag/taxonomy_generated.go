@@ -15,14 +15,10 @@ const (
 	NodeTypeAgentRun = "agent_run"
 	// API - Web API service with multiple endpoints
 	NodeTypeApi = "api"
-	// ASN - Autonomous System Number information for network routing
-	NodeTypeASN = "asn"
 	// Certificate - TLS/SSL certificate discovered on a host or service
 	NodeTypeCertificate = "certificate"
 	// CloudAsset - Cloud infrastructure resource (AWS, GCP, Azure)
 	NodeTypeCloudAsset = "cloud_asset"
-	// DNSRecord - DNS record entry (A, AAAA, CNAME, MX, TXT, etc.)
-	NodeTypeDNSRecord = "dns_record"
 	// Domain - Root domain entity representing a registered domain name
 	NodeTypeDomain = "domain"
 	// Endpoint - Web endpoint or URL discovered through crawling or fuzzing
@@ -49,7 +45,7 @@ const (
 	NodeTypeSubdomain = "subdomain"
 	// Tactic - Attack tactic representing a high-level adversary goal
 	NodeTypeTactic = "tactic"
-	// Technique - Attack technique from MITRE ATT&CK, Arcanum PI, or custom taxonomy
+	// Technique - Attack technique from MITRE ATT&CK or custom taxonomy
 	NodeTypeTechnique = "technique"
 	// Technology - Software, framework, or technology stack component detected on an asset
 	NodeTypeTechnology = "technology"
@@ -82,8 +78,6 @@ const (
 	RelTypeHasPort = "HAS_PORT"
 	// HAS_SUBDOMAIN - Domain has a subdomain
 	RelTypeHasSubdomain = "HAS_SUBDOMAIN"
-	// HOSTED_BY - Host or service is hosted by an ASN or cloud provider
-	RelTypeHostedBy = "HOSTED_BY"
 	// HOSTS - Cloud asset hosts a service or host instance
 	RelTypeHosts = "HOSTS"
 	// LEADS_TO - Finding leads to another finding in an attack chain
@@ -110,8 +104,6 @@ const (
 	RelTypeUsesTechnique = "USES_TECHNIQUE"
 	// USES_TECHNOLOGY - Service or endpoint uses a specific technology or framework
 	RelTypeUsesTechnology = "USES_TECHNOLOGY"
-	// VULNERABLE_TO - Asset is vulnerable to a specific CVE or security issue
-	RelTypeVulnerableTo = "VULNERABLE_TO"
 )
 
 // MITRE ATT&CK Technique ID constants
@@ -162,44 +154,6 @@ const (
 	TechniqueT1573 = "T1573"
 )
 
-// Arcanum Prompt Injection Technique ID constants
-const (
-	// Encoding Obfuscation - Using alternative encodings to hide malicious intent
-	TechniqueARCE001 = "ARC-E001"
-	// Language Switching - Using non-English languages to evade language-specific filters
-	TechniqueARCE002 = "ARC-E002"
-	// Token Smuggling - Hiding instructions within tokenization boundaries or exploiting tokenizer behavior
-	TechniqueARCE003 = "ARC-E003"
-	// Synonym Substitution - Using synonyms or paraphrasing to bypass keyword-based filters
-	TechniqueARCE004 = "ARC-E004"
-	// System Manipulation - Intent to manipulate the system's core functionality or behavior
-	TechniqueARCI001 = "ARC-I001"
-	// Information Extraction - Intent to extract sensitive information or system details
-	TechniqueARCI002 = "ARC-I002"
-	// Jailbreaking - Intent to bypass safety guardrails and content policies
-	TechniqueARCI003 = "ARC-I003"
-	// Framing - Using specific context framing to manipulate model behavior
-	TechniqueARCT001 = "ARC-T001"
-	// Narrative Smuggling - Embedding malicious instructions within seemingly benign narratives
-	TechniqueARCT002 = "ARC-T002"
-	// Instruction Hierarchy Exploitation - Exploiting instruction priority or precedence to override system directives
-	TechniqueARCT003 = "ARC-T003"
-	// Payload Splitting - Breaking malicious instructions across multiple interactions to evade detection
-	TechniqueARCT004 = "ARC-T004"
-	// Delimiter Confusion - Using delimiters or special characters to confuse parsing logic
-	TechniqueARCT005 = "ARC-T005"
-	// Prompt Injection via External Content - Injecting malicious prompts through external data sources (documents, URLs, databases)
-	TechniqueARCT006 = "ARC-T006"
-	// Direct User Input - Malicious prompts provided directly through user interface
-	TechniqueARCV001 = "ARC-V001"
-	// Retrieval Augmentation Poisoning - Injecting malicious prompts through RAG document stores or knowledge bases
-	TechniqueARCV002 = "ARC-V002"
-	// Tool/Function Call Injection - Injecting malicious prompts through tool outputs or function return values
-	TechniqueARCV003 = "ARC-V003"
-	// Image-based Injection - Embedding malicious instructions in images for vision-enabled models
-	TechniqueARCV004 = "ARC-V004"
-)
-
 // Common property name constants
 const (
 	PropName        = "name"
@@ -215,52 +169,4 @@ const (
 	PropMethod      = "method"
 	PropStatusCode  = "status_code"
 	PropTimestamp   = "timestamp"
-
-	// Service properties
-	PropServiceName = "service_name"
-	PropProduct     = "product"
-	PropCPE         = "cpe"
-
-	// Operating System properties
-	PropOSAccuracy = "os_accuracy"
-	PropOSFamily   = "os_family"
-	PropOSVendor   = "os_vendor"
-
-	// HTTP properties
-	PropFinalURL        = "final_url"
-	PropRedirectChain   = "redirect_chain"
-	PropServer          = "server"
-	PropXPoweredBy      = "x_powered_by"
-	PropResponseHeaders = "response_headers"
-
-	// Certificate properties
-	PropCertIssuer  = "cert_issuer"
-	PropCertSubject = "cert_subject"
-	PropCertExpiry  = "cert_expiry"
-	PropCertSANs    = "cert_sans"
-
-	// Vulnerability properties
-	PropCVEID       = "cve_id"
-	PropCWEID       = "cwe_id"
-	PropCVSSScore   = "cvss_score"
-	PropCVSSMetrics = "cvss_metrics"
-	PropRemediation = "remediation"
-	PropReferences  = "references"
-	PropMatcherName = "matcher_name"
-
-	// DNS properties
-	PropRecordType = "record_type"
-	PropTTL        = "ttl"
-	PropPriority   = "priority"
-
-	// ASN properties
-	PropASNNumber      = "asn_number"
-	PropASNDescription = "asn_description"
-	PropASNCountry     = "asn_country"
-
-	// Discovery properties
-	PropSources     = "sources"
-	PropIPAddresses = "ip_addresses"
-	PropBanner      = "banner"
-	PropScripts     = "scripts"
 )

@@ -14,9 +14,10 @@ import (
 
 // mockLLMClient is a test double for LLMClient.
 type mockLLMClient struct {
-	completeFunc           func(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (*llm.CompletionResponse, error)
-	completeStructuredFunc func(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error)
-	callCount              int
+	completeFunc                func(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (*llm.CompletionResponse, error)
+	completeStructuredFunc      func(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error)
+	completeStructuredUsageFunc func(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (*StructuredCompletionResult, error)
+	callCount                   int
 }
 
 func (m *mockLLMClient) Complete(ctx context.Context, slot string, messages []llm.Message, opts ...CompletionOption) (*llm.CompletionResponse, error) {
@@ -31,6 +32,29 @@ func (m *mockLLMClient) CompleteStructuredAny(ctx context.Context, slot string, 
 	m.callCount++
 	if m.completeStructuredFunc != nil {
 		return m.completeStructuredFunc(ctx, slot, messages, schemaType, opts...)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockLLMClient) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (*StructuredCompletionResult, error) {
+	m.callCount++
+	if m.completeStructuredUsageFunc != nil {
+		return m.completeStructuredUsageFunc(ctx, slot, messages, schemaType, opts...)
+	}
+	// Fall back to the old func and wrap the result
+	if m.completeStructuredFunc != nil {
+		result, err := m.completeStructuredFunc(ctx, slot, messages, schemaType, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return &StructuredCompletionResult{
+			Result:           result,
+			Model:            "mock-model",
+			RawJSON:          "{}",
+			PromptTokens:     100,
+			CompletionTokens: 50,
+			TotalTokens:      150,
+		}, nil
 	}
 	return nil, errors.New("not implemented")
 }
@@ -74,14 +98,16 @@ func createTestObservationState() *ObservationState {
 			},
 		},
 		RunningNodes: []NodeSummary{},
-		CompletedNodes: []NodeSummary{
+		CompletedNodes: []CompletedNodeSummary{
 			{
-				ID:          "recon",
-				Name:        "Reconnaissance",
-				Type:        "agent",
-				Description: "Initial reconnaissance",
-				AgentName:   "reconnaissance",
-				Status:      "completed",
+				NodeSummary: NodeSummary{
+					ID:          "recon",
+					Name:        "Reconnaissance",
+					Type:        "agent",
+					Description: "Initial reconnaissance",
+					AgentName:   "reconnaissance",
+					Status:      "completed",
+				},
 			},
 		},
 		FailedNodes: []NodeSummary{},
@@ -658,6 +684,63 @@ func TestIsRetryableError(t *testing.T) {
 			assert.Equal(t, tt.retryable, result)
 		})
 	}
+}
+
+func TestThinkResult_ContainsFullPrompt(t *testing.T) {
+	// Create a mock LLM client that returns a valid decision
+	validDecision := &Decision{
+		Reasoning:    "Should execute the recon agent to gather information",
+		Action:       ActionExecuteAgent,
+		TargetNodeID: "exploit-1",
+		Confidence:   0.9,
+	}
+
+	client := &mockLLMClient{
+		completeStructuredUsageFunc: func(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (*StructuredCompletionResult, error) {
+			return &StructuredCompletionResult{
+				Result:           validDecision,
+				Model:            "gpt-4",
+				RawJSON:          `{"reasoning":"test","action":"execute_agent","target_node_id":"exploit-1","confidence":0.9}`,
+				PromptTokens:     500,
+				CompletionTokens: 150,
+				TotalTokens:      650,
+			}, nil
+		},
+	}
+
+	thinker := NewThinker(client)
+	state := createTestObservationState()
+
+	result, err := thinker.Think(context.Background(), state)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Verify SystemPrompt is populated
+	assert.NotEmpty(t, result.SystemPrompt, "SystemPrompt should be populated")
+	assert.Contains(t, result.SystemPrompt, "Orchestrator", "SystemPrompt should mention orchestrator role")
+
+	// Verify UserPrompt is populated and contains observation state information
+	assert.NotEmpty(t, result.UserPrompt, "UserPrompt should be populated")
+	assert.Contains(t, result.UserPrompt, state.MissionInfo.Name, "UserPrompt should contain mission name")
+	assert.Contains(t, result.UserPrompt, state.MissionInfo.Objective, "UserPrompt should contain mission objective")
+
+	// Verify Messages array is populated with system and user messages
+	assert.Len(t, result.Messages, 2, "Messages should contain 2 messages (system + user)")
+	assert.Equal(t, llm.RoleSystem, result.Messages[0].Role, "First message should be system role")
+	assert.Equal(t, llm.RoleUser, result.Messages[1].Role, "Second message should be user role")
+	assert.Equal(t, result.SystemPrompt, result.Messages[0].Content, "First message content should match SystemPrompt")
+	assert.Equal(t, result.UserPrompt, result.Messages[1].Content, "Second message content should match UserPrompt")
+
+	// Verify RequestConfig is populated
+	assert.Equal(t, "primary", result.RequestConfig.SlotName, "RequestConfig should have default slot name")
+	assert.Equal(t, 0.2, result.RequestConfig.Temperature, "RequestConfig should have default temperature")
+	assert.Equal(t, 2000, result.RequestConfig.MaxTokens, "RequestConfig should have max tokens")
+
+	// Verify decision is correct
+	assert.NotNil(t, result.Decision)
+	assert.Equal(t, ActionExecuteAgent, result.Decision.Action)
+	assert.Equal(t, "exploit-1", result.Decision.TargetNodeID)
 }
 
 // Benchmark tests

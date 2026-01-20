@@ -1,6 +1,6 @@
 # Attack Node Types
 # These node types represent attack techniques and tactics from multiple taxonomies
-# (MITRE ATT&CK, Arcanum PI) that can be linked to findings.
+# (MITRE ATT&CK, custom) that can be linked to findings.
 
 node_types:
   # Technique represents an attack technique from any taxonomy
@@ -8,13 +8,13 @@ node_types:
     name: Technique
     type: technique
     category: attack
-    description: "Attack technique from MITRE ATT&CK, Arcanum PI, or custom taxonomy"
+    description: "Attack technique from MITRE ATT&CK or custom taxonomy"
     id_template: "technique:{technique_id}"
     properties:
       - name: technique_id
         type: string
         required: true
-        description: "Technique identifier (e.g., 'T1190' for MITRE, 'ARC-T001' for Arcanum)"
+        description: "Technique identifier (e.g., 'T1190' for MITRE)"
       - name: name
         type: string
         required: true
@@ -23,7 +23,7 @@ node_types:
         type: string
         required: true
         description: "Source taxonomy"
-        enum: ["mitre", "arcanum", "custom"]
+        enum: ["mitre", "custom"]
       - name: tactic
         type: string
         required: false
@@ -43,7 +43,7 @@ node_types:
       - name: mitre_mapping
         type: "[]string"
         required: false
-        description: "Cross-reference to MITRE technique IDs (for Arcanum techniques)"
+        description: "Cross-reference to MITRE technique IDs"
       - name: detection_strategies
         type: "[]string"
         required: false
@@ -65,12 +65,6 @@ node_types:
         platforms: ["Windows", "Linux", "macOS", "Network"]
         detection_strategies: ["Monitor application logs for exploit attempts", "Web application firewalls"]
         url: "https://attack.mitre.org/techniques/T1190/"
-      - technique_id: "ARC-T001"
-        name: "Framing"
-        taxonomy: "arcanum"
-        description: "Using specific context framing to manipulate model behavior"
-        examples: ["Scenario-based approaches", "Role-play contexts", "False authority frames"]
-        mitre_mapping: []
 
   # Tactic represents an attack tactic (high-level goal)
   - id: node.attack.tactic
@@ -92,7 +86,7 @@ node_types:
         type: string
         required: true
         description: "Source taxonomy"
-        enum: ["mitre", "arcanum", "custom"]
+        enum: ["mitre", "custom"]
       - name: description
         type: string
         required: false

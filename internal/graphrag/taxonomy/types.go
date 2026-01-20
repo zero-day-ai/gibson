@@ -51,18 +51,18 @@ type RelationshipTypeDefinition struct {
 	Bidirectional bool                 `yaml:"bidirectional"`        // Whether relationship should be created in both directions
 }
 
-// TechniqueDefinition defines an attack technique (MITRE ATT&CK or Arcanum PI).
+// TechniqueDefinition defines an attack technique (MITRE ATT&CK or custom).
 // Techniques can be mapped to findings to track attack patterns.
 type TechniqueDefinition struct {
-	TechniqueID         string   `yaml:"technique_id"`                   // e.g., "T1190" or "ARC-T001"
+	TechniqueID         string   `yaml:"technique_id"`                   // e.g., "T1190"
 	Name                string   `yaml:"name"`                           // Technique name
-	Taxonomy            string   `yaml:"taxonomy"`                       // "mitre" or "arcanum"
-	Category            string   `yaml:"category"`                       // e.g., "initial_access" or "attack_technique"
+	Taxonomy            string   `yaml:"taxonomy"`                       // "mitre" or "custom"
+	Category            string   `yaml:"category"`                       // e.g., "initial_access"
 	Description         string   `yaml:"description"`                    // Detailed description
 	Tactic              string   `yaml:"tactic,omitempty"`               // For MITRE (e.g., "Initial Access")
 	Platforms           []string `yaml:"platforms,omitempty"`            // Applicable platforms (e.g., ["Windows", "Linux"])
 	Examples            []string `yaml:"examples,omitempty"`             // Example applications
-	MITREMapping        []string `yaml:"mitre_mapping,omitempty"`        // For Arcanum cross-reference to MITRE
+	MITREMapping        []string `yaml:"mitre_mapping,omitempty"`        // Cross-reference to MITRE technique IDs
 	DetectionStrategies []string `yaml:"detection_strategies,omitempty"` // How to detect this technique
 }
 

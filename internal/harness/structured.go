@@ -1011,6 +1011,188 @@ func (h *DefaultAgentHarness) CompleteStructured(
 	return h.CompleteStructuredAny(ctx, slot, messages, schemaType, opts...)
 }
 
+// CompleteStructuredAnyWithUsage performs structured completion and returns token usage.
+// This method is identical to CompleteStructuredAny but returns a StructuredCompletionResult
+// containing the parsed result, model name, raw JSON, and token usage information.
+//
+// This is useful for orchestration systems that need to track token usage for cost
+// accounting and observability (e.g., Langfuse integration).
+func (h *DefaultAgentHarness) CompleteStructuredAnyWithUsage(
+	ctx context.Context,
+	slot string,
+	messages []llm.Message,
+	schemaType any,
+	opts ...CompletionOption,
+) (*StructuredCompletionResult, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.CompleteStructuredAnyWithUsage")
+	defer span.End()
+
+	var sdkSchema *types.JSONSchema
+	var typeName string
+	var localType reflect.Type
+
+	// Check if schemaType is already a map (JSON schema passed directly from callback/remote agent)
+	if schemaMap, ok := schemaType.(map[string]any); ok {
+		typeName = "RemoteSchema"
+		if name, ok := schemaMap["name"].(string); ok && name != "" {
+			typeName = name
+		}
+		sdkSchema = mapToJSONSchema(schemaMap)
+	} else {
+		t := reflect.TypeOf(schemaType)
+		if t == nil {
+			return nil, fmt.Errorf("schema type cannot be nil")
+		}
+		if t.Kind() == reflect.Ptr {
+			t = t.Elem()
+		}
+		localType = t
+		jsonSchema := schemaFromReflectType(t)
+		typeName = t.Name()
+		if typeName == "" {
+			typeName = "AnonymousType"
+		}
+		sdkSchema = convertToSDKSchema(jsonSchema)
+	}
+
+	// Build ResponseFormat with strict validation
+	format := &types.ResponseFormat{
+		Type:   types.ResponseFormatJSONSchema,
+		Name:   typeName,
+		Schema: sdkSchema,
+		Strict: true,
+	}
+
+	if err := format.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid response format for type %s: %w", typeName, err)
+	}
+
+	// Build completion request with structured output
+	req := llm.CompletionRequest{
+		Messages:       messages,
+		ResponseFormat: format,
+	}
+
+	// Apply completion options
+	options := applyOptions(opts...)
+	if options.Temperature != nil {
+		req.Temperature = *options.Temperature
+	}
+	if options.MaxTokens != nil {
+		req.MaxTokens = *options.MaxTokens
+	}
+	if options.TopP != nil {
+		req.TopP = *options.TopP
+	}
+	if options.StopSequences != nil {
+		req.StopSequences = options.StopSequences
+	}
+	if options.SystemPrompt != nil && *options.SystemPrompt != "" {
+		req.Messages = append([]llm.Message{
+			llm.NewSystemMessage(*options.SystemPrompt),
+		}, req.Messages...)
+	}
+
+	// Resolve slot to provider and model
+	slotDef := agent.NewSlotDefinition(slot, "LLM slot for structured output", true)
+	provider, modelInfo, err := h.slotManager.ResolveSlot(ctx, slotDef, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve slot %s: %w", slot, err)
+	}
+	req.Model = modelInfo.Name
+
+	// Check if provider supports structured output
+	structuredProvider, ok := provider.(llm.StructuredOutputProvider)
+	if !ok {
+		return nil, llm.NewStructuredOutputError(
+			"complete",
+			provider.Name(),
+			"",
+			fmt.Errorf("%w: provider %s", llm.ErrStructuredOutputNotSupportedSentinel, provider.Name()),
+		)
+	}
+
+	if !structuredProvider.SupportsStructuredOutput(format.Type) {
+		return nil, llm.NewStructuredOutputError(
+			"complete",
+			provider.Name(),
+			"",
+			fmt.Errorf("%w: format %s not supported by provider %s",
+				llm.ErrStructuredOutputNotSupportedSentinel, format.Type, provider.Name()),
+		)
+	}
+
+	// Call provider's structured output method
+	resp, err := structuredProvider.CompleteStructured(ctx, req)
+	if err != nil {
+		h.metrics.RecordCounter("llm.structured_completions", 1, map[string]string{
+			"slot":     slot,
+			"provider": provider.Name(),
+			"model":    modelInfo.Name,
+			"type":     typeName,
+			"status":   "failed",
+		})
+		return nil, err
+	}
+
+	// Unmarshal the response
+	var result any
+	if localType != nil {
+		resultPtr := reflect.New(localType)
+		if err := json.Unmarshal([]byte(resp.RawJSON), resultPtr.Interface()); err != nil {
+			return nil, llm.NewUnmarshalError(provider.Name(), resp.RawJSON, typeName, err)
+		}
+		result = resultPtr.Interface()
+	} else {
+		var mapResult map[string]any
+		if err := json.Unmarshal([]byte(resp.RawJSON), &mapResult); err != nil {
+			return nil, llm.NewParseError(provider.Name(), resp.RawJSON, 0, err)
+		}
+		result = mapResult
+	}
+
+	// Track token usage
+	scope := llm.UsageScope{
+		MissionID: h.missionCtx.ID,
+		AgentName: h.missionCtx.CurrentAgent,
+		SlotName:  slot,
+	}
+	tokenUsage := llm.TokenUsage{
+		InputTokens:  resp.Usage.PromptTokens,
+		OutputTokens: resp.Usage.CompletionTokens,
+	}
+	if err := h.tokenUsage.RecordUsage(scope, provider.Name(), modelInfo.Name, tokenUsage); err != nil {
+		h.logger.Warn("failed to record token usage", "error", err)
+	}
+
+	// Record success metrics
+	h.metrics.RecordCounter("llm.structured_completions", 1, map[string]string{
+		"slot":     slot,
+		"provider": provider.Name(),
+		"model":    modelInfo.Name,
+		"type":     typeName,
+		"status":   "success",
+	})
+
+	h.logger.Debug("structured completion with usage successful",
+		"slot", slot,
+		"provider", provider.Name(),
+		"model", modelInfo.Name,
+		"type", typeName,
+		"input_tokens", resp.Usage.PromptTokens,
+		"output_tokens", resp.Usage.CompletionTokens)
+
+	return &StructuredCompletionResult{
+		Result:           result,
+		Model:            modelInfo.Name,
+		RawJSON:          resp.RawJSON,
+		PromptTokens:     resp.Usage.PromptTokens,
+		CompletionTokens: resp.Usage.CompletionTokens,
+		TotalTokens:      resp.Usage.PromptTokens + resp.Usage.CompletionTokens,
+	}, nil
+}
+
 // formatMessagesForPrompt formats LLM messages into a readable prompt string
 // for observability in traces.
 func formatMessagesForPrompt(messages []llm.Message) string {

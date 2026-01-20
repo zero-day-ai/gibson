@@ -105,6 +105,26 @@ func (h *MiddlewareHarness) CompleteStructuredAny(ctx context.Context, slot stri
 	return h.wrapOperation(innerOp)(ctx, nil)
 }
 
+func (h *MiddlewareHarness) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (*StructuredCompletionResult, error) {
+	ctx = middleware.WithOperationType(ctx, middleware.OpCompleteWithTools) // Reuse tools op type since structured uses tool_use
+	ctx = middleware.WithSlotName(ctx, slot)
+	ctx = middleware.WithMissionContext(ctx, h.inner.Mission().ID.String(), h.inner.Mission().CurrentAgent)
+	ctx = middleware.WithMessages(ctx, toMiddlewareMessages(messages))
+
+	innerOp := func(ctx context.Context, req any) (any, error) {
+		return h.inner.CompleteStructuredAnyWithUsage(ctx, slot, messages, schemaType, opts...)
+	}
+
+	result, err := h.wrapOperation(innerOp)(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*StructuredCompletionResult), nil
+}
+
 func (h *MiddlewareHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
 	ctx = middleware.WithOperationType(ctx, middleware.OpCallTool)
 	ctx = middleware.WithToolName(ctx, name)

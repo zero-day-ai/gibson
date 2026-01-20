@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/graphrag/schema"
+	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/orchestrator"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
@@ -136,15 +138,17 @@ func (a *DecisionLogWriterAdapter) LogDecision(ctx context.Context, decision *or
 	// Extract OTEL trace ID from context for correlation with infrastructure traces
 	otelTraceID := extractOTELTraceID(ctx)
 
-	// Build DecisionLog for MissionTracer
+	// Build DecisionLog for MissionTracer with full prompt data
 	decisionLog := &DecisionLog{
 		Decision:      schemaDecision,
-		Prompt:        a.buildPromptSummary(decision, iteration),
+		Prompt:        a.buildFullPrompt(result),
 		Response:      result.RawResponse,
 		Model:         result.Model,
 		GraphSnapshot: a.buildGraphSnapshot(decision),
 		Neo4jNodeID:   "", // Not stored in Neo4j at this level
 		OTELTraceID:   otelTraceID,
+		Messages:      a.convertMessages(result.Messages),
+		RequestMeta:   a.buildRequestMetadata(result),
 	}
 
 	// Log to Langfuse (fire-and-forget)
@@ -357,10 +361,65 @@ func (a *DecisionLogWriterAdapter) convertDecision(decision *orchestrator.Decisi
 	return schemaDecision
 }
 
-// buildPromptSummary creates a summary of the prompt for logging.
-func (a *DecisionLogWriterAdapter) buildPromptSummary(decision *orchestrator.Decision, iteration int) string {
-	return fmt.Sprintf("Orchestrator decision iteration %d: %s (confidence: %.2f)",
-		iteration, decision.Action, decision.Confidence)
+// buildFullPrompt constructs the complete prompt text from ThinkResult.
+// This combines the system prompt and user prompt with clear delimiters for Langfuse display.
+func (a *DecisionLogWriterAdapter) buildFullPrompt(result *orchestrator.ThinkResult) string {
+	if result == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+
+	// Add system prompt section
+	if result.SystemPrompt != "" {
+		sb.WriteString("[SYSTEM]:\n")
+		sb.WriteString(result.SystemPrompt)
+		sb.WriteString("\n\n---\n\n")
+	}
+
+	// Add user prompt section
+	if result.UserPrompt != "" {
+		sb.WriteString("[USER]:\n")
+		sb.WriteString(result.UserPrompt)
+	}
+
+	return sb.String()
+}
+
+// convertMessages converts orchestrator llm.Message slice to observability MessageLog slice.
+// This transforms the message structure for Langfuse ingestion while preserving all fields.
+func (a *DecisionLogWriterAdapter) convertMessages(messages []llm.Message) []MessageLog {
+	if len(messages) == 0 {
+		return nil
+	}
+
+	logs := make([]MessageLog, len(messages))
+	for i, msg := range messages {
+		logs[i] = MessageLog{
+			Role:       string(msg.Role),
+			Content:    msg.Content,
+			Name:       msg.Name,
+			ToolCallID: msg.ToolCallID,
+		}
+	}
+	return logs
+}
+
+// buildRequestMetadata creates RequestMetadata from ThinkResult.
+// This captures the LLM configuration used for the decision.
+func (a *DecisionLogWriterAdapter) buildRequestMetadata(result *orchestrator.ThinkResult) *RequestMetadata {
+	if result == nil {
+		return nil
+	}
+
+	return &RequestMetadata{
+		Model:       result.Model,
+		Temperature: result.RequestConfig.Temperature,
+		MaxTokens:   result.RequestConfig.MaxTokens,
+		TopP:        result.RequestConfig.TopP,
+		SlotName:    result.RequestConfig.SlotName,
+		Provider:    "", // Provider info not available in ThinkResult
+	}
 }
 
 // buildGraphSnapshot creates a snapshot description of the graph state.

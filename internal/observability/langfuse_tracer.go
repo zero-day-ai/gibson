@@ -102,6 +102,26 @@ type MissionTrace struct {
 	Metadata  map[string]any // Additional metadata
 }
 
+// MessageLog represents a single message in an LLM conversation for Langfuse.
+// This provides structured message data for observability and debugging.
+type MessageLog struct {
+	Role       string `json:"role"`                   // Message role (system, user, assistant, tool)
+	Content    string `json:"content"`                // Message content
+	Name       string `json:"name,omitempty"`         // Optional name (for function/tool messages)
+	ToolCallID string `json:"tool_call_id,omitempty"` // Optional tool call ID reference
+}
+
+// RequestMetadata captures LLM request configuration for observability.
+// This enables full visibility into the parameters used for each LLM call.
+type RequestMetadata struct {
+	Model       string  `json:"model"`                // LLM model name
+	Temperature float64 `json:"temperature"`          // Temperature parameter (0.0-1.0)
+	MaxTokens   int     `json:"max_tokens"`           // Maximum tokens to generate
+	TopP        float64 `json:"top_p,omitempty"`      // Top-p nucleus sampling parameter
+	SlotName    string  `json:"slot_name"`            // LLM slot name used
+	Provider    string  `json:"provider,omitempty"`   // LLM provider (e.g., "openai", "anthropic")
+}
+
 // DecisionLog captures orchestrator decision information for Langfuse.
 type DecisionLog struct {
 	Decision      *schema.Decision // The decision node
@@ -111,6 +131,14 @@ type DecisionLog struct {
 	GraphSnapshot string           // Graph state at decision time
 	Neo4jNodeID   string           // Neo4j node ID for correlation
 	OTELTraceID   string           // OTEL trace ID for correlation with infrastructure traces
+
+	// Messages contains the structured message array sent to the LLM
+	// This provides detailed visibility into the conversation structure
+	Messages []MessageLog `json:"messages,omitempty"`
+
+	// RequestMeta contains the LLM request configuration parameters
+	// This enables full observability of decision-making settings
+	RequestMeta *RequestMetadata `json:"request_meta,omitempty"`
 }
 
 // AgentExecutionLog captures agent execution information for Langfuse.
@@ -256,6 +284,8 @@ func (mt *MissionTracer) LogDecision(ctx context.Context, trace *MissionTrace, l
 				"latency_seconds": latencySec,
 				"total_tokens":    decision.TotalTokens(),
 				"otel_trace_id":   log.OTELTraceID,
+				"messages":        log.Messages,     // Structured message array
+				"request_config":  log.RequestMeta,  // Request configuration parameters
 			},
 		},
 	}

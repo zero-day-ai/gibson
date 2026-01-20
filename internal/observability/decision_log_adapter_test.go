@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zero-day-ai/gibson/internal/graphrag/schema"
+	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/orchestrator"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
@@ -949,4 +950,252 @@ func TestFireAndForgetErrorHandling(t *testing.T) {
 
 	err = adapter.Close(ctx, nil)
 	assert.NoError(t, err, "Close should not return error (fire-and-forget)")
+}
+
+// TestAdapter_BuildFullPrompt tests the buildFullPrompt helper function.
+func TestAdapter_BuildFullPrompt(t *testing.T) {
+	adapter := &DecisionLogWriterAdapter{
+		missionID: "test-mission",
+	}
+
+	tests := []struct {
+		name           string
+		result         *orchestrator.ThinkResult
+		expectedOutput []string // Strings that should be in output
+		shouldBeEmpty  bool
+	}{
+		{
+			name: "full prompt with system and user",
+			result: &orchestrator.ThinkResult{
+				SystemPrompt: "You are an orchestrator for security testing",
+				UserPrompt:   "Analyze the current mission state and decide next action",
+			},
+			expectedOutput: []string{
+				"[SYSTEM]:",
+				"You are an orchestrator for security testing",
+				"[USER]:",
+				"Analyze the current mission state and decide next action",
+				"---",
+			},
+		},
+		{
+			name: "only system prompt",
+			result: &orchestrator.ThinkResult{
+				SystemPrompt: "System instructions here",
+				UserPrompt:   "",
+			},
+			expectedOutput: []string{
+				"[SYSTEM]:",
+				"System instructions here",
+				"---",
+			},
+		},
+		{
+			name: "only user prompt",
+			result: &orchestrator.ThinkResult{
+				SystemPrompt: "",
+				UserPrompt:   "User query here",
+			},
+			expectedOutput: []string{
+				"[USER]:",
+				"User query here",
+			},
+		},
+		{
+			name:          "nil result",
+			result:        nil,
+			shouldBeEmpty: true,
+		},
+		{
+			name: "empty result",
+			result: &orchestrator.ThinkResult{
+				SystemPrompt: "",
+				UserPrompt:   "",
+			},
+			shouldBeEmpty: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := adapter.buildFullPrompt(tt.result)
+
+			if tt.shouldBeEmpty {
+				assert.Empty(t, output, "Output should be empty for nil/empty result")
+			} else {
+				for _, expected := range tt.expectedOutput {
+					assert.Contains(t, output, expected, "Output should contain expected string")
+				}
+			}
+		})
+	}
+}
+
+// TestAdapter_ConvertMessages tests the convertMessages helper function.
+func TestAdapter_ConvertMessages(t *testing.T) {
+	adapter := &DecisionLogWriterAdapter{
+		missionID: "test-mission",
+	}
+
+	tests := []struct {
+		name     string
+		messages []llm.Message
+		expected []MessageLog
+	}{
+		{
+			name: "complete message with all fields",
+			messages: []llm.Message{
+				{
+					Role:       llm.RoleSystem,
+					Content:    "System message content",
+					Name:       "system",
+					ToolCallID: "call-123",
+				},
+			},
+			expected: []MessageLog{
+				{
+					Role:       "system",
+					Content:    "System message content",
+					Name:       "system",
+					ToolCallID: "call-123",
+				},
+			},
+		},
+		{
+			name: "multiple messages with different roles",
+			messages: []llm.Message{
+				{
+					Role:    llm.RoleSystem,
+					Content: "System prompt",
+				},
+				{
+					Role:    llm.RoleUser,
+					Content: "User query",
+				},
+				{
+					Role:    llm.RoleAssistant,
+					Content: "Assistant response",
+				},
+			},
+			expected: []MessageLog{
+				{
+					Role:    "system",
+					Content: "System prompt",
+				},
+				{
+					Role:    "user",
+					Content: "User query",
+				},
+				{
+					Role:    "assistant",
+					Content: "Assistant response",
+				},
+			},
+		},
+		{
+			name:     "nil messages",
+			messages: nil,
+			expected: nil,
+		},
+		{
+			name:     "empty messages",
+			messages: []llm.Message{},
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := adapter.convertMessages(tt.messages)
+
+			if tt.expected == nil {
+				assert.Nil(t, result, "Result should be nil for nil/empty input")
+			} else {
+				require.Len(t, result, len(tt.expected), "Result length should match expected")
+				for i, expectedLog := range tt.expected {
+					assert.Equal(t, expectedLog.Role, result[i].Role, "Role should match")
+					assert.Equal(t, expectedLog.Content, result[i].Content, "Content should match")
+					assert.Equal(t, expectedLog.Name, result[i].Name, "Name should match")
+					assert.Equal(t, expectedLog.ToolCallID, result[i].ToolCallID, "ToolCallID should match")
+				}
+			}
+		})
+	}
+}
+
+// TestAdapter_BuildRequestMetadata tests the buildRequestMetadata helper function.
+func TestAdapter_BuildRequestMetadata(t *testing.T) {
+	adapter := &DecisionLogWriterAdapter{
+		missionID: "test-mission",
+	}
+
+	tests := []struct {
+		name     string
+		result   *orchestrator.ThinkResult
+		expected *RequestMetadata
+	}{
+		{
+			name: "complete request config",
+			result: &orchestrator.ThinkResult{
+				Model: "gpt-4",
+				RequestConfig: orchestrator.RequestConfig{
+					Temperature: 0.7,
+					MaxTokens:   2000,
+					TopP:        0.9,
+					SlotName:    "primary",
+				},
+			},
+			expected: &RequestMetadata{
+				Model:       "gpt-4",
+				Temperature: 0.7,
+				MaxTokens:   2000,
+				TopP:        0.9,
+				SlotName:    "primary",
+				Provider:    "", // Provider not available in ThinkResult
+			},
+		},
+		{
+			name: "zero values in config",
+			result: &orchestrator.ThinkResult{
+				Model: "claude-3",
+				RequestConfig: orchestrator.RequestConfig{
+					Temperature: 0.0,
+					MaxTokens:   0,
+					TopP:        0.0,
+					SlotName:    "",
+				},
+			},
+			expected: &RequestMetadata{
+				Model:       "claude-3",
+				Temperature: 0.0,
+				MaxTokens:   0,
+				TopP:        0.0,
+				SlotName:    "",
+				Provider:    "",
+			},
+		},
+		{
+			name:     "nil result",
+			result:   nil,
+			expected: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := adapter.buildRequestMetadata(tt.result)
+
+			if tt.expected == nil {
+				assert.Nil(t, result, "Result should be nil for nil input")
+			} else {
+				require.NotNil(t, result, "Result should not be nil")
+				assert.Equal(t, tt.expected.Model, result.Model, "Model should match")
+				assert.Equal(t, tt.expected.Temperature, result.Temperature, "Temperature should match")
+				assert.Equal(t, tt.expected.MaxTokens, result.MaxTokens, "MaxTokens should match")
+				assert.Equal(t, tt.expected.TopP, result.TopP, "TopP should match")
+				assert.Equal(t, tt.expected.SlotName, result.SlotName, "SlotName should match")
+				assert.Equal(t, tt.expected.Provider, result.Provider, "Provider should be empty")
+			}
+		})
+	}
 }

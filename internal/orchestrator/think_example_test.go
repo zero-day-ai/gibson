@@ -54,6 +54,25 @@ func (c *ExampleLLMClient) CompleteStructuredAny(ctx context.Context, slot strin
 	return decision, nil
 }
 
+func (c *ExampleLLMClient) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...orchestrator.CompletionOption) (*orchestrator.StructuredCompletionResult, error) {
+	// Structured output version with token usage (preferred)
+	decision := &orchestrator.Decision{
+		Reasoning:    "Based on completed reconnaissance, port 443 scan is ready and has high priority",
+		Action:       orchestrator.ActionExecuteAgent,
+		TargetNodeID: "port-scan-443",
+		Confidence:   0.88,
+	}
+	decisionJSON, _ := json.Marshal(decision)
+	return &orchestrator.StructuredCompletionResult{
+		Result:           decision,
+		Model:            "claude-3-opus",
+		RawJSON:          string(decisionJSON),
+		PromptTokens:     850,
+		CompletionTokens: 120,
+		TotalTokens:      970,
+	}, nil
+}
+
 // Example_thinkerBasicUsage demonstrates the basic usage of the Thinker
 func Example_thinkerBasicUsage() {
 	// Create an LLM client (in production, use harness.AgentHarness)
@@ -103,14 +122,16 @@ func Example_thinkerBasicUsage() {
 				Status:      "ready",
 			},
 		},
-		CompletedNodes: []orchestrator.NodeSummary{
+		CompletedNodes: []orchestrator.CompletedNodeSummary{
 			{
-				ID:          "recon",
-				Name:        "Reconnaissance",
-				Type:        "agent",
-				Description: "Initial reconnaissance",
-				AgentName:   "recon-agent",
-				Status:      "completed",
+				NodeSummary: orchestrator.NodeSummary{
+					ID:          "recon",
+					Name:        "Reconnaissance",
+					Type:        "agent",
+					Description: "Initial reconnaissance",
+					AgentName:   "recon-agent",
+					Status:      "completed",
+				},
 			},
 		},
 		RecentDecisions: []orchestrator.DecisionSummary{
@@ -149,7 +170,7 @@ func Example_thinkerBasicUsage() {
 	// Action: execute_agent
 	// Target: port-scan-443
 	// Confidence: 0.88
-	// Tokens: 0
+	// Tokens: 970
 }
 
 // Example_thinkerWithRetries demonstrates retry behavior on parse failures

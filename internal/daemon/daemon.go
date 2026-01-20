@@ -389,6 +389,12 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		d.logger.Info("configured callback service with event bus")
 	}
 
+	// Configure callback service with taxonomy engine for automatic tool output graphing
+	if d.infrastructure != nil && d.infrastructure.taxonomyEngine != nil {
+		d.callback.SetTaxonomyEngine(d.infrastructure.taxonomyEngine)
+		d.logger.Info("configured callback service with taxonomy engine")
+	}
+
 	// Perform crash recovery: find any missions that were running when daemon stopped
 	// and transition them to paused status before accepting new connections
 	d.logger.Info("checking for missions to recover after daemon restart")

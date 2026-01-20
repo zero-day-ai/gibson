@@ -18,6 +18,32 @@ type LLMClient interface {
 	// CompleteStructuredAny performs a completion with provider-native structured output.
 	// The response is guaranteed to match the provided schema.
 	CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error)
+
+	// CompleteStructuredAnyWithUsage performs structured completion and returns token usage.
+	// This is needed for orchestrator observability (Langfuse, token tracking, etc.)
+	CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (*StructuredCompletionResult, error)
+}
+
+// StructuredCompletionResult contains the result of a structured completion
+// along with token usage information for observability and cost tracking.
+type StructuredCompletionResult struct {
+	// Result is the parsed structured output (pointer to the schema type)
+	Result any
+
+	// Model is the name of the model that was used
+	Model string
+
+	// RawJSON is the raw JSON response from the LLM
+	RawJSON string
+
+	// PromptTokens is the number of tokens in the prompt
+	PromptTokens int
+
+	// CompletionTokens is the number of tokens in the completion
+	CompletionTokens int
+
+	// TotalTokens is the total token usage (prompt + completion)
+	TotalTokens int
 }
 
 // CompletionOption defines functional options for LLM completion requests.
@@ -55,6 +81,22 @@ func WithTopP(topP float64) CompletionOption {
 // Note: ObservationState is defined in observe.go
 // This file uses the existing ObservationState from the observe phase.
 
+// RequestConfig contains LLM request configuration parameters for observability.
+// This enables Langfuse to display the exact parameters used for each decision.
+type RequestConfig struct {
+	// Temperature controls randomness in the LLM output (0.0-1.0)
+	Temperature float64 `json:"temperature"`
+
+	// MaxTokens is the maximum number of tokens to generate
+	MaxTokens int `json:"max_tokens"`
+
+	// TopP controls nucleus sampling (0.0-1.0)
+	TopP float64 `json:"top_p,omitempty"`
+
+	// SlotName is the LLM slot used for this request
+	SlotName string `json:"slot_name"`
+}
+
 // ThinkResult contains the complete result of a think operation.
 type ThinkResult struct {
 	// Decision is the orchestrator's decision about what to do next
@@ -80,6 +122,22 @@ type ThinkResult struct {
 
 	// RetryCount is how many retries were needed
 	RetryCount int
+
+	// SystemPrompt is the full system prompt sent to the LLM
+	// This is captured for observability and debugging purposes
+	SystemPrompt string
+
+	// UserPrompt is the full user message sent to the LLM
+	// This includes the observation state and decision schema
+	UserPrompt string
+
+	// Messages is the complete message array sent to the LLM
+	// This preserves the exact structure of the conversation
+	Messages []llm.Message
+
+	// RequestConfig contains the LLM parameters used for this request
+	// This enables full observability of the decision-making process
+	RequestConfig RequestConfig
 }
 
 // Thinker implements the orchestrator's think phase using an LLM.
@@ -203,16 +261,17 @@ func (t *Thinker) Think(ctx context.Context, state *ObservationState) (*ThinkRes
 func (t *Thinker) thinkAttempt(ctx context.Context, state *ObservationState, attemptNum int) (*ThinkResult, error) {
 	startTime := time.Now()
 
-	// Build the prompt
-	prompt, err := t.buildPrompt(state, attemptNum)
+	// Build prompts and store for observability
+	systemPrompt := t.buildSystemPrompt()
+	userPrompt, err := t.buildPrompt(state, attemptNum)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build prompt: %w", err)
 	}
 
 	// Prepare messages
 	messages := []llm.Message{
-		llm.NewSystemMessage(t.buildSystemPrompt()),
-		llm.NewUserMessage(prompt),
+		llm.NewSystemMessage(systemPrompt),
+		llm.NewUserMessage(userPrompt),
 	}
 
 	// Prepare options
@@ -236,7 +295,7 @@ func (t *Thinker) thinkAttempt(ctx context.Context, state *ObservationState, att
 		return nil, &parseError{msg: fmt.Sprintf("invalid decision: %v", err)}
 	}
 
-	// Build result
+	// Build result with full prompt capture for observability
 	latency := time.Since(startTime)
 	result := &ThinkResult{
 		Decision:         decision,
@@ -246,6 +305,19 @@ func (t *Thinker) thinkAttempt(ctx context.Context, state *ObservationState, att
 		Latency:          latency,
 		RawResponse:      response.Message.Content,
 		Model:            response.Model,
+
+		// Capture full prompts for observability
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+		Messages:     append([]llm.Message{}, messages...), // Copy to prevent external mutations
+
+		// Capture request configuration
+		RequestConfig: RequestConfig{
+			Temperature: t.temperature,
+			MaxTokens:   2000,
+			TopP:        0.0, // Not currently configurable, use zero value
+			SlotName:    t.slotName,
+		},
 	}
 
 	return result, nil
@@ -253,8 +325,8 @@ func (t *Thinker) thinkAttempt(ctx context.Context, state *ObservationState, att
 
 // tryStructuredOutput attempts to use provider-native structured output.
 func (t *Thinker) tryStructuredOutput(ctx context.Context, messages []llm.Message, opts []CompletionOption) (*Decision, *llm.CompletionResponse, error) {
-	// Use CompleteStructuredAny to get guaranteed structured output
-	result, err := t.llmClient.CompleteStructuredAny(ctx, t.slotName, messages, Decision{}, opts...)
+	// Use CompleteStructuredAnyWithUsage to get guaranteed structured output AND token usage
+	result, err := t.llmClient.CompleteStructuredAnyWithUsage(ctx, t.slotName, messages, Decision{}, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("structured completion failed: %w", err)
 	}
@@ -262,28 +334,26 @@ func (t *Thinker) tryStructuredOutput(ctx context.Context, messages []llm.Messag
 	// Extract the decision from the result
 	// The structured output should be a *Decision or Decision
 	var decision *Decision
-	switch v := result.(type) {
+	switch v := result.Result.(type) {
 	case *Decision:
 		decision = v
 	case Decision:
 		decision = &v
 	default:
-		return nil, nil, fmt.Errorf("unexpected structured output type: %T", result)
+		return nil, nil, fmt.Errorf("unexpected structured output type: %T", result.Result)
 	}
 
-	// Create a synthetic response for token tracking
-	// Note: Real implementation should get actual response with usage from CompleteStructuredAny
+	// Build response with actual token usage from the structured completion
 	response := &llm.CompletionResponse{
-		Model: t.model,
+		Model: result.Model,
 		Message: llm.Message{
 			Role:    llm.RoleAssistant,
-			Content: decision.Reasoning,
+			Content: result.RawJSON, // Use raw JSON as content for logging
 		},
 		Usage: llm.CompletionTokenUsage{
-			// These would be populated by the actual LLM client
-			PromptTokens:     0,
-			CompletionTokens: 0,
-			TotalTokens:      0,
+			PromptTokens:     result.PromptTokens,
+			CompletionTokens: result.CompletionTokens,
+			TotalTokens:      result.TotalTokens,
 		},
 	}
 

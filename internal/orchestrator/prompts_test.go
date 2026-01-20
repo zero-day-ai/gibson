@@ -96,7 +96,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 			},
 			ReadyNodes:      []NodeSummary{},
 			RunningNodes:    []NodeSummary{},
-			CompletedNodes:  []NodeSummary{},
+			CompletedNodes:  []CompletedNodeSummary{},
 			FailedNodes:     []NodeSummary{},
 			RecentDecisions: []DecisionSummary{},
 			ResourceConstraints: ResourceConstraints{
@@ -153,7 +153,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 				},
 			},
 			RunningNodes:    []NodeSummary{},
-			CompletedNodes:  []NodeSummary{},
+			CompletedNodes:  []CompletedNodeSummary{},
 			FailedNodes:     []NodeSummary{},
 			RecentDecisions: []DecisionSummary{},
 			ResourceConstraints: ResourceConstraints{
@@ -201,7 +201,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 					Attempt:   1,
 				},
 			},
-			CompletedNodes:  []NodeSummary{},
+			CompletedNodes:  []CompletedNodeSummary{},
 			FailedNodes:     []NodeSummary{},
 			RecentDecisions: []DecisionSummary{},
 			ResourceConstraints: ResourceConstraints{
@@ -237,7 +237,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 			},
 			ReadyNodes:     []NodeSummary{},
 			RunningNodes:   []NodeSummary{},
-			CompletedNodes: []NodeSummary{},
+			CompletedNodes: []CompletedNodeSummary{},
 			FailedNodes: []NodeSummary{
 				{
 					ID:        "node-fail",
@@ -295,7 +295,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 			},
 			ReadyNodes:     []NodeSummary{},
 			RunningNodes:   []NodeSummary{},
-			CompletedNodes: []NodeSummary{},
+			CompletedNodes: []CompletedNodeSummary{},
 			FailedNodes:    []NodeSummary{},
 			RecentDecisions: []DecisionSummary{
 				{
@@ -351,7 +351,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 			},
 			ReadyNodes:      []NodeSummary{},
 			RunningNodes:    []NodeSummary{},
-			CompletedNodes:  []NodeSummary{},
+			CompletedNodes:  []CompletedNodeSummary{},
 			FailedNodes:     []NodeSummary{},
 			RecentDecisions: []DecisionSummary{},
 			ResourceConstraints: ResourceConstraints{
@@ -395,7 +395,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 			},
 			ReadyNodes:      []NodeSummary{},
 			RunningNodes:    []NodeSummary{},
-			CompletedNodes:  []NodeSummary{},
+			CompletedNodes:  []CompletedNodeSummary{},
 			FailedNodes:     []NodeSummary{},
 			RecentDecisions: []DecisionSummary{},
 			ResourceConstraints: ResourceConstraints{
@@ -435,7 +435,7 @@ func TestBuildObservationPrompt(t *testing.T) {
 				{ID: "node-2", Type: "agent", AgentName: "injector", Name: "Injector"},
 			},
 			RunningNodes:   []NodeSummary{},
-			CompletedNodes: []NodeSummary{},
+			CompletedNodes: []CompletedNodeSummary{},
 			FailedNodes:    []NodeSummary{},
 			RecentDecisions: []DecisionSummary{
 				{Iteration: 1, Action: "execute_agent", Confidence: 0.9},
@@ -702,7 +702,7 @@ func TestBuildFullPrompt(t *testing.T) {
 			{ID: "node-1", Type: "agent", Name: "Test Node"},
 		},
 		RunningNodes:    []NodeSummary{},
-		CompletedNodes:  []NodeSummary{},
+		CompletedNodes:  []CompletedNodeSummary{},
 		FailedNodes:     []NodeSummary{},
 		RecentDecisions: []DecisionSummary{},
 		ResourceConstraints: ResourceConstraints{
@@ -876,7 +876,7 @@ func BenchmarkBuildObservationPrompt(b *testing.B) {
 		RunningNodes: []NodeSummary{
 			{ID: "node-4", Type: "agent", AgentName: "jailbreaker", Name: "Jailbreaker"},
 		},
-		CompletedNodes: []NodeSummary{},
+		CompletedNodes: []CompletedNodeSummary{},
 		FailedNodes: []NodeSummary{
 			{ID: "node-fail-1", Name: "Failed Node 1", Attempt: 2},
 		},
@@ -914,7 +914,7 @@ func BenchmarkBuildFullPrompt(b *testing.B) {
 			{ID: "node-1", Type: "agent", Name: "Test Node"},
 		},
 		RunningNodes:    []NodeSummary{},
-		CompletedNodes:  []NodeSummary{},
+		CompletedNodes:  []CompletedNodeSummary{},
 		FailedNodes:     []NodeSummary{},
 		RecentDecisions: []DecisionSummary{},
 		ResourceConstraints: ResourceConstraints{

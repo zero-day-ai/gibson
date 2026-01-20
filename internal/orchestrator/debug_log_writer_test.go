@@ -34,7 +34,7 @@ func TestDebugLogWriter_LogObservation(t *testing.T) {
 			{ID: "node-1", AgentName: "recon", Status: "ready"},
 		},
 		RunningNodes:   []NodeSummary{},
-		CompletedNodes: []NodeSummary{},
+		CompletedNodes: []CompletedNodeSummary{},
 		FailedNodes:    []NodeSummary{},
 		ResourceConstraints: ResourceConstraints{
 			MaxConcurrent:   10,

@@ -50,14 +50,6 @@ const (
 {{- end}}
 )
 
-// Arcanum Prompt Injection Technique ID constants
-const (
-{{- range .ArcanumTechniques}}
-	// {{.Name}} - {{.Description}}
-	{{.ConstName}} = "{{.TechniqueID}}"
-{{- end}}
-)
-
 // Common property name constants
 const (
 	PropName        = "name"
@@ -81,7 +73,6 @@ type templateData struct {
 	NodeTypes         []nodeTypeConst
 	RelationshipTypes []relationshipTypeConst
 	MITRETechniques   []techniqueConst
-	ArcanumTechniques []techniqueConst
 }
 
 type nodeTypeConst struct {
@@ -188,7 +179,6 @@ func buildTemplateData(tax *taxonomy.Taxonomy) templateData {
 		NodeTypes:         make([]nodeTypeConst, 0),
 		RelationshipTypes: make([]relationshipTypeConst, 0),
 		MITRETechniques:   make([]techniqueConst, 0),
-		ArcanumTechniques: make([]techniqueConst, 0),
 	}
 
 	// Build node type constants
@@ -232,17 +222,12 @@ func buildTemplateData(tax *taxonomy.Taxonomy) templateData {
 
 		if techDef.Taxonomy == "mitre" {
 			data.MITRETechniques = append(data.MITRETechniques, constItem)
-		} else if techDef.Taxonomy == "arcanum" {
-			data.ArcanumTechniques = append(data.ArcanumTechniques, constItem)
 		}
 	}
 
 	// Sort techniques by const name
 	sort.Slice(data.MITRETechniques, func(i, j int) bool {
 		return data.MITRETechniques[i].ConstName < data.MITRETechniques[j].ConstName
-	})
-	sort.Slice(data.ArcanumTechniques, func(i, j int) bool {
-		return data.ArcanumTechniques[i].ConstName < data.ArcanumTechniques[j].ConstName
 	})
 
 	return data

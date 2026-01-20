@@ -54,7 +54,7 @@ func (d *DebugLogWriter) LogObservation(iteration int, missionID string, state *
 	// Node states
 	d.printNodeList("Ready nodes", state.ReadyNodes)
 	d.printNodeList("Running nodes", state.RunningNodes)
-	d.printNodeList("Completed nodes", state.CompletedNodes)
+	d.printCompletedNodeList("Completed nodes", state.CompletedNodes)
 	d.printNodeList("Failed nodes", state.FailedNodes)
 
 	// Resource constraints
@@ -224,6 +224,24 @@ func (d *DebugLogWriter) printNodeList(label string, nodes []NodeSummary) {
 	fmt.Fprintf(d.w, "%s:\n", label)
 	for _, node := range nodes {
 		fmt.Fprintf(d.w, "  - %s (%s): %s\n", node.ID, node.AgentName, node.Status)
+	}
+	fmt.Fprintln(d.w)
+}
+
+// printCompletedNodeList prints a list of completed nodes with their enhanced details.
+func (d *DebugLogWriter) printCompletedNodeList(label string, nodes []CompletedNodeSummary) {
+	if len(nodes) == 0 {
+		fmt.Fprintf(d.w, "%s: [none]\n", label)
+		return
+	}
+
+	fmt.Fprintf(d.w, "%s:\n", label)
+	for _, node := range nodes {
+		fmt.Fprintf(d.w, "  - %s (%s): %s", node.ID, node.AgentName, node.Status)
+		if node.Duration != "" {
+			fmt.Fprintf(d.w, " [%s]", node.Duration)
+		}
+		fmt.Fprintln(d.w)
 	}
 	fmt.Fprintln(d.w)
 }

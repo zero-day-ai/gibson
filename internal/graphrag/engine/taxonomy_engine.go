@@ -512,10 +512,11 @@ func (e *taxonomyGraphEngine) createRelationshipFromEvent(ctx context.Context, r
 }
 
 // processExtraction processes a single extraction rule from tool output.
+// It now handles nested structures with parent context for _parent references.
 func (e *taxonomyGraphEngine) processExtraction(ctx context.Context, extractSpec *taxonomy.ToolOutputExtraction, output map[string]any, agentRunID string) error {
 	logger := e.logger.With("node_type", extractSpec.NodeType)
 
-	// Extract items using JSONPath
+	// Extract items using JSONPath, starting with no parent context
 	items, err := e.extractItems(output, extractSpec.JSONPath)
 	if err != nil {
 		return fmt.Errorf("failed to extract items: %w", err)
@@ -523,9 +524,9 @@ func (e *taxonomyGraphEngine) processExtraction(ctx context.Context, extractSpec
 
 	logger.Debug("extracted items from tool output", "count", len(items))
 
-	// Process each extracted item
+	// Process each extracted item with empty parent stack (top-level items)
 	for i, item := range items {
-		if err := e.createNodeFromExtraction(ctx, extractSpec, item, agentRunID); err != nil {
+		if err := e.createNodeFromExtractionWithContext(ctx, extractSpec, item, agentRunID, nil); err != nil {
 			logger.Error("failed to create node from extraction",
 				"item_index", i,
 				"error", err,
@@ -585,94 +586,242 @@ func (e *taxonomyGraphEngine) extractItems(output map[string]any, selector strin
 }
 
 // createNodeFromExtraction creates a node from extracted tool output data.
+// This is a convenience wrapper for backward compatibility.
 func (e *taxonomyGraphEngine) createNodeFromExtraction(ctx context.Context, extractSpec *taxonomy.ToolOutputExtraction, item map[string]any, agentRunID string) error {
-	// Build properties from mappings
-	props := make(map[string]any)
+	return e.createNodeFromExtractionWithContext(ctx, extractSpec, item, agentRunID, nil)
+}
 
-	for _, prop := range extractSpec.Properties {
-		var value any
-		var ok bool
-
-		if prop.JSONPath != "" {
-			// Extract from item using JSONPath (simplified - just field access)
-			value, ok = item[prop.JSONPath]
-		} else if prop.Template != "" {
-			// Apply template
-			templated, err := e.interpolateTemplate(prop.Template, item)
-			if err == nil {
-				value = templated
-				ok = true
-			}
-		} else if prop.Default != nil {
-			value = prop.Default
-			ok = true
-		}
-
-		if ok {
-			props[prop.Target] = value
+// createNodeFromExtractionWithContext creates a node from extracted tool output data
+// with parent context support for resolving _parent references.
+// parentStack contains ancestor objects: parentStack[0] is immediate parent, parentStack[1] is grandparent, etc.
+func (e *taxonomyGraphEngine) createNodeFromExtractionWithContext(ctx context.Context, extractSpec *taxonomy.ToolOutputExtraction, item map[string]any, agentRunID string, parentStack []map[string]any) error {
+	// First, extract identifying properties using parent context
+	identProps := make(map[string]any)
+	for propName, jsonPath := range extractSpec.IdentifyingProperties {
+		value := e.extractJSONPathWithContext(item, jsonPath, parentStack)
+		if value != nil {
+			identProps[propName] = value
 		}
 	}
 
-	// Generate node ID from node type definition
+	// Check if we have all required identifying properties for this node type
 	nodeDef, ok := e.registry.NodeType(extractSpec.NodeType)
 	if !ok {
 		return fmt.Errorf("node type not found in taxonomy: %s", extractSpec.NodeType)
 	}
 
-	nodeID, err := e.interpolateTemplate(nodeDef.IDTemplate, props)
-	if err != nil {
-		return fmt.Errorf("failed to generate node ID: %w", err)
+	// Skip if identifying properties use _parent but we have no parent context
+	needsParent := e.mappingNeedsParent(extractSpec)
+	if needsParent && len(parentStack) == 0 {
+		// This mapping requires parent context but we're at root level
+		// This item's children will be processed separately
+		e.logger.Debug("skipping node creation - requires parent context",
+			"node_type", extractSpec.NodeType)
+	} else if len(identProps) > 0 {
+		// We have identifying properties, create the node
+		// Build properties from mappings
+		props := make(map[string]any)
+		for k, v := range identProps {
+			props[k] = v
+		}
+
+		for _, prop := range extractSpec.Properties {
+			var value any
+			var found bool
+
+			if prop.JSONPath != "" {
+				// Extract from item using JSONPath with parent context
+				value = e.extractJSONPathWithContext(item, prop.JSONPath, parentStack)
+				found = value != nil
+			} else if prop.Template != "" {
+				// Apply template
+				templated, err := e.interpolateTemplate(prop.Template, item)
+				if err == nil {
+					value = templated
+					found = true
+				}
+			} else if prop.Default != nil {
+				value = prop.Default
+				found = true
+			}
+
+			if found {
+				props[prop.Target] = value
+			}
+		}
+
+		nodeID, err := e.interpolateTemplate(nodeDef.IDTemplate, props)
+		if err != nil {
+			return fmt.Errorf("failed to generate node ID: %w", err)
+		}
+
+		props["id"] = nodeID
+
+		// Create node using MERGE for idempotency
+		cypher := fmt.Sprintf(`
+			MERGE (n:%s {id: $id})
+			SET n += $props
+			RETURN n
+		`, nodeDef.Name)
+
+		params := map[string]any{
+			"id":    nodeID,
+			"props": props,
+		}
+
+		if _, err := e.graphClient.Query(ctx, cypher, params); err != nil {
+			return fmt.Errorf("failed to create node: %w", err)
+		}
+
+		e.logger.Debug("created node from extraction",
+			"node_type", extractSpec.NodeType,
+			"node_id", nodeID,
+		)
+
+		// Create relationships with parent context
+		for _, relSpec := range extractSpec.Relationships {
+			if err := e.createRelationshipFromExtractionWithContext(ctx, &relSpec, nodeID, item, agentRunID, parentStack); err != nil {
+				e.logger.Warn("failed to create relationship from extraction",
+					"relationship_type", relSpec.Type,
+					"error", err,
+				)
+			}
+		}
 	}
 
-	props["id"] = nodeID
+	// Recursively process nested arrays (ports inside hosts, services inside ports, etc.)
+	// Push current item onto the parent stack for child processing
+	newParentStack := append([]map[string]any{item}, parentStack...)
 
-	// Create node using MERGE for idempotency
-	// Use nodeDef.Name for the Neo4j label (PascalCase like "Host", "Port")
-	cypher := fmt.Sprintf(`
-		MERGE (n:%s {id: $id})
-		SET n += $props
-		RETURN n
-	`, nodeDef.Name)
-
-	params := map[string]any{
-		"id":    nodeID,
-		"props": props,
-	}
-
-	if _, err := e.graphClient.Query(ctx, cypher, params); err != nil {
-		return fmt.Errorf("failed to create node: %w", err)
-	}
-
-	e.logger.Debug("created node from extraction",
-		"node_type", extractSpec.NodeType,
-		"node_id", nodeID,
-	)
-
-	// Create relationships
-	for _, relSpec := range extractSpec.Relationships {
-		if err := e.createRelationshipFromExtraction(ctx, &relSpec, nodeID, item, agentRunID); err != nil {
-			e.logger.Warn("failed to create relationship from extraction",
-				"relationship_type", relSpec.Type,
-				"error", err,
-			)
+	for _, nestedKey := range []string{"ports", "services", "endpoints", "technologies", "subdomains", "findings", "hosts"} {
+		if arr, ok := item[nestedKey].([]any); ok && len(arr) > 0 {
+			for _, child := range arr {
+				if childMap, ok := child.(map[string]any); ok {
+					// Recursively extract with parent context
+					if err := e.createNodeFromExtractionWithContext(ctx, extractSpec, childMap, agentRunID, newParentStack); err != nil {
+						e.logger.Warn("failed to extract from nested array",
+							"key", nestedKey,
+							"error", err,
+						)
+					}
+				}
+			}
 		}
 	}
 
 	return nil
 }
 
+// mappingNeedsParent checks if an extraction uses _parent references.
+func (e *taxonomyGraphEngine) mappingNeedsParent(extractSpec *taxonomy.ToolOutputExtraction) bool {
+	for _, jsonPath := range extractSpec.IdentifyingProperties {
+		if strings.Contains(jsonPath, "_parent") {
+			return true
+		}
+	}
+	for _, prop := range extractSpec.Properties {
+		if strings.Contains(prop.JSONPath, "_parent") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractJSONPathWithContext extracts a value using a JSONPath expression with parent context support.
+// Handles _parent references by looking up the parent stack.
+func (e *taxonomyGraphEngine) extractJSONPathWithContext(data map[string]any, path string, parentStack []map[string]any) any {
+	if data == nil || path == "" {
+		return nil
+	}
+
+	// Handle _parent references
+	if strings.HasPrefix(path, "_parent") {
+		return e.resolveParentPath(path, parentStack)
+	}
+
+	// Handle _context references
+	if strings.HasPrefix(path, "_context.") {
+		if ctx, ok := data["_context"].(map[string]any); ok {
+			remainingPath := strings.TrimPrefix(path, "_context.")
+			return e.extractJSONPathWithContext(ctx, remainingPath, nil)
+		}
+		return nil
+	}
+
+	// Standard path extraction
+	// Strip leading $. if present
+	path = strings.TrimPrefix(path, "$.")
+	path = strings.TrimPrefix(path, ".")
+
+	// Simple field access (no dots)
+	if !strings.Contains(path, ".") {
+		return data[path]
+	}
+
+	// Nested field access
+	parts := strings.Split(path, ".")
+	current := data
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			return current[part]
+		}
+		if next, ok := current[part].(map[string]any); ok {
+			current = next
+		} else {
+			return nil
+		}
+	}
+	return nil
+}
+
+// resolveParentPath resolves a _parent reference path against the parent stack.
+func (e *taxonomyGraphEngine) resolveParentPath(path string, parentStack []map[string]any) any {
+	if parentStack == nil || len(parentStack) == 0 {
+		return nil
+	}
+
+	// Count _parent segments
+	parentDepth := 0
+	remainingPath := path
+
+	for strings.HasPrefix(remainingPath, "_parent") {
+		parentDepth++
+		remainingPath = strings.TrimPrefix(remainingPath, "_parent")
+		remainingPath = strings.TrimPrefix(remainingPath, ".")
+	}
+
+	// Check if we have enough parents
+	if parentDepth > len(parentStack) {
+		return nil
+	}
+
+	// Get the appropriate parent
+	parent := parentStack[parentDepth-1]
+
+	if remainingPath == "" {
+		return parent
+	}
+
+	return e.extractJSONPathWithContext(parent, remainingPath, parentStack[parentDepth:])
+}
+
 // createRelationshipFromExtraction creates a relationship from extracted data.
-// The relationship endpoints are identified using NodeReferenceConfig which specifies
-// the node type and properties to match, rather than templates.
+// This is a convenience wrapper for backward compatibility.
 func (e *taxonomyGraphEngine) createRelationshipFromExtraction(ctx context.Context, relSpec *taxonomy.ToolOutputRelationship, extractedNodeID string, item map[string]any, agentRunID string) error {
-	// Resolve the "from" node ID
-	fromNodeID, err := e.resolveNodeReference(relSpec.From, extractedNodeID, item, agentRunID)
+	return e.createRelationshipFromExtractionWithContext(ctx, relSpec, extractedNodeID, item, agentRunID, nil)
+}
+
+// createRelationshipFromExtractionWithContext creates a relationship from extracted data
+// with parent context support for resolving _parent references.
+func (e *taxonomyGraphEngine) createRelationshipFromExtractionWithContext(ctx context.Context, relSpec *taxonomy.ToolOutputRelationship, extractedNodeID string, item map[string]any, agentRunID string, parentStack []map[string]any) error {
+	// Resolve the "from" node ID with parent context
+	fromNodeID, err := e.resolveNodeReferenceWithContext(relSpec.From, extractedNodeID, item, agentRunID, parentStack)
 	if err != nil {
 		return fmt.Errorf("failed to resolve from node: %w", err)
 	}
 
-	// Resolve the "to" node ID
-	toNodeID, err := e.resolveNodeReference(relSpec.To, extractedNodeID, item, agentRunID)
+	// Resolve the "to" node ID with parent context
+	toNodeID, err := e.resolveNodeReferenceWithContext(relSpec.To, extractedNodeID, item, agentRunID, parentStack)
 	if err != nil {
 		return fmt.Errorf("failed to resolve to node: %w", err)
 	}
@@ -715,9 +864,14 @@ func (e *taxonomyGraphEngine) createRelationshipFromExtraction(ctx context.Conte
 }
 
 // resolveNodeReference resolves a NodeReferenceConfig to a node ID.
-// If the type is "self", it returns the extractedNodeID.
-// Otherwise, it looks up the node by type and properties from the item data.
+// This is a convenience wrapper for backward compatibility.
 func (e *taxonomyGraphEngine) resolveNodeReference(ref taxonomy.NodeReferenceConfig, extractedNodeID string, item map[string]any, agentRunID string) (string, error) {
+	return e.resolveNodeReferenceWithContext(ref, extractedNodeID, item, agentRunID, nil)
+}
+
+// resolveNodeReferenceWithContext resolves a NodeReferenceConfig to a node ID
+// with parent context support for resolving _parent references.
+func (e *taxonomyGraphEngine) resolveNodeReferenceWithContext(ref taxonomy.NodeReferenceConfig, extractedNodeID string, item map[string]any, agentRunID string, parentStack []map[string]any) (string, error) {
 	// Special case: "self" refers to the node just created from extraction
 	if ref.Type == "self" {
 		return extractedNodeID, nil
@@ -736,16 +890,13 @@ func (e *taxonomyGraphEngine) resolveNodeReference(ref taxonomy.NodeReferenceCon
 
 	// Build identifying properties from the reference config
 	// The Properties map in NodeReferenceConfig maps property names to JSONPath expressions
-	// that extract values from the item data
+	// that extract values from the item data, with support for _parent references
 	idProps := make(map[string]any)
 	for propName, jsonPath := range ref.Properties {
-		// Simple field access from item (strip leading $. if present)
-		fieldName := strings.TrimPrefix(jsonPath, "$.")
-		fieldName = strings.TrimPrefix(fieldName, ".")
-
-		value, ok := item[fieldName]
-		if !ok {
-			return "", fmt.Errorf("property %s not found in item for node type %s", fieldName, ref.Type)
+		// Use extractJSONPathWithContext to handle _parent references
+		value := e.extractJSONPathWithContext(item, jsonPath, parentStack)
+		if value == nil {
+			return "", fmt.Errorf("property %s not found in item for node type %s (path: %s)", propName, ref.Type, jsonPath)
 		}
 		idProps[propName] = value
 	}

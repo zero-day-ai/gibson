@@ -749,6 +749,355 @@ if registry.IsSchemaBasedToolSchema("nmap") {
 
 ---
 
+## Tool Output Extraction Deep Dive
+
+### Architecture Overview
+
+Tool output extraction is the process by which Gibson automatically populates the knowledge graph from tool outputs. This happens transparently when agents call tools via the harness.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        TOOL OUTPUT EXTRACTION FLOW                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  1. Agent calls h.CallTool(ctx, "nmap", input)                             │
+│                    │                                                        │
+│                    ▼                                                        │
+│  2. Gibson Harness executes tool, gets JSON output                         │
+│                    │                                                        │
+│                    ▼                                                        │
+│  3. TaxonomyGraphEngine.HandleToolOutput() is called                       │
+│                    │                                                        │
+│                    ▼                                                        │
+│  4. Lookup ToolOutputSchema from registry (embedded or YAML)               │
+│                    │                                                        │
+│                    ▼                                                        │
+│  5. For each extraction rule in schema:                                    │
+│     ┌─────────────────────────────────────────────────────────────┐        │
+│     │  a. Extract items using JSONPath (e.g., $.hosts[*])        │        │
+│     │  b. For each item:                                          │        │
+│     │     - Extract identifying properties (with _parent context) │        │
+│     │     - Generate deterministic node ID                        │        │
+│     │     - MERGE node into Neo4j                                 │        │
+│     │     - Create relationships                                  │        │
+│     │  c. Recursively process nested arrays (ports, services)     │        │
+│     └─────────────────────────────────────────────────────────────┘        │
+│                    │                                                        │
+│                    ▼                                                        │
+│  6. Return original tool output to agent (extraction is transparent)       │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `internal/graphrag/engine/taxonomy_engine.go` | Core extraction logic |
+| `internal/graphrag/taxonomy/schema_loader.go` | Loads taxonomy from tool binaries |
+| `internal/graphrag/taxonomy/types.go` | Type definitions |
+| `internal/graphrag/taxonomy/types_events.go` | ToolOutputSchema, ToolOutputExtraction |
+| `internal/harness/callback_service.go` | Harness integration point |
+
+### Embedded vs YAML Schemas
+
+**Embedded Schemas (Preferred):**
+- Defined in tool's Go code using `schema.TaxonomyMapping`
+- Extracted from binaries via `--schema` flag at runtime
+- Tools: `nmap`, `subfinder`, `httpx`, `nuclei`, `amass`, `masscan`
+
+**YAML Schemas (Legacy):**
+- Defined in `tool_outputs.yaml`
+- For third-party binaries that cannot be modified
+- Should be avoided for new tools
+
+### The `_parent` Reference System
+
+Nested data structures (like ports inside hosts) require referencing parent context. The `_parent` system enables this.
+
+#### How It Works
+
+When processing nested arrays, Gibson maintains a **parent stack**:
+- `parentStack[0]` = immediate parent object
+- `parentStack[1]` = grandparent object
+- etc.
+
+The `_parent` prefix in JSONPath expressions resolves against this stack:
+
+```
+_parent.ip           → parentStack[0]["ip"]        (immediate parent)
+_parent._parent.ip   → parentStack[1]["ip"]        (grandparent)
+_parent.hostname     → parentStack[0]["hostname"]
+```
+
+#### Example: nmap Tool Output
+
+**Tool Output Structure:**
+```json
+{
+  "hosts": [
+    {
+      "ip": "192.168.1.100",
+      "hostname": "server.local",
+      "ports": [
+        {
+          "port": 22,
+          "protocol": "tcp",
+          "state": "open",
+          "service_details": {
+            "name": "ssh",
+            "product": "OpenSSH",
+            "version": "8.2"
+          }
+        },
+        {
+          "port": 80,
+          "protocol": "tcp",
+          "state": "open"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Host Schema (No Parent Needed):**
+```go
+hostSchema := schema.Object(map[string]schema.JSON{
+    "ip":       schema.String(),
+    "hostname": schema.String(),
+    "ports":    schema.Array(portSchema),
+}).WithTaxonomy(schema.TaxonomyMapping{
+    NodeType: "host",
+    IdentifyingProperties: map[string]string{
+        "ip": "ip",  // Direct field access
+    },
+    Properties: []schema.PropertyMapping{
+        schema.PropMap("ip", "ip"),
+        schema.PropMap("hostname", "hostname"),
+    },
+})
+```
+
+**Port Schema (Uses `_parent`):**
+```go
+portSchema := schema.Object(map[string]schema.JSON{
+    "port":     schema.Int(),
+    "protocol": schema.String(),
+    "state":    schema.String(),
+}).WithTaxonomy(schema.TaxonomyMapping{
+    NodeType: "port",
+    IdentifyingProperties: map[string]string{
+        "host_id":  "_parent.ip",      // Reference parent host's IP
+        "number":   "port",
+        "protocol": "protocol",
+    },
+    Properties: []schema.PropertyMapping{
+        schema.PropMap("port", "number"),
+        schema.PropMap("protocol", "protocol"),
+        schema.PropMap("state", "state"),
+    },
+    Relationships: []schema.RelationshipMapping{
+        schema.Rel("HAS_PORT",
+            schema.Node("host", map[string]string{
+                "ip": "_parent.ip",  // Parent reference in relationship
+            }),
+            schema.SelfNode(),
+        ),
+    },
+})
+```
+
+**Service Schema (Uses `_parent._parent` for Grandparent):**
+```go
+serviceSchema := schema.Object(map[string]schema.JSON{
+    "name":    schema.String(),
+    "product": schema.String(),
+    "version": schema.String(),
+}).WithTaxonomy(schema.TaxonomyMapping{
+    NodeType: "service",
+    IdentifyingProperties: map[string]string{
+        "host_id":  "_parent._parent.ip",  // Grandparent (host) IP
+        "port":     "_parent.port",         // Parent (port) number
+        "protocol": "_parent.protocol",     // Parent (port) protocol
+        "name":     "name",                 // Own field
+    },
+    // ...
+})
+```
+
+### Recursive Nested Array Processing
+
+The extraction engine automatically processes nested arrays with parent context:
+
+1. Extract host nodes from `$.hosts[*]`
+2. For each host, push onto parent stack
+3. Extract port nodes from `host.ports[*]` with host as parent
+4. For each port, push onto parent stack
+5. Extract service nodes from `port.service_details` with port as parent, host as grandparent
+
+**Nested Array Keys Processed:**
+- `ports`
+- `services`
+- `endpoints`
+- `technologies`
+- `subdomains`
+- `findings`
+- `hosts`
+
+### Adding Taxonomy to a New Tool
+
+#### Step 1: Define Output Schema with Taxonomy
+
+```go
+// In your tool's schema.go file
+func OutputSchema() schema.JSON {
+    // Define nested schemas from innermost to outermost
+
+    // Innermost: Service (if applicable)
+    serviceSchema := schema.Object(map[string]schema.JSON{
+        "name":    schema.String(),
+        "version": schema.String(),
+    }).WithTaxonomy(schema.TaxonomyMapping{
+        NodeType: "service",
+        IdentifyingProperties: map[string]string{
+            "host_id":  "_parent._parent.ip",  // Grandparent
+            "port":     "_parent.port",
+            "protocol": "_parent.protocol",
+            "name":     "name",
+        },
+        Properties: []schema.PropertyMapping{
+            schema.PropMap("name", "name"),
+            schema.PropMap("version", "version"),
+        },
+        Relationships: []schema.RelationshipMapping{
+            schema.Rel("RUNS_SERVICE",
+                schema.Node("port", map[string]string{
+                    "host_id":  "_parent._parent.ip",
+                    "number":   "_parent.port",
+                    "protocol": "_parent.protocol",
+                }),
+                schema.SelfNode(),
+            ),
+        },
+    })
+
+    // Middle: Port
+    portSchema := schema.Object(map[string]schema.JSON{
+        "port":     schema.Int(),
+        "protocol": schema.String(),
+        "service":  serviceSchema,  // Nested
+    }).WithTaxonomy(schema.TaxonomyMapping{
+        NodeType: "port",
+        IdentifyingProperties: map[string]string{
+            "host_id":  "_parent.ip",
+            "number":   "port",
+            "protocol": "protocol",
+        },
+        // ...
+    })
+
+    // Outermost: Host
+    hostSchema := schema.Object(map[string]schema.JSON{
+        "ip":    schema.String(),
+        "ports": schema.Array(portSchema),  // Nested array
+    }).WithTaxonomy(schema.TaxonomyMapping{
+        NodeType: "host",
+        IdentifyingProperties: map[string]string{
+            "ip": "ip",
+        },
+        // ...
+    })
+
+    return schema.Object(map[string]schema.JSON{
+        "hosts": schema.Array(hostSchema),
+    })
+}
+```
+
+#### Step 2: Implement `--schema` Flag
+
+```go
+func main() {
+    if len(os.Args) > 1 && os.Args[1] == "--schema" {
+        outputSchema()
+        os.Exit(0)
+    }
+    // Normal tool execution
+}
+
+func outputSchema() {
+    schema := struct {
+        Name         string      `json:"name"`
+        Description  string      `json:"description"`
+        InputSchema  schema.JSON `json:"input_schema"`
+        OutputSchema schema.JSON `json:"output_schema"`
+    }{
+        Name:         "my-tool",
+        Description:  "Description of my tool",
+        InputSchema:  InputSchema(),
+        OutputSchema: OutputSchema(),
+    }
+
+    json.NewEncoder(os.Stdout).Encode(schema)
+}
+```
+
+#### Step 3: Verify Schema Loading
+
+```bash
+# Test that schema is extracted
+./my-tool --schema | jq '.output_schema'
+
+# Look for taxonomy mappings
+./my-tool --schema | jq '.. | .taxonomy? // empty'
+```
+
+### Special JSONPath Variables
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `_parent` | Immediate parent object | `_parent.ip` |
+| `_parent._parent` | Grandparent object | `_parent._parent.ip` |
+| `_context` | Execution context (injected by Gibson) | `_context.agent_run_id` |
+| `_context.mission_id` | Current mission ID | |
+| `_context.agent_run_id` | Current agent run ID | |
+| `_context.timestamp` | Execution timestamp | |
+
+### Debugging Extraction Issues
+
+**1. Check if schema is loaded:**
+```go
+registry := init.GetTaxonomyRegistry()
+if schema, ok := registry.GetToolOutputSchema("my-tool"); ok {
+    fmt.Printf("Extracts: %d\n", len(schema.Extracts))
+}
+```
+
+**2. Enable debug logging:**
+```bash
+GIBSON_LOG_LEVEL=debug gibson daemon start
+```
+
+**3. Verify tool output structure:**
+```bash
+./my-tool --input '{"target": "example.com"}' | jq .
+```
+
+**4. Check for missing parent context:**
+```
+WARN "skipping node creation - requires parent context" node_type=port
+```
+This means the port extraction is being attempted at root level instead of nested under hosts.
+
+**5. Check for missing identifying properties:**
+```
+DEBUG "skipping node due to missing identifying properties" node_type=port expected_count=3 found_count=2
+```
+This means `_parent.ip` couldn't resolve because there's no parent in the stack.
+
+---
+
 ## Troubleshooting
 
 ### Taxonomy Not Loading

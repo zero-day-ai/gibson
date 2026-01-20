@@ -11,6 +11,28 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// StructuredCompletionResult contains the result of a structured completion
+// along with token usage information for observability and cost tracking.
+type StructuredCompletionResult struct {
+	// Result is the parsed structured output (pointer to the schema type)
+	Result any
+
+	// Model is the name of the model that was used
+	Model string
+
+	// RawJSON is the raw JSON response from the LLM
+	RawJSON string
+
+	// PromptTokens is the number of tokens in the prompt
+	PromptTokens int
+
+	// CompletionTokens is the number of tokens in the completion
+	CompletionTokens int
+
+	// TotalTokens is the total token usage (prompt + completion)
+	TotalTokens int
+}
+
 // AgentHarness is the primary interface provided to agents during execution.
 // It orchestrates access to all framework capabilities including LLM operations,
 // tool execution, plugin queries, sub-agent delegation, finding management,
@@ -164,6 +186,22 @@ type AgentHarness interface {
 	//   result, err := harness.CompleteStructuredAny(ctx, "primary", messages, Analysis{})
 	//   analysis := result.(*Analysis)
 	CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error)
+
+	// CompleteStructuredAnyWithUsage performs structured output completion and returns
+	// token usage information along with the result. This is useful for cost tracking
+	// and observability in orchestration systems.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - slot: Name of the LLM slot to use
+	//   - messages: Conversation history
+	//   - schemaType: An instance of the struct type to populate
+	//   - opts: Optional configuration
+	//
+	// Returns:
+	//   - *StructuredCompletionResult: Contains the parsed result, model, and token usage
+	//   - error: Non-nil if completion fails or response doesn't match schema
+	CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (*StructuredCompletionResult, error)
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// Tool Execution

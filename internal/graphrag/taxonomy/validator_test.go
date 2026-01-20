@@ -459,16 +459,6 @@ func TestTaxonomyValidator_validateTechnique(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "valid Arcanum technique",
-			tech: &TechniqueDefinition{
-				TechniqueID: "ARC-T001",
-				Name:        "Direct Prompt Injection",
-				Taxonomy:    "arcanum",
-				Description: "Test technique",
-			},
-			wantErr: false,
-		},
-		{
 			name: "valid custom technique",
 			tech: &TechniqueDefinition{
 				TechniqueID: "CUSTOM-001",

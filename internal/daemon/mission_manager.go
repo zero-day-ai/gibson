@@ -1074,6 +1074,40 @@ func (a *llmClientAdapter) CompleteStructuredAny(ctx context.Context, slot strin
 	return a.harness.CompleteStructuredAny(ctx, slot, messages, schemaType, harnessOpts...)
 }
 
+// CompleteStructuredAnyWithUsage performs structured completion and returns token usage.
+func (a *llmClientAdapter) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...orchestrator.CompletionOption) (*orchestrator.StructuredCompletionResult, error) {
+	// Convert orchestrator options to harness options
+	harnessOpts := make([]harness.CompletionOption, 0, len(opts))
+	compOpts := &orchestrator.CompletionOptions{}
+	for _, opt := range opts {
+		opt(compOpts)
+	}
+	if compOpts.Temperature > 0 {
+		harnessOpts = append(harnessOpts, harness.WithTemperature(compOpts.Temperature))
+	}
+	if compOpts.MaxTokens > 0 {
+		harnessOpts = append(harnessOpts, harness.WithMaxTokens(compOpts.MaxTokens))
+	}
+	if compOpts.TopP > 0 {
+		harnessOpts = append(harnessOpts, harness.WithTopP(compOpts.TopP))
+	}
+
+	harnessResult, err := a.harness.CompleteStructuredAnyWithUsage(ctx, slot, messages, schemaType, harnessOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert harness.StructuredCompletionResult to orchestrator.StructuredCompletionResult
+	return &orchestrator.StructuredCompletionResult{
+		Result:           harnessResult.Result,
+		Model:            harnessResult.Model,
+		RawJSON:          harnessResult.RawJSON,
+		PromptTokens:     harnessResult.PromptTokens,
+		CompletionTokens: harnessResult.CompletionTokens,
+		TotalTokens:      harnessResult.TotalTokens,
+	}, nil
+}
+
 // orchestratorHarnessAdapter adapts an AgentHarness to the orchestrator.Harness interface.
 // This allows the orchestrator's Actor to delegate to agents.
 type orchestratorHarnessAdapter struct {

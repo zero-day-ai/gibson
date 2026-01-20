@@ -242,11 +242,11 @@ func (v *taxonomyValidator) validateTechnique(t *TechniqueDefinition) error {
 	}
 
 	// Validate taxonomy is one of the known values
-	validTaxonomies := map[string]bool{"mitre": true, "arcanum": true, "custom": true}
+	validTaxonomies := map[string]bool{"mitre": true, "custom": true}
 	if !validTaxonomies[t.Taxonomy] {
 		return &TaxonomyError{
 			Type:    ErrorTypeInvalidFormat,
-			Message: "technique taxonomy must be 'mitre', 'arcanum', or 'custom'",
+			Message: "technique taxonomy must be 'mitre' or 'custom'",
 			Field:   "taxonomy",
 			Value:   t.Taxonomy,
 		}

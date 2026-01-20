@@ -330,12 +330,6 @@ func TestTaxonomyRegistry_Techniques(t *testing.T) {
 		Name:        "Phishing",
 		Taxonomy:    "mitre",
 	})
-	_ = taxonomy.AddTechnique(&TechniqueDefinition{
-		TechniqueID: "ARC-T001",
-		Name:        "Direct Prompt Injection",
-		Taxonomy:    "arcanum",
-	})
-
 	registry, err := NewTaxonomyRegistry(taxonomy)
 	if err != nil {
 		t.Fatalf("NewTaxonomyRegistry() error = %v", err)
@@ -349,17 +343,12 @@ func TestTaxonomyRegistry_Techniques(t *testing.T) {
 		{
 			name:      "all techniques",
 			source:    "",
-			wantCount: 3,
+			wantCount: 2,
 		},
 		{
 			name:      "MITRE techniques only",
 			source:    "mitre",
 			wantCount: 2,
-		},
-		{
-			name:      "Arcanum techniques only",
-			source:    "arcanum",
-			wantCount: 1,
 		},
 		{
 			name:      "non-existent source",

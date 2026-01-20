@@ -69,10 +69,11 @@ type ObservationState struct {
 	GraphSummary GraphSummary `json:"graph_summary"`
 
 	// Workflow node states by status
-	ReadyNodes     []NodeSummary `json:"ready_nodes"`
-	RunningNodes   []NodeSummary `json:"running_nodes"`
-	CompletedNodes []NodeSummary `json:"completed_nodes"`
-	FailedNodes    []NodeSummary `json:"failed_nodes"`
+	ReadyNodes     []NodeSummary          `json:"ready_nodes"`
+	RunningNodes   []NodeSummary          `json:"running_nodes"`
+	PendingNodes   []PendingNodeSummary   `json:"pending_nodes,omitempty"`
+	CompletedNodes []CompletedNodeSummary `json:"completed_nodes"`
+	FailedNodes    []NodeSummary          `json:"failed_nodes"`
 
 	// Recent execution history for context
 	RecentDecisions []DecisionSummary `json:"recent_decisions"`
@@ -87,6 +88,10 @@ type ObservationState struct {
 	// This enables semantic error recovery by providing alternatives for failures.
 	// Optional - only populated if Observer was configured with InventoryBuilder.
 	ComponentInventory *ComponentInventory `json:"component_inventory,omitempty"`
+
+	// WorkflowDAG shows full graph structure with entry/exit points and edges
+	// Optional - only populated when dependency data is available
+	WorkflowDAG *WorkflowDAG `json:"workflow_dag,omitempty"`
 
 	// Timestamp when this observation was captured
 	ObservedAt time.Time `json:"observed_at"`
@@ -123,6 +128,65 @@ type NodeSummary struct {
 	Status      string `json:"status"`
 	IsDynamic   bool   `json:"is_dynamic,omitempty"`
 	Attempt     int    `json:"attempt,omitempty"`
+}
+
+// BlockingNodeInfo describes a node that is blocking another node from executing.
+type BlockingNodeInfo struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// PendingNodeSummary extends NodeSummary with dependency blocking information.
+// This is used for nodes that are waiting for their dependencies to complete.
+type PendingNodeSummary struct {
+	NodeSummary
+
+	// BlockedBy contains IDs of nodes this node depends on
+	BlockedBy []string `json:"blocked_by,omitempty"`
+
+	// BlockedByDetails provides status of each blocking node
+	BlockedByDetails []BlockingNodeInfo `json:"blocked_by_details,omitempty"`
+}
+
+// CompletedNodeSummary extends NodeSummary with execution results.
+// This provides context about what was accomplished during node execution.
+type CompletedNodeSummary struct {
+	NodeSummary
+
+	// Duration is how long the node took to execute
+	Duration string `json:"duration,omitempty"`
+
+	// CompletedAt is when the node finished
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+
+	// OutputSummary is a brief description of what was produced (truncated to 200 chars)
+	OutputSummary string `json:"output_summary,omitempty"`
+
+	// FindingsCount is the number of findings discovered (for agent nodes)
+	FindingsCount int `json:"findings_count,omitempty"`
+
+	// FindingsSeverity breaks down findings by severity
+	FindingsSeverity map[string]int `json:"findings_severity,omitempty"`
+}
+
+// WorkflowDAG represents the full workflow graph structure.
+// This provides complete visibility into the workflow topology.
+type WorkflowDAG struct {
+	// EntryPoints are nodes with no dependencies (can execute immediately)
+	EntryPoints []string `json:"entry_points"`
+
+	// ExitPoints are nodes with no dependents (terminal nodes)
+	ExitPoints []string `json:"exit_points"`
+
+	// Edges maps each node to its dependencies (node -> depends_on)
+	Edges map[string][]string `json:"edges"`
+
+	// TotalNodes is the count of all nodes
+	TotalNodes int `json:"total_nodes"`
+
+	// CriticalPathLength is the longest dependency chain
+	CriticalPathLength int `json:"critical_path_length,omitempty"`
 }
 
 // DecisionSummary captures key information from a past decision
@@ -230,16 +294,22 @@ func (o *Observer) Observe(ctx context.Context, missionID string) (*ObservationS
 	}
 
 	// 3. Get workflow nodes by status
-	if err := o.observeNodes(ctx, mid, state); err != nil {
+	nodes, dependencyMap, err := o.observeNodesWithDependencies(ctx, mid, state)
+	if err != nil {
 		return nil, fmt.Errorf("failed to observe workflow nodes: %w", err)
 	}
 
-	// 4. Get recent decisions for context
+	// 4. Build workflow DAG structure
+	if len(nodes) > 0 && dependencyMap != nil {
+		state.WorkflowDAG = buildWorkflowDAG(nodes, dependencyMap)
+	}
+
+	// 5. Get recent decisions for context
 	if err := o.observeDecisions(ctx, mid, state); err != nil {
 		return nil, fmt.Errorf("failed to observe recent decisions: %w", err)
 	}
 
-	// 5. Calculate resource constraints
+	// 6. Calculate resource constraints
 	o.calculateResourceConstraints(state)
 
 	// 6. Build component inventory if builder is configured
@@ -301,12 +371,29 @@ func (o *Observer) observeStats(ctx context.Context, missionID types.ID, state *
 	return nil
 }
 
-// observeNodes retrieves and categorizes workflow nodes by status
-func (o *Observer) observeNodes(ctx context.Context, missionID types.ID, state *ObservationState) error {
+// observeNodesWithDependencies retrieves and categorizes workflow nodes by status.
+// Returns the nodes and dependency map for DAG construction.
+func (o *Observer) observeNodesWithDependencies(ctx context.Context, missionID types.ID, state *ObservationState) ([]*schema.WorkflowNode, map[string][]string, error) {
 	// Get all nodes for the mission
 	nodes, err := o.missionQueries.GetMissionNodes(ctx, missionID)
 	if err != nil {
-		return fmt.Errorf("failed to get mission nodes: %w", err)
+		return nil, nil, fmt.Errorf("failed to get mission nodes: %w", err)
+	}
+
+	// Get all dependencies in a single batch query
+	dependencyMap, err := o.missionQueries.GetMissionNodeDependencies(ctx, missionID)
+	if err != nil {
+		// Log warning but continue with empty dependency map
+		slog.Warn("failed to query node dependencies, continuing without dependency info",
+			"mission_id", missionID.String(),
+			"error", err)
+		dependencyMap = make(map[string][]string)
+	}
+
+	// Create node lookup map for status checks
+	nodeMap := make(map[string]*schema.WorkflowNode, len(nodes))
+	for _, node := range nodes {
+		nodeMap[node.ID.String()] = node
 	}
 
 	// Categorize nodes by status
@@ -325,10 +412,68 @@ func (o *Observer) observeNodes(ctx context.Context, missionID types.ID, state *
 		switch node.Status {
 		case schema.WorkflowNodeStatusReady:
 			state.ReadyNodes = append(state.ReadyNodes, summary)
+
 		case schema.WorkflowNodeStatusRunning:
 			state.RunningNodes = append(state.RunningNodes, summary)
+
+		case schema.WorkflowNodeStatusPending:
+			// Build pending node with dependency information
+			pendingNode := PendingNodeSummary{
+				NodeSummary: summary,
+			}
+
+			// Get dependencies for this node
+			if deps, ok := dependencyMap[node.ID.String()]; ok && len(deps) > 0 {
+				pendingNode.BlockedBy = deps
+
+				// Build BlockedByDetails with status of each blocking node
+				for _, depID := range deps {
+					if depNode, found := nodeMap[depID]; found {
+						pendingNode.BlockedByDetails = append(pendingNode.BlockedByDetails, BlockingNodeInfo{
+							ID:     depID,
+							Name:   depNode.Name,
+							Status: depNode.Status.String(),
+						})
+					}
+				}
+			}
+
+			state.PendingNodes = append(state.PendingNodes, pendingNode)
+
 		case schema.WorkflowNodeStatusCompleted:
-			state.CompletedNodes = append(state.CompletedNodes, summary)
+			// Build completed node with execution details
+			completedNode := CompletedNodeSummary{
+				NodeSummary: summary,
+			}
+
+			// Get execution details for duration and output summary
+			executions, err := o.missionQueries.GetNodeExecutions(ctx, node.ID)
+			if err == nil && len(executions) > 0 {
+				lastExec := executions[len(executions)-1]
+
+				// Calculate duration
+				if lastExec.CompletedAt != nil {
+					duration := lastExec.CompletedAt.Sub(lastExec.StartedAt)
+					completedNode.Duration = formatDuration(duration)
+					completedNode.CompletedAt = *lastExec.CompletedAt
+				}
+
+				// Extract output summary from result
+				if lastExec.Result != nil {
+					outputSummary := extractOutputSummary(lastExec.Result)
+					completedNode.OutputSummary = truncateString(outputSummary, 200)
+				}
+
+				// For agent nodes, extract findings count and severity
+				if node.Type == schema.WorkflowNodeTypeAgent && lastExec.Result != nil {
+					if findingsData, ok := lastExec.Result["findings"]; ok {
+						completedNode.FindingsCount, completedNode.FindingsSeverity = extractFindingsInfo(findingsData)
+					}
+				}
+			}
+
+			state.CompletedNodes = append(state.CompletedNodes, completedNode)
+
 		case schema.WorkflowNodeStatusFailed:
 			state.FailedNodes = append(state.FailedNodes, summary)
 		}
@@ -341,14 +486,17 @@ func (o *Observer) observeNodes(ctx context.Context, missionID types.ID, state *
 	if state.RunningNodes == nil {
 		state.RunningNodes = []NodeSummary{}
 	}
+	if state.PendingNodes == nil {
+		state.PendingNodes = []PendingNodeSummary{}
+	}
 	if state.CompletedNodes == nil {
-		state.CompletedNodes = []NodeSummary{}
+		state.CompletedNodes = []CompletedNodeSummary{}
 	}
 	if state.FailedNodes == nil {
 		state.FailedNodes = []NodeSummary{}
 	}
 
-	return nil
+	return nodes, dependencyMap, nil
 }
 
 // observeDecisions retrieves recent orchestrator decisions for context
@@ -654,4 +802,198 @@ func truncateString(s string, maxLen int) string {
 		return "..."
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// extractOutputSummary extracts a human-readable summary from execution result data.
+// Looks for common fields like "summary", "message", "output", or constructs a basic summary.
+func extractOutputSummary(result map[string]any) string {
+	// Try common summary fields first
+	if summary, ok := result["summary"].(string); ok && summary != "" {
+		return summary
+	}
+	if message, ok := result["message"].(string); ok && message != "" {
+		return message
+	}
+	if output, ok := result["output"].(string); ok && output != "" {
+		return output
+	}
+
+	// Build a summary from available keys
+	var parts []string
+	if count, ok := result["count"].(float64); ok {
+		parts = append(parts, fmt.Sprintf("count: %.0f", count))
+	} else if count, ok := result["count"].(int); ok {
+		parts = append(parts, fmt.Sprintf("count: %d", count))
+	}
+
+	if status, ok := result["status"].(string); ok && status != "" {
+		parts = append(parts, fmt.Sprintf("status: %s", status))
+	}
+
+	if len(parts) > 0 {
+		return strings.Join(parts, ", ")
+	}
+
+	// Fallback: just indicate successful completion
+	return "execution completed"
+}
+
+// extractFindingsInfo extracts findings count and severity breakdown from result data.
+// Returns (count, severity_map).
+func extractFindingsInfo(findingsData any) (int, map[string]int) {
+	severityMap := make(map[string]int)
+
+	// Handle findings as array
+	if findingsArray, ok := findingsData.([]any); ok {
+		count := len(findingsArray)
+
+		// Count severities
+		for _, finding := range findingsArray {
+			if findingMap, ok := finding.(map[string]any); ok {
+				if severity, ok := findingMap["severity"].(string); ok && severity != "" {
+					severityMap[severity]++
+				}
+			}
+		}
+
+		return count, severityMap
+	}
+
+	// Handle findings as map with count/severity fields
+	if findingsMap, ok := findingsData.(map[string]any); ok {
+		count := 0
+		if c, ok := findingsMap["count"].(float64); ok {
+			count = int(c)
+		} else if c, ok := findingsMap["count"].(int); ok {
+			count = c
+		}
+
+		// Extract severity breakdown if present
+		if severities, ok := findingsMap["severity"].(map[string]any); ok {
+			for severity, sCount := range severities {
+				if countFloat, ok := sCount.(float64); ok {
+					severityMap[severity] = int(countFloat)
+				} else if countInt, ok := sCount.(int); ok {
+					severityMap[severity] = countInt
+				}
+			}
+		}
+
+		return count, severityMap
+	}
+
+	return 0, severityMap
+}
+
+// buildWorkflowDAG constructs a WorkflowDAG structure from nodes and their dependencies.
+// This provides complete visibility into the workflow topology including entry/exit points
+// and the critical path length.
+func buildWorkflowDAG(nodes []*schema.WorkflowNode, dependencyMap map[string][]string) *WorkflowDAG {
+	if len(nodes) == 0 {
+		return nil
+	}
+
+	dag := &WorkflowDAG{
+		Edges:       make(map[string][]string),
+		TotalNodes:  len(nodes),
+		EntryPoints: []string{},
+		ExitPoints:  []string{},
+	}
+
+	// Build reverse dependency map to find nodes with no dependents (exit points)
+	reverseDeps := make(map[string][]string)
+	allNodeIDs := make(map[string]bool)
+
+	// Collect all node IDs
+	for _, node := range nodes {
+		nodeID := node.ID.String()
+		allNodeIDs[nodeID] = true
+	}
+
+	// Build edges map and reverse dependencies
+	for nodeID, deps := range dependencyMap {
+		dag.Edges[nodeID] = deps
+
+		// Build reverse dependency map
+		for _, depID := range deps {
+			reverseDeps[depID] = append(reverseDeps[depID], nodeID)
+		}
+	}
+
+	// Find entry points (nodes with no dependencies)
+	for nodeID := range allNodeIDs {
+		if len(dependencyMap[nodeID]) == 0 {
+			dag.EntryPoints = append(dag.EntryPoints, nodeID)
+		}
+	}
+
+	// Find exit points (nodes with no dependents)
+	for nodeID := range allNodeIDs {
+		if len(reverseDeps[nodeID]) == 0 {
+			dag.ExitPoints = append(dag.ExitPoints, nodeID)
+		}
+	}
+
+	// Calculate critical path length using topological sort and longest path
+	dag.CriticalPathLength = calculateCriticalPath(dependencyMap, dag.EntryPoints)
+
+	return dag
+}
+
+// calculateCriticalPath calculates the longest path from entry points to any node.
+// This represents the minimum number of sequential steps needed to complete the workflow.
+func calculateCriticalPath(dependencyMap map[string][]string, entryPoints []string) int {
+	if len(entryPoints) == 0 {
+		return 0
+	}
+
+	// Use dynamic programming to find longest path
+	// distance[node] = longest path from any entry point to this node
+	distance := make(map[string]int)
+
+	// Build reverse map for traversal
+	reverseDeps := make(map[string][]string)
+	for nodeID, deps := range dependencyMap {
+		for _, depID := range deps {
+			reverseDeps[depID] = append(reverseDeps[depID], nodeID)
+		}
+	}
+
+	// Initialize entry points with distance 0
+	for _, entryID := range entryPoints {
+		distance[entryID] = 0
+	}
+
+	// BFS from entry points to calculate longest paths
+	queue := make([]string, len(entryPoints))
+	copy(queue, entryPoints)
+	visited := make(map[string]bool)
+
+	maxDistance := 0
+
+	for len(queue) > 0 {
+		currentID := queue[0]
+		queue = queue[1:]
+
+		if visited[currentID] {
+			continue
+		}
+		visited[currentID] = true
+
+		currentDist := distance[currentID]
+		if currentDist > maxDistance {
+			maxDistance = currentDist
+		}
+
+		// Update distances for nodes that depend on this one
+		for _, dependentID := range reverseDeps[currentID] {
+			newDist := currentDist + 1
+			if existingDist, exists := distance[dependentID]; !exists || newDist > existingDist {
+				distance[dependentID] = newDist
+			}
+			queue = append(queue, dependentID)
+		}
+	}
+
+	return maxDistance + 1 // +1 because we count nodes, not edges
 }

@@ -64,11 +64,6 @@ func TestIntegration_LoadValidateRegistry(t *testing.T) {
 		t.Error("Registry has no MITRE techniques")
 	}
 
-	arcanumTechniques := registry.Techniques("arcanum")
-	if len(arcanumTechniques) == 0 {
-		t.Error("Registry has no Arcanum techniques")
-	}
-
 	// Step 5: Test ID generation
 	nodeID, err := registry.GenerateNodeID("domain", map[string]any{
 		"name": "example.com",

@@ -167,7 +167,7 @@ func TestObservationState_FormatForPrompt(t *testing.T) {
 			},
 			ReadyNodes:     []NodeSummary{},
 			RunningNodes:   []NodeSummary{},
-			CompletedNodes: []NodeSummary{},
+			CompletedNodes: []CompletedNodeSummary{},
 			FailedNodes:    []NodeSummary{},
 			FailedExecution: &ExecutionFailure{
 				NodeID:     "node-failed",
@@ -222,7 +222,7 @@ func TestObservationState_FormatForPrompt(t *testing.T) {
 			},
 			ReadyNodes:     []NodeSummary{},
 			RunningNodes:   []NodeSummary{},
-			CompletedNodes: []NodeSummary{},
+			CompletedNodes: []CompletedNodeSummary{},
 			FailedNodes:    []NodeSummary{},
 			FailedExecution: &ExecutionFailure{
 				NodeID:     "node-failed",
@@ -316,7 +316,7 @@ func TestObservationState_FormatForPrompt(t *testing.T) {
 			GraphSummary:    GraphSummary{},
 			ReadyNodes:      []NodeSummary{},
 			RunningNodes:    []NodeSummary{},
-			CompletedNodes:  []NodeSummary{},
+			CompletedNodes:  []CompletedNodeSummary{},
 			FailedNodes:     []NodeSummary{},
 			RecentDecisions: []DecisionSummary{},
 			ResourceConstraints: ResourceConstraints{
