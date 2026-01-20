@@ -4,45 +4,62 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
-	"github.com/clems4ever/all-minilm-l6-v2-go/all_minilm_l6_v2"
-	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/buckhx/gobert/tokenize"
+	"github.com/buckhx/gobert/tokenize/vocab"
+	"github.com/gomlx/go-huggingface/hub"
+	"github.com/gomlx/gomlx/backends"
+	"github.com/gomlx/gomlx/pkg/core/dtypes"
+	. "github.com/gomlx/gomlx/pkg/core/graph"
+	"github.com/gomlx/gomlx/pkg/core/tensors"
+	mlcontext "github.com/gomlx/gomlx/pkg/ml/context"
+	"github.com/gomlx/onnx-gomlx/onnx"
+	gotypes "github.com/zero-day-ai/gibson/internal/types"
 )
 
-// Singleton for the native embedder - ONNX Runtime can only be initialized once per process
+// Singleton for the native embedder - GoMLX backend should only be initialized once per process
 var (
 	nativeEmbedderInstance *NativeEmbedder
 	nativeEmbedderOnce     sync.Once
 	nativeEmbedderErr      error
 )
 
-// NativeEmbedder uses all-MiniLM-L6-v2 for local embedding generation.
-// This embedder runs entirely offline without requiring external API calls.
-// The model is embedded in the binary and uses ONNX Runtime for inference.
+// NativeEmbedder uses GoMLX with all-MiniLM-L6-v2 for local embedding generation.
+// This embedder runs entirely offline (after initial model download) without requiring external API calls.
 //
 // Model details:
-//   - Architecture: all-MiniLM-L6-v2 (sentence-transformers)
+//   - Architecture: all-MiniLM-L6-v2 (sentence-transformers/all-MiniLM-L6-v2)
 //   - Dimensions: 384
-//   - Output: float32 vectors (converted to float64 for interface compliance)
-//   - Performance: ~100ms per embedding on CPU
+//   - Output: float64 vectors
+//   - Backend: XLA/PJRT via GoMLX
+//   - Tokenizer: BERT WordPiece via gobert library
 //
 // Thread-safety: All methods are safe for concurrent use.
-// Singleton: ONNX Runtime can only be initialized once per process, so
-// CreateNativeEmbedder returns a shared instance.
+// Singleton: GoMLX backend should only be initialized once per process.
+//
+// Implementation details:
+//   - Uses gobert (github.com/buckhx/gobert) for BERT tokenization
+//   - Applies mean pooling on last_hidden_state output
+//   - Handles int32->int64 conversion for ONNX model compatibility
 type NativeEmbedder struct {
-	model *all_minilm_l6_v2.Model
-	mu    sync.RWMutex
+	model     *onnx.Model
+	ctx       *mlcontext.Context
+	backend   backends.Backend
+	tokenizer tokenize.FeatureFactory
+	mu        sync.RWMutex
 }
 
-// CreateNativeEmbedder creates or returns the singleton native embedder using all-MiniLM-L6-v2.
-// Returns an error if ONNX Runtime is not available or model initialization fails.
+// CreateNativeEmbedder creates or returns the singleton native embedder using GoMLX with all-MiniLM-L6-v2.
+// Returns an error if the model or tokenizer cannot be loaded.
 //
-// IMPORTANT: ONNX Runtime can only be initialized once per process. This function
+// IMPORTANT: GoMLX backend should only be initialized once per process. This function
 // returns a shared singleton instance. All callers receive the same embedder.
 //
 // Requirements:
-//   - ONNX Runtime library must be available (libonnxruntime.so or onnxruntime.dll)
-//   - Model weights are embedded in the binary (no external files needed)
+//   - Model and tokenizer are downloaded from HuggingFace on first use
+//   - Files are cached in HuggingFace's default cache location (~/.cache/huggingface/)
+//   - No external dependencies required after initial download
 //
 // Example:
 //
@@ -52,17 +69,76 @@ type NativeEmbedder struct {
 //	}
 func CreateNativeEmbedder() (*NativeEmbedder, error) {
 	nativeEmbedderOnce.Do(func() {
-		// Initialize the all-MiniLM-L6-v2 model
-		// This loads the ONNX model and creates the runtime session
-		model, err := all_minilm_l6_v2.NewModel()
+		// Initialize GoMLX backend (XLA/PJRT)
+		backend, err := backends.New()
 		if err != nil {
-			nativeEmbedderErr = types.WrapError(ErrCodeEmbedderUnavailable,
-				"failed to initialize native embedder (ONNX Runtime may be unavailable)", err)
+			nativeEmbedderErr = gotypes.WrapError(ErrCodeEmbedderUnavailable,
+				"failed to initialize GoMLX backend", err)
 			return
 		}
 
+		// Create HuggingFace repo reference for model
+		modelRepo := hub.New("sentence-transformers/all-MiniLM-L6-v2")
+
+		// Download model from HuggingFace Hub
+		// The model will be cached in ~/.cache/huggingface/hub/
+		modelPath, err := modelRepo.DownloadFile("onnx/model.onnx")
+		if err != nil {
+			nativeEmbedderErr = gotypes.WrapError(ErrCodeEmbedderUnavailable,
+				"failed to download all-MiniLM-L6-v2 model from HuggingFace", err)
+			return
+		}
+
+		// Load ONNX model via onnx-gomlx
+		model, err := onnx.ReadFile(modelPath)
+		if err != nil {
+			nativeEmbedderErr = gotypes.WrapError(ErrCodeEmbedderUnavailable,
+				fmt.Sprintf("failed to load ONNX model from %s", modelPath), err)
+			return
+		}
+
+		// Create GoMLX context for model execution
+		ctx := mlcontext.New()
+		if err := model.VariablesToContext(ctx); err != nil {
+			nativeEmbedderErr = gotypes.WrapError(ErrCodeEmbedderUnavailable,
+				"failed to extract model variables to context", err)
+			return
+		}
+
+		// Download vocabulary file for tokenizer
+		vocabPath, err := modelRepo.DownloadFile("vocab.txt")
+		if err != nil {
+			nativeEmbedderErr = gotypes.WrapError(ErrCodeEmbedderUnavailable,
+				"failed to download vocabulary from HuggingFace", err)
+			return
+		}
+
+		// Load BERT vocabulary
+		vocabDict, err := vocab.FromFile(vocabPath)
+		if err != nil {
+			nativeEmbedderErr = gotypes.WrapError(ErrCodeEmbedderUnavailable,
+				fmt.Sprintf("failed to load vocabulary from %s", vocabPath), err)
+			return
+		}
+
+		// Create BERT tokenizer with vocabulary
+		// The model uses lowercase and max sequence length of 512
+		bertTokenizer := tokenize.NewTokenizer(vocabDict,
+			tokenize.WithLower(true),
+			tokenize.WithUnknownToken("[UNK]"))
+
+		// Create feature factory for converting text to model inputs
+		// The model uses a max sequence length of 256 tokens
+		featureFactory := tokenize.FeatureFactory{
+			Tokenizer: bertTokenizer,
+			SeqLen:    256,
+		}
+
 		nativeEmbedderInstance = &NativeEmbedder{
-			model: model,
+			model:     model,
+			ctx:       ctx,
+			backend:   backend,
+			tokenizer: featureFactory,
 		}
 	})
 
@@ -76,9 +152,6 @@ func CreateNativeEmbedder() (*NativeEmbedder, error) {
 // Embed generates an embedding vector for a single text.
 // The text is tokenized, encoded, and passed through the transformer model.
 //
-// The all-MiniLM-L6-v2 model returns float32 vectors, which are converted
-// to float64 for compliance with the Embedder interface.
-//
 // Returns an error if the embedding generation fails or context is canceled.
 func (e *NativeEmbedder) Embed(ctx context.Context, text string) ([]float64, error) {
 	e.mu.RLock()
@@ -86,32 +159,139 @@ func (e *NativeEmbedder) Embed(ctx context.Context, text string) ([]float64, err
 
 	// Check if context is already canceled
 	if err := ctx.Err(); err != nil {
-		return nil, types.WrapError(ErrCodeEmbeddingFailed, "context canceled", err)
+		return nil, gotypes.WrapError(ErrCodeEmbeddingFailed, "context canceled", err)
 	}
 
-	// Generate embedding using the native model
-	// Note: all-minilm-l6-v2-go doesn't currently support context cancellation
-	// TODO: Consider wrapping in a goroutine with timeout for long-running operations
-	embedding, err := e.model.Compute(text, true)
+	// Tokenize text and create model input features
+	feature := e.tokenizer.Feature(text)
+	if len(feature.TokenIDs) == 0 {
+		return nil, gotypes.NewError(ErrCodeEmbeddingFailed,
+			"tokenization failed: no tokens produced")
+	}
+
+	// Extract input tensors from feature
+	// BERT models expect: input_ids, attention_mask, token_type_ids
+	// The tokenizer produces int32, but ONNX model expects int64
+	inputIDsInt32 := feature.TokenIDs      // Shape: [seq_len]
+	attentionMaskInt32 := feature.Mask     // Shape: [seq_len]
+	tokenTypeIDsInt32 := feature.TypeIDs   // Shape: [seq_len]
+
+	// Convert int32 to int64 for ONNX model
+	inputIDs := make([]int64, len(inputIDsInt32))
+	attentionMask := make([]int64, len(attentionMaskInt32))
+	tokenTypeIDs := make([]int64, len(tokenTypeIDsInt32))
+	for i := range inputIDsInt32 {
+		inputIDs[i] = int64(inputIDsInt32[i])
+		attentionMask[i] = int64(attentionMaskInt32[i])
+		tokenTypeIDs[i] = int64(tokenTypeIDsInt32[i])
+	}
+
+	// Create batch dimension (batch_size=1)
+	batchInputIDs := [][]int64{inputIDs}
+	batchAttentionMask := [][]int64{attentionMask}
+	batchTokenTypeIDs := [][]int64{tokenTypeIDs}
+
+	// Execute ONNX model via GoMLX graph
+	// The model returns last_hidden_state with shape [batch_size, seq_len, hidden_size]
+	result, err := mlcontext.ExecOnce(e.backend, e.ctx, func(ctx *mlcontext.Context, inputs []*Node) *Node {
+		g := inputs[0].Graph()
+
+		// Convert input slices to GoMLX tensors
+		// inputs[0] = input_ids, inputs[1] = attention_mask, inputs[2] = token_type_ids
+		inputIDsTensor := inputs[0]
+		attentionMaskTensor := inputs[1]
+		tokenTypeIDsTensor := inputs[2]
+
+		// Call the ONNX model graph
+		// The model has named inputs: input_ids, attention_mask, token_type_ids
+		// Request only the last_hidden_state output
+		outputs := e.model.CallGraph(ctx, g, map[string]*Node{
+			"input_ids":      inputIDsTensor,
+			"attention_mask": attentionMaskTensor,
+			"token_type_ids": tokenTypeIDsTensor,
+		}, "last_hidden_state")
+
+		// Extract last_hidden_state from outputs
+		// outputs is a slice, and we requested only "last_hidden_state"
+		lastHiddenState := outputs[0]
+
+		// Apply mean pooling on the sequence dimension
+		// Shape: [batch_size, seq_len, hidden_size] -> [batch_size, hidden_size]
+		// We need to mask padding tokens before pooling
+		attentionMaskExpanded := ExpandDims(attentionMaskTensor, -1) // Shape: [batch_size, seq_len, 1]
+		attentionMaskExpanded = ConvertType(attentionMaskExpanded, lastHiddenState.DType())
+
+		// Mask hidden states (set padding tokens to 0)
+		maskedHiddenState := Mul(lastHiddenState, attentionMaskExpanded)
+
+		// Sum across sequence dimension
+		sumHiddenState := ReduceSum(maskedHiddenState, 1) // Shape: [batch_size, hidden_size]
+
+		// Count non-padding tokens for averaging
+		sumMask := ReduceSum(attentionMaskExpanded, 1) // Shape: [batch_size, hidden_size]
+		sumMask = Add(sumMask, Const(g, float32(1e-9))) // Avoid division by zero
+
+		// Mean pooling: divide by number of non-padding tokens
+		meanPooled := Div(sumHiddenState, sumMask)
+
+		return meanPooled
+	}, batchInputIDs, batchAttentionMask, batchTokenTypeIDs)
+
 	if err != nil {
-		return nil, types.WrapError(ErrCodeEmbeddingFailed,
-			fmt.Sprintf("failed to generate embedding for text (len=%d)", len(text)), err)
+		return nil, gotypes.WrapError(ErrCodeEmbeddingFailed,
+			"GoMLX graph execution failed", err)
 	}
 
-	// Convert float32 to float64
-	result := make([]float64, len(embedding))
-	for i, v := range embedding {
-		result[i] = float64(v)
+	// Convert result tensor to []float64
+	// Result shape: [1, 384] for batch_size=1
+	embedding := tensorToFloat64Slice(result)
+	if len(embedding) != 384 {
+		return nil, gotypes.NewError(ErrCodeEmbeddingFailed,
+			fmt.Sprintf("unexpected embedding dimension: got %d, want 384", len(embedding)))
 	}
 
-	return result, nil
+	return embedding, nil
+}
+
+// tensorToFloat64Slice converts a GoMLX tensor to a []float64 slice.
+// Assumes the tensor is 2D with shape [1, dimensions] and extracts the first row.
+func tensorToFloat64Slice(tensor *tensors.Tensor) []float64 {
+	// Get tensor shape
+	shape := tensor.Shape()
+	if shape.Rank() != 2 || shape.Dimensions[0] != 1 {
+		panic(fmt.Sprintf("expected shape [1, N], got %v", shape))
+	}
+
+	dims := shape.Dimensions[1]
+	result := make([]float64, dims)
+
+	// Get flat tensor data based on dtype
+	switch tensor.DType() {
+	case dtypes.Float32:
+		// Copy data from tensor using CopyFlatData
+		data, err := tensors.CopyFlatData[float32](tensor)
+		if err != nil {
+			panic(fmt.Sprintf("failed to copy tensor data: %v", err))
+		}
+		for i := 0; i < dims; i++ {
+			result[i] = float64(data[i])
+		}
+	case dtypes.Float64:
+		// Copy data from tensor using CopyFlatData
+		data, err := tensors.CopyFlatData[float64](tensor)
+		if err != nil {
+			panic(fmt.Sprintf("failed to copy tensor data: %v", err))
+		}
+		copy(result, data)
+	default:
+		panic(fmt.Sprintf("unsupported tensor dtype: %v", tensor.DType()))
+	}
+
+	return result
 }
 
 // EmbedBatch generates embeddings for multiple texts efficiently.
-// Texts are processed sequentially using the same model session.
-//
-// This method processes texts one at a time. While not parallel, it's more
-// efficient than separate Embed() calls because the model remains loaded.
+// Texts are processed one at a time for now (true batching can be added later).
 //
 // Returns an error if any embedding fails. Partial results are not returned.
 func (e *NativeEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float64, error) {
@@ -120,7 +300,7 @@ func (e *NativeEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 
 	// Check if context is already canceled
 	if err := ctx.Err(); err != nil {
-		return nil, types.WrapError(ErrCodeEmbeddingBatchFailed, "context canceled", err)
+		return nil, gotypes.WrapError(ErrCodeEmbeddingBatchFailed, "context canceled", err)
 	}
 
 	if len(texts) == 0 {
@@ -132,24 +312,21 @@ func (e *NativeEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	for i, text := range texts {
 		// Check context between iterations
 		if err := ctx.Err(); err != nil {
-			return nil, types.WrapError(ErrCodeEmbeddingBatchFailed,
+			return nil, gotypes.WrapError(ErrCodeEmbeddingBatchFailed,
 				fmt.Sprintf("context canceled after %d/%d embeddings", i, len(texts)), err)
 		}
 
-		// Generate embedding
-		embedding, err := e.model.Compute(text, true)
+		// Temporarily unlock for individual embedding
+		e.mu.RUnlock()
+		embedding, err := e.Embed(ctx, text)
+		e.mu.RLock()
+
 		if err != nil {
-			return nil, types.WrapError(ErrCodeEmbeddingBatchFailed,
+			return nil, gotypes.WrapError(ErrCodeEmbeddingBatchFailed,
 				fmt.Sprintf("failed to generate embedding %d/%d", i+1, len(texts)), err)
 		}
 
-		// Convert float32 to float64
-		result := make([]float64, len(embedding))
-		for j, v := range embedding {
-			result[j] = float64(v)
-		}
-
-		results[i] = result
+		results[i] = embedding
 	}
 
 	return results, nil
@@ -168,18 +345,27 @@ func (e *NativeEmbedder) Model() string {
 
 // Health checks if the embedder is operational.
 // Tests the model by generating a test embedding.
-func (e *NativeEmbedder) Health(ctx context.Context) types.HealthStatus {
+func (e *NativeEmbedder) Health(ctx context.Context) gotypes.HealthStatus {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
 	// Try to generate a test embedding
 	testText := "health check"
-	_, err := e.model.Compute(testText, true)
+
+	// Create a new context for the health check to avoid blocking
+	healthCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// Temporarily unlock for embedding
+	e.mu.RUnlock()
+	_, err := e.Embed(healthCtx, testText)
+	e.mu.RLock()
+
 	if err != nil {
-		return types.NewHealthStatus(types.HealthStateDegraded,
-			fmt.Sprintf("native embedder health check failed: %v", err))
+		return gotypes.NewHealthStatus(gotypes.HealthStateDegraded,
+			fmt.Sprintf("native embedder failed health check: %v", err))
 	}
 
-	return types.NewHealthStatus(types.HealthStateHealthy,
-		"native embedder operational (all-MiniLM-L6-v2)")
+	return gotypes.NewHealthStatus(gotypes.HealthStateHealthy,
+		"native embedder operational (all-MiniLM-L6-v2 via GoMLX)")
 }

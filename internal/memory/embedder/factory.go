@@ -11,7 +11,7 @@ type EmbedderType string
 
 const (
 	// EmbedderTypeNative uses all-MiniLM-L6-v2 for local offline embedding generation.
-	// No API keys required, runs entirely on CPU with ONNX Runtime.
+	// No API keys required, runs via GoMLX with XLA/PJRT backend.
 	// Produces 384-dimensional embeddings.
 	EmbedderTypeNative EmbedderType = "native"
 
