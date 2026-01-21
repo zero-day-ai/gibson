@@ -68,9 +68,30 @@ func NewStreamClient(ctx context.Context, conn *grpc.ClientConn, agentName strin
 	return c, nil
 }
 
-// Start initiates agent execution with the given task and mode.
+// Start initiates agent execution with the given task JSON and mode.
 // This sends the initial StartExecutionRequest to the agent.
+// Deprecated: Use StartWithTask instead which accepts a Task directly.
 func (c *StreamClient) Start(taskJSON string, mode database.AgentMode) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return fmt.Errorf("stream client is closed")
+	}
+	c.mu.Unlock()
+
+	// Parse the JSON task back (this is for backward compatibility)
+	// In practice, we should use StartWithTask instead
+	var task Task
+	if err := json.Unmarshal([]byte(taskJSON), &task); err != nil {
+		return fmt.Errorf("failed to unmarshal task JSON: %w", err)
+	}
+
+	return c.StartWithTask(task, mode)
+}
+
+// StartWithTask initiates agent execution with the given task and mode.
+// This sends the initial StartExecutionRequest to the agent.
+func (c *StreamClient) StartWithTask(task Task, mode database.AgentMode) error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -83,10 +104,12 @@ func (c *StreamClient) Start(taskJSON string, mode database.AgentMode) error {
 		protoMode = proto.AgentMode_AGENT_MODE_INTERACTIVE
 	}
 
+	protoTask := TaskToProto(task)
+
 	msg := &proto.ClientMessage{
 		Payload: &proto.ClientMessage_Start{
 			Start: &proto.StartExecutionRequest{
-				TaskJson:    taskJSON,
+				Task:        protoTask,
 				InitialMode: protoMode,
 			},
 		},
@@ -340,10 +363,12 @@ func (c *StreamClient) protoToEvent(msg *proto.AgentMessage) (*database.StreamEv
 
 	case *proto.AgentMessage_ToolCall:
 		event.EventType = database.StreamEventToolCall
+		// Convert Input map[string]*TypedValue to map[string]any
+		input := typedValueMapToMap(payload.ToolCall.Input)
 		content, err := json.Marshal(map[string]any{
-			"tool_name":  payload.ToolCall.ToolName,
-			"input_json": payload.ToolCall.InputJson,
-			"call_id":    payload.ToolCall.CallId,
+			"tool_name": payload.ToolCall.ToolName,
+			"input":     input,
+			"call_id":   payload.ToolCall.CallId,
 		})
 		if err != nil {
 			return event, fmt.Errorf("failed to marshal tool call: %w", err)
@@ -352,10 +377,12 @@ func (c *StreamClient) protoToEvent(msg *proto.AgentMessage) (*database.StreamEv
 
 	case *proto.AgentMessage_ToolResult:
 		event.EventType = database.StreamEventToolResult
+		// Convert Output TypedValue to any
+		output := typedValueToAny(payload.ToolResult.Output)
 		content, err := json.Marshal(map[string]any{
-			"call_id":     payload.ToolResult.CallId,
-			"output_json": payload.ToolResult.OutputJson,
-			"success":     payload.ToolResult.Success,
+			"call_id": payload.ToolResult.CallId,
+			"output":  output,
+			"success": payload.ToolResult.Success,
 		})
 		if err != nil {
 			return event, fmt.Errorf("failed to marshal tool result: %w", err)
@@ -364,7 +391,12 @@ func (c *StreamClient) protoToEvent(msg *proto.AgentMessage) (*database.StreamEv
 
 	case *proto.AgentMessage_Finding:
 		event.EventType = database.StreamEventFinding
-		event.Content = json.RawMessage(payload.Finding.FindingJson)
+		// Convert proto Finding to JSON
+		findingJSON, err := json.Marshal(payload.Finding.Finding)
+		if err != nil {
+			return event, fmt.Errorf("failed to marshal finding: %w", err)
+		}
+		event.Content = findingJSON
 
 	case *proto.AgentMessage_Status:
 		event.EventType = database.StreamEventStatus

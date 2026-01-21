@@ -202,18 +202,13 @@ func (c *GRPCAgentClient) Initialize(ctx context.Context, cfg agent.AgentConfig)
 // Future implementations may use bidirectional streaming to support
 // harness callbacks (tool execution, plugin queries, sub-agent delegation).
 func (c *GRPCAgentClient) Execute(ctx context.Context, task agent.Task, harness agent.AgentHarness) (agent.Result, error) {
-	// Marshal task to JSON
-	taskJSON, err := json.Marshal(task)
-	if err != nil {
-		result := agent.NewResult(task.ID)
-		result.Fail(fmt.Errorf("failed to marshal task: %w", err))
-		return result, nil
-	}
+	// Convert task to proto
+	protoTask := agent.TaskToProto(task)
 
 	// Send Execute RPC
 	timeoutMs := int64(task.Timeout.Milliseconds())
 	req := &proto.AgentExecuteRequest{
-		TaskJson:  string(taskJSON),
+		Task:      protoTask,
 		TimeoutMs: timeoutMs,
 	}
 
@@ -238,11 +233,9 @@ func (c *GRPCAgentClient) Execute(ctx context.Context, task agent.Task, harness 
 		return result, nil
 	}
 
-	// Unmarshal result from JSON using flexible struct to handle SDK's Output field
-	result, err := unmarshalAgentResult(resp.ResultJson, task.ID)
-	if err != nil {
-		return agent.Result{}, err
-	}
+	// Convert proto result to internal result
+	result := agent.ProtoToResult(resp.Result)
+	result.TaskID = task.ID // Ensure task ID is set
 
 	return result, nil
 }
@@ -268,18 +261,13 @@ func (c *GRPCAgentClient) Execute(ctx context.Context, task agent.Task, harness 
 //
 // Returns the agent's execution result or an error if execution fails.
 func (c *GRPCAgentClient) ExecuteWithCallback(ctx context.Context, task agent.Task, callback *CallbackInfo) (agent.Result, error) {
-	// Marshal task to JSON
-	taskJSON, err := json.Marshal(task)
-	if err != nil {
-		result := agent.NewResult(task.ID)
-		result.Fail(fmt.Errorf("failed to marshal task: %w", err))
-		return result, nil
-	}
+	// Convert task to proto
+	protoTask := agent.TaskToProto(task)
 
 	// Build the base request
 	timeoutMs := int64(task.Timeout.Milliseconds())
 	req := &proto.AgentExecuteRequest{
-		TaskJson:  string(taskJSON),
+		Task:      protoTask,
 		TimeoutMs: timeoutMs,
 	}
 
@@ -295,26 +283,40 @@ func (c *GRPCAgentClient) ExecuteWithCallback(ctx context.Context, task agent.Ta
 		req.CallbackEndpoint = callback.Endpoint
 		req.CallbackToken = callback.Token
 
-		// Serialize mission context to JSON if provided
+		// Convert mission context to TypedMap if provided
 		if callback.Mission != nil {
+			// Convert to map[string]any first
 			missionJSON, err := json.Marshal(callback.Mission)
 			if err != nil {
 				result := agent.NewResult(task.ID)
 				result.Fail(fmt.Errorf("failed to marshal mission context: %w", err))
 				return result, nil
 			}
-			req.MissionJson = string(missionJSON)
+			var missionMap map[string]any
+			if err := json.Unmarshal(missionJSON, &missionMap); err != nil {
+				result := agent.NewResult(task.ID)
+				result.Fail(fmt.Errorf("failed to unmarshal mission context: %w", err))
+				return result, nil
+			}
+			req.Mission = mapToTypedMap(missionMap)
 		}
 
-		// Serialize target info to JSON if provided
+		// Convert target info to TypedMap if provided
 		if callback.Target != nil {
+			// Convert to map[string]any first
 			targetJSON, err := json.Marshal(callback.Target)
 			if err != nil {
 				result := agent.NewResult(task.ID)
 				result.Fail(fmt.Errorf("failed to marshal target info: %w", err))
 				return result, nil
 			}
-			req.TargetJson = string(targetJSON)
+			var targetMap map[string]any
+			if err := json.Unmarshal(targetJSON, &targetMap); err != nil {
+				result := agent.NewResult(task.ID)
+				result.Fail(fmt.Errorf("failed to unmarshal target info: %w", err))
+				return result, nil
+			}
+			req.Target = mapToTypedMap(targetMap)
 		}
 
 		// Set mission-scoped storage fields
@@ -338,11 +340,9 @@ func (c *GRPCAgentClient) ExecuteWithCallback(ctx context.Context, task agent.Ta
 		return result, nil
 	}
 
-	// Unmarshal result from JSON using flexible struct to handle SDK's Output field
-	result, err := unmarshalAgentResult(resp.ResultJson, task.ID)
-	if err != nil {
-		return agent.Result{}, err
-	}
+	// Convert proto result to internal result
+	result := agent.ProtoToResult(resp.Result)
+	result.TaskID = task.ID // Ensure task ID is set
 
 	return result, nil
 }
@@ -579,4 +579,92 @@ func convertTargetSchemas(protoSchemas []*proto.TargetSchemaProto) []agent.Targe
 		})
 	}
 	return result
+}
+
+// mapToTypedMap converts a map[string]any to a proto TypedMap.
+func mapToTypedMap(m map[string]any) *proto.TypedMap {
+	if m == nil {
+		return nil
+	}
+
+	entries := make(map[string]*proto.TypedValue)
+	for k, v := range m {
+		entries[k] = anyToTypedValue(v)
+	}
+
+	return &proto.TypedMap{
+		Entries: entries,
+	}
+}
+
+// anyToTypedValue converts a Go any value to a proto TypedValue.
+func anyToTypedValue(v any) *proto.TypedValue {
+	if v == nil {
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_NullValue{
+				NullValue: proto.NullValue_NULL_VALUE,
+			},
+		}
+	}
+
+	switch val := v.(type) {
+	case string:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_StringValue{StringValue: val},
+		}
+	case int:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int32:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int64:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: val},
+		}
+	case float32:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_DoubleValue{DoubleValue: float64(val)},
+		}
+	case float64:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_DoubleValue{DoubleValue: val},
+		}
+	case bool:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_BoolValue{BoolValue: val},
+		}
+	case []byte:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_BytesValue{BytesValue: val},
+		}
+	case []any:
+		items := make([]*proto.TypedValue, len(val))
+		for i, item := range val {
+			items[i] = anyToTypedValue(item)
+		}
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_ArrayValue{
+				ArrayValue: &proto.TypedArray{Items: items},
+			},
+		}
+	case map[string]any:
+		entries := make(map[string]*proto.TypedValue)
+		for k, v := range val {
+			entries[k] = anyToTypedValue(v)
+		}
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_MapValue{
+				MapValue: &proto.TypedMap{Entries: entries},
+			},
+		}
+	default:
+		// For unknown types, convert to string representation
+		jsonBytes, _ := json.Marshal(v)
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_StringValue{StringValue: string(jsonBytes)},
+		}
+	}
 }

@@ -138,9 +138,11 @@ func TestStreamClient_EventConversion(t *testing.T) {
 			msg: &proto.AgentMessage{
 				Payload: &proto.AgentMessage_ToolCall{
 					ToolCall: &proto.ToolCallEvent{
-						ToolName:  "scan",
-						InputJson: `{"target": "192.168.1.1"}`,
-						CallId:    "call-1",
+						ToolName: "scan",
+						Input: map[string]*proto.TypedValue{
+							"target": {Kind: &proto.TypedValue_StringValue{StringValue: "192.168.1.1"}},
+						},
+						CallId: "call-1",
 					},
 				},
 				Sequence:    2,
@@ -153,9 +155,9 @@ func TestStreamClient_EventConversion(t *testing.T) {
 			msg: &proto.AgentMessage{
 				Payload: &proto.AgentMessage_ToolResult{
 					ToolResult: &proto.ToolResultEvent{
-						CallId:     "call-1",
-						OutputJson: `{"status": "success"}`,
-						Success:    true,
+						CallId:  "call-1",
+						Output:  &proto.TypedValue{Kind: &proto.TypedValue_StringValue{StringValue: "success"}},
+						Success: true,
 					},
 				},
 				Sequence:    3,
@@ -168,7 +170,10 @@ func TestStreamClient_EventConversion(t *testing.T) {
 			msg: &proto.AgentMessage{
 				Payload: &proto.AgentMessage_Finding{
 					Finding: &proto.FindingEvent{
-						FindingJson: `{"severity": "high", "title": "SQL Injection"}`,
+						Finding: &proto.Finding{
+							Severity: proto.FindingSeverity_FINDING_SEVERITY_HIGH,
+							Title:    "SQL Injection",
+						},
 					},
 				},
 				Sequence:    4,
@@ -209,7 +214,7 @@ func TestStreamClient_EventConversion(t *testing.T) {
 			msg: &proto.AgentMessage{
 				Payload: &proto.AgentMessage_Error{
 					Error: &proto.ErrorEvent{
-						Code:    "TIMEOUT",
+						Code:    proto.ErrorCode_ERROR_CODE_TIMEOUT,
 						Message: "Operation timed out",
 						Fatal:   true,
 					},
@@ -340,8 +345,9 @@ func TestStreamClient_SendOperations(t *testing.T) {
 			if msg.GetStart() == nil {
 				t.Error("Expected StartExecutionRequest")
 			}
-			if msg.GetStart().TaskJson != `{"task": "test"}` {
-				t.Errorf("TaskJson = %v, want %v", msg.GetStart().TaskJson, `{"task": "test"}`)
+			// The task is now sent as a Task proto message, not JSON
+			if msg.GetStart().Task == nil {
+				t.Error("Expected Task to be set")
 			}
 		case <-time.After(100 * time.Millisecond):
 			t.Error("Start message not received")

@@ -616,7 +616,7 @@ func (s *DaemonServer) RunMission(req *RunMissionRequest, stream grpc.ServerStre
 				MissionId: event.MissionID,
 				NodeId:    event.NodeID,
 				Message:   event.Message,
-				Data:      event.Data,
+				Data:      StringToTypedMap(event.Data),
 				Error:     event.Error,
 			}
 
@@ -806,16 +806,9 @@ func (s *DaemonServer) ListPlugins(ctx context.Context, req *ListPluginsRequest)
 func (s *DaemonServer) QueryPlugin(ctx context.Context, req *QueryPluginRequest) (*QueryPluginResponse, error) {
 	s.logger.Debug("plugin query request received", "plugin", req.Name, "method", req.Method)
 
-	// Parse JSON params
-	var params map[string]any
-	if req.ParamsJson != "" {
-		if err := json.Unmarshal([]byte(req.ParamsJson), &params); err != nil {
-			s.logger.Error("failed to parse plugin query params", "error", err)
-			return &QueryPluginResponse{
-				Error: fmt.Sprintf("invalid params JSON: %v", err),
-			}, nil
-		}
-	} else {
+	// Convert params from TypedMap to map[string]any
+	params := TypedMapToMap(req.Params)
+	if params == nil {
 		params = make(map[string]any)
 	}
 
@@ -832,19 +825,10 @@ func (s *DaemonServer) QueryPlugin(ctx context.Context, req *QueryPluginRequest)
 		}, nil
 	}
 
-	// Marshal result to JSON
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		s.logger.Error("failed to marshal plugin query result", "error", err)
-		return &QueryPluginResponse{
-			Error:      fmt.Sprintf("failed to marshal result: %v", err),
-			DurationMs: duration.Milliseconds(),
-		}, nil
-	}
-
+	// Convert result to TypedValue
 	s.logger.Debug("plugin query completed", "plugin", req.Name, "method", req.Method, "duration_ms", duration.Milliseconds())
 	return &QueryPluginResponse{
-		ResultJson: string(resultJSON),
+		Result:     anyToTypedValue(result),
 		DurationMs: duration.Milliseconds(),
 	}, nil
 }
@@ -894,7 +878,7 @@ func (s *DaemonServer) RunAttack(req *RunAttackRequest, stream grpc.ServerStream
 				Timestamp: event.Timestamp.Unix(),
 				AttackId:  event.AttackID,
 				Message:   event.Message,
-				Data:      event.Data,
+				Data:      StringToTypedMap(event.Data),
 				Error:     event.Error,
 			}
 
@@ -959,7 +943,7 @@ func (s *DaemonServer) Subscribe(req *SubscribeRequest, stream grpc.ServerStream
 				EventType: event.EventType,
 				Timestamp: event.Timestamp.Unix(),
 				Source:    event.Source,
-				Data:      event.Data,
+				Data:      StringToTypedMap(event.Data),
 			}
 
 			// Add specific event type if present
@@ -971,7 +955,7 @@ func (s *DaemonServer) Subscribe(req *SubscribeRequest, stream grpc.ServerStream
 						MissionId: event.MissionEvent.MissionID,
 						NodeId:    event.MissionEvent.NodeID,
 						Message:   event.MissionEvent.Message,
-						Data:      event.MissionEvent.Data,
+						Data:      StringToTypedMap(event.MissionEvent.Data),
 						Error:     event.MissionEvent.Error,
 					},
 				}
@@ -995,7 +979,7 @@ func (s *DaemonServer) Subscribe(req *SubscribeRequest, stream grpc.ServerStream
 						Timestamp: event.AttackEvent.Timestamp.Unix(),
 						AttackId:  event.AttackEvent.AttackID,
 						Message:   event.AttackEvent.Message,
-						Data:      event.AttackEvent.Data,
+						Data:      StringToTypedMap(event.AttackEvent.Data),
 						Error:     event.AttackEvent.Error,
 						Finding:   finding,
 					},
@@ -1008,7 +992,7 @@ func (s *DaemonServer) Subscribe(req *SubscribeRequest, stream grpc.ServerStream
 						AgentId:   event.AgentEvent.AgentID,
 						AgentName: event.AgentEvent.AgentName,
 						Message:   event.AgentEvent.Message,
-						Data:      event.AgentEvent.Data,
+						Data:      StringToTypedMap(event.AgentEvent.Data),
 					},
 				}
 			} else if event.FindingEvent != nil {
@@ -1230,7 +1214,7 @@ func (s *DaemonServer) ResumeMission(req *ResumeMissionRequest, stream grpc.Serv
 				MissionId: event.MissionID,
 				NodeId:    event.NodeID,
 				Message:   event.Message,
-				Data:      event.Data,
+				Data:      StringToTypedMap(event.Data),
 				Error:     event.Error,
 			}
 
@@ -1356,11 +1340,28 @@ func (s *DaemonServer) ExecuteTool(ctx context.Context, req *ExecuteToolRequest)
 		return nil, status_grpc.Errorf(codes.InvalidArgument, "tool name is required")
 	}
 
+	// Convert TypedMap input to JSON string for daemon
+	inputMap := TypedMapToMap(req.Input)
+	inputJSON, err := json.Marshal(inputMap)
+	if err != nil {
+		s.logger.Error("failed to marshal input", "error", err, "name", req.Name)
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "failed to marshal input: %v", err)
+	}
+
 	// Call daemon implementation
-	result, err := s.daemon.ExecuteTool(ctx, req.Name, req.InputJson, req.TimeoutMs)
+	result, err := s.daemon.ExecuteTool(ctx, req.Name, string(inputJSON), req.TimeoutMs)
 	if err != nil {
 		s.logger.Error("failed to execute tool", "error", err, "name", req.Name)
 		return nil, status_grpc.Errorf(codes.Internal, "failed to execute tool: %v", err)
+	}
+
+	// Convert JSON output back to TypedValue
+	var output any
+	if result.OutputJSON != "" {
+		if err := json.Unmarshal([]byte(result.OutputJSON), &output); err != nil {
+			s.logger.Error("failed to unmarshal output", "error", err)
+			return nil, status_grpc.Errorf(codes.Internal, "failed to unmarshal output: %v", err)
+		}
 	}
 
 	s.logger.Debug("tool execution completed",
@@ -1371,7 +1372,7 @@ func (s *DaemonServer) ExecuteTool(ctx context.Context, req *ExecuteToolRequest)
 
 	return &ExecuteToolResponse{
 		Success:    result.Success,
-		OutputJson: result.OutputJSON,
+		Output:     anyToTypedValue(output),
 		Error:      result.Error,
 		DurationMs: result.DurationMs,
 	}, nil

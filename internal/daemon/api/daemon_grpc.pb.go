@@ -19,38 +19,41 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	DaemonService_Connect_FullMethodName                = "/gibson.daemon.v1.DaemonService/Connect"
-	DaemonService_Ping_FullMethodName                   = "/gibson.daemon.v1.DaemonService/Ping"
-	DaemonService_Status_FullMethodName                 = "/gibson.daemon.v1.DaemonService/Status"
-	DaemonService_RunMission_FullMethodName             = "/gibson.daemon.v1.DaemonService/RunMission"
-	DaemonService_StopMission_FullMethodName            = "/gibson.daemon.v1.DaemonService/StopMission"
-	DaemonService_ListMissions_FullMethodName           = "/gibson.daemon.v1.DaemonService/ListMissions"
-	DaemonService_ListAgents_FullMethodName             = "/gibson.daemon.v1.DaemonService/ListAgents"
-	DaemonService_GetAgentStatus_FullMethodName         = "/gibson.daemon.v1.DaemonService/GetAgentStatus"
-	DaemonService_ListTools_FullMethodName              = "/gibson.daemon.v1.DaemonService/ListTools"
-	DaemonService_ListPlugins_FullMethodName            = "/gibson.daemon.v1.DaemonService/ListPlugins"
-	DaemonService_QueryPlugin_FullMethodName            = "/gibson.daemon.v1.DaemonService/QueryPlugin"
-	DaemonService_RunAttack_FullMethodName              = "/gibson.daemon.v1.DaemonService/RunAttack"
-	DaemonService_Subscribe_FullMethodName              = "/gibson.daemon.v1.DaemonService/Subscribe"
-	DaemonService_StartComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/StartComponent"
-	DaemonService_StopComponent_FullMethodName          = "/gibson.daemon.v1.DaemonService/StopComponent"
-	DaemonService_PauseMission_FullMethodName           = "/gibson.daemon.v1.DaemonService/PauseMission"
-	DaemonService_ResumeMission_FullMethodName          = "/gibson.daemon.v1.DaemonService/ResumeMission"
-	DaemonService_GetMissionHistory_FullMethodName      = "/gibson.daemon.v1.DaemonService/GetMissionHistory"
-	DaemonService_GetMissionCheckpoints_FullMethodName  = "/gibson.daemon.v1.DaemonService/GetMissionCheckpoints"
-	DaemonService_ExecuteTool_FullMethodName            = "/gibson.daemon.v1.DaemonService/ExecuteTool"
-	DaemonService_GetAvailableTools_FullMethodName      = "/gibson.daemon.v1.DaemonService/GetAvailableTools"
-	DaemonService_InstallComponent_FullMethodName       = "/gibson.daemon.v1.DaemonService/InstallComponent"
-	DaemonService_InstallAllComponent_FullMethodName    = "/gibson.daemon.v1.DaemonService/InstallAllComponent"
-	DaemonService_UninstallComponent_FullMethodName     = "/gibson.daemon.v1.DaemonService/UninstallComponent"
-	DaemonService_UpdateComponent_FullMethodName        = "/gibson.daemon.v1.DaemonService/UpdateComponent"
-	DaemonService_BuildComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/BuildComponent"
-	DaemonService_ShowComponent_FullMethodName          = "/gibson.daemon.v1.DaemonService/ShowComponent"
-	DaemonService_GetComponentLogs_FullMethodName       = "/gibson.daemon.v1.DaemonService/GetComponentLogs"
-	DaemonService_InstallMission_FullMethodName         = "/gibson.daemon.v1.DaemonService/InstallMission"
-	DaemonService_UninstallMission_FullMethodName       = "/gibson.daemon.v1.DaemonService/UninstallMission"
-	DaemonService_ListMissionDefinitions_FullMethodName = "/gibson.daemon.v1.DaemonService/ListMissionDefinitions"
-	DaemonService_UpdateMission_FullMethodName          = "/gibson.daemon.v1.DaemonService/UpdateMission"
+	DaemonService_Connect_FullMethodName                     = "/gibson.daemon.v1.DaemonService/Connect"
+	DaemonService_Ping_FullMethodName                        = "/gibson.daemon.v1.DaemonService/Ping"
+	DaemonService_Status_FullMethodName                      = "/gibson.daemon.v1.DaemonService/Status"
+	DaemonService_RunMission_FullMethodName                  = "/gibson.daemon.v1.DaemonService/RunMission"
+	DaemonService_StopMission_FullMethodName                 = "/gibson.daemon.v1.DaemonService/StopMission"
+	DaemonService_ListMissions_FullMethodName                = "/gibson.daemon.v1.DaemonService/ListMissions"
+	DaemonService_ListAgents_FullMethodName                  = "/gibson.daemon.v1.DaemonService/ListAgents"
+	DaemonService_GetAgentStatus_FullMethodName              = "/gibson.daemon.v1.DaemonService/GetAgentStatus"
+	DaemonService_ListTools_FullMethodName                   = "/gibson.daemon.v1.DaemonService/ListTools"
+	DaemonService_ListPlugins_FullMethodName                 = "/gibson.daemon.v1.DaemonService/ListPlugins"
+	DaemonService_QueryPlugin_FullMethodName                 = "/gibson.daemon.v1.DaemonService/QueryPlugin"
+	DaemonService_RunAttack_FullMethodName                   = "/gibson.daemon.v1.DaemonService/RunAttack"
+	DaemonService_Subscribe_FullMethodName                   = "/gibson.daemon.v1.DaemonService/Subscribe"
+	DaemonService_StartComponent_FullMethodName              = "/gibson.daemon.v1.DaemonService/StartComponent"
+	DaemonService_StopComponent_FullMethodName               = "/gibson.daemon.v1.DaemonService/StopComponent"
+	DaemonService_PauseMission_FullMethodName                = "/gibson.daemon.v1.DaemonService/PauseMission"
+	DaemonService_ResumeMission_FullMethodName               = "/gibson.daemon.v1.DaemonService/ResumeMission"
+	DaemonService_GetMissionHistory_FullMethodName           = "/gibson.daemon.v1.DaemonService/GetMissionHistory"
+	DaemonService_GetMissionCheckpoints_FullMethodName       = "/gibson.daemon.v1.DaemonService/GetMissionCheckpoints"
+	DaemonService_ExecuteTool_FullMethodName                 = "/gibson.daemon.v1.DaemonService/ExecuteTool"
+	DaemonService_GetAvailableTools_FullMethodName           = "/gibson.daemon.v1.DaemonService/GetAvailableTools"
+	DaemonService_InstallComponent_FullMethodName            = "/gibson.daemon.v1.DaemonService/InstallComponent"
+	DaemonService_InstallAllComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/InstallAllComponent"
+	DaemonService_UninstallComponent_FullMethodName          = "/gibson.daemon.v1.DaemonService/UninstallComponent"
+	DaemonService_UpdateComponent_FullMethodName             = "/gibson.daemon.v1.DaemonService/UpdateComponent"
+	DaemonService_BuildComponent_FullMethodName              = "/gibson.daemon.v1.DaemonService/BuildComponent"
+	DaemonService_ShowComponent_FullMethodName               = "/gibson.daemon.v1.DaemonService/ShowComponent"
+	DaemonService_GetComponentLogs_FullMethodName            = "/gibson.daemon.v1.DaemonService/GetComponentLogs"
+	DaemonService_InstallMission_FullMethodName              = "/gibson.daemon.v1.DaemonService/InstallMission"
+	DaemonService_UninstallMission_FullMethodName            = "/gibson.daemon.v1.DaemonService/UninstallMission"
+	DaemonService_ListMissionDefinitions_FullMethodName      = "/gibson.daemon.v1.DaemonService/ListMissionDefinitions"
+	DaemonService_UpdateMission_FullMethodName               = "/gibson.daemon.v1.DaemonService/UpdateMission"
+	DaemonService_ResolveMissionDependencies_FullMethodName  = "/gibson.daemon.v1.DaemonService/ResolveMissionDependencies"
+	DaemonService_ValidateMissionDependencies_FullMethodName = "/gibson.daemon.v1.DaemonService/ValidateMissionDependencies"
+	DaemonService_EnsureDependenciesRunning_FullMethodName   = "/gibson.daemon.v1.DaemonService/EnsureDependenciesRunning"
 )
 
 // DaemonServiceClient is the client API for DaemonService service.
@@ -152,6 +155,15 @@ type DaemonServiceClient interface {
 	// UpdateMission updates an installed mission to the latest version.
 	// Pulls latest changes and rebuilds the mission definition.
 	UpdateMission(ctx context.Context, in *UpdateMissionRequest, opts ...grpc.CallOption) (*UpdateMissionResponse, error)
+	// ResolveMissionDependencies resolves the complete dependency tree for a mission.
+	// Walks all transitive dependencies from agents, tools, and plugins.
+	ResolveMissionDependencies(ctx context.Context, in *ResolveMissionDependenciesRequest, opts ...grpc.CallOption) (*ResolveMissionDependenciesResponse, error)
+	// ValidateMissionDependencies validates that all mission dependencies are installed and running.
+	// Returns detailed validation results with component status and any issues found.
+	ValidateMissionDependencies(ctx context.Context, in *ValidateMissionDependenciesRequest, opts ...grpc.CallOption) (*ValidateMissionDependenciesResponse, error)
+	// EnsureDependenciesRunning starts any stopped dependencies in the correct topological order.
+	// Ensures all components required by a mission are running before execution.
+	EnsureDependenciesRunning(ctx context.Context, in *EnsureDependenciesRunningRequest, opts ...grpc.CallOption) (*EnsureDependenciesRunningResponse, error)
 }
 
 type daemonServiceClient struct {
@@ -527,6 +539,36 @@ func (c *daemonServiceClient) UpdateMission(ctx context.Context, in *UpdateMissi
 	return out, nil
 }
 
+func (c *daemonServiceClient) ResolveMissionDependencies(ctx context.Context, in *ResolveMissionDependenciesRequest, opts ...grpc.CallOption) (*ResolveMissionDependenciesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveMissionDependenciesResponse)
+	err := c.cc.Invoke(ctx, DaemonService_ResolveMissionDependencies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) ValidateMissionDependencies(ctx context.Context, in *ValidateMissionDependenciesRequest, opts ...grpc.CallOption) (*ValidateMissionDependenciesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidateMissionDependenciesResponse)
+	err := c.cc.Invoke(ctx, DaemonService_ValidateMissionDependencies_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *daemonServiceClient) EnsureDependenciesRunning(ctx context.Context, in *EnsureDependenciesRunningRequest, opts ...grpc.CallOption) (*EnsureDependenciesRunningResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnsureDependenciesRunningResponse)
+	err := c.cc.Invoke(ctx, DaemonService_EnsureDependenciesRunning_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DaemonServiceServer is the server API for DaemonService service.
 // All implementations must embed UnimplementedDaemonServiceServer
 // for forward compatibility.
@@ -626,6 +668,15 @@ type DaemonServiceServer interface {
 	// UpdateMission updates an installed mission to the latest version.
 	// Pulls latest changes and rebuilds the mission definition.
 	UpdateMission(context.Context, *UpdateMissionRequest) (*UpdateMissionResponse, error)
+	// ResolveMissionDependencies resolves the complete dependency tree for a mission.
+	// Walks all transitive dependencies from agents, tools, and plugins.
+	ResolveMissionDependencies(context.Context, *ResolveMissionDependenciesRequest) (*ResolveMissionDependenciesResponse, error)
+	// ValidateMissionDependencies validates that all mission dependencies are installed and running.
+	// Returns detailed validation results with component status and any issues found.
+	ValidateMissionDependencies(context.Context, *ValidateMissionDependenciesRequest) (*ValidateMissionDependenciesResponse, error)
+	// EnsureDependenciesRunning starts any stopped dependencies in the correct topological order.
+	// Ensures all components required by a mission are running before execution.
+	EnsureDependenciesRunning(context.Context, *EnsureDependenciesRunningRequest) (*EnsureDependenciesRunningResponse, error)
 	mustEmbedUnimplementedDaemonServiceServer()
 }
 
@@ -731,6 +782,15 @@ func (UnimplementedDaemonServiceServer) ListMissionDefinitions(context.Context, 
 }
 func (UnimplementedDaemonServiceServer) UpdateMission(context.Context, *UpdateMissionRequest) (*UpdateMissionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateMission not implemented")
+}
+func (UnimplementedDaemonServiceServer) ResolveMissionDependencies(context.Context, *ResolveMissionDependenciesRequest) (*ResolveMissionDependenciesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveMissionDependencies not implemented")
+}
+func (UnimplementedDaemonServiceServer) ValidateMissionDependencies(context.Context, *ValidateMissionDependenciesRequest) (*ValidateMissionDependenciesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ValidateMissionDependencies not implemented")
+}
+func (UnimplementedDaemonServiceServer) EnsureDependenciesRunning(context.Context, *EnsureDependenciesRunningRequest) (*EnsureDependenciesRunningResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnsureDependenciesRunning not implemented")
 }
 func (UnimplementedDaemonServiceServer) mustEmbedUnimplementedDaemonServiceServer() {}
 func (UnimplementedDaemonServiceServer) testEmbeddedByValue()                       {}
@@ -1294,6 +1354,60 @@ func _DaemonService_UpdateMission_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _DaemonService_ResolveMissionDependencies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveMissionDependenciesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).ResolveMissionDependencies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_ResolveMissionDependencies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).ResolveMissionDependencies(ctx, req.(*ResolveMissionDependenciesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_ValidateMissionDependencies_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidateMissionDependenciesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).ValidateMissionDependencies(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_ValidateMissionDependencies_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).ValidateMissionDependencies(ctx, req.(*ValidateMissionDependenciesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _DaemonService_EnsureDependenciesRunning_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnsureDependenciesRunningRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(DaemonServiceServer).EnsureDependenciesRunning(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: DaemonService_EnsureDependenciesRunning_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(DaemonServiceServer).EnsureDependenciesRunning(ctx, req.(*EnsureDependenciesRunningRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // DaemonService_ServiceDesc is the grpc.ServiceDesc for DaemonService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1408,6 +1522,18 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateMission",
 			Handler:    _DaemonService_UpdateMission_Handler,
+		},
+		{
+			MethodName: "ResolveMissionDependencies",
+			Handler:    _DaemonService_ResolveMissionDependencies_Handler,
+		},
+		{
+			MethodName: "ValidateMissionDependencies",
+			Handler:    _DaemonService_ValidateMissionDependencies_Handler,
+		},
+		{
+			MethodName: "EnsureDependenciesRunning",
+			Handler:    _DaemonService_EnsureDependenciesRunning_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

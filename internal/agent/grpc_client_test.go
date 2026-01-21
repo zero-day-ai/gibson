@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"testing"
 	"time"
@@ -301,8 +300,6 @@ func TestGRPCAgentClient_Execute_Success(t *testing.T) {
 		},
 		Findings: []Finding{},
 	}
-	resultJSON, err := json.Marshal(result)
-	require.NoError(t, err)
 
 	mock := &mockAgentServiceServer{
 		descriptor: &proto.AgentDescriptor{
@@ -311,7 +308,7 @@ func TestGRPCAgentClient_Execute_Success(t *testing.T) {
 			Version:     "1.0.0",
 		},
 		executeResponse: &proto.AgentExecuteResponse{
-			ResultJson: string(resultJSON),
+			Result: ResultToProto(result),
 		},
 	}
 
@@ -397,7 +394,7 @@ func TestGRPCAgentClient_Execute_GRPCError(t *testing.T) {
 	assert.Contains(t, result.Error.Message, "gRPC agent execution failed")
 }
 
-func TestGRPCAgentClient_Execute_InvalidResultJSON(t *testing.T) {
+func TestGRPCAgentClient_Execute_NilResult(t *testing.T) {
 	mock := &mockAgentServiceServer{
 		descriptor: &proto.AgentDescriptor{
 			Name:        "test-agent",
@@ -405,7 +402,7 @@ func TestGRPCAgentClient_Execute_InvalidResultJSON(t *testing.T) {
 			Version:     "1.0.0",
 		},
 		executeResponse: &proto.AgentExecuteResponse{
-			ResultJson: `{invalid json}`,
+			Result: nil, // No result provided
 		},
 	}
 
@@ -418,9 +415,10 @@ func TestGRPCAgentClient_Execute_InvalidResultJSON(t *testing.T) {
 	task := NewTask("test-task", "Test task description", map[string]any{})
 
 	ctx := context.Background()
-	_, err := client.Execute(ctx, task, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to unmarshal result")
+	result, err := client.Execute(ctx, task, nil)
+	// With proto types, we should still get a valid result object, just empty
+	require.NoError(t, err)
+	require.NotNil(t, result)
 }
 
 func TestGRPCAgentClient_Execute_ContextCancellation(t *testing.T) {

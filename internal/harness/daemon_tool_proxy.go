@@ -154,15 +154,6 @@ const (
 //   - Otherwise, the defaultTimeout is used
 //   - The daemon enforces the timeout and kills the subprocess if exceeded
 func (p *DaemonToolProxy) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	// Serialize input to JSON
-	inputJSON, err := json.Marshal(input)
-	if err != nil {
-		return nil, types.NewError(
-			ErrProxyInputSerialization,
-			fmt.Sprintf("failed to serialize tool input: %v", err),
-		)
-	}
-
 	// Determine timeout
 	var timeoutMs int64
 	if deadline, ok := ctx.Deadline(); ok {
@@ -176,10 +167,13 @@ func (p *DaemonToolProxy) Execute(ctx context.Context, input map[string]any) (ma
 		timeoutMs = p.defaultTimeout.Milliseconds()
 	}
 
+	// Convert input to TypedMap (using helper from callback_service.go)
+	inputTypedMap := mapToTypedMap(input)
+
 	// Execute tool via daemon
 	resp, err := p.client.ExecuteTool(ctx, &api.ExecuteToolRequest{
 		Name:      p.name,
-		InputJson: string(inputJSON),
+		Input:     inputTypedMap,
 		TimeoutMs: timeoutMs,
 	})
 	if err != nil {
@@ -197,16 +191,14 @@ func (p *DaemonToolProxy) Execute(ctx context.Context, input map[string]any) (ma
 		)
 	}
 
-	// Deserialize output
-	var output map[string]any
-	if err := json.Unmarshal([]byte(resp.OutputJson), &output); err != nil {
-		return nil, types.NewError(
-			ErrProxyOutputDeserialization,
-			fmt.Sprintf("failed to deserialize tool output: %v", err),
-		)
+	// Convert output from TypedValue to map
+	output := typedValueToAny(resp.Output)
+	if outputMap, ok := output.(map[string]any); ok {
+		return outputMap, nil
 	}
 
-	return output, nil
+	// If output is not a map, wrap it in a map
+	return map[string]any{"result": output}, nil
 }
 
 // Health returns the current health status of this tool.

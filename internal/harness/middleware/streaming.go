@@ -197,19 +197,39 @@ func emitFindingEvent(ctx context.Context, stream StreamSender, req any, traceID
 
 // buildToolCallEvent constructs a ToolCallEvent proto message.
 func buildToolCallEvent(toolName, inputJSON, callID, traceID, spanID string) *proto.ToolCallEvent {
+	// Parse input JSON to map[string]any, then convert to TypedValue map
+	var inputMap map[string]any
+	if err := json.Unmarshal([]byte(inputJSON), &inputMap); err != nil {
+		// If parsing fails, return empty input map
+		inputMap = make(map[string]any)
+	}
+
+	// Convert to TypedValue map
+	inputTypedMap := make(map[string]*proto.TypedValue)
+	for k, v := range inputMap {
+		inputTypedMap[k] = anyToTypedValue(v)
+	}
+
 	return &proto.ToolCallEvent{
-		ToolName:  toolName,
-		InputJson: inputJSON,
-		CallId:    callID,
+		ToolName: toolName,
+		Input:    inputTypedMap,
+		CallId:   callID,
 	}
 }
 
 // buildToolResultEvent constructs a ToolResultEvent proto message.
 func buildToolResultEvent(callID, outputJSON string, success bool, traceID, spanID string) *proto.ToolResultEvent {
+	// Parse output JSON to any, then convert to TypedValue
+	var output any
+	if err := json.Unmarshal([]byte(outputJSON), &output); err != nil {
+		// If parsing fails, use nil output
+		output = nil
+	}
+
 	return &proto.ToolResultEvent{
-		CallId:     callID,
-		OutputJson: outputJSON,
-		Success:    success,
+		CallId:  callID,
+		Output:  anyToTypedValue(output),
+		Success: success,
 	}
 }
 
@@ -223,8 +243,17 @@ func buildOutputEvent(content string, isReasoning bool, traceID, spanID string) 
 
 // buildFindingEvent constructs a FindingEvent proto message.
 func buildFindingEvent(findingJSON, traceID, spanID string) *proto.FindingEvent {
+	// Parse finding JSON to proto Finding
+	var finding proto.Finding
+	if err := json.Unmarshal([]byte(findingJSON), &finding); err != nil {
+		// If parsing fails, return empty finding
+		return &proto.FindingEvent{
+			Finding: &proto.Finding{},
+		}
+	}
+
 	return &proto.FindingEvent{
-		FindingJson: findingJSON,
+		Finding: &finding,
 	}
 }
 
@@ -309,4 +338,76 @@ func (a *gRPCStreamAdapter) SendFinding(finding *proto.FindingEvent) error {
 		TimestampMs: time.Now().UnixMilli(),
 	}
 	return a.stream.Send(msg)
+}
+
+// anyToTypedValue converts a Go any value to a proto TypedValue.
+func anyToTypedValue(v any) *proto.TypedValue {
+	if v == nil {
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_NullValue{
+				NullValue: proto.NullValue_NULL_VALUE,
+			},
+		}
+	}
+
+	switch val := v.(type) {
+	case string:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_StringValue{StringValue: val},
+		}
+	case int:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int32:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int64:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: val},
+		}
+	case float32:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_DoubleValue{DoubleValue: float64(val)},
+		}
+	case float64:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_DoubleValue{DoubleValue: val},
+		}
+	case bool:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_BoolValue{BoolValue: val},
+		}
+	case []byte:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_BytesValue{BytesValue: val},
+		}
+	case []any:
+		items := make([]*proto.TypedValue, len(val))
+		for i, item := range val {
+			items[i] = anyToTypedValue(item)
+		}
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_ArrayValue{
+				ArrayValue: &proto.TypedArray{Items: items},
+			},
+		}
+	case map[string]any:
+		entries := make(map[string]*proto.TypedValue)
+		for k, v := range val {
+			entries[k] = anyToTypedValue(v)
+		}
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_MapValue{
+				MapValue: &proto.TypedMap{Entries: entries},
+			},
+		}
+	default:
+		// For unknown types, convert to string representation
+		jsonBytes, _ := json.Marshal(v)
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_StringValue{StringValue: string(jsonBytes)},
+		}
+	}
 }

@@ -365,8 +365,10 @@ func TestConvertProtoMissionEvent(t *testing.T) {
 				MissionId: "mission-1",
 				NodeId:    "node-1",
 				Message:   "Mission started successfully",
-				Data:      `{"workflow":"attack.yaml"}`,
-				Error:     "",
+				Data: api.MapToTypedMap(map[string]any{
+					"workflow": "attack.yaml",
+				}),
+				Error: "",
 			},
 			expected: MissionEvent{
 				Type:      "mission_started",
@@ -383,7 +385,7 @@ func TestConvertProtoMissionEvent(t *testing.T) {
 				EventType: "mission_completed",
 				Timestamp: 1640000100,
 				Message:   "Mission completed",
-				Data:      "",
+				Data:      nil,
 			},
 			expected: MissionEvent{
 				Type:      "mission_completed",
@@ -393,18 +395,18 @@ func TestConvertProtoMissionEvent(t *testing.T) {
 			},
 		},
 		{
-			name: "mission event with invalid JSON data",
+			name: "mission event with empty data",
 			input: &api.MissionEvent{
 				EventType: "mission.finding",
 				Timestamp: 1640000200,
 				Message:   "Found vulnerability",
-				Data:      "invalid-json{",
+				Data:      api.MapToTypedMap(map[string]any{}),
 			},
 			expected: MissionEvent{
 				Type:      "mission.finding",
 				Timestamp: time.Unix(1640000200, 0),
 				Message:   "Found vulnerability",
-				Data:      nil, // Invalid JSON results in nil
+				Data:      map[string]interface{}{}, // Empty map
 			},
 		},
 	}
@@ -436,8 +438,10 @@ func TestConvertProtoAttackEvent(t *testing.T) {
 				Timestamp: 1640000000,
 				AttackId:  "attack-1",
 				Message:   "Attack started",
-				Data:      `{"target":"http://example.com"}`,
-				Error:     "",
+				Data: api.MapToTypedMap(map[string]any{
+					"target": "http://example.com",
+				}),
+				Error: "",
 			},
 			expected: AttackEvent{
 				Type:      "attack.started",
@@ -492,7 +496,9 @@ func TestConvertProtoEvent(t *testing.T) {
 				EventType: "agent_registered",
 				Timestamp: 1640000000,
 				Source:    "registry",
-				Data:      `{"agent":"test-agent"}`,
+				Data: api.MapToTypedMap(map[string]any{
+					"agent": "test-agent",
+				}),
 			},
 			expected: Event{
 				Type:      "agent_registered",
@@ -509,7 +515,7 @@ func TestConvertProtoEvent(t *testing.T) {
 				EventType: "system_ready",
 				Timestamp: 1640000100,
 				Source:    "daemon",
-				Data:      "",
+				Data:      nil,
 			},
 			expected: Event{
 				Type:      "system_ready",
@@ -627,6 +633,30 @@ func (m *mockDaemonServiceClient) ShowComponent(ctx context.Context, req *api.Sh
 	return nil, nil
 }
 func (m *mockDaemonServiceClient) GetComponentLogs(ctx context.Context, req *api.GetComponentLogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[api.LogEntry], error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) InstallAllComponent(ctx context.Context, req *api.InstallAllComponentRequest, opts ...grpc.CallOption) (*api.InstallAllComponentResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) EnsureDependenciesRunning(ctx context.Context, req *api.EnsureDependenciesRunningRequest, opts ...grpc.CallOption) (*api.EnsureDependenciesRunningResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) InstallMission(ctx context.Context, req *api.InstallMissionRequest, opts ...grpc.CallOption) (*api.InstallMissionResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) UninstallMission(ctx context.Context, req *api.UninstallMissionRequest, opts ...grpc.CallOption) (*api.UninstallMissionResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) UpdateMission(ctx context.Context, req *api.UpdateMissionRequest, opts ...grpc.CallOption) (*api.UpdateMissionResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) ListMissionDefinitions(ctx context.Context, req *api.ListMissionDefinitionsRequest, opts ...grpc.CallOption) (*api.ListMissionDefinitionsResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) ResolveMissionDependencies(ctx context.Context, req *api.ResolveMissionDependenciesRequest, opts ...grpc.CallOption) (*api.ResolveMissionDependenciesResponse, error) {
+	return nil, nil
+}
+func (m *mockDaemonServiceClient) ValidateMissionDependencies(ctx context.Context, req *api.ValidateMissionDependenciesRequest, opts ...grpc.CallOption) (*api.ValidateMissionDependenciesResponse, error) {
 	return nil, nil
 }
 

@@ -136,15 +136,15 @@ func TestTaskJSONRoundTrip(t *testing.T) {
 }
 
 // TestTaskJSONWithEmptyGoalAndContext verifies that Task serialization
-// handles empty/nil goal and context correctly.
+// handles empty/nil goal and context correctly with omitempty behavior.
 func TestTaskJSONWithEmptyGoalAndContext(t *testing.T) {
 	// Create task with empty goal and nil context
 	task := Task{
 		ID:          types.NewID(),
 		Name:        "minimal-task",
 		Description: "Task with no goal or context",
-		Goal:        "",  // Empty goal
-		Context:     nil, // Nil context
+		Goal:        "",  // Empty goal - will be omitted due to omitempty tag
+		Context:     nil, // Nil context - will be omitted due to omitempty tag
 		Input: map[string]any{
 			"test": "value",
 		},
@@ -163,9 +163,9 @@ func TestTaskJSONWithEmptyGoalAndContext(t *testing.T) {
 	err = json.Unmarshal(jsonData, &jsonMap)
 	require.NoError(t, err, "Failed to unmarshal JSON to map")
 
-	// Verify goal is present but empty
-	assert.Contains(t, jsonMap, "goal", "JSON should contain 'goal' field even if empty")
-	assert.Equal(t, "", jsonMap["goal"], "Empty goal should serialize as empty string")
+	// Verify goal is omitted when empty (due to omitempty tag)
+	_, hasGoal := jsonMap["goal"]
+	assert.False(t, hasGoal, "Empty goal should be omitted from JSON (omitempty tag)")
 
 	// Verify context is omitted when nil (due to omitempty tag)
 	_, hasContext := jsonMap["context"]

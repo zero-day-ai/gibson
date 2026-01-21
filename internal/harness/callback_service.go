@@ -329,7 +329,7 @@ func (s *HarnessCallbackService) LLMComplete(ctx context.Context, req *pb.LLMCom
 
 		return &pb.LLMCompleteResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -378,7 +378,7 @@ func (s *HarnessCallbackService) LLMCompleteWithTools(ctx context.Context, req *
 		s.logger.Error("LLM completion with tools failed", "error", err, "task_id", req.Context.TaskId)
 		return &pb.LLMCompleteResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -435,7 +435,7 @@ func (s *HarnessCallbackService) LLMStream(req *pb.LLMStreamRequest, stream pb.H
 		if chunk.Error != nil {
 			protoChunk := &pb.LLMStreamChunk{
 				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
+					Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 					Message: chunk.Error.Error(),
 				},
 			}
@@ -475,7 +475,7 @@ func (s *HarnessCallbackService) LLMCompleteStructured(ctx context.Context, req 
 		s.logger.Error("failed to parse schema JSON", "error", err, "task_id", req.Context.TaskId)
 		return &pb.LLMCompleteStructuredResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: fmt.Sprintf("invalid schema JSON: %v", err),
 			},
 		}, nil
@@ -489,7 +489,7 @@ func (s *HarnessCallbackService) LLMCompleteStructured(ctx context.Context, req 
 		s.logger.Error("LLM structured completion failed", "error", err, "task_id", req.Context.TaskId)
 		return &pb.LLMCompleteStructuredResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -501,14 +501,25 @@ func (s *HarnessCallbackService) LLMCompleteStructured(ctx context.Context, req 
 		s.logger.Error("failed to serialize structured result", "error", err, "task_id", req.Context.TaskId)
 		return &pb.LLMCompleteStructuredResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: fmt.Sprintf("failed to serialize result: %v", err),
 			},
 		}, nil
 	}
 
+	// Unmarshal JSON back to any to convert to TypedValue
+	var resultData any
+	if err := json.Unmarshal(resultJSON, &resultData); err != nil {
+		return &pb.LLMCompleteStructuredResponse{
+			Error: &pb.HarnessError{
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
+				Message: fmt.Sprintf("failed to unmarshal result: %v", err),
+			},
+		}, nil
+	}
+
 	return &pb.LLMCompleteStructuredResponse{
-		ResultJson: string(resultJSON),
+		Result: anyToTypedValue(resultData),
 		// Note: Token usage would need to be extracted from the completion response
 		// For now we return nil usage since we don't have access to it from CompleteStructuredAny
 	}, nil
@@ -535,25 +546,10 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 		"parent_span_id": req.Context.SpanId, // Agent's span ID becomes tool call's parent
 	})
 
-	// Deserialize input
-	var input map[string]any
-	if err := json.Unmarshal([]byte(req.InputJson), &input); err != nil {
-		// Publish tool.call.failed event for invalid input
-		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
-			"tool_name":      req.Name,
-			"mission_id":     req.Context.MissionId,
-			"agent_name":     req.Context.AgentName,
-			"task_id":        req.Context.TaskId,
-			"error":          fmt.Sprintf("invalid input JSON: %v", err),
-			"parent_span_id": req.Context.SpanId,
-		})
-
-		return &pb.CallToolResponse{
-			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
-				Message: fmt.Sprintf("invalid input JSON: %v", err),
-			},
-		}, nil
+	// Convert input TypedValue map to map[string]any
+	input := make(map[string]any)
+	for k, v := range req.Input {
+		input[k] = typedValueToAny(v)
 	}
 
 	// Execute tool
@@ -573,32 +569,12 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 
 		return &pb.CallToolResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
 	}
 
-	// Serialize output
-	outputJSON, err := json.Marshal(output)
-	if err != nil {
-		// Publish tool.call.failed event for serialization error
-		s.publishEvent(ctx, "tool.call.failed", map[string]interface{}{
-			"tool_name":      req.Name,
-			"mission_id":     req.Context.MissionId,
-			"agent_name":     req.Context.AgentName,
-			"task_id":        req.Context.TaskId,
-			"error":          fmt.Sprintf("failed to serialize output: %v", err),
-			"parent_span_id": req.Context.SpanId,
-		})
-
-		return &pb.CallToolResponse{
-			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
-				Message: fmt.Sprintf("failed to serialize output: %v", err),
-			},
-		}, nil
-	}
 
 	// Publish tool.call.completed event
 	s.publishEvent(ctx, "tool.call.completed", map[string]interface{}{
@@ -708,7 +684,7 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 	}
 
 	return &pb.CallToolResponse{
-		OutputJson: string(outputJSON),
+		Output: anyToTypedValue(output),
 	}, nil
 }
 
@@ -725,25 +701,11 @@ func (s *HarnessCallbackService) ListTools(ctx context.Context, req *pb.ListTool
 	// Convert to proto with structured schemas (including taxonomy)
 	protoTools := make([]*pb.HarnessToolDescriptor, len(tools))
 	for i, tool := range tools {
-		// Marshal legacy JSON schemas for backward compatibility
-		inputSchemaJSON, err := json.Marshal(tool.InputSchema)
-		if err != nil {
-			s.logger.Error("failed to marshal tool input schema", "error", err, "tool", tool.Name)
-			inputSchemaJSON = []byte("{}")
-		}
-		outputSchemaJSON, err := json.Marshal(tool.OutputSchema)
-		if err != nil {
-			s.logger.Error("failed to marshal tool output schema", "error", err, "tool", tool.Name)
-			outputSchemaJSON = []byte("{}")
-		}
-
 		protoTools[i] = &pb.HarnessToolDescriptor{
-			Name:             tool.Name,
-			Description:      tool.Description,
-			SchemaJson:       string(inputSchemaJSON),                  // Legacy field for backward compatibility
-			OutputSchemaJson: string(outputSchemaJSON),                 // Legacy output schema
-			InputSchema:      SchemaToCallbackProto(tool.InputSchema),  // Structured schema with taxonomy
-			OutputSchema:     SchemaToCallbackProto(tool.OutputSchema), // Structured output schema with taxonomy
+			Name:         tool.Name,
+			Description:  tool.Description,
+			InputSchema:  SchemaToCallbackProto(tool.InputSchema),  // Structured schema with taxonomy
+			OutputSchema: SchemaToCallbackProto(tool.OutputSchema), // Structured output schema with taxonomy
 		}
 	}
 
@@ -763,16 +725,8 @@ func (s *HarnessCallbackService) QueryPlugin(ctx context.Context, req *pb.QueryP
 		return nil, err
 	}
 
-	// Deserialize params
-	var params map[string]any
-	if err := json.Unmarshal([]byte(req.ParamsJson), &params); err != nil {
-		return &pb.QueryPluginResponse{
-			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
-				Message: fmt.Sprintf("invalid params JSON: %v", err),
-			},
-		}, nil
-	}
+	// Convert params from proto map to Go map
+	params := typedValueMapToMap(req.Params)
 
 	// Query plugin
 	result, err := harness.QueryPlugin(ctx, req.Name, req.Method, params)
@@ -780,25 +734,14 @@ func (s *HarnessCallbackService) QueryPlugin(ctx context.Context, req *pb.QueryP
 		s.logger.Error("plugin query failed", "error", err, "plugin", req.Name, "method", req.Method)
 		return &pb.QueryPluginResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
 	}
 
-	// Serialize result
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		return &pb.QueryPluginResponse{
-			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
-				Message: fmt.Sprintf("failed to serialize result: %v", err),
-			},
-		}, nil
-	}
-
 	return &pb.QueryPluginResponse{
-		ResultJson: string(resultJSON),
+		Result: anyToTypedValue(result),
 	}, nil
 }
 
@@ -845,16 +788,8 @@ func (s *HarnessCallbackService) DelegateToAgent(ctx context.Context, req *pb.De
 		return nil, err
 	}
 
-	// Deserialize task
-	var task agent.Task
-	if err := json.Unmarshal([]byte(req.TaskJson), &task); err != nil {
-		return &pb.DelegateToAgentResponse{
-			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
-				Message: fmt.Sprintf("invalid task JSON: %v", err),
-			},
-		}, nil
-	}
+	// Convert proto Task to internal Task
+	task := protoTaskToTask(req.Task)
 
 	// Delegate to agent
 	result, err := harness.DelegateToAgent(ctx, req.Name, task)
@@ -862,25 +797,14 @@ func (s *HarnessCallbackService) DelegateToAgent(ctx context.Context, req *pb.De
 		s.logger.Error("agent delegation failed", "error", err, "agent", req.Name)
 		return &pb.DelegateToAgentResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
 	}
 
-	// Serialize result
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		return &pb.DelegateToAgentResponse{
-			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
-				Message: fmt.Sprintf("failed to serialize result: %v", err),
-			},
-		}, nil
-	}
-
 	return &pb.DelegateToAgentResponse{
-		ResultJson: string(resultJSON),
+		Result: resultToProtoResult(result),
 	}, nil
 }
 
@@ -922,23 +846,15 @@ func (s *HarnessCallbackService) SubmitFinding(ctx context.Context, req *pb.Subm
 		return nil, err
 	}
 
-	// Deserialize finding
-	var finding agent.Finding
-	if err := json.Unmarshal([]byte(req.FindingJson), &finding); err != nil {
-		return &pb.SubmitFindingResponse{
-			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
-				Message: fmt.Sprintf("invalid finding JSON: %v", err),
-			},
-		}, nil
-	}
+	// Convert proto Finding to internal Finding
+	finding := protoFindingToFinding(req.Finding)
 
 	// Submit finding
 	if err := harness.SubmitFinding(ctx, finding); err != nil {
 		s.logger.Error("finding submission failed", "error", err)
 		return &pb.SubmitFindingResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -954,16 +870,8 @@ func (s *HarnessCallbackService) GetFindings(ctx context.Context, req *pb.GetFin
 		return nil, err
 	}
 
-	// Deserialize filter
-	var filter FindingFilter
-	if err := json.Unmarshal([]byte(req.FilterJson), &filter); err != nil {
-		return &pb.GetFindingsResponse{
-			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
-				Message: fmt.Sprintf("invalid filter JSON: %v", err),
-			},
-		}, nil
-	}
+	// Convert proto FindingFilter to internal FindingFilter
+	filter := protoFilterToFindingFilter(req.Filter)
 
 	// Get findings
 	findings, err := harness.GetFindings(ctx, filter)
@@ -971,29 +879,20 @@ func (s *HarnessCallbackService) GetFindings(ctx context.Context, req *pb.GetFin
 		s.logger.Error("get findings failed", "error", err)
 		return &pb.GetFindingsResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
 	}
 
-	// Serialize findings
-	findingsJSON := make([]string, len(findings))
+	// Convert findings to proto
+	protoFindings := make([]*pb.Finding, len(findings))
 	for i, finding := range findings {
-		data, err := json.Marshal(finding)
-		if err != nil {
-			return &pb.GetFindingsResponse{
-				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
-					Message: fmt.Sprintf("failed to serialize finding: %v", err),
-				},
-			}, nil
-		}
-		findingsJSON[i] = string(data)
+		protoFindings[i] = findingToProtoFinding(finding)
 	}
 
 	return &pb.GetFindingsResponse{
-		FindingsJson: findingsJSON,
+		Findings: protoFindings,
 	}, nil
 }
 
@@ -1024,20 +923,9 @@ func (s *HarnessCallbackService) MemoryGet(ctx context.Context, req *pb.MemoryGe
 			}, nil
 		}
 
-		// Serialize value
-		valueJSON, err := json.Marshal(value)
-		if err != nil {
-			return &pb.MemoryGetResponse{
-				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
-					Message: fmt.Sprintf("failed to serialize value: %v", err),
-				},
-			}, nil
-		}
-
 		return &pb.MemoryGetResponse{
-			ValueJson: string(valueJSON),
-			Found:     true,
+			Value: anyToTypedValue(value),
+			Found: true,
 		}, nil
 
 	case pb.MemoryTier_MEMORY_TIER_MISSION:
@@ -1052,46 +940,25 @@ func (s *HarnessCallbackService) MemoryGet(ctx context.Context, req *pb.MemoryGe
 			}
 			return &pb.MemoryGetResponse{
 				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
+					Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 					Message: fmt.Sprintf("failed to retrieve from mission memory: %v", err),
 				},
 			}, nil
 		}
 
-		// Serialize value and metadata to JSON
-		valueJSON, err := json.Marshal(item.Value)
-		if err != nil {
-			return &pb.MemoryGetResponse{
-				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
-					Message: fmt.Sprintf("failed to serialize value: %v", err),
-				},
-			}, nil
-		}
-
-		metadataJSON, err := json.Marshal(item.Metadata)
-		if err != nil {
-			return &pb.MemoryGetResponse{
-				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
-					Message: fmt.Sprintf("failed to serialize metadata: %v", err),
-				},
-			}, nil
-		}
-
+		typedMapMetadata := mapToTypedMap(item.Metadata)
 		return &pb.MemoryGetResponse{
-			ValueJson:    string(valueJSON),
-			MetadataJson: string(metadataJSON),
-			Found:        true,
-			CreatedAt:    item.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:    item.UpdatedAt.Format(time.RFC3339),
+			Value:     anyToTypedValue(item.Value),
+			Metadata:  typedMapMetadata.Entries,
+			Found:     true,
+			CreatedAt: item.CreatedAt.Format(time.RFC3339),
 		}, nil
 
 	case pb.MemoryTier_MEMORY_TIER_LONG_TERM:
 		// Long-term memory does not support Get by key
 		return &pb.MemoryGetResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: "Long-term memory does not support Get by key. Use LongTermMemorySearch instead.",
 			},
 		}, nil
@@ -1099,7 +966,7 @@ func (s *HarnessCallbackService) MemoryGet(ctx context.Context, req *pb.MemoryGe
 	default:
 		return &pb.MemoryGetResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: fmt.Sprintf("unknown memory tier: %v", tier),
 			},
 		}, nil
@@ -1113,16 +980,8 @@ func (s *HarnessCallbackService) MemorySet(ctx context.Context, req *pb.MemorySe
 		return nil, err
 	}
 
-	// Deserialize value
-	var value any
-	if err := json.Unmarshal([]byte(req.ValueJson), &value); err != nil {
-		return &pb.MemorySetResponse{
-			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
-				Message: fmt.Sprintf("invalid value JSON: %v", err),
-			},
-		}, nil
-	}
+	// Convert value from proto TypedValue
+	value := typedValueToAny(req.Value)
 
 	// Default to WORKING tier for backward compatibility
 	tier := req.Tier
@@ -1136,7 +995,7 @@ func (s *HarnessCallbackService) MemorySet(ctx context.Context, req *pb.MemorySe
 		if err := harness.Memory().Working().Set(req.Key, value); err != nil {
 			return &pb.MemorySetResponse{
 				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
+					Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 					Message: fmt.Sprintf("failed to set value: %v", err),
 				},
 			}, nil
@@ -1145,23 +1004,13 @@ func (s *HarnessCallbackService) MemorySet(ctx context.Context, req *pb.MemorySe
 
 	case pb.MemoryTier_MEMORY_TIER_MISSION:
 		// Mission memory: use Store method
-		// Deserialize metadata if provided
-		var metadata map[string]any
-		if req.MetadataJson != "" {
-			if err := json.Unmarshal([]byte(req.MetadataJson), &metadata); err != nil {
-				return &pb.MemorySetResponse{
-					Error: &pb.HarnessError{
-						Code:    "INVALID_ARGUMENT",
-						Message: fmt.Sprintf("invalid metadata JSON: %v", err),
-					},
-				}, nil
-			}
-		}
+		// Convert metadata from proto TypedMap
+		metadata := typedValueMapToMap(req.Metadata)
 
 		if err := harness.Memory().Mission().Store(ctx, req.Key, value, metadata); err != nil {
 			return &pb.MemorySetResponse{
 				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
+					Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 					Message: fmt.Sprintf("failed to store in mission memory: %v", err),
 				},
 			}, nil
@@ -1172,7 +1021,7 @@ func (s *HarnessCallbackService) MemorySet(ctx context.Context, req *pb.MemorySe
 		// Long-term memory does not support Set by key
 		return &pb.MemorySetResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: "Long-term memory does not support Set by key. Use LongTermMemoryStore instead.",
 			},
 		}, nil
@@ -1180,7 +1029,7 @@ func (s *HarnessCallbackService) MemorySet(ctx context.Context, req *pb.MemorySe
 	default:
 		return &pb.MemorySetResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: fmt.Sprintf("unknown memory tier: %v", tier),
 			},
 		}, nil
@@ -1211,7 +1060,7 @@ func (s *HarnessCallbackService) MemoryDelete(ctx context.Context, req *pb.Memor
 		if err := harness.Memory().Mission().Delete(ctx, req.Key); err != nil {
 			return &pb.MemoryDeleteResponse{
 				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
+					Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 					Message: fmt.Sprintf("failed to delete from mission memory: %v", err),
 				},
 			}, nil
@@ -1222,7 +1071,7 @@ func (s *HarnessCallbackService) MemoryDelete(ctx context.Context, req *pb.Memor
 		// Long-term memory does not support Delete by key
 		return &pb.MemoryDeleteResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: "Long-term memory does not support Delete by key. Use LongTermMemoryDelete instead.",
 			},
 		}, nil
@@ -1230,7 +1079,7 @@ func (s *HarnessCallbackService) MemoryDelete(ctx context.Context, req *pb.Memor
 	default:
 		return &pb.MemoryDeleteResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: fmt.Sprintf("unknown memory tier: %v", tier),
 			},
 		}, nil
@@ -1279,7 +1128,7 @@ func (s *HarnessCallbackService) MemoryList(ctx context.Context, req *pb.MemoryL
 		if err != nil {
 			return &pb.MemoryListResponse{
 				Error: &pb.HarnessError{
-					Code:    "INTERNAL",
+					Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 					Message: fmt.Sprintf("failed to list keys from mission memory: %v", err),
 				},
 			}, nil
@@ -1305,7 +1154,7 @@ func (s *HarnessCallbackService) MemoryList(ctx context.Context, req *pb.MemoryL
 		// Long-term memory does not support listing keys
 		return &pb.MemoryListResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: "Long-term memory does not support listing keys.",
 			},
 		}, nil
@@ -1313,7 +1162,7 @@ func (s *HarnessCallbackService) MemoryList(ctx context.Context, req *pb.MemoryL
 	default:
 		return &pb.MemoryListResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: fmt.Sprintf("unknown memory tier: %v", tier),
 			},
 		}, nil
@@ -1327,15 +1176,8 @@ func (s *HarnessCallbackService) LongTermMemoryStore(ctx context.Context, req *p
 		return nil, err
 	}
 
-	// Deserialize metadata
-	var metadata map[string]any
-	if req.MetadataJson != "" {
-		if err := json.Unmarshal([]byte(req.MetadataJson), &metadata); err != nil {
-			return &pb.LongTermMemoryStoreResponse{
-				Error: &pb.HarnessError{Code: "INVALID_ARGUMENT", Message: fmt.Sprintf("invalid metadata JSON: %v", err)},
-			}, nil
-		}
-	}
+	// Convert metadata from proto TypedMap
+	metadata := typedValueMapToMap(req.Metadata)
 
 	// Generate UUID for the content - SDK interface returns ID, daemon requires ID input
 	id := uuid.New().String()
@@ -1344,7 +1186,7 @@ func (s *HarnessCallbackService) LongTermMemoryStore(ctx context.Context, req *p
 	err = harness.Memory().LongTerm().Store(ctx, id, req.Content, metadata)
 	if err != nil {
 		return &pb.LongTermMemoryStoreResponse{
-			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+			Error: &pb.HarnessError{Code:    pb.ErrorCode_ERROR_CODE_INTERNAL, Message: err.Error()},
 		}, nil
 	}
 
@@ -1358,32 +1200,25 @@ func (s *HarnessCallbackService) LongTermMemorySearch(ctx context.Context, req *
 		return nil, err
 	}
 
-	// Deserialize filters
-	var filters map[string]any
-	if req.FiltersJson != "" {
-		if err := json.Unmarshal([]byte(req.FiltersJson), &filters); err != nil {
-			return &pb.LongTermMemorySearchResponse{
-				Error: &pb.HarnessError{Code: "INVALID_ARGUMENT", Message: fmt.Sprintf("invalid filters JSON: %v", err)},
-			}, nil
-		}
-	}
+	// Convert filters from proto TypedMap
+	filters := typedValueMapToMap(req.Filters)
 
 	results, err := harness.Memory().LongTerm().Search(ctx, req.Query, int(req.TopK), filters)
 	if err != nil {
 		return &pb.LongTermMemorySearchResponse{
-			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+			Error: &pb.HarnessError{Code:    pb.ErrorCode_ERROR_CODE_INTERNAL, Message: err.Error()},
 		}, nil
 	}
 
 	pbResults := make([]*pb.LongTermMemoryResult, len(results))
 	for i, r := range results {
-		metadataJSON, _ := json.Marshal(r.Item.Metadata)
+		typedMapMetadata := mapToTypedMap(r.Item.Metadata)
 		pbResults[i] = &pb.LongTermMemoryResult{
-			Id:           r.Item.Key,
-			Content:      r.Item.Value.(string), // Content is stored as string
-			MetadataJson: string(metadataJSON),
-			Score:        r.Score,
-			CreatedAt:    r.Item.CreatedAt.Format(time.RFC3339),
+			Id:        r.Item.Key,
+			Content:   r.Item.Value.(string), // Content is stored as string
+			Metadata:  typedMapMetadata.Entries,
+			Score:     r.Score,
+			CreatedAt: r.Item.CreatedAt.Format(time.RFC3339),
 		}
 	}
 
@@ -1400,7 +1235,7 @@ func (s *HarnessCallbackService) LongTermMemoryDelete(ctx context.Context, req *
 	err = harness.Memory().LongTerm().Delete(ctx, req.Id)
 	if err != nil {
 		return &pb.LongTermMemoryDeleteResponse{
-			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+			Error: &pb.HarnessError{Code:    pb.ErrorCode_ERROR_CODE_INTERNAL, Message: err.Error()},
 		}, nil
 	}
 
@@ -1417,21 +1252,20 @@ func (s *HarnessCallbackService) MissionMemorySearch(ctx context.Context, req *p
 	results, err := harness.Memory().Mission().Search(ctx, req.Query, int(req.Limit))
 	if err != nil {
 		return &pb.MissionMemorySearchResponse{
-			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+			Error: &pb.HarnessError{Code:    pb.ErrorCode_ERROR_CODE_INTERNAL, Message: err.Error()},
 		}, nil
 	}
 
 	pbResults := make([]*pb.MissionMemoryResult, len(results))
 	for i, r := range results {
-		valueJSON, _ := json.Marshal(r.Item.Value)
-		metadataJSON, _ := json.Marshal(r.Item.Metadata)
+		typedMapMetadata := mapToTypedMap(r.Item.Metadata)
 		pbResults[i] = &pb.MissionMemoryResult{
-			Key:          r.Item.Key,
-			ValueJson:    string(valueJSON),
-			MetadataJson: string(metadataJSON),
-			Score:        r.Score,
-			CreatedAt:    r.Item.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:    r.Item.UpdatedAt.Format(time.RFC3339),
+			Key:       r.Item.Key,
+			Value:     anyToTypedValue(r.Item.Value),
+			Metadata:  typedMapMetadata.Entries,
+			Score:     r.Score,
+			CreatedAt: r.Item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: r.Item.UpdatedAt.Format(time.RFC3339),
 		}
 	}
 
@@ -1448,20 +1282,19 @@ func (s *HarnessCallbackService) MissionMemoryHistory(ctx context.Context, req *
 	items, err := harness.Memory().Mission().History(ctx, int(req.Limit))
 	if err != nil {
 		return &pb.MissionMemoryHistoryResponse{
-			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+			Error: &pb.HarnessError{Code:    pb.ErrorCode_ERROR_CODE_INTERNAL, Message: err.Error()},
 		}, nil
 	}
 
 	pbItems := make([]*pb.MissionMemoryItem, len(items))
 	for i, item := range items {
-		valueJSON, _ := json.Marshal(item.Value)
-		metadataJSON, _ := json.Marshal(item.Metadata)
+		typedMapMetadata := mapToTypedMap(item.Metadata)
 		pbItems[i] = &pb.MissionMemoryItem{
-			Key:          item.Key,
-			ValueJson:    string(valueJSON),
-			MetadataJson: string(metadataJSON),
-			CreatedAt:    item.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:    item.UpdatedAt.Format(time.RFC3339),
+			Key:       item.Key,
+			Value:     anyToTypedValue(item.Value),
+			Metadata:  typedMapMetadata.Entries,
+			CreatedAt: item.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: item.UpdatedAt.Format(time.RFC3339),
 		}
 	}
 
@@ -1481,14 +1314,13 @@ func (s *HarnessCallbackService) MissionMemoryGetPreviousRunValue(ctx context.Co
 		errMsg := err.Error()
 		return &pb.MissionMemoryGetPreviousRunValueResponse{
 			Found: false,
-			Error: &pb.HarnessError{Code: "NOT_FOUND", Message: errMsg},
+			Error: &pb.HarnessError{Code: pb.ErrorCode_ERROR_CODE_NOT_FOUND, Message: errMsg},
 		}, nil
 	}
 
-	valueJSON, _ := json.Marshal(value)
 	return &pb.MissionMemoryGetPreviousRunValueResponse{
-		ValueJson: string(valueJSON),
-		Found:     true,
+		Value: anyToTypedValue(value),
+		Found: true,
 	}, nil
 }
 
@@ -1502,15 +1334,14 @@ func (s *HarnessCallbackService) MissionMemoryGetValueHistory(ctx context.Contex
 	history, err := harness.Memory().Mission().GetValueHistory(ctx, req.Key)
 	if err != nil {
 		return &pb.MissionMemoryGetValueHistoryResponse{
-			Error: &pb.HarnessError{Code: "INTERNAL", Message: err.Error()},
+			Error: &pb.HarnessError{Code:    pb.ErrorCode_ERROR_CODE_INTERNAL, Message: err.Error()},
 		}, nil
 	}
 
 	pbValues := make([]*pb.HistoricalValueItem, len(history))
 	for i, h := range history {
-		valueJSON, _ := json.Marshal(h.Value)
 		pbValues[i] = &pb.HistoricalValueItem{
-			ValueJson: string(valueJSON),
+			Value:     anyToTypedValue(h.Value),
 			RunNumber: int32(h.RunNumber),
 			MissionId: h.MissionID,
 			StoredAt:  h.StoredAt.Format(time.RFC3339),
@@ -1564,19 +1395,19 @@ func (s *HarnessCallbackService) GraphRAGQuery(ctx context.Context, req *pb.Grap
 	if !ok {
 		return &pb.GraphRAGQueryResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: "GraphRAG not supported by this harness",
 			},
 		}, nil
 	}
 
 	// Deserialize query
-	var query sdkgraphrag.Query
-	if err := json.Unmarshal([]byte(req.QueryJson), &query); err != nil {
+	query := protoQueryToSDKQuery(req.Query)
+	if query.Text == "" && len(query.NodeTypes) == 0 {
 		return &pb.GraphRAGQueryResponse{
 			Error: &pb.HarnessError{
-				Code:    "INVALID_ARGUMENT",
-				Message: fmt.Sprintf("invalid query JSON: %v", err),
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
+				Message: "query must have Text or NodeTypes",
 			},
 		}, nil
 	}
@@ -1587,7 +1418,7 @@ func (s *HarnessCallbackService) GraphRAGQuery(ctx context.Context, req *pb.Grap
 		s.logger.Error("GraphRAG query failed", "error", err)
 		return &pb.GraphRAGQueryResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1617,7 +1448,7 @@ func (s *HarnessCallbackService) FindSimilarAttacks(ctx context.Context, req *pb
 	if err != nil {
 		return &pb.FindSimilarAttacksResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1629,7 +1460,7 @@ func (s *HarnessCallbackService) FindSimilarAttacks(ctx context.Context, req *pb
 		s.logger.Error("find similar attacks failed", "error", err)
 		return &pb.FindSimilarAttacksResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1659,7 +1490,7 @@ func (s *HarnessCallbackService) FindSimilarFindings(ctx context.Context, req *p
 	if err != nil {
 		return &pb.FindSimilarFindingsResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1671,7 +1502,7 @@ func (s *HarnessCallbackService) FindSimilarFindings(ctx context.Context, req *p
 		s.logger.Error("find similar findings failed", "error", err)
 		return &pb.FindSimilarFindingsResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1702,7 +1533,7 @@ func (s *HarnessCallbackService) GetAttackChains(ctx context.Context, req *pb.Ge
 	if err != nil {
 		return &pb.GetAttackChainsResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1714,7 +1545,7 @@ func (s *HarnessCallbackService) GetAttackChains(ctx context.Context, req *pb.Ge
 		s.logger.Error("get attack chains failed", "error", err)
 		return &pb.GetAttackChainsResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1753,7 +1584,7 @@ func (s *HarnessCallbackService) GetRelatedFindings(ctx context.Context, req *pb
 	if err != nil {
 		return &pb.GetRelatedFindingsResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1765,7 +1596,7 @@ func (s *HarnessCallbackService) GetRelatedFindings(ctx context.Context, req *pb
 		s.logger.Error("get related findings failed", "error", err)
 		return &pb.GetRelatedFindingsResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1800,7 +1631,7 @@ func (s *HarnessCallbackService) StoreGraphNode(ctx context.Context, req *pb.Sto
 	if err != nil {
 		return &pb.StoreGraphNodeResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1815,7 +1646,7 @@ func (s *HarnessCallbackService) StoreGraphNode(ctx context.Context, req *pb.Sto
 		s.logger.Error("store graph node failed", "error", err)
 		return &pb.StoreGraphNodeResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1832,7 +1663,7 @@ func (s *HarnessCallbackService) CreateGraphRelationship(ctx context.Context, re
 	if err != nil {
 		return &pb.CreateGraphRelationshipResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1846,7 +1677,7 @@ func (s *HarnessCallbackService) CreateGraphRelationship(ctx context.Context, re
 		s.logger.Error("create graph relationship failed", "error", err)
 		return &pb.CreateGraphRelationshipResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1861,7 +1692,7 @@ func (s *HarnessCallbackService) StoreGraphBatch(ctx context.Context, req *pb.St
 	if err != nil {
 		return &pb.StoreGraphBatchResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1887,7 +1718,7 @@ func (s *HarnessCallbackService) StoreGraphBatch(ctx context.Context, req *pb.St
 		s.logger.Error("store graph batch failed", "error", err)
 		return &pb.StoreGraphBatchResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1904,7 +1735,7 @@ func (s *HarnessCallbackService) TraverseGraph(ctx context.Context, req *pb.Trav
 	if err != nil {
 		return &pb.TraverseGraphResponse{
 			Error: &pb.HarnessError{
-				Code:    "UNIMPLEMENTED",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -1924,7 +1755,7 @@ func (s *HarnessCallbackService) TraverseGraph(ctx context.Context, req *pb.Trav
 		s.logger.Error("traverse graph failed", "error", err)
 		return &pb.TraverseGraphResponse{
 			Error: &pb.HarnessError{
-				Code:    "INTERNAL",
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
 			},
 		}, nil
@@ -2086,13 +1917,10 @@ func (s *HarnessCallbackService) toolCallsToProto(calls []llm.ToolCall) []*pb.To
 func (s *HarnessCallbackService) protoToToolDefs(protoTools []*pb.ToolDef) []llm.ToolDef {
 	tools := make([]llm.ToolDef, len(protoTools))
 	for i, protoTool := range protoTools {
-		// Parameters are stored as JSON string in proto, unmarshal to JSONSchema
+		// Convert JSONSchemaNode to schema.JSON
 		var params schema.JSON
-		if protoTool.ParametersJson != "" {
-			if err := json.Unmarshal([]byte(protoTool.ParametersJson), &params); err != nil {
-				s.logger.Error("failed to unmarshal tool parameters", "error", err, "tool", protoTool.Name)
-				// Continue with empty params rather than failing entirely
-			}
+		if protoTool.Parameters != nil {
+			params = CallbackProtoToSchema(protoTool.Parameters)
 		}
 
 		tools[i] = llm.ToolDef{
@@ -2105,31 +1933,21 @@ func (s *HarnessCallbackService) protoToToolDefs(protoTools []*pb.ToolDef) []llm
 }
 
 func (s *HarnessCallbackService) graphNodeToProto(node sdkgraphrag.GraphNode) *pb.GraphNode {
-	propsJSON, err := json.Marshal(node.Properties)
-	if err != nil {
-		s.logger.Error("failed to marshal graph node properties", "error", err, "node_id", node.ID)
-		propsJSON = []byte("{}")
-	}
+	typedMapProps := mapToTypedMap(node.Properties)
 	return &pb.GraphNode{
-		Id:             node.ID,
-		Type:           node.Type,
-		PropertiesJson: string(propsJSON),
-		Content:        node.Content,
-		MissionId:      node.MissionID,
-		AgentName:      node.AgentName,
-		CreatedAt:      node.CreatedAt.Unix(),
-		UpdatedAt:      node.UpdatedAt.Unix(),
+		Id:         node.ID,
+		Type:       node.Type,
+		Properties: typedMapProps.Entries,
+		Content:    node.Content,
+		MissionId:  node.MissionID,
+		AgentName:  node.AgentName,
+		CreatedAt:  node.CreatedAt.Unix(),
+		UpdatedAt:  node.UpdatedAt.Unix(),
 	}
 }
 
 func (s *HarnessCallbackService) protoToGraphNode(protoNode *pb.GraphNode) sdkgraphrag.GraphNode {
-	var props map[string]any
-	if protoNode.PropertiesJson != "" {
-		if err := json.Unmarshal([]byte(protoNode.PropertiesJson), &props); err != nil {
-			s.logger.Error("failed to unmarshal graph node properties", "error", err, "node_id", protoNode.Id)
-			// Continue with empty props
-		}
-	}
+	props := typedValueMapToMap(protoNode.Properties)
 
 	return sdkgraphrag.GraphNode{
 		ID:         protoNode.Id,
@@ -2141,14 +1959,9 @@ func (s *HarnessCallbackService) protoToGraphNode(protoNode *pb.GraphNode) sdkgr
 	}
 }
 
+
 func (s *HarnessCallbackService) protoToRelationship(protoRel *pb.Relationship) sdkgraphrag.Relationship {
-	var props map[string]any
-	if protoRel.PropertiesJson != "" {
-		if err := json.Unmarshal([]byte(protoRel.PropertiesJson), &props); err != nil {
-			s.logger.Error("failed to unmarshal relationship properties", "error", err, "from", protoRel.FromId, "to", protoRel.ToId)
-			// Continue with empty props
-		}
-	}
+	props := typedValueMapToMap(protoRel.Properties)
 
 	return sdkgraphrag.Relationship{
 		FromID:        protoRel.FromId,
@@ -2345,7 +2158,7 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 	if req.Context == nil {
 		return &pb.GetCredentialResponse{
 			Error: &pb.HarnessError{
-				Code:    codes.InvalidArgument.String(),
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: "missing context info in request",
 			},
 		}, nil
@@ -2363,7 +2176,7 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 		s.logger.Warn("GetCredential called but credential store not configured")
 		return &pb.GetCredentialResponse{
 			Error: &pb.HarnessError{
-				Code:    codes.Unavailable.String(),
+				Code:    pb.ErrorCode_ERROR_CODE_UNAVAILABLE,
 				Message: "credential store not available",
 			},
 		}, nil
@@ -2375,7 +2188,7 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 		s.logger.Warn("GetCredential failed", "name", req.Name, "error", err)
 		return &pb.GetCredentialResponse{
 			Error: &pb.HarnessError{
-				Code:    codes.NotFound.String(),
+				Code:    pb.ErrorCode_ERROR_CODE_NOT_FOUND,
 				Message: fmt.Sprintf("credential %q not found: %v", req.Name, err),
 			},
 		}, nil
@@ -2398,28 +2211,29 @@ func (s *HarnessCallbackService) GetCredential(ctx context.Context, req *pb.GetC
 		credType = pb.CredentialType_CREDENTIAL_TYPE_API_KEY
 	}
 
-	// Encode metadata as JSON
-	var metadataJSON string
-	if cred.Tags != nil || cred.Provider != "" {
-		metadata := map[string]any{
-			"provider": cred.Provider,
-			"tags":     cred.Tags,
-		}
-		metadataBytes, err := json.Marshal(metadata)
-		if err == nil {
-			metadataJSON = string(metadataBytes)
-		}
-	}
-
 	s.logger.Debug("GetCredential succeeded", "name", req.Name)
 
+	// Build credential with oneof secret_data based on type
+	pbCred := &pb.Credential{
+		Name:     cred.Name,
+		Type:     credType,
+		Metadata: mapToTypedValueMap(map[string]any{"provider": cred.Provider, "tags": cred.Tags}),
+	}
+
+	// Set secret using oneof field based on credential type
+	switch credType {
+	case pb.CredentialType_CREDENTIAL_TYPE_API_KEY:
+		pbCred.SecretData = &pb.Credential_ApiKey{ApiKey: secret}
+	case pb.CredentialType_CREDENTIAL_TYPE_BEARER:
+		pbCred.SecretData = &pb.Credential_BearerToken{BearerToken: secret}
+	case pb.CredentialType_CREDENTIAL_TYPE_CUSTOM:
+		pbCred.SecretData = &pb.Credential_CustomSecret{CustomSecret: secret}
+	default:
+		pbCred.SecretData = &pb.Credential_ApiKey{ApiKey: secret}
+	}
+
 	return &pb.GetCredentialResponse{
-		Credential: &pb.Credential{
-			Name:         cred.Name,
-			Type:         credType,
-			Secret:       secret,
-			MetadataJson: metadataJSON,
-		},
+		Credential: pbCred,
 	}, nil
 }
 
@@ -2527,7 +2341,7 @@ func (s *HarnessCallbackService) GenerateNodeID(ctx context.Context, req *pb.Gen
 	s.logger.Debug("GenerateNodeID called (taxonomy removed)")
 	return &pb.GenerateNodeIDResponse{
 		Error: &pb.HarnessError{
-			Code:    codes.Unimplemented.String(),
+			Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 			Message: "taxonomy has been removed; use domain types which generate their own IDs",
 		},
 	}, nil
@@ -2542,13 +2356,13 @@ func (s *HarnessCallbackService) ValidateFinding(ctx context.Context, req *pb.Va
 
 	s.logger.Debug("ValidateFinding called")
 
-	// Parse finding from JSON
-	var finding sdkfinding.Finding
-	if err := json.Unmarshal([]byte(req.FindingJson), &finding); err != nil {
+	// Convert proto finding to SDK finding
+	finding := protoFindingToSDKFinding(req.Finding)
+	if finding == nil {
 		return &pb.ValidationResponse{
 			Error: &pb.HarnessError{
-				Code:    codes.InvalidArgument.String(),
-				Message: fmt.Sprintf("failed to parse finding JSON: %v", err),
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
+				Message: "finding cannot be nil",
 			},
 		}, nil
 	}
@@ -2606,4 +2420,657 @@ func (s *HarnessCallbackService) ValidateRelationship(ctx context.Context, req *
 		Valid:    true,
 		Warnings: []string{"taxonomy-based validation has been removed; use domain types for type-safe relationship creation"},
 	}, nil
+}
+
+// anyToTypedValue converts a Go any value to a proto TypedValue.
+func anyToTypedValue(v any) *pb.TypedValue {
+	if v == nil {
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_NullValue{
+				NullValue: pb.NullValue_NULL_VALUE,
+			},
+		}
+	}
+
+	switch val := v.(type) {
+	case string:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_StringValue{StringValue: val},
+		}
+	case int:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int32:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int64:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_IntValue{IntValue: val},
+		}
+	case float32:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_DoubleValue{DoubleValue: float64(val)},
+		}
+	case float64:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_DoubleValue{DoubleValue: val},
+		}
+	case bool:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_BoolValue{BoolValue: val},
+		}
+	case []byte:
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_BytesValue{BytesValue: val},
+		}
+	case []any:
+		items := make([]*pb.TypedValue, len(val))
+		for i, item := range val {
+			items[i] = anyToTypedValue(item)
+		}
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_ArrayValue{
+				ArrayValue: &pb.TypedArray{Items: items},
+			},
+		}
+	case map[string]any:
+		entries := make(map[string]*pb.TypedValue)
+		for k, v := range val {
+			entries[k] = anyToTypedValue(v)
+		}
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_MapValue{
+				MapValue: &pb.TypedMap{Entries: entries},
+			},
+		}
+	default:
+		// For unknown types, convert to string representation
+		jsonBytes, _ := json.Marshal(v)
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_StringValue{StringValue: string(jsonBytes)},
+		}
+	}
+}
+
+// typedValueToAny converts a proto TypedValue to a Go any value.
+func typedValueToAny(tv *pb.TypedValue) any {
+	if tv == nil {
+		return nil
+	}
+
+	switch kind := tv.Kind.(type) {
+	case *pb.TypedValue_NullValue:
+		return nil
+	case *pb.TypedValue_StringValue:
+		return kind.StringValue
+	case *pb.TypedValue_IntValue:
+		return kind.IntValue
+	case *pb.TypedValue_DoubleValue:
+		return kind.DoubleValue
+	case *pb.TypedValue_BoolValue:
+		return kind.BoolValue
+	case *pb.TypedValue_BytesValue:
+		return kind.BytesValue
+	case *pb.TypedValue_ArrayValue:
+		if kind.ArrayValue == nil {
+			return []any{}
+		}
+		result := make([]any, len(kind.ArrayValue.Items))
+		for i, item := range kind.ArrayValue.Items {
+			result[i] = typedValueToAny(item)
+		}
+		return result
+	case *pb.TypedValue_MapValue:
+		if kind.MapValue == nil {
+			return map[string]any{}
+		}
+		result := make(map[string]any)
+		for k, v := range kind.MapValue.Entries {
+			result[k] = typedValueToAny(v)
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+// ============================================================================
+// Proto Conversion Helpers
+// ============================================================================
+
+// typedValueMapToMap converts map[string]*TypedValue to map[string]any.
+func typedValueMapToMap(m map[string]*pb.TypedValue) map[string]any {
+	if m == nil {
+		return make(map[string]any)
+	}
+
+	result := make(map[string]any)
+	for k, v := range m {
+		result[k] = typedValueToAny(v)
+	}
+	return result
+}
+
+// protoTaskToTask converts a proto Task to an internal agent.Task.
+func protoTaskToTask(pt *pb.Task) agent.Task {
+	if pt == nil {
+		return agent.Task{}
+	}
+
+	task := agent.Task{
+		Goal:    pt.Goal,
+		Context: typedValueMapToMap(pt.Context),
+	}
+
+	// Parse ID if present
+	if pt.Id != "" {
+		if id, err := uuid.Parse(pt.Id); err == nil {
+			task.ID = types.ID(id.String())
+		}
+	}
+
+	// Extract metadata fields
+	if pt.Metadata != nil {
+		if nameVal := pt.Metadata["name"]; nameVal != nil {
+			if name, ok := typedValueToAny(nameVal).(string); ok {
+				task.Name = name
+			}
+		}
+		if descVal := pt.Metadata["description"]; descVal != nil {
+			if desc, ok := typedValueToAny(descVal).(string); ok {
+				task.Description = desc
+			}
+		}
+		if timeoutVal := pt.Metadata["timeout_ms"]; timeoutVal != nil {
+			if timeoutMs, ok := typedValueToAny(timeoutVal).(int64); ok {
+				task.Timeout = time.Duration(timeoutMs) * time.Millisecond
+			}
+		}
+		if missionIDVal := pt.Metadata["mission_id"]; missionIDVal != nil {
+			if missionIDStr, ok := typedValueToAny(missionIDVal).(string); ok {
+				if id, err := uuid.Parse(missionIDStr); err == nil {
+					missionID := types.ID(id.String())
+					task.MissionID = &missionID
+				}
+			}
+		}
+		if parentTaskIDVal := pt.Metadata["parent_task_id"]; parentTaskIDVal != nil {
+			if parentTaskIDStr, ok := typedValueToAny(parentTaskIDVal).(string); ok {
+				if id, err := uuid.Parse(parentTaskIDStr); err == nil {
+					parentTaskID := types.ID(id.String())
+					task.ParentTaskID = &parentTaskID
+				}
+			}
+		}
+		if targetIDVal := pt.Metadata["target_id"]; targetIDVal != nil {
+			if targetIDStr, ok := typedValueToAny(targetIDVal).(string); ok {
+				if id, err := uuid.Parse(targetIDStr); err == nil {
+					targetID := types.ID(id.String())
+					task.TargetID = &targetID
+				}
+			}
+		}
+	}
+
+	return task
+}
+
+// resultToProtoResult converts an internal agent.Result to a proto Result.
+func resultToProtoResult(r agent.Result) *pb.Result {
+	result := &pb.Result{
+		Status: resultStatusToProtoStatus(r.Status),
+		Output: mapToTypedValue(r.Output),
+	}
+
+	if r.Error != nil {
+		// Convert error code string to ErrorCode enum
+		errCode := pb.ErrorCode_ERROR_CODE_INTERNAL
+		if codeVal, ok := pb.ErrorCode_value["ERROR_CODE_"+r.Error.Code]; ok {
+			errCode = pb.ErrorCode(codeVal)
+		}
+		result.Error = &pb.ResultError{
+			Message:   r.Error.Message,
+			Code:      errCode,
+			Details:   convertMapStringAnyToMapStringString(r.Error.Details),
+			Retryable: r.Error.Recoverable,
+		}
+	}
+
+	return result
+}
+
+// resultStatusToProtoStatus converts an internal ResultStatus to proto ResultStatus.
+func resultStatusToProtoStatus(status agent.ResultStatus) pb.ResultStatus {
+	switch status {
+	case agent.ResultStatusPending:
+		return pb.ResultStatus_RESULT_STATUS_UNSPECIFIED
+	case agent.ResultStatusCompleted:
+		return pb.ResultStatus_RESULT_STATUS_SUCCESS
+	case agent.ResultStatusFailed:
+		return pb.ResultStatus_RESULT_STATUS_FAILED
+	case agent.ResultStatusCancelled:
+		return pb.ResultStatus_RESULT_STATUS_CANCELLED
+	default:
+		return pb.ResultStatus_RESULT_STATUS_FAILED
+	}
+}
+
+// mapToTypedValue converts a map[string]any to a proto TypedValue containing a TypedMap.
+func mapToTypedValue(m map[string]any) *pb.TypedValue {
+	if m == nil {
+		return &pb.TypedValue{
+			Kind: &pb.TypedValue_MapValue{
+				MapValue: &pb.TypedMap{Entries: make(map[string]*pb.TypedValue)},
+			},
+		}
+	}
+
+	entries := make(map[string]*pb.TypedValue)
+	for k, v := range m {
+		entries[k] = anyToTypedValue(v)
+	}
+
+	return &pb.TypedValue{
+		Kind: &pb.TypedValue_MapValue{
+			MapValue: &pb.TypedMap{Entries: entries},
+		},
+	}
+}
+
+// convertMapStringAnyToMapStringString converts map[string]any to map[string]string for Error.Details.
+func convertMapStringAnyToMapStringString(m map[string]any) map[string]string {
+	if m == nil {
+		return nil
+	}
+	result := make(map[string]string)
+	for k, v := range m {
+		if str, ok := v.(string); ok {
+			result[k] = str
+		} else {
+			result[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	return result
+}
+
+// mapToTypedValueMap converts a map[string]any to a map[string]*pb.TypedValue.
+func mapToTypedValueMap(m map[string]any) map[string]*pb.TypedValue {
+	if m == nil {
+		return make(map[string]*pb.TypedValue)
+	}
+
+	result := make(map[string]*pb.TypedValue)
+	for k, v := range m {
+		result[k] = anyToTypedValue(v)
+	}
+	return result
+}
+
+// protoFindingToSDKFinding converts a proto Finding to an SDK finding.Finding.
+func protoFindingToSDKFinding(pf *pb.Finding) *sdkfinding.Finding {
+	if pf == nil {
+		return nil
+	}
+
+	finding := &sdkfinding.Finding{
+		ID:          pf.Id,
+		MissionID:   pf.MissionId,
+		AgentName:   pf.AgentName,
+		Title:       pf.Title,
+		Description: pf.Description,
+		Category:    sdkfinding.Category(pf.Category),
+		Subcategory: pf.Subcategory,
+		Severity:    protoSeverityToSDKSeverity(pf.Severity),
+		Confidence:  pf.Confidence,
+		TargetID:    pf.TargetId,
+		Technique:   pf.Technique,
+		Tags:        pf.Tags,
+		Remediation: pf.Remediation,
+		References:  pf.References,
+	}
+
+	// Convert Evidence
+	if len(pf.Evidence) > 0 {
+		finding.Evidence = make([]sdkfinding.Evidence, len(pf.Evidence))
+		for i, ev := range pf.Evidence {
+			finding.Evidence[i] = sdkfinding.Evidence{
+				Type:    protoEvidenceTypeToSDK(ev.Type),
+				Title:   ev.Title,
+				Content: ev.Content,
+			}
+			// Convert metadata if present
+			if len(ev.Metadata) > 0 {
+				finding.Evidence[i].Metadata = make(map[string]any)
+				for k, v := range ev.Metadata {
+					finding.Evidence[i].Metadata[k] = v
+				}
+			}
+		}
+	}
+
+	// Convert Reproduction steps
+	if len(pf.Reproduction) > 0 {
+		finding.Reproduction = make([]sdkfinding.ReproStep, len(pf.Reproduction))
+		for i, rs := range pf.Reproduction {
+			finding.Reproduction[i] = sdkfinding.ReproStep{
+				Order:       int(rs.Order),
+				Description: rs.Description,
+				Input:       rs.Input,
+				Output:      rs.Output,
+			}
+		}
+	}
+
+	// Convert CVSS score
+	if pf.CvssScore > 0 {
+		finding.CVSSScore = &pf.CvssScore
+	}
+
+	finding.RiskScore = pf.RiskScore
+
+	// Convert timestamps
+	if pf.CreatedAt > 0 {
+		finding.CreatedAt = time.Unix(0, pf.CreatedAt*int64(time.Millisecond))
+	}
+	if pf.UpdatedAt > 0 {
+		finding.UpdatedAt = time.Unix(0, pf.UpdatedAt*int64(time.Millisecond))
+	}
+
+	return finding
+}
+
+// protoSeverityToSDKSeverity converts a proto FindingSeverity to an SDK Severity.
+func protoSeverityToSDKSeverity(severity pb.FindingSeverity) sdkfinding.Severity {
+	switch severity {
+	case pb.FindingSeverity_FINDING_SEVERITY_CRITICAL:
+		return sdkfinding.SeverityCritical
+	case pb.FindingSeverity_FINDING_SEVERITY_HIGH:
+		return sdkfinding.SeverityHigh
+	case pb.FindingSeverity_FINDING_SEVERITY_MEDIUM:
+		return sdkfinding.SeverityMedium
+	case pb.FindingSeverity_FINDING_SEVERITY_LOW:
+		return sdkfinding.SeverityLow
+	case pb.FindingSeverity_FINDING_SEVERITY_INFO:
+		return sdkfinding.SeverityInfo
+	default:
+		return sdkfinding.SeverityInfo
+	}
+}
+
+// protoEvidenceTypeToSDK converts a proto EvidenceType to an SDK EvidenceType.
+func protoEvidenceTypeToSDK(evidenceType pb.EvidenceType) sdkfinding.EvidenceType {
+	switch evidenceType {
+	case pb.EvidenceType_EVIDENCE_TYPE_REQUEST:
+		return sdkfinding.EvidenceHTTPRequest
+	case pb.EvidenceType_EVIDENCE_TYPE_RESPONSE:
+		return sdkfinding.EvidenceHTTPResponse
+	case pb.EvidenceType_EVIDENCE_TYPE_SCREENSHOT:
+		return sdkfinding.EvidenceScreenshot
+	case pb.EvidenceType_EVIDENCE_TYPE_LOG:
+		return sdkfinding.EvidenceLog
+	case pb.EvidenceType_EVIDENCE_TYPE_CODE:
+		return sdkfinding.EvidencePayload
+	default:
+		return sdkfinding.EvidenceLog
+	}
+}
+
+// protoEvidenceTypeToString converts a proto EvidenceType to a string.
+func protoEvidenceTypeToString(evidenceType pb.EvidenceType) string {
+	switch evidenceType {
+	case pb.EvidenceType_EVIDENCE_TYPE_REQUEST:
+		return "request"
+	case pb.EvidenceType_EVIDENCE_TYPE_RESPONSE:
+		return "response"
+	case pb.EvidenceType_EVIDENCE_TYPE_SCREENSHOT:
+		return "screenshot"
+	case pb.EvidenceType_EVIDENCE_TYPE_LOG:
+		return "log"
+	case pb.EvidenceType_EVIDENCE_TYPE_CODE:
+		return "code"
+	case pb.EvidenceType_EVIDENCE_TYPE_OTHER:
+		return "other"
+	default:
+		return "other"
+	}
+}
+
+// stringToProtoEvidenceType converts a string to a proto EvidenceType.
+func stringToProtoEvidenceType(typeStr string) pb.EvidenceType {
+	switch typeStr {
+	case "request":
+		return pb.EvidenceType_EVIDENCE_TYPE_REQUEST
+	case "response":
+		return pb.EvidenceType_EVIDENCE_TYPE_RESPONSE
+	case "screenshot":
+		return pb.EvidenceType_EVIDENCE_TYPE_SCREENSHOT
+	case "log":
+		return pb.EvidenceType_EVIDENCE_TYPE_LOG
+	case "code":
+		return pb.EvidenceType_EVIDENCE_TYPE_CODE
+	default:
+		return pb.EvidenceType_EVIDENCE_TYPE_OTHER
+	}
+}
+
+// protoFindingToFinding converts a proto Finding to an internal agent.Finding.
+func protoFindingToFinding(pf *pb.Finding) agent.Finding {
+	if pf == nil {
+		return agent.Finding{}
+	}
+
+	finding := agent.Finding{
+		Title:       pf.Title,
+		Description: pf.Description,
+		Severity:    protoSeverityToAgentSeverity(pf.Severity),
+		Confidence:  pf.Confidence,
+		Category:    pf.Category,
+	}
+
+	// Parse ID if present
+	if pf.Id != "" {
+		if id, err := uuid.Parse(pf.Id); err == nil {
+			finding.ID = types.ID(id.String())
+		}
+	}
+
+	// Parse TargetID if present
+	if pf.TargetId != "" {
+		if id, err := uuid.Parse(pf.TargetId); err == nil {
+			targetID := types.ID(id.String())
+			finding.TargetID = &targetID
+		}
+	}
+
+	// Convert Evidence
+	if len(pf.Evidence) > 0 {
+		finding.Evidence = make([]agent.Evidence, len(pf.Evidence))
+		for i, ev := range pf.Evidence {
+			// Convert proto EvidenceType enum to string
+			typeStr := protoEvidenceTypeToString(ev.Type)
+			finding.Evidence[i] = agent.Evidence{
+				Type:        typeStr,
+				Description: ev.Title,
+				Data: map[string]any{
+					"content": ev.Content,
+				},
+			}
+			// Add metadata to Data if present
+			if len(ev.Metadata) > 0 {
+				for k, v := range ev.Metadata {
+					finding.Evidence[i].Data[k] = v
+				}
+			}
+		}
+	}
+
+	// Convert CVSS score if present
+	if pf.CvssScore > 0 {
+		finding.CVSS = &agent.CVSSScore{
+			Score: pf.CvssScore,
+			// Vector not available in proto, leave empty
+		}
+	}
+
+	// Parse timestamp if present
+	if pf.CreatedAt > 0 {
+		finding.CreatedAt = time.Unix(0, pf.CreatedAt*int64(time.Millisecond))
+	} else {
+		finding.CreatedAt = time.Now()
+	}
+
+	return finding
+}
+
+// findingToProtoFinding converts an internal agent.Finding to a proto Finding.
+func findingToProtoFinding(f agent.Finding) *pb.Finding {
+	finding := &pb.Finding{
+		Id:          f.ID.String(),
+		Title:       f.Title,
+		Description: f.Description,
+		Severity:    agentSeverityToProtoSeverity(f.Severity),
+		Confidence:  f.Confidence,
+		Category:    f.Category,
+		CreatedAt:   f.CreatedAt.UnixMilli(),
+	}
+
+	// Convert CVSS score if present
+	if f.CVSS != nil {
+		finding.CvssScore = f.CVSS.Score
+	}
+
+	if f.TargetID != nil {
+		finding.TargetId = f.TargetID.String()
+	}
+
+	// Convert Evidence
+	if len(f.Evidence) > 0 {
+		finding.Evidence = make([]*pb.Evidence, len(f.Evidence))
+		for i, ev := range f.Evidence {
+			// Extract content from Data map if present
+			content := ""
+			if contentVal, ok := ev.Data["content"]; ok {
+				if contentStr, ok := contentVal.(string); ok {
+					content = contentStr
+				}
+			}
+
+			// Convert metadata
+			metadata := make(map[string]string)
+			for k, v := range ev.Data {
+				if k != "content" { // Skip content field
+					if strVal, ok := v.(string); ok {
+						metadata[k] = strVal
+					} else {
+						metadata[k] = fmt.Sprintf("%v", v)
+					}
+				}
+			}
+
+			finding.Evidence[i] = &pb.Evidence{
+				Type:     stringToProtoEvidenceType(ev.Type),
+				Title:    ev.Description,
+				Content:  content,
+				Metadata: metadata,
+			}
+		}
+	}
+
+	return finding
+}
+
+// mapToTypedMap converts map[string]any to *pb.TypedMap.
+func mapToTypedMap(m map[string]any) *pb.TypedMap {
+	if m == nil {
+		return nil
+	}
+	entries := make(map[string]*pb.TypedValue)
+	for k, v := range m {
+		entries[k] = anyToTypedValue(v)
+	}
+	return &pb.TypedMap{Entries: entries}
+}
+
+// protoSeverityToAgentSeverity converts proto FindingSeverity to agent.FindingSeverity.
+func protoSeverityToAgentSeverity(severity pb.FindingSeverity) agent.FindingSeverity {
+	switch severity {
+	case pb.FindingSeverity_FINDING_SEVERITY_CRITICAL:
+		return agent.SeverityCritical
+	case pb.FindingSeverity_FINDING_SEVERITY_HIGH:
+		return agent.SeverityHigh
+	case pb.FindingSeverity_FINDING_SEVERITY_MEDIUM:
+		return agent.SeverityMedium
+	case pb.FindingSeverity_FINDING_SEVERITY_LOW:
+		return agent.SeverityLow
+	case pb.FindingSeverity_FINDING_SEVERITY_INFO:
+		return agent.SeverityInfo
+	default:
+		return agent.SeverityInfo
+	}
+}
+
+// agentSeverityToProtoSeverity converts agent.FindingSeverity to proto FindingSeverity.
+func agentSeverityToProtoSeverity(severity agent.FindingSeverity) pb.FindingSeverity {
+	switch severity {
+	case agent.SeverityCritical:
+		return pb.FindingSeverity_FINDING_SEVERITY_CRITICAL
+	case agent.SeverityHigh:
+		return pb.FindingSeverity_FINDING_SEVERITY_HIGH
+	case agent.SeverityMedium:
+		return pb.FindingSeverity_FINDING_SEVERITY_MEDIUM
+	case agent.SeverityLow:
+		return pb.FindingSeverity_FINDING_SEVERITY_LOW
+	case agent.SeverityInfo:
+		return pb.FindingSeverity_FINDING_SEVERITY_INFO
+	default:
+		return pb.FindingSeverity_FINDING_SEVERITY_INFO
+	}
+}
+
+// protoFilterToFindingFilter converts a proto FindingFilter to internal FindingFilter.
+func protoFilterToFindingFilter(pf *pb.FindingFilter) FindingFilter {
+	if pf == nil {
+		return FindingFilter{}
+	}
+
+	filter := FindingFilter{}
+
+	// Convert optional fields that exist in proto
+	if pf.Severity != pb.FindingSeverity_FINDING_SEVERITY_UNSPECIFIED {
+		severity := protoSeverityToAgentSeverity(pf.Severity)
+		filter.Severity = &severity
+	}
+
+	// Note: proto FindingFilter has tags, mission_id, agent_name, status fields
+	// but internal FindingFilter may not have all of them
+
+	return filter
+}
+
+// protoQueryToSDKQuery converts a proto GraphQuery to SDK Query.
+func protoQueryToSDKQuery(pq *pb.GraphQuery) sdkgraphrag.Query {
+	if pq == nil {
+		return sdkgraphrag.Query{}
+	}
+
+	query := sdkgraphrag.Query{
+		Text:      pq.Text,
+		NodeTypes: pq.NodeTypes,
+		TopK:      int(pq.TopK),
+		MinScore:  float64(pq.MinScore),
+		Scope:     sdkgraphrag.MissionScope(pq.Scope),
+	}
+
+	// Convert embedding if present (proto uses float32, SDK uses float64)
+	if len(pq.Embedding) > 0 {
+		embedding := make([]float64, len(pq.Embedding))
+		for i, v := range pq.Embedding {
+			embedding[i] = float64(v)
+		}
+		query.Embedding = embedding
+	}
+
+	return query
 }

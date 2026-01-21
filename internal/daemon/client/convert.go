@@ -6,8 +6,6 @@
 package client
 
 import (
-	"encoding/json"
-	"log/slog"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/daemon"
@@ -161,13 +159,10 @@ func convertProtoMissionEvent(event *api.MissionEvent) MissionEvent {
 		return MissionEvent{}
 	}
 
-	// Decode JSON data field if present
+	// Convert TypedMap data to map[string]interface{}
 	var data map[string]interface{}
-	if event.Data != "" {
-		if err := json.Unmarshal([]byte(event.Data), &data); err != nil {
-			slog.Error("failed to unmarshal mission event data", "error", err, "event_type", event.EventType)
-			// Continue with nil data
-		}
+	if event.Data != nil {
+		data = api.TypedMapToMap(event.Data)
 	}
 
 	return MissionEvent{
@@ -194,13 +189,10 @@ func convertProtoAttackEvent(event *api.AttackEvent) AttackEvent {
 		return AttackEvent{}
 	}
 
-	// Decode JSON data field if present
+	// Convert TypedMap data to map[string]interface{}
 	var data map[string]interface{}
-	if event.Data != "" {
-		if err := json.Unmarshal([]byte(event.Data), &data); err != nil {
-			slog.Error("failed to unmarshal attack event data", "error", err, "event_type", event.EventType)
-			// Continue with nil data
-		}
+	if event.Data != nil {
+		data = api.TypedMapToMap(event.Data)
 	}
 
 	// Convert OperationResult if present
@@ -251,13 +243,10 @@ func convertProtoEvent(event *api.Event) Event {
 		return Event{}
 	}
 
-	// Decode JSON data field if present
+	// Convert TypedMap data to map[string]interface{}
 	var data map[string]interface{}
-	if event.Data != "" {
-		if err := json.Unmarshal([]byte(event.Data), &data); err != nil {
-			slog.Error("failed to unmarshal event data", "error", err, "event_type", event.EventType, "source", event.Source)
-			// Continue with nil data
-		}
+	if event.Data != nil {
+		data = api.TypedMapToMap(event.Data)
 	}
 
 	return Event{

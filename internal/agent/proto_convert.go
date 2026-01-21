@@ -1,0 +1,296 @@
+package agent
+
+import (
+	"fmt"
+
+	proto "github.com/zero-day-ai/sdk/api/gen/proto"
+)
+
+// TaskToProto converts a Gibson internal Task to a proto Task message.
+func TaskToProto(task Task) *proto.Task {
+	protoTask := &proto.Task{
+		Id:       task.ID.String(),
+		Goal:     task.Goal,
+		Context:  mapToTypedValueMap(task.Context),
+		Metadata: mapToTypedValueMap(map[string]any{
+			"name":        task.Name,
+			"description": task.Description,
+			"timeout_ms":  task.Timeout.Milliseconds(),
+		}),
+	}
+
+	// Add optional fields to metadata if present
+	if task.MissionID != nil {
+		if protoTask.Metadata == nil {
+			protoTask.Metadata = make(map[string]*proto.TypedValue)
+		}
+		protoTask.Metadata["mission_id"] = stringToTypedValue(task.MissionID.String())
+	}
+	if task.ParentTaskID != nil {
+		if protoTask.Metadata == nil {
+			protoTask.Metadata = make(map[string]*proto.TypedValue)
+		}
+		protoTask.Metadata["parent_task_id"] = stringToTypedValue(task.ParentTaskID.String())
+	}
+	if task.TargetID != nil {
+		if protoTask.Metadata == nil {
+			protoTask.Metadata = make(map[string]*proto.TypedValue)
+		}
+		protoTask.Metadata["target_id"] = stringToTypedValue(task.TargetID.String())
+	}
+
+	return protoTask
+}
+
+// ResultToProto converts a Gibson internal Result to a proto Result message.
+func ResultToProto(r Result) *proto.Result {
+	protoResult := &proto.Result{
+		Status: resultStatusToProto(r.Status),
+		Output: anyToTypedValue(r.Output),
+	}
+
+	// Convert error if present
+	if r.Error != nil {
+		details := make(map[string]string)
+		for k, v := range r.Error.Details {
+			details[k] = fmt.Sprintf("%v", v)
+		}
+		protoResult.Error = &proto.ResultError{
+			Message: r.Error.Message,
+			Code:    proto.ErrorCode(proto.ErrorCode_value[r.Error.Code]),
+			Details: details,
+		}
+	}
+
+	// Convert findings to finding IDs
+	if len(r.Findings) > 0 {
+		protoResult.FindingIds = make([]string, len(r.Findings))
+		for i, f := range r.Findings {
+			protoResult.FindingIds[i] = string(f.ID)
+		}
+	}
+
+	return protoResult
+}
+
+// resultStatusToProto converts an internal ResultStatus to a proto ResultStatus.
+func resultStatusToProto(status ResultStatus) proto.ResultStatus {
+	switch status {
+	case ResultStatusPending:
+		return proto.ResultStatus_RESULT_STATUS_UNSPECIFIED
+	case ResultStatusCompleted:
+		return proto.ResultStatus_RESULT_STATUS_SUCCESS
+	case ResultStatusFailed:
+		return proto.ResultStatus_RESULT_STATUS_FAILED
+	case ResultStatusCancelled:
+		return proto.ResultStatus_RESULT_STATUS_CANCELLED
+	default:
+		return proto.ResultStatus_RESULT_STATUS_UNSPECIFIED
+	}
+}
+
+// ProtoToResult converts a proto Result to a Gibson internal Result.
+func ProtoToResult(pr *proto.Result) Result {
+	if pr == nil {
+		return Result{}
+	}
+
+	result := Result{
+		Status:   protoStatusToResultStatus(pr.Status),
+		Output:   typedValueToMap(pr.Output),
+		Findings: []Finding{}, // FindingIDs are used instead of full findings in proto
+	}
+
+	// Convert error if present
+	if pr.Error != nil {
+		// Convert Details map[string]string to map[string]any
+		details := make(map[string]any)
+		for k, v := range pr.Error.Details {
+			details[k] = v
+		}
+
+		result.Error = &ResultError{
+			Message: pr.Error.Message,
+			Code:    pr.Error.Code.String(),
+			Details: details,
+		}
+	}
+
+	return result
+}
+
+// protoStatusToResultStatus converts a proto ResultStatus to an internal ResultStatus.
+func protoStatusToResultStatus(status proto.ResultStatus) ResultStatus {
+	switch status {
+	case proto.ResultStatus_RESULT_STATUS_UNSPECIFIED:
+		return ResultStatusPending
+	case proto.ResultStatus_RESULT_STATUS_SUCCESS:
+		return ResultStatusCompleted
+	case proto.ResultStatus_RESULT_STATUS_FAILED:
+		return ResultStatusFailed
+	case proto.ResultStatus_RESULT_STATUS_PARTIAL:
+		return ResultStatusCompleted // Partial is still completed
+	case proto.ResultStatus_RESULT_STATUS_CANCELLED:
+		return ResultStatusCancelled
+	case proto.ResultStatus_RESULT_STATUS_TIMEOUT:
+		return ResultStatusFailed // Timeout is a type of failure
+	default:
+		return ResultStatusFailed
+	}
+}
+
+// mapToTypedValueMap converts a map[string]any to map[string]*TypedValue.
+func mapToTypedValueMap(m map[string]any) map[string]*proto.TypedValue {
+	if m == nil {
+		return nil
+	}
+
+	result := make(map[string]*proto.TypedValue)
+	for k, v := range m {
+		result[k] = anyToTypedValue(v)
+	}
+	return result
+}
+
+// typedValueMapToMap converts map[string]*TypedValue to map[string]any.
+func typedValueMapToMap(m map[string]*proto.TypedValue) map[string]any {
+	if m == nil {
+		return nil
+	}
+
+	result := make(map[string]any)
+	for k, v := range m {
+		result[k] = typedValueToAny(v)
+	}
+	return result
+}
+
+// typedValueToMap converts a TypedValue to map[string]any if it's a map, otherwise returns empty map.
+func typedValueToMap(tv *proto.TypedValue) map[string]any {
+	if tv == nil {
+		return make(map[string]any)
+	}
+
+	if mapVal, ok := tv.Kind.(*proto.TypedValue_MapValue); ok && mapVal.MapValue != nil {
+		return typedValueMapToMap(mapVal.MapValue.Entries)
+	}
+
+	// If not a map, return empty map
+	return make(map[string]any)
+}
+
+// anyToTypedValue converts any Go value to a proto TypedValue.
+func anyToTypedValue(v any) *proto.TypedValue {
+	if v == nil {
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_NullValue{
+				NullValue: proto.NullValue_NULL_VALUE,
+			},
+		}
+	}
+
+	switch val := v.(type) {
+	case string:
+		return stringToTypedValue(val)
+	case int:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int32:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: int64(val)},
+		}
+	case int64:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_IntValue{IntValue: val},
+		}
+	case float32:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_DoubleValue{DoubleValue: float64(val)},
+		}
+	case float64:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_DoubleValue{DoubleValue: val},
+		}
+	case bool:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_BoolValue{BoolValue: val},
+		}
+	case []byte:
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_BytesValue{BytesValue: val},
+		}
+	case []any:
+		items := make([]*proto.TypedValue, len(val))
+		for i, item := range val {
+			items[i] = anyToTypedValue(item)
+		}
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_ArrayValue{
+				ArrayValue: &proto.TypedArray{Items: items},
+			},
+		}
+	case map[string]any:
+		entries := make(map[string]*proto.TypedValue)
+		for k, v := range val {
+			entries[k] = anyToTypedValue(v)
+		}
+		return &proto.TypedValue{
+			Kind: &proto.TypedValue_MapValue{
+				MapValue: &proto.TypedMap{Entries: entries},
+			},
+		}
+	default:
+		// For unknown types, convert to string representation
+		return stringToTypedValue(fmt.Sprintf("%v", v))
+	}
+}
+
+// stringToTypedValue creates a TypedValue with a string value.
+func stringToTypedValue(s string) *proto.TypedValue {
+	return &proto.TypedValue{
+		Kind: &proto.TypedValue_StringValue{StringValue: s},
+	}
+}
+
+// typedValueToAny converts a proto TypedValue to a Go any value.
+func typedValueToAny(tv *proto.TypedValue) any {
+	if tv == nil {
+		return nil
+	}
+
+	switch kind := tv.Kind.(type) {
+	case *proto.TypedValue_NullValue:
+		return nil
+	case *proto.TypedValue_StringValue:
+		return kind.StringValue
+	case *proto.TypedValue_IntValue:
+		return kind.IntValue
+	case *proto.TypedValue_DoubleValue:
+		return kind.DoubleValue
+	case *proto.TypedValue_BoolValue:
+		return kind.BoolValue
+	case *proto.TypedValue_BytesValue:
+		return kind.BytesValue
+	case *proto.TypedValue_ArrayValue:
+		if kind.ArrayValue == nil {
+			return []any{}
+		}
+		result := make([]any, len(kind.ArrayValue.Items))
+		for i, item := range kind.ArrayValue.Items {
+			result[i] = typedValueToAny(item)
+		}
+		return result
+	case *proto.TypedValue_MapValue:
+		if kind.MapValue == nil {
+			return map[string]any{}
+		}
+		result := make(map[string]any)
+		for k, v := range kind.MapValue.Entries {
+			result[k] = typedValueToAny(v)
+		}
+		return result
+	default:
+		return nil
+	}
+}

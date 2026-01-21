@@ -4,6 +4,20 @@ package gibson.daemon.v1;
 
 option go_package = "github.com/zero-day-ai/gibson/internal/daemon/api;api";
 
+// Import SDK common types for TypedValue, TypedMap, ErrorCode, etc.
+import "common.proto";
+
+// MissionStatus represents the execution status of a mission.
+enum MissionStatus {
+  MISSION_STATUS_UNSPECIFIED = 0;
+  MISSION_STATUS_PENDING = 1;
+  MISSION_STATUS_RUNNING = 2;
+  MISSION_STATUS_PAUSED = 3;
+  MISSION_STATUS_COMPLETED = 4;
+  MISSION_STATUS_FAILED = 5;
+  MISSION_STATUS_CANCELLED = 6;
+}
+
 // DaemonService provides the gRPC API for Gibson daemon client communication.
 //
 // This service exposes all daemon functionality including mission execution,
@@ -246,8 +260,8 @@ message MissionEvent {
   // message is a human-readable event message
   string message = 5;
 
-  // data contains event-specific data (JSON-encoded)
-  string data = 6;
+  // data contains event-specific data (typed map)
+  gibson.common.TypedMap data = 6;
 
   // error contains error information if the event represents an error
   string error = 7;
@@ -459,23 +473,31 @@ message QueryPluginRequest {
   // method is the method name to execute
   string method = 2;
 
-  // params_json is the JSON-encoded parameters for the method
-  string params_json = 3;
+  // params is the typed parameters for the method
+  gibson.common.TypedMap params = 3;
 
   // timeout_ms is the optional timeout in milliseconds (0 = default)
   int64 timeout_ms = 4;
+
+  // Reserved field numbers for removed fields
+  reserved 5;
+  reserved "params_json";
 }
 
 // QueryPluginResponse returns the result of a plugin query.
 message QueryPluginResponse {
-  // result_json is the JSON-encoded result from the plugin method
-  string result_json = 1;
+  // result is the typed result from the plugin method
+  gibson.common.TypedValue result = 1;
 
   // error is set if the query failed
   string error = 2;
 
   // duration_ms is how long the query took in milliseconds
   int64 duration_ms = 3;
+
+  // Reserved field numbers for removed fields
+  reserved 4;
+  reserved "result_json";
 }
 
 // RunAttackRequest executes an attack.
@@ -513,8 +535,8 @@ message AttackEvent {
   // message is a human-readable event message
   string message = 4;
 
-  // data contains event-specific data (JSON-encoded)
-  string data = 5;
+  // data contains event-specific data (typed map)
+  gibson.common.TypedMap data = 5;
 
   // error contains error information if the event represents an error
   string error = 6;
@@ -573,8 +595,8 @@ message Event {
   // source is the event source (mission, agent, daemon, etc.)
   string source = 3;
 
-  // data contains event-specific data (JSON-encoded)
-  string data = 4;
+  // data contains event-specific data (typed map)
+  gibson.common.TypedMap data = 4;
 
   // Specific event types (only one will be set)
   oneof event {
@@ -602,8 +624,8 @@ message AgentEvent {
   // message is a human-readable message
   string message = 5;
 
-  // data contains event-specific data (JSON-encoded)
-  string data = 6;
+  // data contains event-specific data (typed map)
+  gibson.common.TypedMap data = 6;
 }
 
 // FindingEvent represents a finding discovery event.
@@ -839,11 +861,15 @@ message ExecuteToolRequest {
   // name is the tool name to execute
   string name = 1;
 
-  // input_json is the JSON-encoded input parameters for the tool
-  string input_json = 2;
+  // input is the typed input parameters for the tool
+  gibson.common.TypedMap input = 2;
 
   // timeout_ms is the execution timeout in milliseconds (0 = default 5 minutes)
   int64 timeout_ms = 3;
+
+  // Reserved field numbers for removed fields
+  reserved 4;
+  reserved "input_json";
 }
 
 // ExecuteToolResponse returns the result of tool execution.
@@ -851,14 +877,18 @@ message ExecuteToolResponse {
   // success indicates if the tool executed successfully
   bool success = 1;
 
-  // output_json is the JSON-encoded output from the tool (if success)
-  string output_json = 2;
+  // output is the typed output from the tool (if success)
+  gibson.common.TypedValue output = 2;
 
   // error is the error message (if !success)
   string error = 3;
 
   // duration_ms is the actual execution duration in milliseconds
   int64 duration_ms = 4;
+
+  // Reserved field numbers for removed fields
+  reserved 5;
+  reserved "output_json";
 }
 
 // GetAvailableToolsRequest queries available tools from the Tool Executor Service.
@@ -1344,8 +1374,8 @@ message LogEntry {
   // message is the log message
   string message = 3;
 
-  // fields contains additional structured log fields (JSON-encoded)
-  string fields = 4;
+  // fields contains additional structured log fields (typed map)
+  gibson.common.TypedMap fields = 4;
 }
 
 // InstallMissionRequest requests installing a mission from a Git repository.
@@ -1679,4 +1709,142 @@ message VersionMismatchInfo {
 
   // actual_version is the version that is actually installed
   string actual_version = 3;
+}
+
+// Mission represents a complete mission execution instance with full state.
+message Mission {
+  // id is the unique mission identifier
+  string id = 1;
+
+  // name is the human-readable mission name
+  string name = 2;
+
+  // status is the current mission status
+  MissionStatus status = 3;
+
+  // target_id is the target identifier
+  string target_id = 4;
+
+  // workflow_id is the workflow definition identifier
+  string workflow_id = 5;
+
+  // constraints defines execution constraints
+  MissionConstraints constraints = 6;
+
+  // metrics contains current execution metrics
+  MissionMetrics metrics = 7;
+
+  // checkpoint is the latest checkpoint (if any)
+  MissionCheckpoint checkpoint = 8;
+
+  // run_number is the sequential run number for this mission name
+  int32 run_number = 9;
+
+  // created_at is when the mission was created (Unix timestamp in milliseconds)
+  int64 created_at = 10;
+
+  // updated_at is when the mission was last updated (Unix timestamp in milliseconds)
+  int64 updated_at = 11;
+
+  // started_at is when the mission execution started (Unix timestamp in milliseconds)
+  int64 started_at = 12;
+
+  // completed_at is when the mission execution completed (Unix timestamp in milliseconds, 0 if not completed)
+  int64 completed_at = 13;
+}
+
+// MissionConstraints defines execution constraints for a mission.
+message MissionConstraints {
+  // max_duration_seconds is the maximum mission duration in seconds (0 = no limit)
+  int32 max_duration_seconds = 1;
+
+  // max_findings is the maximum number of findings to collect (0 = no limit)
+  int32 max_findings = 2;
+
+  // max_tokens is the maximum LLM tokens to consume (0 = no limit)
+  int32 max_tokens = 3;
+
+  // max_turns_per_agent is the maximum turns per agent (0 = no limit)
+  int32 max_turns_per_agent = 4;
+
+  // allowed_techniques is the list of allowed MITRE techniques (empty = all allowed)
+  repeated string allowed_techniques = 5;
+
+  // blocked_techniques is the list of blocked MITRE techniques (empty = none blocked)
+  repeated string blocked_techniques = 6;
+}
+
+// MissionMetrics contains execution metrics for a mission.
+message MissionMetrics {
+  // turns_used is the number of agent turns/iterations executed
+  int32 turns_used = 1;
+
+  // nodes_executed is the number of workflow nodes that ran successfully
+  int32 nodes_executed = 2;
+
+  // nodes_failed is the number of workflow nodes that failed
+  int32 nodes_failed = 3;
+
+  // findings_count is the total number of findings discovered
+  int32 findings_count = 4;
+
+  // critical_count is the number of critical severity findings
+  int32 critical_count = 5;
+
+  // high_count is the number of high severity findings
+  int32 high_count = 6;
+
+  // medium_count is the number of medium severity findings
+  int32 medium_count = 7;
+
+  // low_count is the number of low severity findings
+  int32 low_count = 8;
+
+  // tokens_used is the total LLM tokens consumed
+  int64 tokens_used = 9;
+}
+
+// MissionCheckpoint represents a saved checkpoint state for pause/resume.
+message MissionCheckpoint {
+  // id is the unique checkpoint identifier
+  string id = 1;
+
+  // version is the checkpoint format version
+  int32 version = 2;
+
+  // completed_nodes is the number of nodes that had completed at checkpoint time
+  int32 completed_nodes = 3;
+
+  // total_nodes is the total number of nodes in the workflow
+  int32 total_nodes = 4;
+
+  // created_at is when this checkpoint was created (Unix timestamp in milliseconds)
+  int64 created_at = 5;
+
+  // state_data is the serialized checkpoint state (opaque blob)
+  bytes state_data = 6;
+}
+
+// MissionDefinition represents an installed mission workflow definition.
+message MissionDefinition {
+  // name is the mission name
+  string name = 1;
+
+  // version is the mission version
+  string version = 2;
+
+  // description is the mission description
+  string description = 3;
+
+  // source is the Git repository URL
+  string source = 4;
+
+  // node_count is the number of nodes in the mission workflow
+  int32 node_count = 5;
+
+  // installed_at is when the mission was installed (Unix timestamp in milliseconds)
+  int64 installed_at = 6;
+
+  // updated_at is when the mission was last updated (Unix timestamp in milliseconds)
+  int64 updated_at = 7;
 }

@@ -471,16 +471,10 @@ type PluginQueryResult struct {
 //	}
 //	fmt.Printf("Result: %v (took %dms)\n", result.Result, result.DurationMs)
 func (c *Client) QueryPlugin(ctx context.Context, name, method string, params map[string]any) (*PluginQueryResult, error) {
-	// Marshal params to JSON
-	paramsJSON, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal params: %w", err)
-	}
-
 	resp, err := c.daemon.QueryPlugin(ctx, &api.QueryPluginRequest{
-		Name:       name,
-		Method:     method,
-		ParamsJson: string(paramsJSON),
+		Name:   name,
+		Method: method,
+		Params: api.MapToTypedMap(params),
 	})
 	if err != nil {
 		// Wrap error with user-friendly message
@@ -502,13 +496,8 @@ func (c *Client) QueryPlugin(ctx context.Context, name, method string, params ma
 		return nil, fmt.Errorf("plugin error: %s", resp.Error)
 	}
 
-	// Unmarshal result
-	var result any
-	if resp.ResultJson != "" {
-		if err := json.Unmarshal([]byte(resp.ResultJson), &result); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal plugin result: %w", err)
-		}
-	}
+	// Convert TypedValue result to any
+	result := api.TypedValueToAny(resp.Result)
 
 	return &PluginQueryResult{
 		Result:     result,
@@ -1599,12 +1588,13 @@ func (c *Client) getComponentLogs(ctx context.Context, kind, name string, opts L
 				return
 			}
 
-			// Parse fields JSON if present
+			// Convert TypedMap fields to map[string]string
 			var fields map[string]string
-			if entry.Fields != "" {
-				if err := json.Unmarshal([]byte(entry.Fields), &fields); err != nil {
-					// If fields is not valid JSON, create a single field
-					fields = map[string]string{"raw": entry.Fields}
+			if entry.Fields != nil {
+				rawFields := api.TypedMapToMap(entry.Fields)
+				fields = make(map[string]string, len(rawFields))
+				for k, v := range rawFields {
+					fields[k] = fmt.Sprintf("%v", v)
 				}
 			}
 
@@ -1725,13 +1715,10 @@ func (c *Client) ResumeMission(ctx context.Context, missionID string, fromCheckp
 			}
 
 			// Convert proto event to client event
-			// Parse JSON data string into map if present
+			// Convert TypedMap data to map[string]interface{}
 			var data map[string]interface{}
-			if event.Data != "" {
-				if err := json.Unmarshal([]byte(event.Data), &data); err != nil {
-					// If data is not valid JSON, put it in a map with "raw" key
-					data = map[string]interface{}{"raw": event.Data}
-				}
+			if event.Data != nil {
+				data = api.TypedMapToMap(event.Data)
 			}
 
 			eventChan <- MissionEvent{
@@ -1916,9 +1903,15 @@ type ToolExecutionResult struct {
 //	}
 //	fmt.Printf("Output: %s\n", result.OutputJSON)
 func (c *Client) ExecuteTool(ctx context.Context, name, inputJSON string, timeoutMs int64) (*ToolExecutionResult, error) {
+	// Parse inputJSON to map, then convert to TypedMap
+	var inputMap map[string]any
+	if err := json.Unmarshal([]byte(inputJSON), &inputMap); err != nil {
+		return nil, fmt.Errorf("failed to parse input JSON: %w", err)
+	}
+
 	resp, err := c.daemon.ExecuteTool(ctx, &api.ExecuteToolRequest{
 		Name:      name,
-		InputJson: inputJSON,
+		Input:     api.MapToTypedMap(inputMap),
 		TimeoutMs: timeoutMs,
 	})
 	if err != nil {
@@ -1940,9 +1933,22 @@ func (c *Client) ExecuteTool(ctx context.Context, name, inputJSON string, timeou
 		return nil, fmt.Errorf("failed to execute tool: %w", err)
 	}
 
+	// Convert TypedValue output to JSON string
+	var outputJSON string
+	if resp.Output != nil {
+		outputAny := api.TypedValueToAny(resp.Output)
+		if outputAny != nil {
+			outputBytes, err := json.Marshal(outputAny)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal tool output: %w", err)
+			}
+			outputJSON = string(outputBytes)
+		}
+	}
+
 	return &ToolExecutionResult{
 		Success:    resp.Success,
-		OutputJSON: resp.OutputJson,
+		OutputJSON: outputJSON,
 		Error:      resp.Error,
 		DurationMs: resp.DurationMs,
 	}, nil

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -176,18 +175,13 @@ func (c *GRPCAgentClient) LLMSlots() []SlotDefinition {
 //   - Result with success/failure status and any findings
 //   - Error only if the result could not be unmarshaled (execution errors are in Result.Error)
 func (c *GRPCAgentClient) Execute(ctx context.Context, task Task, harness AgentHarness) (Result, error) {
-	// Marshal task to JSON
-	taskJSON, err := json.Marshal(task)
-	if err != nil {
-		result := NewResult(task.ID)
-		result.Fail(fmt.Errorf("failed to marshal task: %w", err))
-		return result, nil
-	}
+	// Convert task to proto
+	protoTask := TaskToProto(task)
 
 	// Send Execute RPC
 	timeoutMs := int64(task.Timeout.Milliseconds())
 	req := &proto.AgentExecuteRequest{
-		TaskJson:  string(taskJSON),
+		Task:      protoTask,
 		TimeoutMs: timeoutMs,
 	}
 
@@ -205,11 +199,9 @@ func (c *GRPCAgentClient) Execute(ctx context.Context, task Task, harness AgentH
 		return result, nil
 	}
 
-	// Unmarshal result from JSON
-	var result Result
-	if err := json.Unmarshal([]byte(resp.ResultJson), &result); err != nil {
-		return Result{}, fmt.Errorf("failed to unmarshal result: %w", err)
-	}
+	// Convert proto result to internal result
+	result := ProtoToResult(resp.Result)
+	result.TaskID = task.ID // Ensure task ID is set
 
 	return result, nil
 }
@@ -298,15 +290,8 @@ func (c *GRPCAgentClient) StreamExecute(ctx context.Context, task Task, sessionI
 		return nil, fmt.Errorf("failed to create stream client: %w", err)
 	}
 
-	// Marshal the task to JSON
-	taskJSON, err := json.Marshal(task)
-	if err != nil {
-		streamClient.Close()
-		return nil, fmt.Errorf("failed to marshal task: %w", err)
-	}
-
 	// Send the initial task with autonomous mode as default
-	if err := streamClient.Start(string(taskJSON), database.AgentModeAutonomous); err != nil {
+	if err := streamClient.StartWithTask(task, database.AgentModeAutonomous); err != nil {
 		streamClient.Close()
 		return nil, fmt.Errorf("failed to start execution: %w", err)
 	}
