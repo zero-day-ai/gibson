@@ -160,8 +160,18 @@ func (m *MissionAdapter) Execute(ctx context.Context, mis *mission.Mission) (*mi
 		}
 	}
 
+	// Get run number for context
+	runNumber := 0
+	if mis.Metadata != nil {
+		if rn, ok := mis.Metadata["run_number"].(int); ok {
+			runNumber = rn
+		} else if rn, ok := mis.Metadata["run_number"].(float64); ok {
+			runNumber = int(rn)
+		}
+	}
+
 	// Create orchestrator for this mission execution
-	orchestrator, err := m.createOrchestrator(ctx, mis, def)
+	orchestrator, err := m.createOrchestrator(ctx, mis, def, missionRunID, runNumber)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create orchestrator: %w", err)
 	}
@@ -214,7 +224,7 @@ func (m *MissionAdapter) Execute(ctx context.Context, mis *mission.Mission) (*mi
 
 // createOrchestrator creates an orchestrator instance for a specific mission execution.
 // It creates the harness, adapters, and all orchestrator components (Observer, Thinker, Actor).
-func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mission, def *mission.MissionDefinition) (*Orchestrator, error) {
+func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mission, def *mission.MissionDefinition, missionRunID string, runNumber int) (*Orchestrator, error) {
 	// Validate GraphRAG client
 	if m.config.GraphRAGClient == nil {
 		return nil, fmt.Errorf("GraphRAGClient not configured")
@@ -230,6 +240,8 @@ func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mi
 	// Create harness for this mission
 	// Use the harness factory to create an appropriate harness
 	missionCtx := harness.NewMissionContext(mis.ID, mis.Name, "")
+	missionCtx.MissionRunID = missionRunID
+	missionCtx.RunNumber = runNumber
 
 	// Create target info
 	// Note: In a full implementation, we would load the target entity here

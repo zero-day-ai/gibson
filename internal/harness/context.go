@@ -16,6 +16,16 @@ type MissionContext struct {
 	Phase        string         `json:"phase"`
 	Constraints  []string       `json:"constraints"`
 	Metadata     map[string]any `json:"metadata,omitempty"`
+	// MissionRunID is the unique identifier for this specific mission execution.
+	// Created by MissionGraphManager.CreateMissionRunNode() at mission start.
+	// Used for mission-scoped GraphRAG storage.
+	MissionRunID string `json:"mission_run_id,omitempty"`
+	// AgentRunID is the unique identifier for this specific agent execution.
+	// Used for DISCOVERED relationships and provenance tracking.
+	AgentRunID string `json:"agent_run_id,omitempty"`
+	// RunNumber is the sequential run number for this mission (1, 2, 3...).
+	// Used for mission memory queries and historical comparisons.
+	RunNumber int `json:"run_number,omitempty"`
 }
 
 // NewMissionContext creates a new mission context with the given ID, name, and current agent.

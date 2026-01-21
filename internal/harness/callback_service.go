@@ -611,8 +611,28 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 
 	// Graph tool output automatically
 	if output != nil {
-		// Get agent run ID from context - try multiple sources
-		agentRunID := s.extractAgentRunID(ctx, req.Context)
+		// Get context fields from proto - prefer explicit proto fields, fallback for backward compatibility
+		missionRunID := req.Context.MissionRunId
+		if missionRunID == "" {
+			// Fallback: try Go context (for older agents that don't send proto field)
+			missionRunID = MissionRunIDFromContext(ctx)
+			if missionRunID == "" {
+				// Last resort: use mission ID (not ideal but better than nothing)
+				missionRunID = req.Context.MissionId
+			}
+		}
+
+		agentRunID := req.Context.AgentRunId
+		if agentRunID == "" {
+			// Fallback for backward compatibility
+			agentRunID = s.extractAgentRunID(ctx, req.Context)
+		}
+
+		toolExecutionID := req.Context.ToolExecutionId
+		if toolExecutionID == "" {
+			// Fallback: use task ID
+			toolExecutionID = req.Context.TaskId
+		}
 
 		// Process tool output in background to avoid blocking the tool response
 		// Graphing errors are non-fatal and shouldn't fail the tool execution
@@ -643,15 +663,16 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 								"ports", len(discoveryResult.Ports),
 								"services", len(discoveryResult.Services),
 								"agent_run_id", agentRunID,
-								"mission_id", req.Context.MissionId)
+								"mission_id", req.Context.MissionId,
+								"mission_run_id", missionRunID)
 
-							// Construct execution context
+							// Construct execution context from proto fields
 							execCtx := loader.ExecContext{
-								MissionRunID:    req.Context.MissionId, // TODO: Once proto is updated, use mission_run_id
+								MissionRunID:    missionRunID,
 								MissionID:       req.Context.MissionId,
 								AgentName:       req.Context.AgentName,
 								AgentRunID:      agentRunID,
-								ToolExecutionID: req.Context.TaskId, // Use task ID as tool execution ID
+								ToolExecutionID: toolExecutionID,
 							}
 
 							// Load all discovered nodes into the graph

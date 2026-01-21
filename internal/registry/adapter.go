@@ -688,7 +688,9 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 			}
 		}
 
-		// Extract mission ID and agent name from the mission context via reflection
+		// Extract mission context fields via reflection
+		var missionRunID, agentRunID string
+		var runNumber int32
 		if mission != nil {
 			missionVal := reflect.ValueOf(mission)
 			// Get ID field and call String() on it
@@ -706,6 +708,21 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 			currentAgentField := missionVal.FieldByName("CurrentAgent")
 			if currentAgentField.IsValid() {
 				agentName = currentAgentField.String()
+			}
+			// Get MissionRunID field (for mission-scoped storage)
+			missionRunIDField := missionVal.FieldByName("MissionRunID")
+			if missionRunIDField.IsValid() {
+				missionRunID = missionRunIDField.String()
+			}
+			// Get AgentRunID field (for provenance tracking)
+			agentRunIDField := missionVal.FieldByName("AgentRunID")
+			if agentRunIDField.IsValid() {
+				agentRunID = agentRunIDField.String()
+			}
+			// Get RunNumber field (for historical queries)
+			runNumberField := missionVal.FieldByName("RunNumber")
+			if runNumberField.IsValid() && runNumberField.CanInt() {
+				runNumber = int32(runNumberField.Int())
 			}
 		}
 
@@ -741,10 +758,13 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 
 		// Create callback info with endpoint and context
 		callbackInfo := &CallbackInfo{
-			Endpoint: a.callbackManager.CallbackEndpoint(),
-			Token:    "", // TODO: Add token support when authentication is implemented
-			Mission:  mission,
-			Target:   target,
+			Endpoint:     a.callbackManager.CallbackEndpoint(),
+			Token:        "", // TODO: Add token support when authentication is implemented
+			Mission:      mission,
+			Target:       target,
+			MissionRunID: missionRunID,
+			AgentRunID:   agentRunID,
+			RunNumber:    runNumber,
 		}
 
 		// Execute with callback support

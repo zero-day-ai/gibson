@@ -71,6 +71,16 @@ type CallbackInfo struct {
 	// Target is the target information to pass to the agent (typically *harness.TargetInfo)
 	// This will be JSON-marshaled and sent to the agent via the TargetJson field.
 	Target any
+	// MissionRunID is the unique identifier for this specific mission execution.
+	// Created by MissionGraphManager.CreateMissionRunNode() at mission start.
+	// Used for mission-scoped GraphRAG storage.
+	MissionRunID string
+	// AgentRunID is the unique identifier for this specific agent execution.
+	// Used for DISCOVERED relationships and provenance tracking.
+	AgentRunID string
+	// RunNumber is the sequential run number for this mission (1, 2, 3...).
+	// Used for mission memory queries and historical comparisons.
+	RunNumber int32
 }
 
 // Name returns the agent name from ServiceInfo
@@ -306,6 +316,11 @@ func (c *GRPCAgentClient) ExecuteWithCallback(ctx context.Context, task agent.Ta
 			}
 			req.TargetJson = string(targetJSON)
 		}
+
+		// Set mission-scoped storage fields
+		req.MissionRunId = callback.MissionRunID
+		req.AgentRunId = callback.AgentRunID
+		req.RunNumber = callback.RunNumber
 	}
 
 	// Send Execute RPC
