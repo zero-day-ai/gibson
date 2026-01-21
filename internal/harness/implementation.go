@@ -1492,7 +1492,7 @@ func (h *DefaultAgentHarness) QueryGraphRAGScoped(ctx context.Context, query sdk
 	defer span.End()
 
 	// Set the mission scope on the query
-	query.MissionScope = scope
+	query.Scope = scope
 	query.MissionName = h.Mission().Name
 
 	h.logger.Debug("querying graphrag with scope",

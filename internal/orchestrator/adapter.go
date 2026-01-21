@@ -31,6 +31,24 @@ type MissionGraphLoader interface {
 	LoadMission(ctx context.Context, def *mission.MissionDefinition) (string, error)
 }
 
+// MissionGraphManager defines the interface for managing Mission and MissionRun nodes.
+// This interface enables mission-scoped storage in GraphRAG by tracking missions and their runs.
+type MissionGraphManager interface {
+	// EnsureMissionNode creates or retrieves a Mission node in Neo4j.
+	// Uses MERGE semantics because missions are deduplicated by name+target_id.
+	// Returns the mission ID (existing or newly created).
+	EnsureMissionNode(ctx context.Context, name, targetID string) (string, error)
+
+	// CreateMissionRunNode creates a new MissionRun node in Neo4j.
+	// Always uses CREATE because each pipeline execution is unique.
+	// Returns the mission run ID.
+	CreateMissionRunNode(ctx context.Context, missionID string, runNumber int) (string, error)
+
+	// UpdateMissionRunStatus updates the status of a mission run node.
+	// Valid status values: "running", "completed", "failed", "cancelled"
+	UpdateMissionRunStatus(ctx context.Context, runID string, status string) error
+}
+
 // Execute implements mission.MissionOrchestrator interface.
 // It converts the mission to the orchestrator format, executes it using the orchestrator,
 // and converts the result back to a mission.MissionResult.
@@ -91,6 +109,57 @@ func (m *MissionAdapter) Execute(ctx context.Context, mis *mission.Mission) (*mi
 		}
 	}
 
+	// Track mission and mission run in Neo4j for GraphRAG mission-scoped storage
+	var missionRunID string
+	if m.config.MissionGraphManager != nil {
+		// Ensure Mission node exists (or get existing one)
+		graphMissionID, err := m.config.MissionGraphManager.EnsureMissionNode(ctx, mis.Name, mis.TargetID.String())
+		if err != nil {
+			m.config.Logger.Warn("failed to ensure mission node in GraphRAG",
+				"error", err,
+				"mission_id", mis.ID,
+				"mission_name", mis.Name,
+				"target_id", mis.TargetID,
+			)
+		} else {
+			m.config.Logger.Debug("mission node ensured in GraphRAG",
+				"graph_mission_id", graphMissionID,
+				"mission_id", mis.ID,
+				"mission_name", mis.Name,
+			)
+
+			// Create MissionRun node for this execution
+			// Get run number from mission metadata (set by MissionRunLinker)
+			runNumber := 0
+			if mis.Metadata != nil {
+				if rn, ok := mis.Metadata["run_number"].(int); ok {
+					runNumber = rn
+				} else if rn, ok := mis.Metadata["run_number"].(float64); ok {
+					runNumber = int(rn)
+				}
+			}
+
+			missionRunID, err = m.config.MissionGraphManager.CreateMissionRunNode(ctx, graphMissionID, runNumber)
+			if err != nil {
+				m.config.Logger.Warn("failed to create mission run node in GraphRAG",
+					"error", err,
+					"mission_id", mis.ID,
+					"graph_mission_id", graphMissionID,
+					"run_number", runNumber,
+				)
+			} else {
+				m.config.Logger.Info("mission run node created in GraphRAG",
+					"mission_run_id", missionRunID,
+					"graph_mission_id", graphMissionID,
+					"mission_id", mis.ID,
+					"run_number", runNumber,
+				)
+				// Inject MissionRunID into context for harness access
+				ctx = harness.ContextWithMissionRunID(ctx, missionRunID)
+			}
+		}
+	}
+
 	// Create orchestrator for this mission execution
 	orchestrator, err := m.createOrchestrator(ctx, mis, def)
 	if err != nil {
@@ -99,6 +168,41 @@ func (m *MissionAdapter) Execute(ctx context.Context, mis *mission.Mission) (*mi
 
 	// Execute using orchestrator
 	orchResult, err := orchestrator.Run(ctx, mis.ID.String())
+
+	// Update mission run status in Neo4j (if tracking is enabled)
+	if missionRunID != "" && m.config.MissionGraphManager != nil {
+		var status string
+		if err != nil {
+			status = "failed"
+		} else {
+			// Map orchestrator status to mission run status
+			switch orchResult.Status {
+			case StatusCompleted:
+				status = "completed"
+			case StatusFailed:
+				status = "failed"
+			case StatusCancelled:
+				status = "cancelled"
+			default:
+				status = "failed" // All other terminal states treated as failed
+			}
+		}
+
+		updateErr := m.config.MissionGraphManager.UpdateMissionRunStatus(ctx, missionRunID, status)
+		if updateErr != nil {
+			m.config.Logger.Warn("failed to update mission run status in GraphRAG",
+				"error", updateErr,
+				"mission_run_id", missionRunID,
+				"status", status,
+			)
+		} else {
+			m.config.Logger.Info("mission run status updated in GraphRAG",
+				"mission_run_id", missionRunID,
+				"status", status,
+			)
+		}
+	}
+
 	if err != nil {
 		// Convert error to mission result
 		return m.convertErrorToResult(mis, orchResult, err, startedAt), err

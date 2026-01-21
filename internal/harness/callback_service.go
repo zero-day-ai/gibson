@@ -647,9 +647,11 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 
 							// Construct execution context
 							execCtx := loader.ExecContext{
+								MissionRunID:    req.Context.MissionId, // TODO: Once proto is updated, use mission_run_id
+								MissionID:       req.Context.MissionId,
+								AgentName:       req.Context.AgentName,
 								AgentRunID:      agentRunID,
 								ToolExecutionID: req.Context.TaskId, // Use task ID as tool execution ID
-								MissionID:       req.Context.MissionId,
 							}
 
 							// Load all discovered nodes into the graph

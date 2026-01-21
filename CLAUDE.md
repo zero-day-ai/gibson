@@ -55,10 +55,34 @@ Knowledge graph engine for semantic search:
 - Taxonomy-driven node/relationship types
 - Hybrid scoring (vector + graph)
 
+**Mission-Scoped Storage (v0.16.0+):**
+
+All graph data is scoped to MissionRun for proper isolation:
+
+```
+Mission (name: "pentest-web", target_id: "target-123")
+    └── MissionRun (run_number: 1, started_at: ...)
+            ├── Host (ip: "192.168.1.1")
+            │       └── Port (number: 443)
+            │               └── Service (name: "https")
+            ├── Finding (title: "SQL Injection")
+            └── Technique (id: "T1190")
+```
+
+- **Mission**: Top-level entity identified by (name + target_id), reused across runs
+- **MissionRun**: Unique execution instance, nodes BELONGS_TO this
+- **Root Nodes**: Automatically attached to MissionRun (host, domain, finding, etc.)
+- **Child Nodes**: Must declare parent via `BelongsTo()` pattern (port→host, service→port)
+
 **Storage Modes:**
 - **Semantic Storage**: Generates embeddings for similarity search (findings, insights)
 - **Structured Storage**: Direct graph storage without embeddings (hosts, ports, IPs)
 - **Auto-routing**: Intelligent fallback between semantic and structured queries
+
+**Query Scopes:**
+- `ScopeMissionRun` (default): Only current run's data
+- `ScopeMission`: All runs of same mission (historical queries)
+- `ScopeGlobal`: All missions (cross-mission analysis)
 
 **Query Routing:**
 - `QuerySemantic()`: Vector similarity search only
@@ -71,6 +95,8 @@ Key files:
 - `queries/` - Graph query builders
 - `processor.go` - Query routing logic
 - `store.go` - Storage implementations
+- `loader/loader.go` - Mission-scoped storage with CREATE (not MERGE)
+- `mission_graph_manager.go` - Mission/MissionRun lifecycle
 
 ### internal/daemon
 

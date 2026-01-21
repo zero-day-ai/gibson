@@ -110,8 +110,11 @@ func (b *DefaultGraphRAGQueryBridge) Query(ctx context.Context, query sdkgraphra
 		return nil, fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
 	}
 
-	// Convert SDK query to internal query
-	internalQuery := sdkQueryToInternal(query)
+	// Get mission run ID from context for scope filtering
+	missionRunID := MissionRunIDFromContext(ctx)
+
+	// Convert SDK query to internal query with scope context
+	internalQuery := sdkQueryToInternal(query, missionRunID)
 
 	// Execute query
 	internalResults, err := b.store.Query(ctx, internalQuery)
@@ -671,8 +674,11 @@ func (b *DefaultGraphRAGQueryBridge) QuerySemantic(ctx context.Context, query sd
 		return nil, fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
 	}
 
+	// Get mission run ID from context for scope filtering
+	missionRunID := MissionRunIDFromContext(ctx)
+
 	// Convert SDK query to internal query with ForceSemanticOnly=true
-	internalQuery := sdkQueryToInternal(query)
+	internalQuery := sdkQueryToInternal(query, missionRunID)
 	internalQuery.ForceSemanticOnly = true
 
 	// Execute query
@@ -711,8 +717,11 @@ func (b *DefaultGraphRAGQueryBridge) QueryStructured(ctx context.Context, query 
 		return nil, fmt.Errorf("%w: %v", sdkgraphrag.ErrInvalidQuery, err)
 	}
 
+	// Get mission run ID from context for scope filtering
+	missionRunID := MissionRunIDFromContext(ctx)
+
 	// Convert SDK query to internal query with ForceStructuredOnly=true
-	internalQuery := sdkQueryToInternal(query)
+	internalQuery := sdkQueryToInternal(query, missionRunID)
 	internalQuery.ForceStructuredOnly = true
 
 	// Execute query
@@ -742,7 +751,8 @@ var _ GraphRAGQueryBridge = (*DefaultGraphRAGQueryBridge)(nil)
 // Type conversion functions (adapters)
 
 // sdkQueryToInternal converts SDK Query to internal GraphRAGQuery.
-func sdkQueryToInternal(q sdkgraphrag.Query) graphrag.GraphRAGQuery {
+// The missionRunID parameter is injected from the harness context for scope filtering.
+func sdkQueryToInternal(q sdkgraphrag.Query, missionRunID string) graphrag.GraphRAGQuery {
 	// Convert mission ID if present
 	var missionID *types.ID
 	if q.MissionID != "" {
@@ -769,13 +779,30 @@ func sdkQueryToInternal(q sdkgraphrag.Query) graphrag.GraphRAGQuery {
 		GraphWeight:  q.GraphWeight,
 	}
 
-	// Convert mission scope - SDK and internal use the same string values
-	if q.MissionScope != "" {
-		internalQuery.MissionScope = graphrag.MissionScope(q.MissionScope)
+	// Convert mission scope from SDK int type to internal string type
+	// SDK uses iota-based enum: ScopeMissionRun=0, ScopeMission=1, ScopeGlobal=2
+	switch q.Scope {
+	case sdkgraphrag.ScopeMissionRun:
+		internalQuery.MissionScope = graphrag.ScopeCurrentRun
+	case sdkgraphrag.ScopeMission:
+		internalQuery.MissionScope = graphrag.ScopeSameMission
+	case sdkgraphrag.ScopeGlobal:
+		internalQuery.MissionScope = graphrag.ScopeAll
+	default:
+		// Default to current run scope if not specified
+		internalQuery.MissionScope = graphrag.ScopeCurrentRun
 	}
 
 	// Set mission name for scope filtering
 	internalQuery.MissionName = q.MissionName
+
+	// Inject mission run ID from harness context for scoped queries
+	// SDK's MissionRunID takes precedence if explicitly set
+	if q.MissionRunID != "" {
+		internalQuery.MissionRunID = q.MissionRunID
+	} else {
+		internalQuery.MissionRunID = missionRunID
+	}
 
 	// Note: RunNumber is handled by the store layer for filtering
 	// The bridge doesn't need to explicitly convert it since it's used

@@ -125,7 +125,8 @@ func TestLoad_EmptyNodeType(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.True(t, result.HasErrors())
-	assert.Contains(t, result.Errors[0].Error(), "empty NodeType")
+	// Phase 2: ValidateGraphNode rejects unknown node types (including empty)
+	assert.Contains(t, result.Errors[0].Error(), "unknown node type")
 }
 
 func TestLoad_NoIdentifyingProperties(t *testing.T) {
@@ -137,6 +138,8 @@ func TestLoad_NoIdentifyingProperties(t *testing.T) {
 	ctx := context.Background()
 	execCtx := ExecContext{AgentRunID: "test-run"}
 
+	// Phase 2: test_node is not in taxonomy, so validation fails
+	// This test verifies unknown node types are rejected by ValidateGraphNode
 	node := &mockGraphNode{
 		nodeType: "test_node",
 		idProps:  map[string]any{}, // Empty identifying properties
@@ -147,7 +150,7 @@ func TestLoad_NoIdentifyingProperties(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.True(t, result.HasErrors())
-	assert.Contains(t, result.Errors[0].Error(), "no identifying properties")
+	assert.Contains(t, result.Errors[0].Error(), "unknown node type")
 }
 
 func TestLoad_CreateNode_Success(t *testing.T) {
@@ -190,33 +193,35 @@ func TestLoad_CreateNode_Success(t *testing.T) {
 	assert.Equal(t, 0, result.RelationshipsCreated)
 	assert.False(t, result.HasErrors())
 
-	// Verify the MERGE query was called
+	// Verify the CREATE query was called (Phase 2: CREATE not MERGE)
 	calls := client.GetCallsByMethod("Query")
 	assert.Len(t, calls, 1)
 
-	// Check that the query contains MERGE and the node type
+	// Check that the query contains CREATE and the node type
 	queryStr := calls[0].Args[0].(string)
-	assert.Contains(t, queryStr, "MERGE")
+	assert.Contains(t, queryStr, "CREATE")
 	assert.Contains(t, queryStr, "host")
-	assert.Contains(t, queryStr, "ip: $id_ip")
+	// Phase 2: CREATE uses $props parameter with all properties
+	assert.Contains(t, queryStr, "$props")
 }
 
-func TestLoad_UpdateNode_Success(t *testing.T) {
+// TestLoad_CreateNode_WithSameData tests that even with the same data,
+// CREATE always creates new nodes (Phase 2 behavior - no updates/MERGE).
+func TestLoad_CreateNode_AlwaysCreatesNew(t *testing.T) {
 	client := graph.NewMockGraphClient()
 	err := client.Connect(context.Background())
 	require.NoError(t, err)
 
-	// Configure mock to return a successful node update
+	// Configure mock to return node creation (Phase 2: always create)
 	client.AddQueryResult(graph.QueryResult{
 		Records: []map[string]any{
 			{
-				"node_id":   "mock-node-1",
-				"operation": "updated",
+				"node_id": "mock-node-1",
 			},
 		},
-		Columns: []string{"node_id", "operation"},
+		Columns: []string{"node_id"},
 		Summary: graph.QuerySummary{
-			PropertiesSet: 2,
+			NodesCreated: 1,
 		},
 	})
 
@@ -237,8 +242,9 @@ func TestLoad_UpdateNode_Success(t *testing.T) {
 	result, err := loader.Load(ctx, execCtx, []domain.GraphNode{node})
 
 	assert.NoError(t, err)
-	assert.Equal(t, 0, result.NodesCreated)
-	assert.Equal(t, 1, result.NodesUpdated)
+	// Phase 2: CREATE always creates new nodes, never updates
+	assert.Equal(t, 1, result.NodesCreated)
+	assert.Equal(t, 0, result.NodesUpdated)
 	assert.False(t, result.HasErrors())
 }
 
@@ -298,10 +304,10 @@ func TestLoad_WithParentRelationship(t *testing.T) {
 	calls := client.GetCallsByMethod("Query")
 	assert.Len(t, calls, 2)
 
-	// Check the relationship query
+	// Check the relationship query - Phase 2: CREATE not MERGE
 	relQuery := calls[1].Args[0].(string)
 	assert.Contains(t, relQuery, "MATCH (parent:host)")
-	assert.Contains(t, relQuery, "MERGE (parent)-[r:HAS_PORT]->(child)")
+	assert.Contains(t, relQuery, "CREATE (parent)-[r:HAS_PORT]->(child)")
 }
 
 func TestLoad_WithDiscoveredRelationship(t *testing.T) {
@@ -412,7 +418,7 @@ func TestLoad_QueryError(t *testing.T) {
 	assert.NoError(t, err) // Load continues despite errors
 	assert.True(t, result.HasErrors())
 	assert.Len(t, result.Errors, 1)
-	assert.Contains(t, result.Errors[0].Error(), "failed to merge node")
+	assert.Contains(t, result.Errors[0].Error(), "failed to create node")
 }
 
 func TestLoad_MultipleNodes(t *testing.T) {
@@ -493,7 +499,7 @@ func TestCreateParentRelationship_Success(t *testing.T) {
 	assert.Contains(t, queryStr, "MATCH (parent:host)")
 	assert.Contains(t, queryStr, "parent.ip = $parent_ip")
 	assert.Contains(t, queryStr, "elementId(child) = $child_id")
-	assert.Contains(t, queryStr, "MERGE (parent)-[r:HAS_PORT]->(child)")
+	assert.Contains(t, queryStr, "CREATE (parent)-[r:HAS_PORT]->(child)")
 }
 
 func TestCreateParentRelationship_NilRef(t *testing.T) {
@@ -570,24 +576,16 @@ func TestLoadBatch_GroupsByNodeType(t *testing.T) {
 	err := client.Connect(context.Background())
 	require.NoError(t, err)
 
-	// Configure mock to return batch result
+	// Configure mock to return batch result - one record per node with element_id and idx
 	client.AddQueryResult(graph.QueryResult{
 		Records: []map[string]any{
 			{
-				"batch_result": []any{
-					map[string]any{
-						"element_id": "node-1",
-						"operation":  "created",
-						"node_type":  "host",
-						"index":      float64(0),
-					},
-					map[string]any{
-						"element_id": "node-2",
-						"operation":  "created",
-						"node_type":  "host",
-						"index":      float64(1),
-					},
-				},
+				"element_id": "node-1",
+				"idx":        float64(0),
+			},
+			{
+				"element_id": "node-2",
+				"idx":        float64(1),
 			},
 		},
 	})
@@ -620,7 +618,8 @@ func TestLoadBatch_GroupsByNodeType(t *testing.T) {
 
 	queryStr := calls[0].Args[0].(string)
 	assert.Contains(t, queryStr, "UNWIND")
-	assert.Contains(t, queryStr, "MERGE (n:host")
+	// Phase 2: LoadBatch uses CREATE not MERGE for mission-scoped storage
+	assert.Contains(t, queryStr, "CREATE (n:host")
 }
 
 func TestLoadBatch_WithParentRelationships(t *testing.T) {
@@ -681,7 +680,8 @@ func TestLoadBatch_WithParentRelationships(t *testing.T) {
 	relQuery := calls[1].Args[0].(string)
 	assert.Contains(t, relQuery, "UNWIND $rel_data")
 	assert.Contains(t, relQuery, "MATCH (parent:host)")
-	assert.Contains(t, relQuery, "MERGE (parent)-[r:HAS_PORT]->(child)")
+	// Phase 2: LoadBatch uses CREATE not MERGE for relationships in mission-scoped storage
+	assert.Contains(t, relQuery, "CREATE (parent)-[r:HAS_PORT]->(child)")
 }
 
 func TestLoadBatch_WithDiscoveredRelationships(t *testing.T) {
@@ -827,8 +827,11 @@ func TestLoad_ParameterizedQueries(t *testing.T) {
 	assert.Len(t, calls, 1)
 
 	params := calls[0].Args[1].(map[string]any)
+	// Phase 2: CREATE uses $props parameter (not separate id_* params like MERGE)
 	assert.Contains(t, params, "props")
-	assert.Contains(t, params, "id_ip")
+	// Verify props contains the IP value (parameterized, not concatenated)
+	propsMap := params["props"].(map[string]any)
+	assert.Contains(t, propsMap, "ip")
 
 	// Verify the dangerous value is in parameters, not embedded in query string
 	queryStr := calls[0].Args[0].(string)

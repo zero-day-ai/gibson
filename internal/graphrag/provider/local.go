@@ -120,6 +120,7 @@ func (l *LocalGraphRAGProvider) SetVectorStore(store vector.VectorStore) {
 
 // createIndices creates necessary Neo4j indices for performance.
 // Creates indices on node IDs, labels, and common query patterns.
+// Indices support mission-scoped storage with label-agnostic property indexing.
 func (l *LocalGraphRAGProvider) createIndices(ctx context.Context) error {
 	// Create index on node ID for fast lookups
 	// Note: Uses label-agnostic syntax (n) to index all nodes regardless of label.
@@ -136,10 +137,60 @@ func (l *LocalGraphRAGProvider) createIndices(ctx context.Context) error {
 		return err
 	}
 
-	// Note: mission_id index removed because it was also incorrectly scoped to :GraphNode.
-	// If mission-scoped queries become a performance bottleneck, we should either:
-	// 1. Add a label-agnostic mission_id index: FOR (n) ON (n.mission_id)
-	// 2. Or add per-label indices if Neo4j version doesn't support label-agnostic property indices
+	// Create label-agnostic index on mission_run_id property for mission-scoped queries
+	// Supports scoped traversal where nodes are queried by mission_run_id
+	_, err = l.graphClient.Query(ctx, `
+		CREATE INDEX mission_run_id_lookup IF NOT EXISTS
+		FOR (n)
+		ON (n.mission_run_id)
+	`, nil)
+	if err != nil {
+		return err
+	}
+
+	// Create index on mission_run.id for mission run queries
+	// Enables fast lookup of MissionRun nodes during scoped traversal
+	_, err = l.graphClient.Query(ctx, `
+		CREATE INDEX mission_run_id IF NOT EXISTS
+		FOR (n:mission_run)
+		ON (n.id)
+	`, nil)
+	if err != nil {
+		return err
+	}
+
+	// Create index on mission.id for mission queries
+	// Supports mission-level queries across all runs
+	_, err = l.graphClient.Query(ctx, `
+		CREATE INDEX mission_id IF NOT EXISTS
+		FOR (n:mission)
+		ON (n.id)
+	`, nil)
+	if err != nil {
+		return err
+	}
+
+	// Create constraint for mission uniqueness
+	// Ensures only one mission exists per name+target_id combination
+	_, err = l.graphClient.Query(ctx, `
+		CREATE CONSTRAINT mission_unique IF NOT EXISTS
+		FOR (m:mission)
+		REQUIRE (m.name, m.target_id) IS UNIQUE
+	`, nil)
+	if err != nil {
+		return err
+	}
+
+	// Create label-agnostic index on discovered_by for provenance queries
+	// Enables filtering nodes by which agent discovered them
+	_, err = l.graphClient.Query(ctx, `
+		CREATE INDEX discovered_by IF NOT EXISTS
+		FOR (n)
+		ON (n.discovered_by)
+	`, nil)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -291,53 +342,35 @@ func (l *LocalGraphRAGProvider) QueryNodes(ctx context.Context, query graphrag.N
 }
 
 // queryNodesFromGraph queries nodes from Neo4j using Cypher.
+// Supports mission-scoped queries based on query.Scope:
+//   - ScopeCurrentRun (default): Queries nodes with matching mission_run_id
+//   - ScopeSameMission: Queries nodes connected to any run of the same mission
+//   - ScopeAll: No mission filtering (global query)
 func (l *LocalGraphRAGProvider) queryNodesFromGraph(ctx context.Context, query graphrag.NodeQuery) ([]graphrag.GraphNode, error) {
-	// Build Cypher query
-	cypher := "MATCH (n"
 	params := make(map[string]any)
+	var cypher string
 
-	// Add label filter
-	if len(query.NodeTypes) > 0 {
-		for i, nt := range query.NodeTypes {
-			if i == 0 {
-				cypher += ":" + nt.String()
-			} else {
-				cypher += "|" + nt.String()
-			}
+	// Determine query strategy based on scope
+	switch query.Scope {
+	case graphrag.ScopeCurrentRun:
+		// Default: Query nodes in the current mission run only
+		cypher = l.buildMissionRunScopedQuery(query, params)
+
+	case graphrag.ScopeSameMission:
+		// Query nodes from all runs of the same mission
+		cypher = l.buildMissionScopedQuery(query, params)
+
+	case graphrag.ScopeAll:
+		// Global query - no mission filtering
+		cypher = l.buildGlobalQuery(query, params)
+
+	default:
+		// Default to mission-run scoped if MissionRunID is set, otherwise global
+		if query.MissionRunID != "" {
+			cypher = l.buildMissionRunScopedQuery(query, params)
+		} else {
+			cypher = l.buildGlobalQuery(query, params)
 		}
-	}
-	cypher += ")"
-
-	// Add property filters
-	if len(query.Properties) > 0 || query.MissionID != nil {
-		cypher += " WHERE "
-		first := true
-
-		for key, value := range query.Properties {
-			if !first {
-				cypher += " AND "
-			}
-			paramKey := "prop_" + key
-			cypher += fmt.Sprintf("n.%s = $%s", key, paramKey)
-			params[paramKey] = value
-			first = false
-		}
-
-		if query.MissionID != nil {
-			if !first {
-				cypher += " AND "
-			}
-			cypher += "n.mission_id = $mission_id"
-			params["mission_id"] = query.MissionID.String()
-		}
-	}
-
-	// Add return clause
-	cypher += " RETURN n"
-
-	// Add limit
-	if query.Limit > 0 {
-		cypher += fmt.Sprintf(" LIMIT %d", query.Limit)
 	}
 
 	// Execute query
@@ -361,6 +394,169 @@ func (l *LocalGraphRAGProvider) queryNodesFromGraph(ctx context.Context, query g
 	}
 
 	return nodes, nil
+}
+
+// buildMissionRunScopedQuery builds a Cypher query that filters by mission_run_id.
+// This is the default scope - only nodes from the current mission run are returned.
+// Uses graph traversal: (mission_run)<-[:BELONGS_TO]-(n) for root nodes,
+// or n.mission_run_id property for nodes with the property set.
+func (l *LocalGraphRAGProvider) buildMissionRunScopedQuery(query graphrag.NodeQuery, params map[string]any) string {
+	// Build label filter
+	labelFilter := l.buildLabelFilter(query.NodeTypes)
+
+	// Start building query - use mission_run_id property for filtering
+	// This is set on all nodes during CREATE in the loader
+	cypher := "MATCH (n" + labelFilter + ")"
+
+	// Build WHERE clauses
+	whereClauses := []string{}
+
+	// Filter by mission_run_id
+	if query.MissionRunID != "" {
+		whereClauses = append(whereClauses, "n.mission_run_id = $mission_run_id")
+		params["mission_run_id"] = query.MissionRunID
+	}
+
+	// Add property filters
+	for key, value := range query.Properties {
+		paramKey := "prop_" + key
+		whereClauses = append(whereClauses, fmt.Sprintf("n.%s = $%s", key, paramKey))
+		params[paramKey] = value
+	}
+
+	// Add legacy mission ID filter if present
+	if query.MissionID != nil {
+		whereClauses = append(whereClauses, "n.mission_id = $mission_id")
+		params["mission_id"] = query.MissionID.String()
+	}
+
+	// Assemble WHERE clause
+	if len(whereClauses) > 0 {
+		cypher += " WHERE " + whereClauses[0]
+		for i := 1; i < len(whereClauses); i++ {
+			cypher += " AND " + whereClauses[i]
+		}
+	}
+
+	// Add return clause
+	cypher += " RETURN n"
+
+	// Add limit
+	if query.Limit > 0 {
+		cypher += fmt.Sprintf(" LIMIT %d", query.Limit)
+	}
+
+	return cypher
+}
+
+// buildMissionScopedQuery builds a Cypher query that filters by mission name.
+// Returns nodes from all runs of the same mission (historical query).
+// Uses graph traversal: (mission {name: $name})<-[:BELONGS_TO]-(run)<-[:BELONGS_TO]-(n)
+func (l *LocalGraphRAGProvider) buildMissionScopedQuery(query graphrag.NodeQuery, params map[string]any) string {
+	// Build label filter
+	labelFilter := l.buildLabelFilter(query.NodeTypes)
+
+	// Query nodes that belong to any run of the same mission
+	// Traverse: mission -> mission_run -> node
+	cypher := `
+		MATCH (m:mission {name: $mission_name})<-[:BELONGS_TO]-(run:mission_run)<-[:BELONGS_TO]-(n` + labelFilter + `)
+	`
+	params["mission_name"] = query.MissionName
+
+	// Build WHERE clauses for additional filters
+	whereClauses := []string{}
+
+	// Add property filters
+	for key, value := range query.Properties {
+		paramKey := "prop_" + key
+		whereClauses = append(whereClauses, fmt.Sprintf("n.%s = $%s", key, paramKey))
+		params[paramKey] = value
+	}
+
+	// Add legacy mission ID filter if present
+	if query.MissionID != nil {
+		whereClauses = append(whereClauses, "n.mission_id = $mission_id")
+		params["mission_id"] = query.MissionID.String()
+	}
+
+	// Assemble WHERE clause
+	if len(whereClauses) > 0 {
+		cypher += " WHERE " + whereClauses[0]
+		for i := 1; i < len(whereClauses); i++ {
+			cypher += " AND " + whereClauses[i]
+		}
+	}
+
+	// Add return clause
+	cypher += " RETURN DISTINCT n"
+
+	// Add limit
+	if query.Limit > 0 {
+		cypher += fmt.Sprintf(" LIMIT %d", query.Limit)
+	}
+
+	return cypher
+}
+
+// buildGlobalQuery builds a Cypher query with no mission filtering.
+// Returns nodes across all missions (global query).
+func (l *LocalGraphRAGProvider) buildGlobalQuery(query graphrag.NodeQuery, params map[string]any) string {
+	// Build label filter
+	labelFilter := l.buildLabelFilter(query.NodeTypes)
+
+	// Simple global query
+	cypher := "MATCH (n" + labelFilter + ")"
+
+	// Build WHERE clauses
+	whereClauses := []string{}
+
+	// Add property filters
+	for key, value := range query.Properties {
+		paramKey := "prop_" + key
+		whereClauses = append(whereClauses, fmt.Sprintf("n.%s = $%s", key, paramKey))
+		params[paramKey] = value
+	}
+
+	// Add legacy mission ID filter if present
+	if query.MissionID != nil {
+		whereClauses = append(whereClauses, "n.mission_id = $mission_id")
+		params["mission_id"] = query.MissionID.String()
+	}
+
+	// Assemble WHERE clause
+	if len(whereClauses) > 0 {
+		cypher += " WHERE " + whereClauses[0]
+		for i := 1; i < len(whereClauses); i++ {
+			cypher += " AND " + whereClauses[i]
+		}
+	}
+
+	// Add return clause
+	cypher += " RETURN n"
+
+	// Add limit
+	if query.Limit > 0 {
+		cypher += fmt.Sprintf(" LIMIT %d", query.Limit)
+	}
+
+	return cypher
+}
+
+// buildLabelFilter builds a Cypher label filter string from node types.
+func (l *LocalGraphRAGProvider) buildLabelFilter(nodeTypes []graphrag.NodeType) string {
+	if len(nodeTypes) == 0 {
+		return ""
+	}
+
+	labelFilter := ""
+	for i, nt := range nodeTypes {
+		if i == 0 {
+			labelFilter = ":" + nt.String()
+		} else {
+			labelFilter += "|" + nt.String()
+		}
+	}
+	return labelFilter
 }
 
 // queryNodesFromVectorStore queries nodes from vector store using metadata filters.

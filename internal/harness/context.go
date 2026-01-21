@@ -147,6 +147,7 @@ type contextKey string
 const (
 	agentRunIDKey      contextKey = "gibson.agent_run_id"
 	toolExecutionIDKey contextKey = "gibson.tool_execution_id"
+	missionRunIDKey    contextKey = "gibson.mission_run_id"
 )
 
 // ContextWithAgentRunID returns a new context with the agent run ID set.
@@ -174,6 +175,22 @@ func ContextWithToolExecutionID(ctx context.Context, toolExecutionID string) con
 // Returns empty string if not set.
 func ToolExecutionIDFromContext(ctx context.Context) string {
 	if v := ctx.Value(toolExecutionIDKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// ContextWithMissionRunID returns a new context with the mission run ID set.
+// The mission run ID is used for GraphRAG mission-scoped storage, allowing agents
+// to automatically associate stored nodes with the current mission run.
+func ContextWithMissionRunID(ctx context.Context, missionRunID string) context.Context {
+	return context.WithValue(ctx, missionRunIDKey, missionRunID)
+}
+
+// MissionRunIDFromContext retrieves the mission run ID from context.
+// Returns empty string if not set.
+func MissionRunIDFromContext(ctx context.Context) string {
+	if v := ctx.Value(missionRunIDKey); v != nil {
 		return v.(string)
 	}
 	return ""

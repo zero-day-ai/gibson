@@ -65,6 +65,11 @@ type Config struct {
 	// linking agent-level LLM calls to the agent execution span.
 	// Type: *observability.MissionTracer (stored as interface{} to avoid import cycles)
 	MissionTracer interface{}
+
+	// MissionGraphManager manages Mission and MissionRun nodes in Neo4j (optional)
+	// When set, enables automatic mission graph node creation and status tracking
+	// for GraphRAG mission-scoped storage.
+	MissionGraphManager MissionGraphManager
 }
 
 // NewMissionAdapter creates a new mission orchestrator adapter.

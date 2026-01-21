@@ -1625,20 +1625,27 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 	if comp != nil && comp.RepoPath != "" {
 		// Check if other components use the same repository
 		shouldRemoveRepo := true
+
+		// First, determine the actual repository root for this component
+		// For single-component repos: RepoPath IS the repo root (e.g., _repos/network-recon)
+		// For mono-repos: RepoPath is a subdirectory (e.g., _repos/mono-repo/agents/my-agent)
+		reposDir := i.getReposDir(kind)
+		compRepoRoot := i.getRepoRoot(comp.RepoPath, reposDir)
+
 		if i.store != nil {
 			// Get all components of this kind
 			allComponents, err := i.store.List(ctx, kind)
 			if err == nil {
-				// Check if any other component shares the same repository path prefix
+				// Check if any other component shares the same repository root
 				for _, otherComp := range allComponents {
 					if otherComp.Name != name && otherComp.RepoPath != "" {
-						// Check if this component shares the same repo parent directory
-						// For mono-repos, components may be in subdirectories of the same cloned repo
-						if strings.HasPrefix(otherComp.RepoPath, filepath.Dir(comp.RepoPath)) ||
-							strings.HasPrefix(comp.RepoPath, filepath.Dir(otherComp.RepoPath)) {
+						otherRepoRoot := i.getRepoRoot(otherComp.RepoPath, reposDir)
+						// Components share a repo only if they have the same repo root
+						if compRepoRoot == otherRepoRoot {
 							shouldRemoveRepo = false
 							span.AddEvent("repository shared with other components", trace.WithAttributes(
 								attribute.String("repo_path", comp.RepoPath),
+								attribute.String("repo_root", compRepoRoot),
 								attribute.String("shared_with", otherComp.Name),
 							))
 							break
@@ -1650,34 +1657,17 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 
 		// Remove repository if no other components use it
 		if shouldRemoveRepo {
-			// For single-component repos, RepoPath points directly to the repo
-			// For mono-repos, we need to find the actual repository root in _repos/
-			repoRoot := comp.RepoPath
-
-			// Check if this is inside _repos/ directory
-			reposDir := i.getReposDir(kind)
-			if strings.HasPrefix(comp.RepoPath, reposDir) {
-				// Find the immediate subdirectory of _repos/ (the actual cloned repo)
-				relPath, err := filepath.Rel(reposDir, comp.RepoPath)
-				if err == nil && relPath != "." {
-					// Get the first component of the relative path (the repo directory)
-					pathParts := strings.Split(relPath, string(filepath.Separator))
-					if len(pathParts) > 0 {
-						repoRoot = filepath.Join(reposDir, pathParts[0])
-					}
-				}
-			}
-
+			// Use the repo root we already calculated above
 			// Remove the repository directory
-			if err := os.RemoveAll(repoRoot); err != nil && !os.IsNotExist(err) {
+			if err := os.RemoveAll(compRepoRoot); err != nil && !os.IsNotExist(err) {
 				// Log warning but don't fail - partial cleanup is acceptable
 				span.AddEvent("failed to remove repository", trace.WithAttributes(
-					attribute.String("path", repoRoot),
+					attribute.String("path", compRepoRoot),
 					attribute.String("error", err.Error()),
 				))
 			} else if err == nil {
 				span.AddEvent("removed repository", trace.WithAttributes(
-					attribute.String("path", repoRoot),
+					attribute.String("path", compRepoRoot),
 				))
 			}
 		}
@@ -1962,6 +1952,32 @@ func (i *DefaultInstaller) getBinDir(kind ComponentKind) string {
 // Returns ~/.gibson/{kind}s/_repos/ (e.g., ~/.gibson/agents/_repos/, ~/.gibson/tools/_repos/)
 func (i *DefaultInstaller) getReposDir(kind ComponentKind) string {
 	return filepath.Join(i.homeDir, kind.String()+"s", "_repos")
+}
+
+// getRepoRoot determines the actual git repository root for a component path.
+// For single-component repos: returns the component path itself (e.g., _repos/network-recon)
+// For mono-repos: returns the first directory under _repos/ (e.g., _repos/tools for _repos/tools/nmap)
+// If the path is not under reposDir, returns the path unchanged.
+func (i *DefaultInstaller) getRepoRoot(componentPath, reposDir string) string {
+	// If not under _repos/, return as-is
+	if !strings.HasPrefix(componentPath, reposDir) {
+		return componentPath
+	}
+
+	// Get the relative path from _repos/
+	relPath, err := filepath.Rel(reposDir, componentPath)
+	if err != nil || relPath == "." {
+		return componentPath
+	}
+
+	// Get the first path component (the actual repo directory name)
+	pathParts := strings.Split(relPath, string(filepath.Separator))
+	if len(pathParts) == 0 {
+		return componentPath
+	}
+
+	// Return the full path to the repo root
+	return filepath.Join(reposDir, pathParts[0])
 }
 
 // verifyArtifactsExist checks that all specified artifacts exist at the source directory.

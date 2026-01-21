@@ -33,10 +33,11 @@ type GraphRAGQuery struct {
 	NodeTypes []NodeType       `json:"node_types,omitempty"` // Filter by node types
 	MissionID *types.ID        `json:"mission_id,omitempty"` // Filter by mission
 
-	// Mission scope filtering
+	// Mission scope filtering (Phase 2 - mission-scoped storage)
 	MissionScope    MissionScope `json:"mission_scope,omitempty"`     // Query scope
 	MissionName     string       `json:"mission_name,omitempty"`      // Mission name for same_mission scope
 	MissionIDFilter []types.ID   `json:"mission_id_filter,omitempty"` // Resolved mission IDs to filter by
+	MissionRunID    string       `json:"mission_run_id,omitempty"`    // Current mission run ID (injected by harness)
 
 	// Scoring weights
 	VectorWeight float64 `json:"vector_weight,omitempty"` // Weight for vector similarity (0-1)
@@ -251,6 +252,14 @@ type NodeQuery struct {
 	Properties map[string]any `json:"properties,omitempty"`
 	MissionID  *types.ID      `json:"mission_id,omitempty"`
 	Limit      int            `json:"limit,omitempty"`
+
+	// Mission-scoped query fields (Phase 2)
+	// Scope determines what data is visible: current run, all runs of mission, or global
+	Scope MissionScope `json:"scope,omitempty"`
+	// MissionRunID is set by harness for mission-run scoped queries (default scope)
+	MissionRunID string `json:"mission_run_id,omitempty"`
+	// MissionName is used for ScopeMission queries to find all runs with same name
+	MissionName string `json:"mission_name,omitempty"`
 }
 
 // NewNodeQuery creates a new NodeQuery.
@@ -282,6 +291,24 @@ func (nq *NodeQuery) WithMission(missionID types.ID) *NodeQuery {
 // WithLimit sets the maximum number of results.
 func (nq *NodeQuery) WithLimit(limit int) *NodeQuery {
 	nq.Limit = limit
+	return nq
+}
+
+// WithScope sets the mission scope for the query.
+func (nq *NodeQuery) WithScope(scope MissionScope) *NodeQuery {
+	nq.Scope = scope
+	return nq
+}
+
+// WithMissionRunID sets the mission run ID for mission-run scoped queries.
+func (nq *NodeQuery) WithMissionRunID(runID string) *NodeQuery {
+	nq.MissionRunID = runID
+	return nq
+}
+
+// WithMissionName sets the mission name for same-mission scoped queries.
+func (nq *NodeQuery) WithMissionName(name string) *NodeQuery {
+	nq.MissionName = name
 	return nq
 }
 
