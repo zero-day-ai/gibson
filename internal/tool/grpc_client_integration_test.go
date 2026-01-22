@@ -16,6 +16,8 @@ import (
 	"github.com/zero-day-ai/sdk/api/gen/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	protobuf "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // mockIntegrationToolServer implements proto.ToolServiceServer for integration testing
@@ -174,19 +176,22 @@ func TestGRPCToolClient_Integration_RealServer(t *testing.T) {
 	assert.Equal(t, "1.0.0", client.Version())
 	assert.Equal(t, []string{"integration", "network", "scanner"}, client.Tags())
 
-	// Test Execute
+	// Test ExecuteProto
 	ctx := context.Background()
-	input := map[string]any{
+	input, err := structpb.NewStruct(map[string]any{
 		"target": "192.168.1.1",
 		"port":   443,
-	}
-
-	output, err := client.Execute(ctx, input)
+	})
 	require.NoError(t, err)
-	require.NotNil(t, output)
-	assert.Equal(t, "scan completed", output["result"])
-	assert.Equal(t, true, output["success"])
-	assert.Equal(t, float64(3), output["ports_found"]) // JSON unmarshals numbers as float64
+
+	outputProto, err := client.ExecuteProto(ctx, input)
+	require.NoError(t, err)
+	require.NotNil(t, outputProto)
+
+	output := outputProto.(*structpb.Struct)
+	assert.Equal(t, "scan completed", output.Fields["result"].GetStringValue())
+	assert.Equal(t, true, output.Fields["success"].GetBoolValue())
+	assert.Equal(t, float64(3), output.Fields["ports_found"].GetNumberValue())
 
 	// Test Health
 	health := client.Health(ctx)
@@ -232,11 +237,14 @@ func TestGRPCToolClient_Integration_ServerRestart(t *testing.T) {
 
 	// Test initial execution
 	ctx := context.Background()
-	input := map[string]any{"input": "test1"}
-
-	output, err := client.Execute(ctx, input)
+	input, err := structpb.NewStruct(map[string]any{"input": "test1"})
 	require.NoError(t, err)
-	assert.Equal(t, "success", output["output"])
+
+	outputProto, err := client.ExecuteProto(ctx, input)
+	require.NoError(t, err)
+
+	output := outputProto.(*structpb.Struct)
+	assert.Equal(t, "success", output.Fields["output"].GetStringValue())
 
 	// Test health check - should be healthy
 	health := client.Health(ctx)
@@ -251,8 +259,8 @@ func TestGRPCToolClient_Integration_ServerRestart(t *testing.T) {
 
 	// Attempt to execute should fail now
 	t.Log("Testing execution after server stop...")
-	_, err = client.Execute(ctx, input)
-	assert.Error(t, err, "Execute should fail when server is down")
+	_, err = client.ExecuteProto(ctx, input)
+	assert.Error(t, err, "ExecuteProto should fail when server is down")
 
 	// Health check should report unhealthy
 	health = client.Health(ctx)
@@ -305,10 +313,11 @@ func TestGRPCToolClient_Integration_ServerRestart(t *testing.T) {
 	// gRPC client should automatically reconnect on next call
 	// We may need to retry a few times as the connection re-establishes
 	var lastErr error
+	var outputProto2 protobuf.Message
 	reconnected := false
 	for i := 0; i < 5; i++ {
 		time.Sleep(100 * time.Millisecond * time.Duration(i+1))
-		output, err = client.Execute(ctx, input)
+		outputProto2, err = client.ExecuteProto(ctx, input)
 		if err == nil {
 			reconnected = true
 			break
@@ -319,7 +328,8 @@ func TestGRPCToolClient_Integration_ServerRestart(t *testing.T) {
 
 	if reconnected {
 		t.Log("Successfully reconnected to restarted server")
-		assert.Equal(t, "success", output["output"])
+		output2 := outputProto2.(*structpb.Struct)
+		assert.Equal(t, "success", output2.Fields["output"].GetStringValue())
 
 		// Health check should be healthy again
 		health = client.Health(ctx)
@@ -375,18 +385,24 @@ func TestGRPCToolClient_Integration_MultipleClients(t *testing.T) {
 	for i := 0; i < numClients; i++ {
 		clientID := i
 		go func(c *GRPCToolClient, id int) {
-			input := map[string]any{
+			input, err := structpb.NewStruct(map[string]any{
 				"client_id": fmt.Sprintf("client-%d", id),
-			}
-
-			output, err := c.Execute(ctx, input)
+			})
 			if err != nil {
 				errors <- err
 				done <- false
 				return
 			}
 
-			if output["output"] != "success" {
+			outputProto, err := c.ExecuteProto(ctx, input)
+			if err != nil {
+				errors <- err
+				done <- false
+				return
+			}
+
+			output := outputProto.(*structpb.Struct)
+			if output.Fields["output"].GetStringValue() != "success" {
 				errors <- fmt.Errorf("unexpected output from client %d: %v", id, output)
 				done <- false
 				return
@@ -451,8 +467,11 @@ func TestGRPCToolClient_Integration_Timeout(t *testing.T) {
 	// Wait for context to expire
 	time.Sleep(10 * time.Millisecond)
 
-	// Execute should fail with context deadline exceeded
-	_, err = client.Execute(ctx, map[string]any{})
+	// ExecuteProto should fail with context deadline exceeded
+	input, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+
+	_, err = client.ExecuteProto(ctx, input)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context deadline exceeded")
 }
@@ -522,7 +541,7 @@ func TestGRPCToolClient_Integration_ComplexDataFlow(t *testing.T) {
 	defer client.Close()
 
 	ctx := context.Background()
-	input := map[string]any{
+	input, err := structpb.NewStruct(map[string]any{
 		"target": "https://example.com",
 		"options": map[string]any{
 			"depth":   3,
@@ -531,31 +550,33 @@ func TestGRPCToolClient_Integration_ComplexDataFlow(t *testing.T) {
 				"User-Agent": "gibson/1.0",
 			},
 		},
-	}
-
-	output, err := client.Execute(ctx, input)
+	})
 	require.NoError(t, err)
-	require.NotNil(t, output)
+
+	outputProto, err := client.ExecuteProto(ctx, input)
+	require.NoError(t, err)
+	require.NotNil(t, outputProto)
 
 	// Verify complex nested structure is preserved
-	findings, ok := output["findings"].([]any)
-	require.True(t, ok, "findings should be an array")
-	assert.Len(t, findings, 2, "should have 2 findings")
+	output := outputProto.(*structpb.Struct)
+	findings := output.Fields["findings"].GetListValue()
+	require.NotNil(t, findings, "findings should be an array")
+	assert.Len(t, findings.Values, 2, "should have 2 findings")
 
 	// Check first finding structure
-	finding1, ok := findings[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "finding-001", finding1["id"])
-	assert.Equal(t, "high", finding1["severity"])
-	assert.Equal(t, "sql-injection", finding1["type"])
+	finding1 := findings.Values[0].GetStructValue()
+	require.NotNil(t, finding1)
+	assert.Equal(t, "finding-001", finding1.Fields["id"].GetStringValue())
+	assert.Equal(t, "high", finding1.Fields["severity"].GetStringValue())
+	assert.Equal(t, "sql-injection", finding1.Fields["type"].GetStringValue())
 
-	evidence1, ok := finding1["evidence"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "' OR '1'='1", evidence1["payload"])
+	evidence1 := finding1.Fields["evidence"].GetStructValue()
+	require.NotNil(t, evidence1)
+	assert.Equal(t, "' OR '1'='1", evidence1.Fields["payload"].GetStringValue())
 
 	// Check metadata
-	metadata, ok := output["metadata"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, float64(42), metadata["requests_sent"])
-	assert.Greater(t, metadata["scan_duration_ms"], float64(0))
+	metadata := output.Fields["metadata"].GetStructValue()
+	require.NotNil(t, metadata)
+	assert.Equal(t, float64(42), metadata.Fields["requests_sent"].GetNumberValue())
+	assert.Greater(t, metadata.Fields["scan_duration_ms"].GetNumberValue(), float64(0))
 }

@@ -2,15 +2,17 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/api/gen/proto"
-	"github.com/zero-day-ai/sdk/schema"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	protobuf "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
 // GRPCToolClient wraps a gRPC connection to implement the Tool interface.
@@ -19,17 +21,17 @@ import (
 // The client handles:
 // - gRPC connection management
 // - Protocol buffer marshaling/unmarshaling
-// - Schema conversion between JSON Schema and proto definitions
+// - Proto message type resolution and dynamic creation
 // - Health check integration with gRPC health protocol
 type GRPCToolClient struct {
-	name         string
-	description  string
-	version      string
-	tags         []string
-	conn         *grpc.ClientConn
-	client       proto.ToolServiceClient
-	inputSchema  schema.JSON
-	outputSchema schema.JSON
+	name              string
+	description       string
+	version           string
+	tags              []string
+	inputMessageType  string
+	outputMessageType string
+	conn              *grpc.ClientConn
+	client            proto.ToolServiceClient
 }
 
 // NewGRPCToolClient creates a new GRPCToolClient by connecting to a gRPC tool service.
@@ -68,44 +70,22 @@ func NewGRPCToolClient(endpoint string, opts ...grpc.DialOption) (*GRPCToolClien
 		return nil, types.WrapError(ErrToolExecutionFailed, "failed to get tool descriptor", err)
 	}
 
-	// Convert proto schemas to internal schema types
-	inputSchema, err := protoSchemaToInternal(descriptor.GetInputSchema())
-	if err != nil {
-		conn.Close()
-		return nil, types.WrapError(ErrToolExecutionFailed, "failed to parse input schema", err)
-	}
-
-	outputSchema, err := protoSchemaToInternal(descriptor.GetOutputSchema())
-	if err != nil {
-		conn.Close()
-		return nil, types.WrapError(ErrToolExecutionFailed, "failed to parse output schema", err)
-	}
+	// TODO: Once SDK task 1.3 is complete and tool.proto has input_message_type/output_message_type fields,
+	// use descriptor.GetInputMessageType() and descriptor.GetOutputMessageType() instead.
+	// For now, default to google.protobuf.Struct as the proto interface.
+	inputMsgType := "google.protobuf.Struct"
+	outputMsgType := "google.protobuf.Struct"
 
 	return &GRPCToolClient{
-		name:         descriptor.GetName(),
-		description:  descriptor.GetDescription(),
-		version:      descriptor.GetVersion(),
-		tags:         descriptor.GetTags(),
-		conn:         conn,
-		client:       client,
-		inputSchema:  inputSchema,
-		outputSchema: outputSchema,
+		name:              descriptor.GetName(),
+		description:       descriptor.GetDescription(),
+		version:           descriptor.GetVersion(),
+		tags:              descriptor.GetTags(),
+		inputMessageType:  inputMsgType,
+		outputMessageType: outputMsgType,
+		conn:              conn,
+		client:            client,
 	}, nil
-}
-
-// protoSchemaToInternal converts a proto JSONSchema to SDK schema.JSON.
-// The proto type contains a serialized JSON string that we unmarshal.
-func protoSchemaToInternal(protoSchema *proto.JSONSchema) (schema.JSON, error) {
-	if protoSchema == nil {
-		return schema.Object(nil), nil
-	}
-
-	var result schema.JSON
-	if err := json.Unmarshal([]byte(protoSchema.GetJson()), &result); err != nil {
-		return schema.JSON{}, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
-	}
-
-	return result, nil
 }
 
 // Name returns the unique identifier for this tool
@@ -128,23 +108,27 @@ func (c *GRPCToolClient) Tags() []string {
 	return c.tags
 }
 
-// InputSchema returns the JSON schema defining valid input parameters.
-func (c *GRPCToolClient) InputSchema() schema.JSON {
-	return c.inputSchema
+// InputMessageType returns the fully-qualified proto message type name for input
+func (c *GRPCToolClient) InputMessageType() string {
+	return c.inputMessageType
 }
 
-// OutputSchema returns the JSON schema defining the output structure.
-func (c *GRPCToolClient) OutputSchema() schema.JSON {
-	return c.outputSchema
+// OutputMessageType returns the fully-qualified proto message type name for output
+func (c *GRPCToolClient) OutputMessageType() string {
+	return c.outputMessageType
 }
 
-// Execute runs the tool via gRPC with the given input.
-// It marshals the input to JSON, makes the gRPC call, and unmarshals the output.
-func (c *GRPCToolClient) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	// Marshal input to JSON
-	inputJSON, err := json.Marshal(input)
+// ExecuteProto runs the tool via gRPC with proto message input.
+// It marshals the proto to JSON, makes the gRPC call, and unmarshals the JSON output back to proto.
+func (c *GRPCToolClient) ExecuteProto(ctx context.Context, input protobuf.Message) (protobuf.Message, error) {
+	// Marshal proto input to JSON
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames: true,
+		EmitUnpopulated: false,
+	}
+	inputJSON, err := marshaler.Marshal(input)
 	if err != nil {
-		return nil, types.WrapError(ErrToolInvalidInput, "failed to marshal input to JSON", err)
+		return nil, types.WrapError(ErrToolInvalidInput, "failed to marshal proto input to JSON", err)
 	}
 
 	// Create the gRPC request
@@ -168,10 +152,20 @@ func (c *GRPCToolClient) Execute(ctx context.Context, input map[string]any) (map
 		return nil, gibsonErr
 	}
 
-	// Unmarshal output JSON to map
-	var output map[string]any
-	if err := json.Unmarshal([]byte(resp.GetOutputJson()), &output); err != nil {
-		return nil, types.WrapError(ErrToolInvalidOutput, "failed to unmarshal output JSON", err)
+	// Create output proto message dynamically
+	outputType, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(c.outputMessageType))
+	if err != nil {
+		return nil, types.WrapError(ErrToolInvalidOutput, fmt.Sprintf("failed to find output message type %q", c.outputMessageType), err)
+	}
+
+	output := outputType.New().Interface()
+
+	// Unmarshal JSON to proto
+	unmarshaler := protojson.UnmarshalOptions{
+		DiscardUnknown: true,
+	}
+	if err := unmarshaler.Unmarshal([]byte(resp.GetOutputJson()), output); err != nil {
+		return nil, types.WrapError(ErrToolInvalidOutput, "failed to unmarshal output JSON to proto", err)
 	}
 
 	return output, nil

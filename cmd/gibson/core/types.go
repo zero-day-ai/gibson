@@ -35,6 +35,9 @@ type CommandContext struct {
 	// MissionStore provides access to mission data (optional, may be nil)
 	MissionStore mission.MissionStore
 
+	// MissionRunStore provides access to mission run data (optional, may be nil)
+	MissionRunStore mission.MissionRunStore
+
 	// RegManager provides access to the component registry for service discovery
 	RegManager *registry.Manager
 
@@ -54,6 +57,9 @@ func (cc *CommandContext) Close() error {
 // CommandResult represents the result of a command execution.
 // It provides both structured data and human-readable output.
 type CommandResult struct {
+	// Success indicates whether the operation succeeded
+	Success bool
+
 	// Data contains structured output that can be used programmatically
 	Data interface{}
 
@@ -74,6 +80,9 @@ type InstallOptions struct {
 
 	// Tag specifies the Git tag to install from
 	Tag string
+
+	// Commit specifies the Git commit to install from
+	Commit string
 
 	// Force allows reinstallation even if component exists
 	Force bool

@@ -77,7 +77,7 @@ func getSpanNameForOperation(opType OperationType) string {
 		return SpanGenAIChat
 	case OpStream:
 		return SpanGenAIChatStream
-	case OpCallTool:
+	case OpCallToolProto:
 		return SpanGenAITool
 	case OpQueryPlugin:
 		return SpanPluginQuery
@@ -102,7 +102,7 @@ func getErrorCodeForOperation(opType OperationType) string {
 		return "COMPLETION_ERROR"
 	case OpStream:
 		return "STREAM_ERROR"
-	case OpCallTool:
+	case OpCallToolProto:
 		return "TOOL_EXECUTION_ERROR"
 	case OpQueryPlugin:
 		return "PLUGIN_QUERY_ERROR"
@@ -137,7 +137,7 @@ func addPreExecutionAttributes(span trace.Span, ctx context.Context, opType Oper
 		if messages := GetMessages(ctx); len(messages) > 0 {
 			addPromptAttribute(span, messages)
 		}
-	case OpCallTool:
+	case OpCallToolProto:
 		if toolName := GetToolName(ctx); toolName != "" {
 			span.SetAttributes(attribute.String(AttrToolName, toolName))
 		}

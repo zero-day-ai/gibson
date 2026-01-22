@@ -794,7 +794,7 @@ func TestComponentUpdate(t *testing.T) {
 				Installer:      installer,
 			}
 
-			result, err := ComponentUpdate(cc, tt.kind, tt.componentName, tt.opts)
+			result, err := ComponentUpdate(cc, tt.kind, tt.componentName)
 
 			if tt.wantErr {
 				if err == nil {

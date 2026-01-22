@@ -10,25 +10,39 @@ import (
 // ToolDescriptor provides lightweight metadata about a tool without requiring
 // the full tool interface. Used for discovery, filtering, and capability queries.
 type ToolDescriptor struct {
-	Name         string      `json:"name"`
-	Description  string      `json:"description"`
-	Version      string      `json:"version"`
-	Tags         []string    `json:"tags"`
-	InputSchema  schema.JSON `json:"input_schema"`
-	OutputSchema schema.JSON `json:"output_schema"`
+	Name              string      `json:"name"`
+	Description       string      `json:"description"`
+	Version           string      `json:"version"`
+	Tags              []string    `json:"tags"`
+	InputSchema       schema.JSON `json:"input_schema"`
+	OutputSchema      schema.JSON `json:"output_schema"`
+	InputProtoType    string      `json:"input_proto_type,omitempty"`    // Proto message type name for input (e.g., "tool.v1.Request")
+	OutputProtoType   string      `json:"output_proto_type,omitempty"`   // Proto message type name for output (e.g., "tool.v1.Response")
 }
 
 // FromTool creates a ToolDescriptor from a Tool interface.
 // This extracts metadata without exposing the full tool implementation.
 func FromTool(t tool.Tool) ToolDescriptor {
-	return ToolDescriptor{
-		Name:         t.Name(),
-		Description:  t.Description(),
-		Version:      t.Version(),
-		Tags:         t.Tags(),
-		InputSchema:  t.InputSchema(),
-		OutputSchema: t.OutputSchema(),
+	desc := ToolDescriptor{
+		Name:             t.Name(),
+		Description:      t.Description(),
+		Version:          t.Version(),
+		Tags:             t.Tags(),
+		InputProtoType:   t.InputMessageType(),
+		OutputProtoType:  t.OutputMessageType(),
 	}
+
+	// Check if the tool still supports legacy schema methods (for backward compatibility)
+	type legacyTool interface {
+		InputSchema() schema.JSON
+		OutputSchema() schema.JSON
+	}
+	if lt, ok := t.(legacyTool); ok {
+		desc.InputSchema = lt.InputSchema()
+		desc.OutputSchema = lt.OutputSchema()
+	}
+
+	return desc
 }
 
 // PluginDescriptor provides lightweight metadata about a plugin.

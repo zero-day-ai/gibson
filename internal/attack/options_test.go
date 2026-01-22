@@ -238,7 +238,6 @@ func TestAttackOptions_Validate(t *testing.T) {
 				o.TargetProvider = "anthropic"
 				o.TargetHeaders = map[string]string{"X-Custom": "value"}
 				o.Credential = "cred-123"
-				o.Goal = "Test prompt injection"
 				o.MaxTurns = 10
 				o.Timeout = 5 * time.Minute
 				o.PayloadIDs = []string{"payload-1", "payload-2"}
@@ -290,7 +289,6 @@ func TestAttackOptions_FunctionalOptions(t *testing.T) {
 		opts.Apply(
 			WithAgentName("test-agent"),
 			WithTargetURL("https://example.com"),
-			WithGoal("Test security"),
 			WithMaxTurns(20),
 			WithTimeout(10*time.Minute),
 			WithVerbose(true),
@@ -298,7 +296,6 @@ func TestAttackOptions_FunctionalOptions(t *testing.T) {
 
 		assert.Equal(t, "test-agent", opts.AgentName)
 		assert.Equal(t, "https://example.com", opts.TargetURL)
-		assert.Equal(t, "Test security", opts.Goal)
 		assert.Equal(t, 20, opts.MaxTurns)
 		assert.Equal(t, 10*time.Minute, opts.Timeout)
 		assert.True(t, opts.Verbose)

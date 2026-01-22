@@ -22,9 +22,6 @@ import (
 type Harness interface {
 	// DelegateToAgent delegates a task to another agent and waits for the result
 	DelegateToAgent(ctx context.Context, agentName string, task agent.Task) (agent.Result, error)
-
-	// CallTool executes a tool and returns its output
-	CallTool(ctx context.Context, toolName string, input map[string]interface{}) (interface{}, error)
 }
 
 // Actor executes orchestrator decisions by performing the appropriate actions
@@ -36,6 +33,7 @@ type Actor struct {
 	graphClient    graph.GraphClient
 	inventory      *ComponentInventory // Component inventory for validation
 	missionTracer  interface{}         // *observability.MissionTracer for Langfuse tracing (optional, can be nil)
+	policyChecker  PolicyChecker       // Policy checker for data reuse enforcement (optional, can be nil)
 }
 
 // NewActor creates a new Actor with the given dependencies.
@@ -43,7 +41,8 @@ type Actor struct {
 // The queries provide graph operations for tracking execution state.
 // The inventory parameter is optional and used for component validation.
 // The missionTracer parameter is optional and enables Langfuse observability when provided.
-func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient, inventory *ComponentInventory, missionTracer interface{}) *Actor {
+// The policyChecker parameter is optional and enables data reuse policy enforcement when provided.
+func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient, inventory *ComponentInventory, missionTracer interface{}, policyChecker PolicyChecker) *Actor {
 	return &Actor{
 		harness:        harness,
 		execQueries:    execQueries,
@@ -51,6 +50,7 @@ func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQue
 		graphClient:    graphClient,
 		inventory:      inventory,
 		missionTracer:  missionTracer,
+		policyChecker:  policyChecker,
 	}
 }
 
@@ -137,6 +137,37 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 	// Verify it's an agent node
 	if node.Type != schema.WorkflowNodeTypeAgent {
 		return nil, fmt.Errorf("node %s is not an agent node (type: %s)", node.ID, node.Type)
+	}
+
+	// Check data reuse policy if policy checker is configured
+	if a.policyChecker != nil {
+		shouldExecute, reason := a.policyChecker.ShouldExecute(ctx, node.AgentName)
+		if !shouldExecute {
+			// Policy check failed - skip this agent execution
+			slog.Info("agent execution skipped by data reuse policy",
+				"agent_name", node.AgentName,
+				"node_id", node.ID.String(),
+				"reason", reason)
+
+			// Mark the node as skipped
+			if err := a.updateNodeStatus(ctx, node.ID, schema.WorkflowNodeStatusSkipped); err != nil {
+				return nil, fmt.Errorf("failed to update node status to skipped: %w", err)
+			}
+
+			// Return a result indicating the agent was skipped
+			return &ActionResult{
+				Action:       ActionExecuteAgent,
+				Error:        nil,
+				IsTerminal:   false,
+				TargetNodeID: decision.TargetNodeID,
+				Metadata: map[string]interface{}{
+					"agent_name":   node.AgentName,
+					"skipped":      true,
+					"skip_reason":  reason,
+					"policy_check": true,
+				},
+			}, nil
+		}
 	}
 
 	// Determine attempt number by counting previous executions

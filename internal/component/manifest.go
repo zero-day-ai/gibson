@@ -238,6 +238,7 @@ type Manifest struct {
 	Dependencies *ComponentDependencies `json:"dependencies,omitempty" yaml:"dependencies,omitempty"` // Component dependencies
 	Contents     []ContentEntry         `json:"contents,omitempty" yaml:"contents,omitempty"`         // Repository contents (for repository manifests)
 	Discover     bool                   `json:"discover,omitempty" yaml:"discover,omitempty"`         // Auto-discover components in repository
+	Taxonomy     *TaxonomyExtension     `json:"taxonomy,omitempty" yaml:"taxonomy,omitempty"`         // Custom GraphRAG taxonomy extensions
 }
 
 // BuildConfig contains build configuration for the component.
@@ -355,6 +356,13 @@ func (m *Manifest) Validate() error {
 	if m.Dependencies != nil {
 		if err := m.Dependencies.Validate(); err != nil {
 			return fmt.Errorf("dependencies validation failed: %w", err)
+		}
+	}
+
+	// Validate taxonomy if present
+	if m.Taxonomy != nil {
+		if err := m.Taxonomy.Validate(); err != nil {
+			return fmt.Errorf("taxonomy validation failed: %w", err)
 		}
 	}
 

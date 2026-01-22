@@ -49,7 +49,7 @@ const (
 	OpStream            OperationType = "stream"
 
 	// Component Operations
-	OpCallTool        OperationType = "call_tool"
+	OpCallToolProto   OperationType = "call_tool_proto"
 	OpQueryPlugin     OperationType = "query_plugin"
 	OpDelegateToAgent OperationType = "delegate_to_agent"
 

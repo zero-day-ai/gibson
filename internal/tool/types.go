@@ -2,34 +2,32 @@ package tool
 
 import (
 	"time"
-
-	"github.com/zero-day-ai/sdk/schema"
 )
 
 // ToolDescriptor contains tool metadata for discovery and introspection.
 // It provides all the information needed to understand what a tool does
 // and how to interact with it, without requiring tool execution.
 type ToolDescriptor struct {
-	Name         string      `json:"name"`
-	Description  string      `json:"description"`
-	Version      string      `json:"version"`
-	Tags         []string    `json:"tags"`
-	InputSchema  schema.JSON `json:"input_schema"`
-	OutputSchema schema.JSON `json:"output_schema"`
-	IsExternal   bool        `json:"is_external"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description"`
+	Version           string   `json:"version"`
+	Tags              []string `json:"tags"`
+	InputMessageType  string   `json:"input_message_type"`
+	OutputMessageType string   `json:"output_message_type"`
+	IsExternal        bool     `json:"is_external"`
 }
 
 // NewToolDescriptor creates a ToolDescriptor from a Tool interface.
 // IsExternal is set to false by default; use NewExternalToolDescriptor for external tools.
 func NewToolDescriptor(t Tool) ToolDescriptor {
 	return ToolDescriptor{
-		Name:         t.Name(),
-		Description:  t.Description(),
-		Version:      t.Version(),
-		Tags:         t.Tags(),
-		InputSchema:  t.InputSchema(),
-		OutputSchema: t.OutputSchema(),
-		IsExternal:   false,
+		Name:              t.Name(),
+		Description:       t.Description(),
+		Version:           t.Version(),
+		Tags:              t.Tags(),
+		InputMessageType:  t.InputMessageType(),
+		OutputMessageType: t.OutputMessageType(),
+		IsExternal:        false,
 	}
 }
 

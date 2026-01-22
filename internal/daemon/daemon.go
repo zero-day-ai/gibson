@@ -94,6 +94,9 @@ type daemonImpl struct {
 	// missionStore provides access to mission persistence
 	missionStore mission.MissionStore
 
+	// missionRunStore provides access to mission run persistence
+	missionRunStore mission.MissionRunStore
+
 	// missionInstaller handles mission installation, updates, and uninstallation
 	missionInstaller mission.MissionInstaller
 
@@ -198,6 +201,9 @@ func New(cfg *config.Config, homeDir string) (Daemon, error) {
 	// Initialize mission store
 	missionStore := mission.NewDBMissionStore(db)
 
+	// Initialize mission run store
+	missionRunStore := mission.NewDBMissionRunStore(db)
+
 	// Initialize target store
 	targetStore := database.NewTargetDAO(db)
 
@@ -223,6 +229,7 @@ func New(cfg *config.Config, homeDir string) (Daemon, error) {
 		eventBus:        eventBus,
 		db:              db,
 		missionStore:    missionStore,
+		missionRunStore: missionRunStore,
 		targetStore:     targetStore,
 		activeMissions:  make(map[string]context.CancelFunc),
 		grpcServer:      nil,      // Created in Start()
@@ -371,6 +378,16 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 	}
 	d.infrastructure = infra
 	d.logger.Info("infrastructure components initialized")
+
+	// Inject taxonomy registry into component installer so it can unregister extensions on agent uninstall
+	if d.componentInstaller != nil && infra.taxonomyRegistry != nil {
+		// Cast to *DefaultInstaller since SetTaxonomyRegistry is not on the Installer interface
+		if defaultInstaller, ok := d.componentInstaller.(*component.DefaultInstaller); ok {
+			adapter := component.NewTaxonomyRegistryAdapter(infra.taxonomyRegistry)
+			defaultInstaller.SetTaxonomyRegistry(adapter)
+			d.logger.Info("taxonomy registry injected into component installer")
+		}
+	}
 
 	// Initialize dependency resolver for mission dependency validation
 	// The resolver needs component store, lifecycle manager, and a manifest loader

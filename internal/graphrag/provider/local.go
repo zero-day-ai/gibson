@@ -3,8 +3,10 @@ package provider
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
+	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/zero-day-ai/gibson/internal/graphrag"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/memory/vector"
@@ -342,36 +344,18 @@ func (l *LocalGraphRAGProvider) QueryNodes(ctx context.Context, query graphrag.N
 }
 
 // queryNodesFromGraph queries nodes from Neo4j using Cypher.
-// Supports mission-scoped queries based on query.Scope:
-//   - ScopeCurrentRun (default): Queries nodes with matching mission_run_id
-//   - ScopeSameMission: Queries nodes connected to any run of the same mission
-//   - ScopeAll: No mission filtering (global query)
+// Basic query functionality without scope filtering.
+// Policy-based filtering will be added in a separate task.
 func (l *LocalGraphRAGProvider) queryNodesFromGraph(ctx context.Context, query graphrag.NodeQuery) ([]graphrag.GraphNode, error) {
 	params := make(map[string]any)
-	var cypher string
 
-	// Determine query strategy based on scope
-	switch query.Scope {
-	case graphrag.ScopeCurrentRun:
-		// Default: Query nodes in the current mission run only
-		cypher = l.buildMissionRunScopedQuery(query, params)
+	// Build basic query - policy-based filtering will be added later
+	cypher := l.buildGlobalQuery(query, params)
 
-	case graphrag.ScopeSameMission:
-		// Query nodes from all runs of the same mission
-		cypher = l.buildMissionScopedQuery(query, params)
-
-	case graphrag.ScopeAll:
-		// Global query - no mission filtering
-		cypher = l.buildGlobalQuery(query, params)
-
-	default:
-		// Default to mission-run scoped if MissionRunID is set, otherwise global
-		if query.MissionRunID != "" {
-			cypher = l.buildMissionRunScopedQuery(query, params)
-		} else {
-			cypher = l.buildGlobalQuery(query, params)
-		}
-	}
+	slog.Info("queryNodesFromGraph executing",
+		"cypher", cypher,
+		"params", params,
+		"nodeTypes", query.NodeTypes)
 
 	// Execute query
 	result, err := l.graphClient.Query(ctx, cypher, params)
@@ -379,124 +363,41 @@ func (l *LocalGraphRAGProvider) queryNodesFromGraph(ctx context.Context, query g
 		return nil, graphrag.NewQueryError("failed to query nodes from graph", err)
 	}
 
+	slog.Info("queryNodesFromGraph result",
+		"records", len(result.Records))
+
 	// Convert results to GraphNodes
 	nodes := make([]graphrag.GraphNode, 0, len(result.Records))
-	for _, record := range result.Records {
-		// Extract node from result
-		// Note: This is a simplified conversion - production code would handle Neo4j node types properly
-		nodeData, ok := record["n"].(map[string]any)
-		if !ok {
+	for i, record := range result.Records {
+		// Extract node from result - Neo4j driver returns dbtype.Node, not map[string]any
+		nodeData := record["n"]
+		if nodeData == nil {
+			slog.Warn("queryNodesFromGraph nil nodeData", "index", i)
 			continue
 		}
 
-		node := l.recordToGraphNode(nodeData)
+		// Handle different return types from Neo4j driver
+		var dataMap map[string]any
+		var neo4jLabels []string
+		switch n := nodeData.(type) {
+		case dbtype.Node:
+			dataMap = n.Props
+			neo4jLabels = n.Labels
+		case map[string]any:
+			dataMap = n
+		default:
+			slog.Warn("queryNodesFromGraph unknown type", "index", i, "type", fmt.Sprintf("%T", nodeData))
+			continue
+		}
+
+		node := l.recordToGraphNodeWithLabels(dataMap, neo4jLabels)
 		nodes = append(nodes, node)
 	}
 
+	slog.Info("queryNodesFromGraph returning", "nodes", len(nodes))
 	return nodes, nil
 }
 
-// buildMissionRunScopedQuery builds a Cypher query that filters by mission_run_id.
-// This is the default scope - only nodes from the current mission run are returned.
-// Uses graph traversal: (mission_run)<-[:BELONGS_TO]-(n) for root nodes,
-// or n.mission_run_id property for nodes with the property set.
-func (l *LocalGraphRAGProvider) buildMissionRunScopedQuery(query graphrag.NodeQuery, params map[string]any) string {
-	// Build label filter
-	labelFilter := l.buildLabelFilter(query.NodeTypes)
-
-	// Start building query - use mission_run_id property for filtering
-	// This is set on all nodes during CREATE in the loader
-	cypher := "MATCH (n" + labelFilter + ")"
-
-	// Build WHERE clauses
-	whereClauses := []string{}
-
-	// Filter by mission_run_id
-	if query.MissionRunID != "" {
-		whereClauses = append(whereClauses, "n.mission_run_id = $mission_run_id")
-		params["mission_run_id"] = query.MissionRunID
-	}
-
-	// Add property filters
-	for key, value := range query.Properties {
-		paramKey := "prop_" + key
-		whereClauses = append(whereClauses, fmt.Sprintf("n.%s = $%s", key, paramKey))
-		params[paramKey] = value
-	}
-
-	// Add legacy mission ID filter if present
-	if query.MissionID != nil {
-		whereClauses = append(whereClauses, "n.mission_id = $mission_id")
-		params["mission_id"] = query.MissionID.String()
-	}
-
-	// Assemble WHERE clause
-	if len(whereClauses) > 0 {
-		cypher += " WHERE " + whereClauses[0]
-		for i := 1; i < len(whereClauses); i++ {
-			cypher += " AND " + whereClauses[i]
-		}
-	}
-
-	// Add return clause
-	cypher += " RETURN n"
-
-	// Add limit
-	if query.Limit > 0 {
-		cypher += fmt.Sprintf(" LIMIT %d", query.Limit)
-	}
-
-	return cypher
-}
-
-// buildMissionScopedQuery builds a Cypher query that filters by mission name.
-// Returns nodes from all runs of the same mission (historical query).
-// Uses graph traversal: (mission {name: $name})<-[:BELONGS_TO]-(run)<-[:BELONGS_TO]-(n)
-func (l *LocalGraphRAGProvider) buildMissionScopedQuery(query graphrag.NodeQuery, params map[string]any) string {
-	// Build label filter
-	labelFilter := l.buildLabelFilter(query.NodeTypes)
-
-	// Query nodes that belong to any run of the same mission
-	// Traverse: mission -> mission_run -> node
-	cypher := `
-		MATCH (m:mission {name: $mission_name})<-[:BELONGS_TO]-(run:mission_run)<-[:BELONGS_TO]-(n` + labelFilter + `)
-	`
-	params["mission_name"] = query.MissionName
-
-	// Build WHERE clauses for additional filters
-	whereClauses := []string{}
-
-	// Add property filters
-	for key, value := range query.Properties {
-		paramKey := "prop_" + key
-		whereClauses = append(whereClauses, fmt.Sprintf("n.%s = $%s", key, paramKey))
-		params[paramKey] = value
-	}
-
-	// Add legacy mission ID filter if present
-	if query.MissionID != nil {
-		whereClauses = append(whereClauses, "n.mission_id = $mission_id")
-		params["mission_id"] = query.MissionID.String()
-	}
-
-	// Assemble WHERE clause
-	if len(whereClauses) > 0 {
-		cypher += " WHERE " + whereClauses[0]
-		for i := 1; i < len(whereClauses); i++ {
-			cypher += " AND " + whereClauses[i]
-		}
-	}
-
-	// Add return clause
-	cypher += " RETURN DISTINCT n"
-
-	// Add limit
-	if query.Limit > 0 {
-		cypher += fmt.Sprintf(" LIMIT %d", query.Limit)
-	}
-
-	return cypher
-}
 
 // buildGlobalQuery builds a Cypher query with no mission filtering.
 // Returns nodes across all missions (global query).
@@ -541,6 +442,7 @@ func (l *LocalGraphRAGProvider) buildGlobalQuery(query graphrag.NodeQuery, param
 
 	return cypher
 }
+
 
 // buildLabelFilter builds a Cypher label filter string from node types.
 func (l *LocalGraphRAGProvider) buildLabelFilter(nodeTypes []graphrag.NodeType) string {
@@ -741,12 +643,23 @@ func (l *LocalGraphRAGProvider) TraverseGraph(ctx context.Context, startID strin
 	// Convert results to GraphNodes
 	nodes := make([]graphrag.GraphNode, 0, len(result.Records))
 	for _, record := range result.Records {
-		nodeData, ok := record["end"].(map[string]any)
-		if !ok {
+		nodeData := record["end"]
+		if nodeData == nil {
 			continue
 		}
 
-		node := l.recordToGraphNode(nodeData)
+		// Handle different return types from Neo4j driver
+		var dataMap map[string]any
+		switch n := nodeData.(type) {
+		case dbtype.Node:
+			dataMap = n.Props
+		case map[string]any:
+			dataMap = n
+		default:
+			continue
+		}
+
+		node := l.recordToGraphNode(dataMap)
 		nodes = append(nodes, node)
 	}
 
@@ -869,13 +782,23 @@ func (l *LocalGraphRAGProvider) Close() error {
 }
 
 // recordToGraphNode converts a Neo4j result record to a GraphNode.
+// Deprecated: Use recordToGraphNodeWithLabels to preserve Neo4j node labels.
 func (l *LocalGraphRAGProvider) recordToGraphNode(data map[string]any) graphrag.GraphNode {
+	return l.recordToGraphNodeWithLabels(data, nil)
+}
+
+// recordToGraphNodeWithLabels converts a Neo4j result record to a GraphNode,
+// using the provided Neo4j labels to set the node type.
+func (l *LocalGraphRAGProvider) recordToGraphNodeWithLabels(data map[string]any, neo4jLabels []string) graphrag.GraphNode {
 	// Extract ID
 	idStr, _ := data["id"].(string)
 	nodeID, _ := types.ParseID(idStr)
 
-	// Extract labels - this is simplified, production code would handle Neo4j labels properly
-	labels := []graphrag.NodeType{}
+	// Convert Neo4j labels to internal NodeType labels
+	labels := make([]graphrag.NodeType, 0, len(neo4jLabels))
+	for _, label := range neo4jLabels {
+		labels = append(labels, graphrag.NodeType(label))
+	}
 
 	// Extract properties
 	properties := make(map[string]any)
@@ -885,7 +808,7 @@ func (l *LocalGraphRAGProvider) recordToGraphNode(data map[string]any) graphrag.
 		}
 	}
 
-	// Create node
+	// Create node with labels from Neo4j
 	node := graphrag.NewGraphNode(nodeID, labels...)
 	node.WithProperties(properties)
 

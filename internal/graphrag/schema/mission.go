@@ -221,7 +221,7 @@ func (m *Mission) MarkFailed() {
 // Each node represents either an agent execution or tool invocation.
 type WorkflowNode struct {
 	ID          types.ID           `json:"id"`                     // Unique within mission
-	MissionID   types.ID           `json:"mission_id"`             // Parent mission ID
+	MissionID   types.ID           `json:"mission_id"`             // Parent mission ID (stable SQLite ID)
 	Type        WorkflowNodeType   `json:"type"`                   // "agent" or "tool"
 	Name        string             `json:"name"`                   // Node name/identifier
 	Description string             `json:"description"`            // Human-readable description

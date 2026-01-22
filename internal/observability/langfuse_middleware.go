@@ -24,7 +24,7 @@ type EventSender interface {
 //
 // The middleware handles two key operation types:
 //   - OpComplete/OpCompleteWithTools: Traced as Langfuse "generation" events with prompt/completion/tokens
-//   - OpCallTool: Traced as Langfuse "span" events with input/output
+//   - OpCallToolProto: Traced as Langfuse "span" events with input/output
 //
 // Trace Hierarchy:
 // When a tracer and parent log are provided, traces are nested under the parent agent execution:
@@ -76,7 +76,7 @@ func LangfuseTracingMiddleware(tracer EventSender, parentLog *AgentExecutionLog)
 			case middleware.OpComplete, middleware.OpCompleteWithTools:
 				go traceCompletion(ctx, tracer, parentLog, req, resp, err, startTime)
 
-			case middleware.OpCallTool:
+			case middleware.OpCallToolProto:
 				go traceToolCall(ctx, tracer, parentLog, req, resp, err, startTime)
 			}
 

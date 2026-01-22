@@ -1,6 +1,8 @@
 package component
 
 import (
+	sdkGraphrag "github.com/zero-day-ai/sdk/graphrag"
+	"github.com/zero-day-ai/gibson/internal/graphrag"
 	"context"
 	"fmt"
 	"os"
@@ -264,12 +266,19 @@ type Installer interface {
 
 // DefaultInstaller implements Installer using git, build executor, and ComponentStore
 type DefaultInstaller struct {
-	git       git.GitOperations
-	builder   build.BuildExecutor
-	store     ComponentStore
-	lifecycle LifecycleManager
-	homeDir   string
-	tracer    trace.Tracer
+	git              git.GitOperations
+	builder          build.BuildExecutor
+	store            ComponentStore
+	lifecycle        LifecycleManager
+	homeDir          string
+	tracer           trace.Tracer
+	taxonomyRegistry TaxonomyRegistry // Optional: unregisters agent taxonomy extensions on uninstall
+}
+
+// TaxonomyRegistry defines the interface for managing agent taxonomy extensions.
+type TaxonomyRegistry interface {
+	RegisterExtension(agentName string, ext *TaxonomyExtension) error
+	UnregisterExtension(agentName string) error
 }
 
 // NewDefaultInstaller creates a new DefaultInstaller instance
@@ -1611,6 +1620,11 @@ func (i *DefaultInstaller) Uninstall(ctx context.Context, kind ComponentKind, na
 		}
 	}
 
+	// Step 2.5: Unregister agent taxonomy extension (agents only)
+	if kind == ComponentKindAgent {
+		i.unregisterTaxonomyExtension(ctx, name, span)
+	}
+
 	// Step 3: Delete from database
 	if i.store != nil {
 		if err := i.store.Delete(ctx, kind, name); err != nil {
@@ -2339,4 +2353,117 @@ func (i *DefaultInstaller) buildAtPath(ctx context.Context, dir string, buildCfg
 	}
 
 	return result, nil
+}
+
+// registerTaxonomyExtension registers a taxonomy extension for an agent with the taxonomy registry.
+// This is called after successful agent installation to merge custom node types and relationships
+// with the core taxonomy. Failures are logged as warnings but don't fail the installation.
+func (i *DefaultInstaller) registerTaxonomyExtension(ctx context.Context, agentName string, manifestTaxonomy *TaxonomyExtension, span trace.Span) {
+	// Skip if no taxonomy registry is configured
+	if i.taxonomyRegistry == nil {
+		span.AddEvent("taxonomy registry not configured, skipping extension registration", trace.WithAttributes(
+			attribute.String("agent.name", agentName),
+		))
+		return
+	}
+
+	// Register with the taxonomy registry (manifest types are used directly)
+	if err := i.taxonomyRegistry.RegisterExtension(agentName, manifestTaxonomy); err != nil {
+		// Log as warning - taxonomy registration failure shouldn't fail installation
+		span.AddEvent("failed to register taxonomy extension", trace.WithAttributes(
+			attribute.String("agent.name", agentName),
+			attribute.String("error", err.Error()),
+		))
+	} else {
+		// Log success with counts
+		span.AddEvent("registered taxonomy extension", trace.WithAttributes(
+			attribute.String("agent.name", agentName),
+			attribute.Int("node_types", len(manifestTaxonomy.NodeTypes)),
+			attribute.Int("relationships", len(manifestTaxonomy.Relationships)),
+		))
+	}
+}
+
+// unregisterTaxonomyExtension removes a taxonomy extension for an agent from the taxonomy registry.
+// This is called during agent uninstallation to clean up custom taxonomy definitions.
+// Failures are logged but don't fail the uninstallation.
+func (i *DefaultInstaller) unregisterTaxonomyExtension(ctx context.Context, agentName string, span trace.Span) {
+	// Skip if no taxonomy registry is configured
+	if i.taxonomyRegistry == nil {
+		return
+	}
+
+	// Unregister the extension
+	if err := i.taxonomyRegistry.UnregisterExtension(agentName); err != nil {
+		// Log as warning - taxonomy unregistration failure shouldn't fail uninstallation
+		span.AddEvent("failed to unregister taxonomy extension", trace.WithAttributes(
+			attribute.String("agent.name", agentName),
+			attribute.String("error", err.Error()),
+		))
+	} else {
+		span.AddEvent("unregistered taxonomy extension", trace.WithAttributes(
+			attribute.String("agent.name", agentName),
+		))
+	}
+}
+
+// taxonomyRegistryAdapter adapts the graphrag.TaxonomyRegistry to work with component.TaxonomyExtension types.
+// This avoids circular imports and type conflicts between packages.
+type taxonomyRegistryAdapter struct {
+	registry graphrag.TaxonomyRegistry
+}
+
+// NewTaxonomyRegistryAdapter creates a new adapter for the graphrag TaxonomyRegistry.
+func NewTaxonomyRegistryAdapter(registry graphrag.TaxonomyRegistry) TaxonomyRegistry {
+	return &taxonomyRegistryAdapter{registry: registry}
+}
+
+// RegisterExtension converts component.TaxonomyExtension to graphrag.TaxonomyExtension and registers it.
+func (a *taxonomyRegistryAdapter) RegisterExtension(agentName string, ext *TaxonomyExtension) error {
+	if ext == nil {
+		return nil
+	}
+
+	// Convert component types to graphrag types
+	graphragExt := graphrag.TaxonomyExtension{
+		NodeTypes:     make([]graphrag.NodeTypeDefinition, len(ext.NodeTypes)),
+		Relationships: make([]graphrag.RelationshipDefinition, len(ext.Relationships)),
+	}
+
+	// Convert node types
+	for i, nt := range ext.NodeTypes {
+		graphragExt.NodeTypes[i] = graphrag.NodeTypeDefinition{
+			Name:       nt.Name,
+			Category:   nt.Category,
+			Properties: make([]sdkGraphrag.PropertyInfo, len(nt.Properties)),
+		}
+		for j, prop := range nt.Properties {
+			graphragExt.NodeTypes[i].Properties[j] = sdkGraphrag.PropertyInfo{
+				Name: prop.Name,
+				Type: prop.Type,
+			}
+		}
+	}
+
+	// Convert relationships
+	for i, rel := range ext.Relationships {
+		graphragExt.Relationships[i] = graphrag.RelationshipDefinition{
+			Name:      rel.Name,
+			FromTypes: rel.FromTypes,
+			ToTypes:   rel.ToTypes,
+		}
+	}
+
+	return a.registry.RegisterExtension(agentName, graphragExt)
+}
+
+// UnregisterExtension removes a taxonomy extension for an agent.
+func (a *taxonomyRegistryAdapter) UnregisterExtension(agentName string) error {
+	return a.registry.UnregisterExtension(agentName)
+}
+
+// SetTaxonomyRegistry sets the taxonomy registry for the installer.
+// This is optional - if not set, taxonomy extension cleanup will be skipped during uninstall.
+func (i *DefaultInstaller) SetTaxonomyRegistry(registry TaxonomyRegistry) {
+	i.taxonomyRegistry = registry
 }

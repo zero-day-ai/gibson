@@ -12,7 +12,7 @@ import (
 )
 
 // executeTool executes a tool step.
-// It calls the tool through the harness and returns the output.
+// It calls the tool through the harness using CallToolProto and returns the output.
 // Tools don't produce findings directly.
 func (e *PlanExecutor) executeTool(ctx context.Context, step *ExecutionStep, h harness.AgentHarness) (map[string]any, []agent.Finding, error) {
 	if step.ToolName == "" {
@@ -24,10 +24,45 @@ func (e *PlanExecutor) executeTool(ctx context.Context, step *ExecutionStep, h h
 		"step_id", step.ID,
 	)
 
-	// Call the tool through the harness
-	output, err := h.CallTool(ctx, step.ToolName, step.ToolInput)
+	// Get tool descriptor to determine proto types
+	toolDesc, err := h.GetToolDescriptor(ctx, step.ToolName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get tool descriptor: %w", err)
+	}
+
+	// Check if tool supports proto execution
+	if toolDesc.InputProtoType == "" || toolDesc.OutputProtoType == "" {
+		return nil, nil, fmt.Errorf("tool %s does not support proto execution", step.ToolName)
+	}
+
+	e.logger.Debug("tool proto types",
+		"tool_name", step.ToolName,
+		"input_type", toolDesc.InputProtoType,
+		"output_type", toolDesc.OutputProtoType,
+	)
+
+	// Convert step.ToolInput (map[string]any) to proto request
+	inputMsg, err := mapToProtoMessage(step.ToolInput, toolDesc.InputProtoType)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert input to proto: %w", err)
+	}
+
+	// Create output proto message
+	outputMsg, err := createProtoMessage(toolDesc.OutputProtoType)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create output proto: %w", err)
+	}
+
+	// Call the tool through the harness using CallToolProto
+	err = h.CallToolProto(ctx, step.ToolName, inputMsg, outputMsg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tool execution failed: %w", err)
+	}
+
+	// Convert proto response back to map[string]any for workflow output
+	output, err := protoMessageToMap(outputMsg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to convert output from proto: %w", err)
 	}
 
 	// Tools don't produce findings directly

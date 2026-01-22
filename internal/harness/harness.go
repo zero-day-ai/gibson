@@ -9,6 +9,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/proto"
 )
 
 // StructuredCompletionResult contains the result of a structured completion
@@ -116,14 +117,16 @@ type AgentHarness interface {
 	//
 	// The agent is responsible for:
 	//   1. Checking response.Message.ToolCalls to see if the LLM requested tool execution
-	//   2. Executing the requested tools using CallTool()
+	//   2. Executing the requested tools using CallToolProto()
 	//   3. Appending tool results to messages and calling Complete() again
 	//
 	// Example:
 	//   resp, err := harness.CompleteWithTools(ctx, "primary", messages, tools)
 	//   for _, toolCall := range resp.Message.ToolCalls {
-	//       result, _ := harness.CallTool(ctx, toolCall.Name, args)
-	//       messages = append(messages, llm.NewToolResultMessage(toolCall.ID, result))
+	//       req := &toolpb.Request{} // Populate from toolCall
+	//       resp := &toolpb.Response{}
+	//       harness.CallToolProto(ctx, toolCall.Name, req, resp)
+	//       messages = append(messages, llm.NewToolResultMessage(toolCall.ID, resp))
 	//   }
 	CompleteWithTools(ctx context.Context, slot string, messages []llm.Message, tools []llm.ToolDef, opts ...CompletionOption) (*llm.CompletionResponse, error)
 
@@ -207,30 +210,32 @@ type AgentHarness interface {
 	// Tool Execution
 	// ────────────────────────────────────────────────────────────────────────────
 
-	// CallTool executes a registered tool by name with the given input parameters.
-	// Tools are typically called in response to LLM tool requests, but agents
-	// can also call tools directly.
+	// CallToolProto executes a registered tool by name using Protocol Buffer messages.
+	// This is the canonical method for tool execution in Gibson. Tools are typically
+	// called in response to LLM tool requests, but agents can also call tools directly.
 	//
 	// Parameters:
 	//   - ctx: Context for cancellation and timeout control
 	//   - name: Name of the tool to execute (must be registered)
-	//   - input: Tool input parameters as a map (validated against tool's input schema)
+	//   - request: Tool input as a proto message (validated against tool's proto schema)
+	//   - response: Proto message to populate with tool output
 	//
 	// Returns:
-	//   - map[string]any: Tool execution result (conforms to tool's output schema)
 	//   - error: Non-nil if tool not found, validation fails, or execution fails
 	//
 	// The harness:
-	//   - Validates input against the tool's JSON schema
+	//   - Validates request against the tool's proto schema
 	//   - Executes the tool with proper context propagation
 	//   - Records execution metrics (duration, success/failure)
 	//   - Creates distributed trace spans
 	//   - Handles timeouts and cancellation
+	//   - Populates the response proto message with tool output
 	//
 	// Example:
-	//   input := map[string]any{"target": "192.168.1.1", "ports": "1-1024"}
-	//   result, err := harness.CallTool(ctx, "nmap_scan", input)
-	CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error)
+	//   req := &portscannerpb.ScanRequest{Target: "192.168.1.1", Ports: "1-1024"}
+	//   resp := &portscannerpb.ScanResponse{}
+	//   err := harness.CallToolProto(ctx, "nmap_scan", req, resp)
+	CallToolProto(ctx context.Context, name string, request, response proto.Message) error
 
 	// ListTools returns descriptors for all registered tools.
 	// This enables dynamic tool discovery and capability introspection.

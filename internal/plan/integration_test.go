@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/guardrail"
@@ -24,7 +25,7 @@ import (
 // MockHarness is a test harness implementation for testing plan execution
 type MockHarness struct {
 	tools            map[string]harness.ToolDescriptor
-	toolOutputs      map[string]map[string]any
+	toolProtoOutputs map[string]proto.Message
 	toolErrors       map[string]error
 	plugins          map[string]harness.PluginDescriptor
 	pluginOutputs    map[string]map[string]any
@@ -46,17 +47,17 @@ var _ harness.AgentHarness = (*MockHarness)(nil)
 // createMockHarness returns a basic mock harness for testing
 func createMockHarness() *MockHarness {
 	return &MockHarness{
-		tools:         make(map[string]harness.ToolDescriptor),
-		toolOutputs:   make(map[string]map[string]any),
-		toolErrors:    make(map[string]error),
-		plugins:       make(map[string]harness.PluginDescriptor),
-		pluginOutputs: make(map[string]map[string]any),
-		pluginErrors:  make(map[string]error),
-		agents:        make(map[string]harness.AgentDescriptor),
-		agentResults:  make(map[string]agent.Result),
-		agentErrors:   make(map[string]error),
-		llmResponses:  []string{},
-		findings:      []agent.Finding{},
+		tools:            make(map[string]harness.ToolDescriptor),
+		toolProtoOutputs: make(map[string]proto.Message),
+		toolErrors:       make(map[string]error),
+		plugins:          make(map[string]harness.PluginDescriptor),
+		pluginOutputs:    make(map[string]map[string]any),
+		pluginErrors:     make(map[string]error),
+		agents:           make(map[string]harness.AgentDescriptor),
+		agentResults:     make(map[string]agent.Result),
+		agentErrors:      make(map[string]error),
+		llmResponses:     []string{},
+		findings:         []agent.Finding{},
 		missionCtx: harness.MissionContext{
 			ID:           types.NewID(),
 			Name:         "test_mission",
@@ -96,20 +97,35 @@ func (m *MockHarness) CompleteWithTools(ctx context.Context, slot string, messag
 	return m.Complete(ctx, slot, messages, opts...)
 }
 
+// CompleteStructuredAny implements harness.AgentHarness
+func (m *MockHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (any, error) {
+	return nil, errors.New("CompleteStructuredAny not implemented in mock")
+}
+
+// CompleteStructuredAnyWithUsage implements harness.AgentHarness
+func (m *MockHarness) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (*harness.StructuredCompletionResult, error) {
+	return nil, errors.New("CompleteStructuredAnyWithUsage not implemented in mock")
+}
+
 // Stream implements harness.AgentHarness
 func (m *MockHarness) Stream(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (<-chan llm.StreamChunk, error) {
 	return nil, errors.New("streaming not implemented in mock")
 }
 
-// CallTool implements harness.AgentHarness
-func (m *MockHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	if err, exists := m.toolErrors[name]; exists {
-		return nil, err
+// CallToolProto implements harness.AgentHarness
+func (m *MockHarness) CallToolProto(ctx context.Context, name string, request proto.Message, response proto.Message) error {
+	if err, ok := m.toolErrors[name]; ok {
+		return err
 	}
-	if output, exists := m.toolOutputs[name]; exists {
-		return output, nil
+	// If a proto output is set for this tool, copy it to the response
+	if protoOut, ok := m.toolProtoOutputs[name]; ok {
+		// Use proto.Merge to copy fields from the mock output to the response
+		proto.Merge(response, protoOut)
+		return nil
 	}
-	return map[string]any{"status": "success"}, nil
+	// For testing with generic responses, provide a successful default
+	// The actual tests don't validate proto structure, just that the mock works
+	return nil
 }
 
 // ListTools implements harness.AgentHarness
@@ -119,6 +135,14 @@ func (m *MockHarness) ListTools() []harness.ToolDescriptor {
 		tools = append(tools, tool)
 	}
 	return tools
+}
+
+// GetToolDescriptor implements harness.AgentHarness
+func (m *MockHarness) GetToolDescriptor(ctx context.Context, name string) (*harness.ToolDescriptor, error) {
+	if tool, exists := m.tools[name]; exists {
+		return &tool, nil
+	}
+	return nil, errors.New("tool not found")
 }
 
 // QueryPlugin implements harness.AgentHarness
@@ -175,6 +199,31 @@ func (m *MockHarness) GetFindings(ctx context.Context, filter harness.FindingFil
 	return m.findings, nil
 }
 
+// GetPreviousRunFindings implements harness.AgentHarness
+func (m *MockHarness) GetPreviousRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return []agent.Finding{}, nil
+}
+
+// GetAllRunFindings implements harness.AgentHarness
+func (m *MockHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
+	return m.findings, nil
+}
+
+// MissionExecutionContext implements harness.AgentHarness
+func (m *MockHarness) MissionExecutionContext() harness.MissionExecutionContextSDK {
+	return harness.MissionExecutionContextSDK{}
+}
+
+// GetMissionRunHistory implements harness.AgentHarness
+func (m *MockHarness) GetMissionRunHistory(ctx context.Context) ([]harness.MissionRunSummarySDK, error) {
+	return []harness.MissionRunSummarySDK{}, nil
+}
+
+// MissionID implements harness.AgentHarness
+func (m *MockHarness) MissionID() types.ID {
+	return m.missionCtx.ID
+}
+
 // Memory implements harness.AgentHarness
 func (m *MockHarness) Memory() memory.MemoryStore {
 	return nil // Not needed for these tests
@@ -213,16 +262,32 @@ func (m *MockHarness) TokenUsage() *llm.TokenTracker {
 // AddTool adds a tool to the mock harness
 func (m *MockHarness) AddTool(name, description string) *MockHarness {
 	m.tools[name] = harness.ToolDescriptor{
-		Name:        name,
-		Description: description,
-		Tags:        []string{},
+		Name:            name,
+		Description:     description,
+		Tags:            []string{},
+		InputProtoType:  "google.protobuf.Struct",  // Generic proto type for testing
+		OutputProtoType: "google.protobuf.Struct", // Generic proto type for testing
 	}
 	return m
 }
 
-// SetToolOutput sets the output for a tool call
+// SetToolProtoOutput sets the proto output for a tool call
+func (m *MockHarness) SetToolProtoOutput(name string, output proto.Message) *MockHarness {
+	m.toolProtoOutputs[name] = output
+	return m
+}
+
+// SetToolOutput sets the output for a tool call as a map (for convenience in tests)
+// The map will be converted to proto Struct internally when CallToolProto is called
 func (m *MockHarness) SetToolOutput(name string, output map[string]any) *MockHarness {
-	m.toolOutputs[name] = output
+	// Convert map to proto Struct for storage
+	protoOutput, err := mapToProtoMessage(output, "google.protobuf.Struct")
+	if err != nil {
+		// If conversion fails, store error for this tool
+		m.toolErrors[name] = err
+		return m
+	}
+	m.toolProtoOutputs[name] = protoOutput
 	return m
 }
 

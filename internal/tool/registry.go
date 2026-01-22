@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
-// ToolRegistry manages tool registration, discovery, and execution.
+// ToolRegistry manages tool registration, discovery, and health monitoring.
 // It provides a centralized registry for both internal (native Go) and external (gRPC) tools,
-// with built-in metrics tracking and health monitoring.
+// with built-in metrics tracking. Tools are executed via their ExecuteProto method after retrieval.
 type ToolRegistry interface {
 	// RegisterInternal registers a native Go tool implementation
 	RegisterInternal(tool Tool) error
@@ -30,9 +29,6 @@ type ToolRegistry interface {
 
 	// ListByTag returns descriptors for tools matching the given tag
 	ListByTag(tag string) []ToolDescriptor
-
-	// Execute runs a tool by name with the given input, recording metrics
-	Execute(ctx context.Context, name string, input map[string]any) (map[string]any, error)
 
 	// Health returns the overall health status of the registry
 	Health(ctx context.Context) types.HealthStatus
@@ -206,38 +202,6 @@ func (r *DefaultToolRegistry) ListByTag(tag string) []ToolDescriptor {
 	}
 
 	return descriptors
-}
-
-// Execute runs a tool by name with the given input, recording metrics.
-// Returns ErrToolNotFound if the tool doesn't exist.
-func (r *DefaultToolRegistry) Execute(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	// Get the tool (with read lock)
-	tool, err := r.Get(name)
-	if err != nil {
-		return nil, err
-	}
-
-	// Execute the tool and track metrics
-	start := time.Now()
-	output, execErr := tool.Execute(ctx, input)
-	duration := time.Since(start)
-
-	// Record metrics (with write lock)
-	r.mu.Lock()
-	if metrics, exists := r.metrics[name]; exists {
-		if execErr != nil {
-			metrics.RecordFailure(duration)
-		} else {
-			metrics.RecordSuccess(duration)
-		}
-	}
-	r.mu.Unlock()
-
-	if execErr != nil {
-		return nil, types.WrapError(ErrToolExecutionFailed, fmt.Sprintf("tool %q execution failed", name), execErr)
-	}
-
-	return output, nil
 }
 
 // Health returns the overall health status of the registry.

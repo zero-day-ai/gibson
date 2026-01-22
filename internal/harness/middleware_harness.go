@@ -12,6 +12,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/proto"
 )
 
 // MiddlewareHarness wraps an AgentHarness and routes operations through middleware.
@@ -125,23 +126,10 @@ func (h *MiddlewareHarness) CompleteStructuredAnyWithUsage(ctx context.Context, 
 	return result.(*StructuredCompletionResult), nil
 }
 
-func (h *MiddlewareHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	ctx = middleware.WithOperationType(ctx, middleware.OpCallTool)
-	ctx = middleware.WithToolName(ctx, name)
-	ctx = middleware.WithMissionContext(ctx, h.inner.Mission().ID.String(), h.inner.Mission().CurrentAgent)
-
-	innerOp := func(ctx context.Context, req any) (any, error) {
-		return h.inner.CallTool(ctx, name, input)
-	}
-
-	result, err := h.wrapOperation(innerOp)(ctx, input)
-	if err != nil {
-		return nil, err
-	}
-	if result == nil {
-		return nil, nil
-	}
-	return result.(map[string]any), nil
+// CallToolProto delegates to the inner harness's CallToolProto.
+// Middleware can be applied in the future if needed.
+func (h *MiddlewareHarness) CallToolProto(ctx context.Context, name string, request, response proto.Message) error {
+	return h.inner.CallToolProto(ctx, name, request, response)
 }
 
 func (h *MiddlewareHarness) QueryPlugin(ctx context.Context, name string, method string, params map[string]any) (any, error) {
@@ -216,10 +204,6 @@ func (h *MiddlewareHarness) GetAllRunFindings(ctx context.Context, filter Findin
 }
 
 // agent.AgentHarness interface
-func (h *MiddlewareHarness) ExecuteTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	return h.CallTool(ctx, name, input)
-}
-
 func (h *MiddlewareHarness) Log(level, message string, fields map[string]any) {
 	attrs := make([]any, 0, len(fields)*2)
 	for k, v := range fields {
@@ -241,7 +225,8 @@ func (h *MiddlewareHarness) Log(level, message string, fields map[string]any) {
 }
 
 var _ AgentHarness = (*MiddlewareHarness)(nil)
-var _ agent.AgentHarness = (*MiddlewareHarness)(nil)
+// TODO(gibson-calltool-removal): Re-enable after task 7.1 removes ExecuteTool from agent.AgentHarness
+// var _ agent.AgentHarness = (*MiddlewareHarness)(nil)
 
 // GraphRAGSupport interface implementation - pass through to inner harness
 // These methods enable GraphRAG operations for external agents using callback RPCs.

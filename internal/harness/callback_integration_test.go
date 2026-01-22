@@ -16,18 +16,21 @@ import (
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
+	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/sdk/serve"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
+	protobuf "google.golang.org/protobuf/proto"
 )
 
 // mockIntegrationHarness is a minimal implementation of AgentHarness for testing callbacks.
 // It implements only the methods needed for the integration test (Memory access).
 type mockIntegrationHarness struct {
-	memory memory.MemoryStore
-	logger *slog.Logger
-	tracer trace.Tracer
+	memory           memory.MemoryStore
+	logger           *slog.Logger
+	tracer           trace.Tracer
+	toolProtoOutputs map[string]protobuf.Message // Proto outputs by tool name
 }
 
 // Memory returns the memory store
@@ -58,12 +61,30 @@ func (m *mockIntegrationHarness) Stream(ctx context.Context, slot string, messag
 	return nil, fmt.Errorf("Stream not implemented in mock harness")
 }
 
-func (m *mockIntegrationHarness) CallTool(ctx context.Context, toolName string, input map[string]any) (map[string]any, error) {
-	return nil, fmt.Errorf("CallTool not implemented in mock harness")
+func (m *mockIntegrationHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (any, error) {
+	return nil, fmt.Errorf("CompleteStructuredAny not implemented in mock harness")
+}
+
+func (m *mockIntegrationHarness) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...CompletionOption) (*StructuredCompletionResult, error) {
+	return nil, fmt.Errorf("CompleteStructuredAnyWithUsage not implemented in mock harness")
+}
+
+func (m *mockIntegrationHarness) CallToolProto(ctx context.Context, name string, request protobuf.Message, response protobuf.Message) error {
+	// If a proto output is set for this tool, copy it to the response
+	if protoOut, ok := m.toolProtoOutputs[name]; ok {
+		// Use protobuf.Merge to copy fields from the mock output to the response
+		protobuf.Merge(response, protoOut)
+		return nil
+	}
+	return fmt.Errorf("CallToolProto not configured for tool: %s", name)
 }
 
 func (m *mockIntegrationHarness) ListTools() []ToolDescriptor {
 	return nil
+}
+
+func (m *mockIntegrationHarness) GetToolDescriptor(ctx context.Context, name string) (*ToolDescriptor, error) {
+	return nil, fmt.Errorf("GetToolDescriptor not implemented in mock harness")
 }
 
 func (m *mockIntegrationHarness) QueryPlugin(ctx context.Context, pluginName string, method string, params map[string]any) (any, error) {
@@ -104,6 +125,10 @@ func (m *mockIntegrationHarness) GetPreviousRunFindings(ctx context.Context, fil
 
 func (m *mockIntegrationHarness) Mission() MissionContext {
 	return MissionContext{}
+}
+
+func (m *mockIntegrationHarness) MissionID() types.ID {
+	return types.ID("")
 }
 
 func (m *mockIntegrationHarness) MissionExecutionContext() MissionExecutionContextSDK {
@@ -176,9 +201,10 @@ func TestCallbackIntegration(t *testing.T) {
 	workingMem := memory.NewWorkingMemory(10000) // 10k token budget
 	mockMem := &mockMemoryStore{working: workingMem}
 	harness := &mockIntegrationHarness{
-		memory: mockMem,
-		logger: logger,
-		tracer: noop.NewTracerProvider().Tracer("test"),
+		memory:           mockMem,
+		logger:           logger,
+		tracer:           noop.NewTracerProvider().Tracer("test"),
+		toolProtoOutputs: make(map[string]protobuf.Message),
 	}
 
 	// Step 3: Register harness with mission ID and agent name (via registry)

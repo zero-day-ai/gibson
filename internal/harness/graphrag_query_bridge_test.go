@@ -316,7 +316,7 @@ func TestDefaultGraphRAGQueryBridge_Query(t *testing.T) {
 				IsHealthy:       true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			results, err := bridge.Query(ctx, tt.query)
@@ -398,7 +398,7 @@ func TestDefaultGraphRAGQueryBridge_FindSimilarAttacks(t *testing.T) {
 				IsHealthy:                    true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			patterns, err := bridge.FindSimilarAttacks(ctx, tt.content, tt.topK)
@@ -480,7 +480,7 @@ func TestDefaultGraphRAGQueryBridge_FindSimilarFindings(t *testing.T) {
 				IsHealthy:                     true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			findings, err := bridge.FindSimilarFindings(ctx, tt.findingID, tt.topK)
@@ -577,7 +577,7 @@ func TestDefaultGraphRAGQueryBridge_GetAttackChains(t *testing.T) {
 				IsHealthy:                 true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			chains, err := bridge.GetAttackChains(ctx, tt.techniqueID, tt.maxDepth)
@@ -662,7 +662,7 @@ func TestDefaultGraphRAGQueryBridge_GetRelatedFindings(t *testing.T) {
 				IsHealthy:                    true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			findings, err := bridge.GetRelatedFindings(ctx, tt.findingID)
@@ -754,7 +754,7 @@ func TestDefaultGraphRAGQueryBridge_StoreNode(t *testing.T) {
 				IsHealthy:       true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			nodeID, err := bridge.StoreNode(ctx, tt.node, tt.missionID, tt.agentName)
@@ -838,7 +838,7 @@ func TestDefaultGraphRAGQueryBridge_CreateRelationship(t *testing.T) {
 				IsHealthy:       true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			err := bridge.CreateRelationship(ctx, tt.rel)
@@ -958,7 +958,7 @@ func TestDefaultGraphRAGQueryBridge_StoreBatch(t *testing.T) {
 				IsHealthy:            true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			nodeIDs, err := bridge.StoreBatch(ctx, tt.batch, tt.missionID, tt.agentName)
@@ -1000,7 +1000,7 @@ func TestDefaultGraphRAGQueryBridge_Traverse(t *testing.T) {
 				IsHealthy: true,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			results, err := bridge.Traverse(ctx, startNodeID, tt.opts)
@@ -1048,7 +1048,7 @@ func TestDefaultGraphRAGQueryBridge_Health(t *testing.T) {
 				HealthMessage: tt.healthMessage,
 			}
 
-			bridge := NewGraphRAGQueryBridge(mock)
+			bridge := NewGraphRAGQueryBridge(mock, nil)
 			ctx := context.Background()
 
 			status := bridge.Health(ctx)
@@ -1108,7 +1108,7 @@ func TestStoreBatch_ValidBatch(t *testing.T) {
 		IsHealthy: true,
 	}
 
-	bridge := NewGraphRAGQueryBridge(mock)
+	bridge := NewGraphRAGQueryBridge(mock, nil)
 	ctx := context.Background()
 	missionID := types.NewID().String()
 
@@ -1168,7 +1168,7 @@ func TestStoreBatch_InvalidFromID(t *testing.T) {
 		IsHealthy: true,
 	}
 
-	bridge := NewGraphRAGQueryBridge(mock)
+	bridge := NewGraphRAGQueryBridge(mock, nil)
 	ctx := context.Background()
 	missionID := types.NewID().String()
 
@@ -1217,7 +1217,7 @@ func TestStoreBatch_InvalidToID(t *testing.T) {
 		IsHealthy: true,
 	}
 
-	bridge := NewGraphRAGQueryBridge(mock)
+	bridge := NewGraphRAGQueryBridge(mock, nil)
 	ctx := context.Background()
 	missionID := types.NewID().String()
 
@@ -1279,7 +1279,7 @@ func TestStoreBatch_MultipleInvalid(t *testing.T) {
 		IsHealthy: true,
 	}
 
-	bridge := NewGraphRAGQueryBridge(mock)
+	bridge := NewGraphRAGQueryBridge(mock, nil)
 	ctx := context.Background()
 	missionID := types.NewID().String()
 
@@ -1360,7 +1360,7 @@ func TestStoreSemantic(t *testing.T) {
 				IsHealthy:     true,
 				HealthMessage: "healthy",
 			}
-			bridge := NewGraphRAGQueryBridge(mockStore)
+			bridge := NewGraphRAGQueryBridge(mockStore, nil)
 
 			nodeID, err := bridge.StoreSemantic(context.Background(), tt.node, "test-mission", "test-agent")
 
@@ -1416,7 +1416,7 @@ func TestStoreStructured(t *testing.T) {
 				IsHealthy:     true,
 				HealthMessage: "healthy",
 			}
-			bridge := NewGraphRAGQueryBridge(mockStore)
+			bridge := NewGraphRAGQueryBridge(mockStore, nil)
 
 			nodeID, err := bridge.StoreStructured(context.Background(), tt.node, "test-mission", "test-agent")
 
@@ -1475,7 +1475,7 @@ func TestQuerySemantic(t *testing.T) {
 				IsHealthy:     true,
 				HealthMessage: "healthy",
 			}
-			bridge := NewGraphRAGQueryBridge(mockStore)
+			bridge := NewGraphRAGQueryBridge(mockStore, nil)
 
 			results, err := bridge.QuerySemantic(context.Background(), tt.query)
 
@@ -1538,7 +1538,7 @@ func TestQueryStructured(t *testing.T) {
 				IsHealthy:     true,
 				HealthMessage: "healthy",
 			}
-			bridge := NewGraphRAGQueryBridge(mockStore)
+			bridge := NewGraphRAGQueryBridge(mockStore, nil)
 
 			results, err := bridge.QueryStructured(context.Background(), tt.query)
 

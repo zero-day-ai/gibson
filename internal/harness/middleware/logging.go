@@ -226,7 +226,7 @@ func addStartAttributes(record *log.Record, opType OperationType, req any) {
 			)
 		}
 
-	case OpCallTool:
+	case OpCallToolProto:
 		if toolReq, ok := req.(*ToolRequest); ok {
 			record.AddAttributes(
 				log.String("tool_name", toolReq.Name),
@@ -268,7 +268,7 @@ func addCompleteAttributes(record *log.Record, opType OperationType, resp any) {
 			)
 		}
 
-	case OpCallTool:
+	case OpCallToolProto:
 		if toolResp, ok := resp.(map[string]any); ok {
 			record.AddAttributes(
 				log.Int("result_size", len(toolResp)),
@@ -303,7 +303,7 @@ func addDebugStartAttributes(record *log.Record, opType OperationType, req any) 
 			record.AddAttributes(log.String("prompt_preview", promptPreview))
 		}
 
-	case OpCallTool:
+	case OpCallToolProto:
 		if toolReq, ok := req.(*ToolRequest); ok {
 			// Include parameter summary (but not full values which may be sensitive)
 			paramKeys := make([]string, 0, len(toolReq.Input))
@@ -383,7 +383,7 @@ func operationName(opType OperationType) string {
 		return "llm.complete_with_tools"
 	case OpStream:
 		return "llm.stream"
-	case OpCallTool:
+	case OpCallToolProto:
 		return "tool.call"
 	case OpQueryPlugin:
 		return "plugin.query"

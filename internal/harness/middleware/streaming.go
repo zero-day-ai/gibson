@@ -61,7 +61,7 @@ func StreamingMiddleware(stream StreamSender, logger *slog.Logger, tracer trace.
 			traceID, spanID := extractTraceInfo(ctx, tracer)
 
 			// Handle pre-execution events (tool calls)
-			if opType == OpCallTool {
+			if opType == OpCallToolProto {
 				if err := emitToolCallEvent(ctx, stream, req, traceID, spanID); err != nil {
 					if logger != nil {
 						logger.Warn("failed to emit tool call event", "error", err)
@@ -74,7 +74,7 @@ func StreamingMiddleware(stream StreamSender, logger *slog.Logger, tracer trace.
 
 			// Handle post-execution events based on operation type
 			switch opType {
-			case OpCallTool:
+			case OpCallToolProto:
 				if streamErr := emitToolResultEvent(ctx, stream, req, result, err, traceID, spanID); streamErr != nil {
 					if logger != nil {
 						logger.Warn("failed to emit tool result event", "error", streamErr)

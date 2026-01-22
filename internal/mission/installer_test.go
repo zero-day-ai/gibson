@@ -153,6 +153,14 @@ func (m *MockMissionStore) IncrementRunNumber(ctx context.Context, name string) 
 	return args.Int(0), args.Error(1)
 }
 
+func (m *MockMissionStore) FindOrCreateByName(ctx context.Context, mission *Mission) (*Mission, bool, error) {
+	args := m.Called(ctx, mission)
+	if args.Get(0) == nil {
+		return nil, args.Bool(1), args.Error(2)
+	}
+	return args.Get(0).(*Mission), args.Bool(1), args.Error(2)
+}
+
 func (m *MockMissionStore) CreateDefinition(ctx context.Context, def *MissionDefinition) error {
 	args := m.Called(ctx, def)
 	return args.Error(0)

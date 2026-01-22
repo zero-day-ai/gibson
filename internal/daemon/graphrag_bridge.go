@@ -45,6 +45,10 @@ type GraphRAGBridgeConfig struct {
 	// Required - this is the core GraphRAG storage layer.
 	GraphRAGStore graphrag.GraphRAGStore
 
+	// PolicySource provides access to data policies for enforcement.
+	// Optional - if nil, policy enforcement will be disabled.
+	PolicySource harness.PolicySource
+
 	// Logger for diagnostic output.
 	// Optional - defaults to slog.Default() if nil.
 	Logger *slog.Logger
@@ -116,7 +120,8 @@ func NewGraphRAGBridgeAdapter(config GraphRAGBridgeConfig) (*GraphRAGBridgeAdapt
 	)
 
 	// Create the query bridge (reads and queries)
-	queryBridge := harness.NewGraphRAGQueryBridge(config.GraphRAGStore)
+	// Pass PolicySource for data policy enforcement (may be nil if not configured)
+	queryBridge := harness.NewGraphRAGQueryBridge(config.GraphRAGStore, config.PolicySource)
 
 	adapter := &GraphRAGBridgeAdapter{
 		store:       config.GraphRAGStore,

@@ -130,6 +130,12 @@ func getMigrations() []migration {
 			up:      getKnowledgeSuiteSchema(),
 			down:    getDownMigration13(),
 		},
+		{
+			version: 14,
+			name:    "mission_runs_table",
+			up:      getMissionRunsTableSchema(),
+			down:    getDownMigration14(),
+		},
 		// Future migrations will be added here
 	}
 
@@ -1611,5 +1617,97 @@ DROP INDEX IF EXISTS idx_knowledge_vectors_created_at;
 
 -- Drop knowledge vectors table
 DROP TABLE IF EXISTS knowledge_vectors;
+`
+}
+
+// getMissionRunsTableSchema returns the schema for mission_runs table
+// This separates execution tracking from mission definitions, aligning SQLite with Neo4j structure
+func getMissionRunsTableSchema() string {
+	return `
+-- Migration 14: Mission Runs Table
+-- Creates a separate table for tracking individual mission executions
+-- This aligns SQLite with Neo4j's Mission/MissionRun node structure
+
+-- ============================================================================
+-- Mission Runs Table: Track individual execution instances
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mission_runs (
+    id TEXT PRIMARY KEY,
+    mission_id TEXT NOT NULL,                -- FK to missions table
+    run_number INTEGER NOT NULL,             -- Sequential run number (1, 2, 3...)
+    status TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'running', 'completed', 'failed', 'cancelled', 'paused'
+
+    -- Execution metrics
+    progress REAL DEFAULT 0.0,               -- 0.0 to 1.0
+    findings_count INTEGER DEFAULT 0,
+
+    -- State tracking
+    checkpoint TEXT,                         -- JSON serialized checkpoint state
+    error TEXT,                              -- Error message if failed
+
+    -- Timestamps
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Foreign key constraint
+    FOREIGN KEY (mission_id) REFERENCES missions(id) ON DELETE CASCADE,
+
+    -- Unique constraint: one run number per mission
+    UNIQUE(mission_id, run_number)
+);
+
+-- ============================================================================
+-- Indexes for Mission Runs
+-- ============================================================================
+
+-- Index for querying runs by mission
+CREATE INDEX IF NOT EXISTS idx_mission_runs_mission_id ON mission_runs(mission_id);
+
+-- Index for status filtering
+CREATE INDEX IF NOT EXISTS idx_mission_runs_status ON mission_runs(status);
+
+-- Index for finding latest run per mission
+CREATE INDEX IF NOT EXISTS idx_mission_runs_mission_run ON mission_runs(mission_id, run_number DESC);
+
+-- Index for active runs
+CREATE INDEX IF NOT EXISTS idx_mission_runs_active ON mission_runs(status) WHERE status IN ('running', 'paused');
+
+-- Index for time-based queries
+CREATE INDEX IF NOT EXISTS idx_mission_runs_created_at ON mission_runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mission_runs_started_at ON mission_runs(started_at DESC);
+
+-- ============================================================================
+-- Trigger to update updated_at timestamp
+-- ============================================================================
+CREATE TRIGGER IF NOT EXISTS update_mission_runs_timestamp
+    AFTER UPDATE ON mission_runs
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE mission_runs SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+`
+}
+
+// getDownMigration14 returns the rollback SQL for migration 14
+func getDownMigration14() string {
+	return `
+-- Rollback Migration 14: Mission Runs Table
+
+-- Drop trigger
+DROP TRIGGER IF EXISTS update_mission_runs_timestamp;
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_mission_runs_started_at;
+DROP INDEX IF EXISTS idx_mission_runs_created_at;
+DROP INDEX IF EXISTS idx_mission_runs_active;
+DROP INDEX IF EXISTS idx_mission_runs_mission_run;
+DROP INDEX IF EXISTS idx_mission_runs_status;
+DROP INDEX IF EXISTS idx_mission_runs_mission_id;
+
+-- Drop table
+DROP TABLE IF EXISTS mission_runs;
 `
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/sdk/agent"
+	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 	"github.com/zero-day-ai/sdk/finding"
 	"github.com/zero-day-ai/sdk/graphrag"
 	"github.com/zero-day-ai/sdk/llm"
@@ -20,6 +21,7 @@ import (
 	"github.com/zero-day-ai/sdk/tool"
 	"github.com/zero-day-ai/sdk/types"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/proto"
 
 	gibsonAgent "github.com/zero-day-ai/gibson/internal/agent"
 	gibsonHarness "github.com/zero-day-ai/gibson/internal/harness"
@@ -88,9 +90,10 @@ func (a *GibsonHarnessAdapter) Stream(ctx context.Context, slot string, messages
 	return sdkChunks, nil
 }
 
-// CallTool invokes a tool by name with the given input parameters.
-func (a *GibsonHarnessAdapter) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	return a.inner.CallTool(ctx, name, input)
+// CallToolProto invokes a tool by name with proto request/response messages.
+// This delegates to the inner Gibson harness.
+func (a *GibsonHarnessAdapter) CallToolProto(ctx context.Context, name string, request, response proto.Message) error {
+	return a.inner.CallToolProto(ctx, name, request, response)
 }
 
 // ListTools returns descriptors for all available tools.
@@ -99,12 +102,12 @@ func (a *GibsonHarnessAdapter) ListTools(ctx context.Context) ([]tool.Descriptor
 	sdkTools := make([]tool.Descriptor, len(gibsonTools))
 	for i, t := range gibsonTools {
 		sdkTools[i] = tool.Descriptor{
-			Name:         t.Name,
-			Version:      t.Version,
-			Description:  t.Description,
-			Tags:         t.Tags,
-			InputSchema:  schema.Any(),
-			OutputSchema: schema.Any(),
+			Name:              t.Name,
+			Version:           t.Version,
+			Description:       t.Description,
+			Tags:              t.Tags,
+			InputMessageType:  t.InputProtoType,
+			OutputMessageType: t.OutputProtoType,
 		}
 	}
 	return sdkTools, nil
@@ -633,12 +636,6 @@ func convertFilterToGibson(filter finding.Filter) gibsonHarness.FindingFilter {
 	return gibsonFilter
 }
 
-// QueryGraphRAGScoped executes a GraphRAG query with explicit scope.
-func (a *GibsonHarnessAdapter) QueryGraphRAGScoped(ctx context.Context, query graphrag.Query, scope graphrag.MissionScope) ([]graphrag.Result, error) {
-	// Not yet implemented - requires full GraphRAG integration
-	return nil, ErrNotImplemented
-}
-
 // StoreSemantic stores a node with semantic search capabilities (requires Content).
 func (a *GibsonHarnessAdapter) StoreSemantic(ctx context.Context, node graphrag.GraphNode) (string, error) {
 	return "", ErrNotImplemented
@@ -722,6 +719,20 @@ func (a *GibsonHarnessAdapter) GetMissionResults(ctx context.Context, missionID 
 // GetCredential retrieves a credential by name from the credential store.
 func (a *GibsonHarnessAdapter) GetCredential(ctx context.Context, name string) (*types.Credential, error) {
 	return nil, ErrNotImplemented
+}
+
+// ============================================================================
+// Proto-Based GraphRAG Operations (Not Implemented in Eval Adapter)
+// ============================================================================
+
+// QueryNodes queries the knowledge graph using proto messages.
+func (a *GibsonHarnessAdapter) QueryNodes(ctx context.Context, query *graphragpb.GraphQuery) ([]*graphragpb.QueryResult, error) {
+	return nil, ErrNotImplemented
+}
+
+// StoreNode stores a graph node using proto message.
+func (a *GibsonHarnessAdapter) StoreNode(ctx context.Context, node *graphragpb.GraphNode) (string, error) {
+	return "", ErrNotImplemented
 }
 
 var _ agent.Harness = (*GibsonHarnessAdapter)(nil)

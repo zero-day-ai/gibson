@@ -11,9 +11,6 @@ import (
 // through which agents interact with the Gibson platform during execution.
 // See internal/harness/harness.go for the full interface definition.
 type AgentHarness interface {
-	// ExecuteTool executes a tool and returns its output
-	ExecuteTool(ctx context.Context, name string, input map[string]any) (map[string]any, error)
-
 	// QueryPlugin queries a plugin for data or executes a plugin method
 	QueryPlugin(ctx context.Context, plugin, method string, params map[string]any) (any, error)
 

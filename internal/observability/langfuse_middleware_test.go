@@ -310,8 +310,8 @@ func TestLangfuseTracingMiddleware_WrapComplete_WithToolCalls(t *testing.T) {
 	assert.Contains(t, output, "nmap")
 }
 
-// TestLangfuseTracingMiddleware_WrapCallTool_Success tests successful tool execution tracing.
-func TestLangfuseTracingMiddleware_WrapCallTool_Success(t *testing.T) {
+// TestLangfuseTracingMiddleware_WrapCallToolProto_Success tests successful tool execution tracing.
+func TestLangfuseTracingMiddleware_WrapCallToolProto_Success(t *testing.T) {
 	mockTracer := newMockTracer()
 	executionID := types.NewID()
 
@@ -348,7 +348,7 @@ func TestLangfuseTracingMiddleware_WrapCallTool_Success(t *testing.T) {
 	}
 
 	wrappedOp := mw(mockOp)
-	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallTool)
+	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallToolProto)
 	result, err := wrappedOp(ctx, req)
 
 	require.NoError(t, err)
@@ -389,8 +389,8 @@ func TestLangfuseTracingMiddleware_WrapCallTool_Success(t *testing.T) {
 	assert.Equal(t, "success", output["status"])
 }
 
-// TestLangfuseTracingMiddleware_WrapCallTool_WithError tests tool execution tracing with error.
-func TestLangfuseTracingMiddleware_WrapCallTool_WithError(t *testing.T) {
+// TestLangfuseTracingMiddleware_WrapCallToolProto_WithError tests tool execution tracing with error.
+func TestLangfuseTracingMiddleware_WrapCallToolProto_WithError(t *testing.T) {
 	mockTracer := newMockTracer()
 	executionID := types.NewID()
 
@@ -421,7 +421,7 @@ func TestLangfuseTracingMiddleware_WrapCallTool_WithError(t *testing.T) {
 	}
 
 	wrappedOp := mw(mockOp)
-	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallTool)
+	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallToolProto)
 	result, err := wrappedOp(ctx, req)
 
 	// Verify error is propagated
@@ -810,7 +810,7 @@ func TestLangfuseTracingMiddleware_ToolNameExtraction_FromContext(t *testing.T) 
 	wrappedOp := mw(mockOp)
 
 	// Set tool name in context
-	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallTool)
+	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallToolProto)
 	ctx = middleware.WithToolName(ctx, "context-tool")
 
 	result, err := wrappedOp(ctx, req)
@@ -1015,7 +1015,7 @@ func TestLangfuseTracingMiddleware_ToolCallOutputPreservation(t *testing.T) {
 	}
 
 	wrappedOp := mw(mockOp)
-	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallTool)
+	ctx := middleware.WithOperationType(context.Background(), middleware.OpCallToolProto)
 
 	result, err := wrappedOp(ctx, req)
 

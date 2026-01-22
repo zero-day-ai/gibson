@@ -167,6 +167,7 @@ type MissionNode struct {
 	Dependencies []string      `json:"dependencies,omitempty" yaml:"dependencies,omitempty"`
 	Timeout      time.Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
 	RetryPolicy  *RetryPolicy  `json:"retry_policy,omitempty" yaml:"retry_policy,omitempty"`
+	DataPolicy   *DataPolicy   `json:"data_policy,omitempty" yaml:"data_policy,omitempty"`
 
 	// Additional metadata
 	Metadata map[string]any `json:"metadata,omitempty" yaml:"metadata,omitempty"`

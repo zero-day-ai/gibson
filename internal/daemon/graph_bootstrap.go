@@ -22,6 +22,13 @@ type GraphBootstrapper struct {
 	logger      *slog.Logger
 }
 
+// BootstrapResult contains the results of bootstrapping a mission graph.
+type BootstrapResult struct {
+	// MissionRunID is the unique ID of the created MissionRun node.
+	// This should be used for all subsequent GraphRAG operations in this mission execution.
+	MissionRunID string
+}
+
 // NewGraphBootstrapper creates a new GraphBootstrapper instance.
 // The graph client must be connected before use.
 func NewGraphBootstrapper(client graph.GraphClient, logger *slog.Logger) *GraphBootstrapper {
@@ -104,7 +111,7 @@ func convertToSchemaMission(m *mission.Mission, def *mission.MissionDefinition) 
 // and the graph schema.
 //
 // Parameters:
-//   - missionID: The ID of the parent mission
+//   - missionID: The ID of the parent mission (stable SQLite ID)
 //   - nodeDef: The node definition from the mission workflow
 //   - hasDependencies: Whether this node has dependencies (determines initial status)
 //
@@ -226,42 +233,63 @@ func convertToSchemaNode(missionID types.ID, nodeDef *mission.MissionNode, hasDe
 }
 
 // Bootstrap creates the complete mission graph structure in Neo4j.
-// This includes the mission node, all workflow nodes, and their dependency relationships.
-// The method is idempotent - calling it multiple times with the same mission is safe.
+// This includes the Mission node (with full SQLite metadata), MissionRun node,
+// all WorkflowNodes, and their dependency relationships.
+//
+// The method is idempotent for Mission/WorkflowNodes - calling it multiple times is safe.
+// However, each call creates a NEW MissionRun node to track individual executions.
 //
 // Parameters:
 //   - ctx: Context for cancellation and timeouts
-//   - m: The mission state from SQLite
+//   - m: The mission state from SQLite (has stable ID across runs)
 //   - def: The mission definition containing workflow structure
+//   - run: The mission run from SQLite (unique per execution)
 //
 // Returns:
+//   - *BootstrapResult: Contains the MissionRunID for GraphRAG operations
 //   - error: Any error encountered during bootstrapping
 //
 // The bootstrap process follows these steps:
-//  1. Create the mission node in Neo4j
-//  2. Create all workflow nodes and link them to the mission
-//  3. Create dependency relationships between nodes based on DependsOn fields
+//  1. Create/ensure the Mission node with full SQLite metadata (uses stable SQLite ID)
+//  2. Create a new MissionRun node linked to Mission (uses SQLite run ID)
+//  3. Create all WorkflowNodes and link them to Mission
+//  4. Create dependency relationships between nodes based on DependsOn fields
 //
-// All operations use MERGE to ensure idempotency. If the bootstrap is interrupted
-// and rerun, already-created nodes/relationships will be matched, not duplicated.
-func (b *GraphBootstrapper) Bootstrap(ctx context.Context, m *mission.Mission, def *mission.MissionDefinition) error {
+// All operations use MERGE for Mission/WorkflowNodes to ensure idempotency.
+// MissionRuns always use CREATE to ensure each execution is tracked uniquely.
+func (b *GraphBootstrapper) Bootstrap(ctx context.Context, m *mission.Mission, def *mission.MissionDefinition, run *mission.MissionRun) (*BootstrapResult, error) {
 	// Create MissionQueries instance for graph operations
 	missionQueries := queries.NewMissionQueries(b.graphClient)
 
-	// Step 1: Convert mission to schema format and create mission node
 	b.logger.Info("bootstrapping mission to graph",
 		"mission_id", m.ID,
-		"mission_name", m.Name)
+		"mission_name", m.Name,
+		"target_id", m.TargetID,
+		"run_id", run.ID,
+		"run_number", run.RunNumber)
 
+	// Step 1: Create/ensure Mission node with full SQLite metadata
+	// Uses MERGE on SQLite ID for idempotency - same mission returns same node
 	schemaMission := convertToSchemaMission(m, def)
 	if err := missionQueries.CreateMission(ctx, schemaMission); err != nil {
-		return fmt.Errorf("failed to create mission in graph: %w", err)
+		return nil, fmt.Errorf("failed to create mission in graph: %w", err)
 	}
 
-	b.logger.Info("created mission node in graph",
+	b.logger.Info("created/ensured Mission node in graph",
 		"mission_id", m.ID)
 
-	// Step 2: Create workflow nodes and build ID mapping
+	// Step 2: Create a new MissionRun node for this execution
+	// Uses SQLite run ID for consistency between SQLite and Neo4j
+	if err := missionQueries.CreateMissionRun(ctx, m.ID, run.ID, run.RunNumber); err != nil {
+		return nil, fmt.Errorf("failed to create mission run node: %w", err)
+	}
+
+	b.logger.Info("created MissionRun node in graph",
+		"mission_id", m.ID,
+		"mission_run_id", run.ID,
+		"run_number", run.RunNumber)
+
+	// Step 3: Create WorkflowNodes and build ID mapping
 	// Map YAML node IDs to generated types.IDs for dependency creation
 	nodeIDMap := make(map[string]types.ID)
 
@@ -274,7 +302,7 @@ func (b *GraphBootstrapper) Bootstrap(ctx context.Context, m *mission.Mission, d
 
 		// Create node in graph
 		if err := missionQueries.CreateWorkflowNode(ctx, schemaNode); err != nil {
-			return fmt.Errorf("failed to create workflow node %s: %w", nodeDef.ID, err)
+			return nil, fmt.Errorf("failed to create workflow node %s: %w", nodeDef.ID, err)
 		}
 
 		// Store mapping for dependency creation
@@ -290,13 +318,13 @@ func (b *GraphBootstrapper) Bootstrap(ctx context.Context, m *mission.Mission, d
 		"mission_id", m.ID,
 		"node_count", len(def.Nodes))
 
-	// Step 3: Create dependency relationships
+	// Step 4: Create dependency relationships
 	dependencyCount := 0
 	for _, nodeDef := range def.Nodes {
 		// Get the graph ID for this node
 		fromNodeID, ok := nodeIDMap[nodeDef.ID]
 		if !ok {
-			return fmt.Errorf("node ID %s not found in mapping", nodeDef.ID)
+			return nil, fmt.Errorf("node ID %s not found in mapping", nodeDef.ID)
 		}
 
 		// Create dependency relationships for each dependency
@@ -304,12 +332,12 @@ func (b *GraphBootstrapper) Bootstrap(ctx context.Context, m *mission.Mission, d
 			// Look up the dependency's graph ID
 			toNodeID, ok := nodeIDMap[depID]
 			if !ok {
-				return fmt.Errorf("dependency node ID %s not found in mapping", depID)
+				return nil, fmt.Errorf("dependency node ID %s not found in mapping", depID)
 			}
 
 			// Create the DEPENDS_ON relationship
 			if err := missionQueries.CreateNodeDependency(ctx, fromNodeID, toNodeID); err != nil {
-				return fmt.Errorf("failed to create dependency %s->%s: %w", nodeDef.ID, depID, err)
+				return nil, fmt.Errorf("failed to create dependency %s->%s: %w", nodeDef.ID, depID, err)
 			}
 
 			b.logger.Debug("created dependency relationship",
@@ -328,8 +356,11 @@ func (b *GraphBootstrapper) Bootstrap(ctx context.Context, m *mission.Mission, d
 
 	b.logger.Info("bootstrap complete",
 		"mission_id", m.ID,
+		"mission_run_id", run.ID,
 		"nodes_created", len(def.Nodes),
 		"dependencies_created", dependencyCount)
 
-	return nil
+	return &BootstrapResult{
+		MissionRunID: run.ID.String(),
+	}, nil
 }

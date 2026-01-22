@@ -206,8 +206,3 @@ type orchestratorHarnessAdapter struct {
 func (a *orchestratorHarnessAdapter) DelegateToAgent(ctx context.Context, agentName string, task agent.Task) (agent.Result, error) {
 	return a.harness.DelegateToAgent(ctx, agentName, task)
 }
-
-// CallTool executes a tool via the harness.
-func (a *orchestratorHarnessAdapter) CallTool(ctx context.Context, toolName string, input map[string]interface{}) (interface{}, error) {
-	return a.harness.CallTool(ctx, toolName, input)
-}

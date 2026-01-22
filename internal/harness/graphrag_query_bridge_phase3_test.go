@@ -14,6 +14,7 @@ func TestProvenanceProperties(t *testing.T) {
 	agentRunID := "agent_run:test-trace:test-span"
 	agentName := "test-agent"
 	missionID := "01234567-89ab-cdef-0123-456789abcdef"
+	missionRunID := "run-01234567-89ab-cdef-0123-456789abcdef"
 
 	testCases := []struct {
 		name           string
@@ -62,7 +63,7 @@ func TestProvenanceProperties(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Call the converter function
-			result := sdkNodeToInternal(tc.inputNode, missionID, agentName, agentRunID)
+			result := sdkNodeToInternal(tc.inputNode, missionID, missionRunID, agentName, agentRunID)
 
 			// Verify provenance properties
 			if tc.shouldHaveRun {

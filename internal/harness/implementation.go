@@ -12,8 +12,10 @@ import (
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/proto"
 )
 
 // DefaultAgentHarness is the production implementation of the AgentHarness interface.
@@ -418,15 +420,18 @@ func (h *DefaultAgentHarness) Stream(ctx context.Context, slot string, messages 
 // Tool Execution Methods
 // ────────────────────────────────────────────────────────────────────────────
 
-// CallTool executes a registered tool by name with the given input parameters.
-func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
+// CallToolProto executes a registered tool using proto message input/output.
+// This is the preferred method for tools with proto schemas, providing type safety
+// and schema validation at the protocol level.
+func (h *DefaultAgentHarness) CallToolProto(ctx context.Context, name string, request proto.Message, response proto.Message) error {
 	// Create span for distributed tracing
-	ctx, span := h.tracer.Start(ctx, "harness.CallTool")
+	ctx, span := h.tracer.Start(ctx, "harness.CallToolProto")
 	defer span.End()
 
-	h.logger.Debug("calling tool",
+	h.logger.Debug("calling tool with proto messages",
 		"tool", name,
-		"input", input)
+		"input_type", string(request.ProtoReflect().Descriptor().FullName()),
+		"output_type", string(response.ProtoReflect().Descriptor().FullName()))
 
 	// Try to get tool from local registry first
 	t, err := h.toolRegistry.Get(name)
@@ -442,7 +447,7 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 					"tool", name,
 					"local_error", err,
 					"discovery_error", discErr)
-				return nil, types.WrapError(
+				return types.WrapError(
 					ErrHarnessToolExecutionFailed,
 					fmt.Sprintf("tool not found: %s (local: %v, remote: %v)", name, err, discErr),
 					err,
@@ -459,12 +464,66 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 			h.logger.Error("tool not found locally and no registry adapter available",
 				"tool", name,
 				"error", err)
-			return nil, types.WrapError(
+			return types.WrapError(
 				ErrHarnessToolExecutionFailed,
 				fmt.Sprintf("tool not found: %s", name),
 				err,
 			)
 		}
+	}
+
+	// Check if tool supports proto execution by type assertion
+	// The SDK tool.Tool interface has proto methods, but internal tool.Tool does not
+	type protoTool interface {
+		InputMessageType() string
+		OutputMessageType() string
+		ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error)
+	}
+
+	protoT, ok := t.(protoTool)
+	if !ok {
+		// Tool doesn't support proto - this is an error
+		h.logger.Error("tool does not support proto execution",
+			"tool", name)
+		return types.WrapError(
+			ErrHarnessToolExecutionFailed,
+			fmt.Sprintf("tool %s does not support proto execution (use CallTool instead)", name),
+			nil,
+		)
+	}
+
+	inputType := protoT.InputMessageType()
+	outputType := protoT.OutputMessageType()
+
+	if inputType == "" || outputType == "" {
+		// Tool doesn't support proto - this is an error
+		h.logger.Error("tool does not support proto execution",
+			"tool", name,
+			"input_type", inputType,
+			"output_type", outputType)
+		return types.WrapError(
+			ErrHarnessToolExecutionFailed,
+			fmt.Sprintf("tool %s does not support proto execution (use CallTool instead)", name),
+			nil,
+		)
+	}
+
+	// Verify message types match
+	expectedInputType := string(request.ProtoReflect().Descriptor().FullName())
+	expectedOutputType := string(response.ProtoReflect().Descriptor().FullName())
+
+	// Note: inputType and outputType from tool might be in format "package.Message"
+	// while proto reflection gives "package.Message" - they should match
+	if inputType != expectedInputType {
+		h.logger.Error("input message type mismatch",
+			"tool", name,
+			"expected", inputType,
+			"provided", expectedInputType)
+		return types.WrapError(
+			ErrHarnessToolExecutionFailed,
+			fmt.Sprintf("input message type mismatch: tool expects %s, got %s", inputType, expectedInputType),
+			nil,
+		)
 	}
 
 	// Determine if tool is local or remote for logging
@@ -476,8 +535,8 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 		}
 	}
 
-	// Execute tool
-	output, err := t.Execute(ctx, input)
+	// Execute tool with proto messages
+	outputMsg, err := protoT.ExecuteProto(ctx, request)
 	if err != nil {
 		h.logger.Error("tool execution failed",
 			"tool", name,
@@ -489,28 +548,46 @@ func (h *DefaultAgentHarness) CallTool(ctx context.Context, name string, input m
 			"tool":   name,
 			"remote": fmt.Sprintf("%t", isRemote),
 			"status": "failed",
+			"mode":   "proto",
 		})
 
-		return nil, types.WrapError(
+		return types.WrapError(
 			ErrHarnessToolExecutionFailed,
 			fmt.Sprintf("tool execution failed: %s", name),
 			err,
 		)
 	}
 
+	// Verify output type matches
+	actualOutputType := string(outputMsg.ProtoReflect().Descriptor().FullName())
+	if actualOutputType != expectedOutputType {
+		h.logger.Error("output message type mismatch",
+			"tool", name,
+			"expected", expectedOutputType,
+			"actual", actualOutputType)
+		return types.WrapError(
+			ErrHarnessToolExecutionFailed,
+			fmt.Sprintf("output message type mismatch: expected %s, got %s", expectedOutputType, actualOutputType),
+			nil,
+		)
+	}
+
+	// Merge the output message into the response parameter
+	proto.Merge(response, outputMsg)
+
 	// Record success metrics
 	h.metrics.RecordCounter("tools.executions", 1, map[string]string{
 		"tool":   name,
 		"remote": fmt.Sprintf("%t", isRemote),
 		"status": "success",
+		"mode":   "proto",
 	})
 
-	h.logger.Debug("tool execution successful",
+	h.logger.Debug("tool execution successful with proto",
 		"tool", name,
-		"remote", isRemote,
-		"output", output)
+		"remote", isRemote)
 
-	return output, nil
+	return nil
 }
 
 // ListTools returns descriptors for all registered tools.
@@ -522,12 +599,14 @@ func (h *DefaultAgentHarness) ListTools() []ToolDescriptor {
 	descriptors := make([]ToolDescriptor, 0, len(localToolDescriptors))
 	for _, t := range localToolDescriptors {
 		descriptors = append(descriptors, ToolDescriptor{
-			Name:         t.Name,
-			Description:  t.Description,
-			Version:      t.Version,
-			Tags:         t.Tags,
-			InputSchema:  t.InputSchema,
-			OutputSchema: t.OutputSchema,
+			Name:            t.Name,
+			Description:     t.Description,
+			Version:         t.Version,
+			Tags:            t.Tags,
+			InputProtoType:  t.InputMessageType,
+			OutputProtoType: t.OutputMessageType,
+			// InputSchema and OutputSchema are legacy fields, left empty for now
+			// They can be populated by calling GetToolDescriptor() which fetches from the tool
 		})
 	}
 
@@ -577,14 +656,8 @@ func (h *DefaultAgentHarness) GetToolDescriptor(ctx context.Context, name string
 	// Try to get tool from local registry first
 	t, err := h.toolRegistry.Get(name)
 	if err == nil {
-		desc := ToolDescriptor{
-			Name:         t.Name(),
-			Description:  t.Description(),
-			Version:      t.Version(),
-			Tags:         t.Tags(),
-			InputSchema:  t.InputSchema(),
-			OutputSchema: t.OutputSchema(),
-		}
+		// Use FromTool helper which handles both proto and legacy tools
+		desc := FromTool(t)
 		return &desc, nil
 	}
 
@@ -606,15 +679,8 @@ func (h *DefaultAgentHarness) GetToolDescriptor(ctx context.Context, name string
 			)
 		}
 
-		// Build descriptor from discovered remote tool
-		desc := ToolDescriptor{
-			Name:         remoteTool.Name(),
-			Description:  remoteTool.Description(),
-			Version:      remoteTool.Version(),
-			Tags:         remoteTool.Tags(),
-			InputSchema:  remoteTool.InputSchema(),
-			OutputSchema: remoteTool.OutputSchema(),
-		}
+		// Build descriptor from discovered remote tool using FromTool helper
+		desc := FromTool(remoteTool)
 		return &desc, nil
 	}
 
@@ -1066,12 +1132,6 @@ func (h *DefaultAgentHarness) TokenUsage() *llm.TokenTracker {
 // Minimal agent.AgentHarness Interface Implementation
 // ────────────────────────────────────────────────────────────────────────────
 
-// ExecuteTool implements the minimal agent.AgentHarness interface method.
-// It delegates to CallTool.
-func (h *DefaultAgentHarness) ExecuteTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	return h.CallTool(ctx, name, input)
-}
-
 // Log implements the minimal agent.AgentHarness interface method.
 // It writes a structured log message using the harness logger.
 func (h *DefaultAgentHarness) Log(level, message string, fields map[string]any) {
@@ -1098,16 +1158,144 @@ func (h *DefaultAgentHarness) Log(level, message string, fields map[string]any) 
 // GraphRAG Query Methods
 // ────────────────────────────────────────────────────────────────────────────
 
+// QueryNodes performs a query against the knowledge graph using proto messages.
+// This is the preferred method for GraphRAG queries with explicit proto schemas.
+func (h *DefaultAgentHarness) QueryNodes(ctx context.Context, query *graphragpb.GraphQuery) ([]*graphragpb.QueryResult, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.QueryNodes")
+	defer span.End()
+
+	h.logger.Debug("querying graph nodes (proto)",
+		"query_text", query.Text,
+		"top_k", query.TopK,
+		"node_types_count", len(query.NodeTypes))
+
+	// Convert proto query to SDK Query
+	sdkQuery, err := protoQueryToSDK(query)
+	if err != nil {
+		h.logger.Error("failed to convert proto query to SDK query",
+			"error", err)
+		return nil, fmt.Errorf("failed to convert proto query: %w", err)
+	}
+
+	// Delegate to existing QueryGraphRAG implementation
+	results, err := h.QueryGraphRAG(ctx, *sdkQuery)
+	if err != nil {
+		h.logger.Error("query graph nodes (proto) failed",
+			"error", err)
+		return nil, err
+	}
+
+	// Convert SDK results to proto results
+	protoResults := make([]*graphragpb.QueryResult, len(results))
+	for i, result := range results {
+		protoResult, err := sdkResultToProto(result)
+		if err != nil {
+			h.logger.Error("failed to convert SDK result to proto",
+				"index", i,
+				"error", err)
+			continue
+		}
+		protoResults[i] = protoResult
+	}
+
+	h.logger.Debug("query graph nodes (proto) completed",
+		"results_count", len(protoResults))
+
+	return protoResults, nil
+}
+
+// protoQueryToSDK converts a proto GraphQuery to SDK Query
+func protoQueryToSDK(protoQuery *graphragpb.GraphQuery) (*sdkgraphrag.Query, error) {
+	if protoQuery == nil {
+		return nil, fmt.Errorf("proto query is nil")
+	}
+
+	// Convert node type enums to strings
+	nodeTypes := make([]string, len(protoQuery.NodeTypes))
+	for i, nt := range protoQuery.NodeTypes {
+		nodeType := nt.String()
+		// Remove the "NODE_TYPE_" prefix
+		if len(nodeType) > 10 && nodeType[:10] == "NODE_TYPE_" {
+			nodeType = nodeType[10:]
+		}
+		nodeTypes[i] = nodeType
+	}
+
+	query := &sdkgraphrag.Query{
+		Text:      protoQuery.Text,
+		TopK:      int(protoQuery.TopK),
+		MinScore:  protoQuery.MinScore,
+		NodeTypes: nodeTypes,
+		// Default values for fields not in proto
+		MaxHops:      3,
+		VectorWeight: 0.6,
+		GraphWeight:  0.4,
+	}
+
+	return query, nil
+}
+
+// sdkResultToProto converts an SDK Result to proto QueryResult
+func sdkResultToProto(sdkResult sdkgraphrag.Result) (*graphragpb.QueryResult, error) {
+	// Convert SDK node to proto node
+	protoNode, err := sdkNodeToProto(sdkResult.Node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert node: %w", err)
+	}
+
+	result := &graphragpb.QueryResult{
+		Node:  protoNode,
+		Score: sdkResult.Score,
+	}
+
+	return result, nil
+}
+
+// sdkNodeToProto converts an SDK GraphNode to proto GraphNode
+func sdkNodeToProto(sdkNode sdkgraphrag.GraphNode) (*graphragpb.GraphNode, error) {
+	// Convert node type string to enum
+	nodeTypeStr := "NODE_TYPE_" + sdkNode.Type
+	nodeType, ok := graphragpb.NodeType_value[nodeTypeStr]
+	if !ok {
+		// If type doesn't match enum, use UNSPECIFIED
+		nodeType = int32(graphragpb.NodeType_NODE_TYPE_UNSPECIFIED)
+	}
+
+	// Convert map[string]any to map[string]string
+	properties := make(map[string]string)
+	for k, v := range sdkNode.Properties {
+		// Convert value to string (best effort)
+		properties[k] = fmt.Sprintf("%v", v)
+	}
+
+	node := &graphragpb.GraphNode{
+		Type:       graphragpb.NodeType(nodeType),
+		Content:    sdkNode.Content,
+		Properties: properties,
+	}
+
+	return node, nil
+}
+
 // QueryGraphRAG performs a semantic or hybrid query against the knowledge graph.
+// Automatically sets MissionName from harness context if not already set.
 func (h *DefaultAgentHarness) QueryGraphRAG(ctx context.Context, query sdkgraphrag.Query) ([]sdkgraphrag.Result, error) {
 	// Create span for distributed tracing
 	ctx, span := h.tracer.Start(ctx, "harness.QueryGraphRAG")
 	defer span.End()
 
+	// Auto-fill MissionName from harness context if not set
+	// This is required for mission-scoped queries (same_mission scope)
+	if query.MissionName == "" {
+		query.MissionName = h.Mission().Name
+	}
+
 	h.logger.Debug("querying graphrag",
 		"query_text", query.Text,
 		"top_k", query.TopK,
-		"max_hops", query.MaxHops)
+		"max_hops", query.MaxHops,
+		"mission_name", query.MissionName)
 
 	// Delegate to query bridge
 	results, err := h.graphRAGQueryBridge.Query(ctx, query)
@@ -1225,6 +1413,68 @@ func (h *DefaultAgentHarness) GetRelatedFindings(ctx context.Context, findingID 
 // ────────────────────────────────────────────────────────────────────────────
 // GraphRAG Storage Methods
 // ────────────────────────────────────────────────────────────────────────────
+
+// StoreNode stores a graph node using proto messages.
+// This is the preferred method for storing nodes with explicit proto schemas.
+func (h *DefaultAgentHarness) StoreNode(ctx context.Context, node *graphragpb.GraphNode) (string, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.StoreNode")
+	defer span.End()
+
+	h.logger.Debug("storing graph node (proto)",
+		"node_type", node.Type.String())
+
+	// Convert proto node to SDK GraphNode
+	sdkNode, err := protoNodeToSDK(node)
+	if err != nil {
+		h.logger.Error("failed to convert proto node to SDK node",
+			"error", err)
+		return "", fmt.Errorf("failed to convert proto node: %w", err)
+	}
+
+	// Delegate to existing StoreGraphNode implementation
+	nodeID, err := h.StoreGraphNode(ctx, *sdkNode)
+	if err != nil {
+		h.logger.Error("store graph node (proto) failed",
+			"node_type", node.Type.String(),
+			"error", err)
+		return "", err
+	}
+
+	h.logger.Debug("store graph node (proto) completed",
+		"node_id", nodeID)
+
+	return nodeID, nil
+}
+
+// protoNodeToSDK converts a proto GraphNode to SDK GraphNode
+func protoNodeToSDK(protoNode *graphragpb.GraphNode) (*sdkgraphrag.GraphNode, error) {
+	if protoNode == nil {
+		return nil, fmt.Errorf("proto node is nil")
+	}
+
+	// Convert node type enum to string
+	nodeType := protoNode.Type.String()
+	// Remove the "NODE_TYPE_" prefix that proto enums have
+	if len(nodeType) > 10 && nodeType[:10] == "NODE_TYPE_" {
+		nodeType = nodeType[10:]
+	}
+
+	// Convert map[string]string to map[string]any
+	properties := make(map[string]any)
+	for k, v := range protoNode.Properties {
+		properties[k] = v
+	}
+
+	// Create SDK node (no ID field in proto, will be generated by storage)
+	node := &sdkgraphrag.GraphNode{
+		Type:       nodeType,
+		Content:    protoNode.Content,
+		Properties: properties,
+	}
+
+	return node, nil
+}
 
 // StoreGraphNode stores an arbitrary node in the knowledge graph.
 func (h *DefaultAgentHarness) StoreGraphNode(ctx context.Context, node sdkgraphrag.GraphNode) (string, error) {
@@ -1484,25 +1734,6 @@ func (h *DefaultAgentHarness) GetAllRunFindings(ctx context.Context, filter Find
 	return allFindings, nil
 }
 
-// QueryGraphRAGScoped performs a GraphRAG query with mission scope filtering.
-// This is a convenience method that sets the mission scope and name on the query
-// before delegating to QueryGraphRAG.
-func (h *DefaultAgentHarness) QueryGraphRAGScoped(ctx context.Context, query sdkgraphrag.Query, scope sdkgraphrag.MissionScope) ([]sdkgraphrag.Result, error) {
-	ctx, span := h.tracer.Start(ctx, "AgentHarness.QueryGraphRAGScoped")
-	defer span.End()
-
-	// Set the mission scope on the query
-	query.Scope = scope
-	query.MissionName = h.Mission().Name
-
-	h.logger.Debug("querying graphrag with scope",
-		"query_text", query.Text,
-		"scope", scope,
-		"mission_name", query.MissionName)
-
-	// Delegate to the standard QueryGraphRAG method
-	return h.QueryGraphRAG(ctx, query)
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Lifecycle Methods

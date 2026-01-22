@@ -11,13 +11,16 @@ import (
 // MissionRunLinker manages relationships between mission runs with the same name.
 // It provides functionality to create new runs, link them to previous runs,
 // and query run history for a given mission name.
+//
+// Deprecated: This interface is being replaced by the two-table model where
+// Mission and MissionRun are separate entities. Use MissionRunStore directly.
 type MissionRunLinker interface {
 	// CreateRun creates a new mission run, linking it to the previous run if it exists.
 	// It checks for active runs first and returns an error if one exists.
 	CreateRun(ctx context.Context, name string, mission *Mission) error
 
 	// GetRunHistory returns all runs for a mission name in descending order by run number.
-	GetRunHistory(ctx context.Context, name string) ([]*MissionRun, error)
+	GetRunHistory(ctx context.Context, name string) ([]*MissionRunInfo, error)
 
 	// GetLatestRun returns the most recent run for a mission name.
 	GetLatestRun(ctx context.Context, name string) (*Mission, error)
@@ -27,8 +30,9 @@ type MissionRunLinker interface {
 	GetActiveRun(ctx context.Context, name string) (*Mission, error)
 }
 
-// MissionRun represents metadata about a single mission run.
-type MissionRun struct {
+// MissionRunInfo represents metadata about a single mission run for history queries.
+// Deprecated: Use MissionRun from run.go instead for full run management.
+type MissionRunInfo struct {
 	// RunNumber is the sequential run number for this mission name.
 	RunNumber int `json:"run_number"`
 
@@ -124,7 +128,7 @@ func (l *DefaultMissionRunLinker) CreateRun(ctx context.Context, name string, mi
 }
 
 // GetRunHistory returns all runs for a mission name in descending order by run number.
-func (l *DefaultMissionRunLinker) GetRunHistory(ctx context.Context, name string) ([]*MissionRun, error) {
+func (l *DefaultMissionRunLinker) GetRunHistory(ctx context.Context, name string) ([]*MissionRunInfo, error) {
 	if name == "" {
 		return nil, fmt.Errorf("mission name cannot be empty")
 	}
@@ -134,9 +138,9 @@ func (l *DefaultMissionRunLinker) GetRunHistory(ctx context.Context, name string
 		return nil, fmt.Errorf("failed to list missions by name: %w", err)
 	}
 
-	runs := make([]*MissionRun, 0, len(missions))
+	runs := make([]*MissionRunInfo, 0, len(missions))
 	for _, m := range missions {
-		run := &MissionRun{
+		run := &MissionRunInfo{
 			MissionID:   m.ID,
 			Status:      m.Status,
 			CreatedAt:   m.CreatedAt,

@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/zero-day-ai/gibson/internal/memory/embedder"
-	"github.com/zero-day-ai/gibson/internal/types"
 )
 
 // QueryProcessor orchestrates the full GraphRAG query pipeline.
@@ -41,7 +40,6 @@ type QueryProcessor interface {
 type DefaultQueryProcessor struct {
 	embedder embedder.Embedder // For generating query embeddings
 	reranker MergeReranker     // For merging and scoring results
-	scoper   QueryScoper       // For resolving mission scope (optional)
 	logger   *slog.Logger      // For logging warnings and debug info
 }
 
@@ -89,14 +87,6 @@ func NewQueryProcessorFromConfig(config GraphRAGConfig, emb embedder.Embedder, l
 	}, nil
 }
 
-// WithScoper sets the query scoper for mission scope filtering.
-// Returns the processor for method chaining.
-// The scoper is optional; if nil, scope filtering will be skipped.
-func (p *DefaultQueryProcessor) WithScoper(scoper QueryScoper) *DefaultQueryProcessor {
-	p.scoper = scoper
-	return p
-}
-
 // ProcessQuery executes the full GraphRAG hybrid query pipeline.
 //
 // Query routing:
@@ -106,17 +96,15 @@ func (p *DefaultQueryProcessor) WithScoper(scoper QueryScoper) *DefaultQueryProc
 //
 // Pipeline for semantic/hybrid queries:
 // 1. Validate query
-// 2. Resolve mission scope (if specified)
-// 3. Generate embedding (if query.Text is set)
-// 4. Execute vector search
-// 5. Expand results via graph traversal
-// 6. Merge and rerank results
-// 7. Apply filters and return top-K
+// 2. Generate embedding (if query.Text is set)
+// 3. Execute vector search
+// 4. Expand results via graph traversal
+// 5. Merge and rerank results
+// 6. Apply filters and return top-K
 //
 // Graceful degradation:
 // - If graph traversal fails, returns vector-only results
 // - If vector search fails but embedding exists, attempts graph-only search
-// - If scope resolution fails, falls back to ScopeAll (no filtering)
 // - Returns error only if both stages fail or query is invalid
 func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAGQuery, provider GraphRAGProvider) ([]GraphRAGResult, error) {
 	// Step 1: Validate the query
@@ -138,37 +126,7 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 	}
 
 	// Continue with semantic/hybrid query pipeline...
-	// Step 3: Resolve mission scope filtering
-	// Only apply scope filtering if:
-	// - Scope is not empty and not "all"
-	// - Scoper is configured
-	// - MissionID is provided (required for current_run scope)
-	if query.MissionScope != "" && query.MissionScope != ScopeAll && p.scoper != nil {
-		// For current_run scope, we need a mission ID
-		var currentMissionID types.ID
-		if query.MissionID != nil {
-			currentMissionID = *query.MissionID
-		}
-
-		// Resolve scope to mission IDs
-		missionIDs, err := p.scoper.ResolveScope(ctx, query.MissionScope, query.MissionName, currentMissionID)
-		if err != nil {
-			// Log warning and continue without filtering (graceful degradation)
-			p.logger.Warn("failed to resolve mission scope, continuing without filter",
-				"scope", query.MissionScope,
-				"mission_name", query.MissionName,
-				"mission_id", currentMissionID,
-				"error", err)
-		} else if len(missionIDs) > 0 {
-			// Scope resolution succeeded and returned IDs - apply filter
-			query.MissionIDFilter = missionIDs
-			p.logger.Debug("resolved mission scope",
-				"scope", query.MissionScope,
-				"mission_count", len(missionIDs))
-		}
-	}
-
-	// Step 3: Generate embedding if needed (query has Text but no Embedding)
+	// Step 2: Generate embedding if needed (query has Text but no Embedding)
 	queryEmbedding := query.Embedding
 	if query.Text != "" && len(query.Embedding) == 0 {
 		emb, err := p.embedder.Embed(ctx, query.Text)
@@ -181,16 +139,8 @@ func (p *DefaultQueryProcessor) ProcessQuery(ctx context.Context, query GraphRAG
 	// Prepare filters for vector search
 	vectorFilters := make(map[string]any)
 
-	// Apply mission ID filter based on scope resolution
-	if len(query.MissionIDFilter) > 0 {
-		// Scope filtering resolved to multiple mission IDs
-		missionIDStrings := make([]string, len(query.MissionIDFilter))
-		for i, id := range query.MissionIDFilter {
-			missionIDStrings[i] = id.String()
-		}
-		vectorFilters["mission_id"] = missionIDStrings
-	} else if query.MissionID != nil {
-		// Legacy single mission ID filter (backwards compatibility)
+	// Apply mission ID filter if provided
+	if query.MissionID != nil {
 		vectorFilters["mission_id"] = query.MissionID.String()
 	}
 
@@ -478,7 +428,8 @@ func (p *DefaultQueryProcessor) processStructuredQuery(ctx context.Context, quer
 	p.logger.Debug("processing structured query (no vector search)",
 		"node_types", query.NodeTypes,
 		"top_k", query.TopK,
-		"mission_id", query.MissionID)
+		"mission_id", query.MissionID,
+		"mission_run_id", query.MissionRunID)
 
 	// Build NodeQuery from GraphRAGQuery
 	nodeQuery := NewNodeQuery().
@@ -488,6 +439,14 @@ func (p *DefaultQueryProcessor) processStructuredQuery(ctx context.Context, quer
 	// Apply mission filter if specified
 	if query.MissionID != nil {
 		nodeQuery.WithMission(*query.MissionID)
+	}
+
+	// Apply mission run ID for mission-scoped queries
+	if query.MissionRunID != "" {
+		nodeQuery.WithMissionRunID(query.MissionRunID)
+	}
+	if query.MissionName != "" {
+		nodeQuery.WithMissionName(query.MissionName)
 	}
 
 	// Execute direct graph query

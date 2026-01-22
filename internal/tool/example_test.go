@@ -6,10 +6,11 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/sdk/schema"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// ExampleTool demonstrates implementing a custom tool
+// ExampleTool demonstrates implementing a custom tool with proto-based execution
 type ExampleTool struct{}
 
 func (t *ExampleTool) Name() string        { return "example-tool" }
@@ -17,33 +18,41 @@ func (t *ExampleTool) Description() string { return "An example tool for demonst
 func (t *ExampleTool) Version() string     { return "1.0.0" }
 func (t *ExampleTool) Tags() []string      { return []string{"example", "demo"} }
 
-func (t *ExampleTool) InputSchema() schema.JSON {
-	minLen := 1
-	return schema.Object(
-		map[string]schema.JSON{
-			"message": {Type: "string", Description: "Message to process", MinLength: &minLen},
-		},
-		"message",
-	)
+func (t *ExampleTool) InputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-func (t *ExampleTool) OutputSchema() schema.JSON {
-	return schema.Object(
-		map[string]schema.JSON{
-			"result": schema.StringWithDesc("Processed result"),
-		},
-		"result",
-	)
+func (t *ExampleTool) OutputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-func (t *ExampleTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	message, ok := input["message"].(string)
+func (t *ExampleTool) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
+	// Type assert to structpb.Struct
+	structInput, ok := input.(*structpb.Struct)
 	if !ok {
-		return nil, fmt.Errorf("invalid input: message must be a string")
+		return nil, fmt.Errorf("invalid input type: expected *structpb.Struct")
+	}
+
+	// Extract message field
+	messageValue := structInput.Fields["message"]
+	if messageValue == nil {
+		return nil, fmt.Errorf("missing required field: message")
+	}
+
+	message := messageValue.GetStringValue()
+	if message == "" {
+		return nil, fmt.Errorf("invalid input: message must be a non-empty string")
 	}
 
 	result := fmt.Sprintf("Processed: %s", message)
-	return map[string]any{"result": result}, nil
+
+	// Create output proto message
+	output, err := structpb.NewStruct(map[string]any{"result": result})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create output: %w", err)
+	}
+
+	return output, nil
 }
 
 func (t *ExampleTool) Health(ctx context.Context) types.HealthStatus {
@@ -62,16 +71,26 @@ func Example() {
 		return
 	}
 
-	// Execute the tool
+	// Get the tool from registry
+	t, err := registry.Get("example-tool")
+	if err != nil {
+		fmt.Printf("Failed to get tool: %v\n", err)
+		return
+	}
+
+	// Execute the tool with proto input
 	ctx := context.Background()
-	input := map[string]any{"message": "Hello, Gibson!"}
-	output, err := registry.Execute(ctx, "example-tool", input)
+	input, _ := structpb.NewStruct(map[string]any{"message": "Hello, Gibson!"})
+	outputProto, err := t.ExecuteProto(ctx, input)
 	if err != nil {
 		fmt.Printf("Execution failed: %v\n", err)
 		return
 	}
 
-	fmt.Printf("Result: %s\n", output["result"])
+	// Extract result from proto output
+	output := outputProto.(*structpb.Struct)
+	result := output.Fields["result"].GetStringValue()
+	fmt.Printf("Result: %s\n", result)
 
 	// Check metrics
 	metrics, _ := registry.Metrics("example-tool")

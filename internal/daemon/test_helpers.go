@@ -15,6 +15,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/proto"
 )
 
 // mockComponentDiscovery is a mock implementation of registry.ComponentDiscovery for testing.
@@ -174,7 +175,10 @@ func (m *mockHarnessFactory) Create(agentName string, missionCtx harness.Mission
 }
 
 // mockAgentHarness is a minimal mock implementation of harness.AgentHarness for testing.
-type mockAgentHarness struct{}
+type mockAgentHarness struct {
+	toolProtoOutputs map[string]proto.Message
+	toolErrors       map[string]error
+}
 
 func (m *mockAgentHarness) Complete(ctx context.Context, slot string, messages []llm.Message, opts ...harness.CompletionOption) (*llm.CompletionResponse, error) {
 	return &llm.CompletionResponse{}, fmt.Errorf("not implemented in mock")
@@ -196,8 +200,14 @@ func (m *mockAgentHarness) CompleteStructuredAnyWithUsage(ctx context.Context, s
 	return nil, fmt.Errorf("not implemented in mock")
 }
 
-func (m *mockAgentHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	return nil, fmt.Errorf("not implemented in mock")
+func (m *mockAgentHarness) CallToolProto(ctx context.Context, name string, request, response proto.Message) error {
+	if err, ok := m.toolErrors[name]; ok {
+		return err
+	}
+	if protoOut, ok := m.toolProtoOutputs[name]; ok {
+		proto.Merge(response, protoOut)
+	}
+	return nil
 }
 
 func (m *mockAgentHarness) ListTools() []harness.ToolDescriptor {

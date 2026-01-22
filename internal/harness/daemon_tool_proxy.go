@@ -12,6 +12,8 @@ import (
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/schema"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // Ensure DaemonToolProxy implements tool.Tool at compile time
@@ -39,11 +41,17 @@ type DaemonToolProxy struct {
 	// tags are labels for categorizing the tool.
 	tags []string
 
-	// inputSchema defines the expected input structure.
+	// inputSchema defines the expected input structure (deprecated, kept for backward compat).
 	inputSchema schema.JSON
 
-	// outputSchema defines the output structure.
+	// outputSchema defines the output structure (deprecated, kept for backward compat).
 	outputSchema schema.JSON
+
+	// inputProtoType is the fully-qualified proto message type name for input.
+	inputProtoType string
+
+	// outputProtoType is the fully-qualified proto message type name for output.
+	outputProtoType string
 
 	// defaultTimeout is the default execution timeout if not specified in context.
 	defaultTimeout time.Duration
@@ -66,11 +74,17 @@ type DaemonToolProxyConfig struct {
 	// Tags are labels for categorizing the tool.
 	Tags []string
 
-	// InputSchema defines the expected input structure.
+	// InputSchema defines the expected input structure (deprecated, kept for backward compat).
 	InputSchema schema.JSON
 
-	// OutputSchema defines the output structure.
+	// OutputSchema defines the output structure (deprecated, kept for backward compat).
 	OutputSchema schema.JSON
+
+	// InputProtoType is the fully-qualified proto message type name for input.
+	InputProtoType string
+
+	// OutputProtoType is the fully-qualified proto message type name for output.
+	OutputProtoType string
 
 	// DefaultTimeout is the default execution timeout (default: 5 minutes).
 	DefaultTimeout time.Duration
@@ -96,14 +110,16 @@ func NewDaemonToolProxy(cfg DaemonToolProxyConfig) *DaemonToolProxy {
 	}
 
 	return &DaemonToolProxy{
-		client:         cfg.Client,
-		name:           cfg.Name,
-		description:    cfg.Description,
-		version:        cfg.Version,
-		tags:           cfg.Tags,
-		inputSchema:    cfg.InputSchema,
-		outputSchema:   cfg.OutputSchema,
-		defaultTimeout: timeout,
+		client:          cfg.Client,
+		name:            cfg.Name,
+		description:     cfg.Description,
+		version:         cfg.Version,
+		tags:            cfg.Tags,
+		inputSchema:     cfg.InputSchema,
+		outputSchema:    cfg.OutputSchema,
+		inputProtoType:  cfg.InputProtoType,
+		outputProtoType: cfg.OutputProtoType,
+		defaultTimeout:  timeout,
 	}
 }
 
@@ -127,14 +143,14 @@ func (p *DaemonToolProxy) Tags() []string {
 	return p.tags
 }
 
-// InputSchema returns the JSON schema defining valid input parameters.
-func (p *DaemonToolProxy) InputSchema() schema.JSON {
-	return p.inputSchema
+// InputMessageType returns the fully-qualified proto message type name for input.
+func (p *DaemonToolProxy) InputMessageType() string {
+	return p.inputProtoType
 }
 
-// OutputSchema returns the JSON schema defining the output structure.
-func (p *DaemonToolProxy) OutputSchema() schema.JSON {
-	return p.outputSchema
+// OutputMessageType returns the fully-qualified proto message type name for output.
+func (p *DaemonToolProxy) OutputMessageType() string {
+	return p.outputProtoType
 }
 
 // Tool execution error codes for DaemonToolProxy
@@ -201,6 +217,38 @@ func (p *DaemonToolProxy) Execute(ctx context.Context, input map[string]any) (ma
 	return map[string]any{"result": output}, nil
 }
 
+// ExecuteProto runs the tool with proto message input and returns proto message output.
+// This is a wrapper around Execute that converts between proto and map representations.
+func (p *DaemonToolProxy) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
+	// Convert proto input to map[string]any
+	inputStruct, ok := input.(*structpb.Struct)
+	if !ok {
+		return nil, types.NewError(
+			ErrProxyInputSerialization,
+			fmt.Sprintf("invalid input type: expected *structpb.Struct, got %T", input),
+		)
+	}
+
+	inputMap := inputStruct.AsMap()
+
+	// Execute tool
+	outputMap, err := p.Execute(ctx, inputMap)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert output map to proto
+	outputStruct, err := structpb.NewStruct(outputMap)
+	if err != nil {
+		return nil, types.NewError(
+			ErrProxyOutputDeserialization,
+			fmt.Sprintf("failed to convert output to proto: %v", err),
+		)
+	}
+
+	return outputStruct, nil
+}
+
 // Health returns the current health status of this tool.
 //
 // For daemon-proxied tools, health is determined by:
@@ -255,13 +303,15 @@ func (f *DaemonToolProxyFactory) CreateFromAvailableToolInfo(info *api.Available
 	}
 
 	return NewDaemonToolProxy(DaemonToolProxyConfig{
-		Client:       f.client,
-		Name:         info.Name,
-		Description:  info.Description,
-		Version:      info.Version,
-		Tags:         info.Tags,
-		InputSchema:  inputSchema,
-		OutputSchema: outputSchema,
+		Client:          f.client,
+		Name:            info.Name,
+		Description:     info.Description,
+		Version:         info.Version,
+		Tags:            info.Tags,
+		InputSchema:     inputSchema,
+		OutputSchema:    outputSchema,
+		InputProtoType:  "google.protobuf.Struct",
+		OutputProtoType: "google.protobuf.Struct",
 	}), nil
 }
 
@@ -328,14 +378,16 @@ func (f *DaemonToolProxyFactory) PopulateToolRegistry(ctx context.Context, regis
 // DirectToolProxy implements tool.Tool by directly calling the ToolExecutorService.
 // This is used when running inside the daemon to avoid gRPC round-trips.
 type DirectToolProxy struct {
-	service        toolexec.ToolExecutorService
-	name           string
-	description    string
-	version        string
-	tags           []string
-	inputSchema    schema.JSON
-	outputSchema   schema.JSON
-	defaultTimeout time.Duration
+	service         toolexec.ToolExecutorService
+	name            string
+	description     string
+	version         string
+	tags            []string
+	inputSchema     schema.JSON
+	outputSchema    schema.JSON
+	inputProtoType  string
+	outputProtoType string
+	defaultTimeout  time.Duration
 }
 
 // Ensure DirectToolProxy implements tool.Tool at compile time
@@ -358,25 +410,31 @@ func NewDirectToolProxy(
 		outputSchema = toolSchema.OutputSchema
 	}
 
+	// For now, all tools use google.protobuf.Struct for proto messages
+	// TODO: Add proto type information to ToolSchema when tools support typed proto messages
+	inputProtoType := "google.protobuf.Struct"
+	outputProtoType := "google.protobuf.Struct"
+
 	return &DirectToolProxy{
-		service:        service,
-		name:           descriptor.Name,
-		description:    descriptor.Description,
-		version:        descriptor.Version,
-		tags:           descriptor.Tags,
-		inputSchema:    inputSchema,
-		outputSchema:   outputSchema,
-		defaultTimeout: defaultTimeout,
+		service:         service,
+		name:            descriptor.Name,
+		description:     descriptor.Description,
+		version:         descriptor.Version,
+		tags:            descriptor.Tags,
+		inputSchema:     inputSchema,
+		outputSchema:    outputSchema,
+		inputProtoType:  inputProtoType,
+		outputProtoType: outputProtoType,
+		defaultTimeout:  defaultTimeout,
 	}
 }
 
-func (p *DirectToolProxy) Name() string              { return p.name }
-func (p *DirectToolProxy) Description() string       { return p.description }
-func (p *DirectToolProxy) Version() string           { return p.version }
-func (p *DirectToolProxy) Tags() []string            { return p.tags }
-func (p *DirectToolProxy) InputSchema() schema.JSON  { return p.inputSchema }
-func (p *DirectToolProxy) OutputSchema() schema.JSON { return p.outputSchema }
-
+func (p *DirectToolProxy) Name() string                { return p.name }
+func (p *DirectToolProxy) Description() string         { return p.description }
+func (p *DirectToolProxy) Version() string             { return p.version }
+func (p *DirectToolProxy) Tags() []string              { return p.tags }
+func (p *DirectToolProxy) InputMessageType() string    { return p.inputProtoType }
+func (p *DirectToolProxy) OutputMessageType() string   { return p.outputProtoType }
 func (p *DirectToolProxy) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
 	// Use default timeout - don't derive from context deadline or tool input
 	// The context deadline may be for the entire operation (e.g., module timeout)
@@ -395,6 +453,36 @@ func (p *DirectToolProxy) Execute(ctx context.Context, input map[string]any) (ma
 	}
 
 	return output, nil
+}
+
+func (p *DirectToolProxy) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
+	// Convert proto input to map[string]any
+	inputStruct, ok := input.(*structpb.Struct)
+	if !ok {
+		return nil, types.NewError(
+			ErrProxyInputSerialization,
+			fmt.Sprintf("invalid input type: expected *structpb.Struct, got %T", input),
+		)
+	}
+
+	inputMap := inputStruct.AsMap()
+
+	// Execute tool
+	outputMap, err := p.Execute(ctx, inputMap)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert output map to proto
+	outputStruct, err := structpb.NewStruct(outputMap)
+	if err != nil {
+		return nil, types.NewError(
+			ErrProxyOutputDeserialization,
+			fmt.Sprintf("failed to convert output to proto: %v", err),
+		)
+	}
+
+	return outputStruct, nil
 }
 
 func (p *DirectToolProxy) Health(ctx context.Context) types.HealthStatus {

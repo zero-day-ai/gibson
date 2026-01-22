@@ -68,7 +68,6 @@ func TestTextOutputHandler_OnStart(t *testing.T) {
 				TargetType:     "llm_api",
 				TargetProvider: "openai",
 				AgentName:      "prompt-injection",
-				Goal:           "Test for injection vulnerabilities",
 			},
 			verbose: false,
 			quiet:   false,
@@ -78,7 +77,6 @@ func TestTextOutputHandler_OnStart(t *testing.T) {
 				"llm_api",
 				"openai",
 				"prompt-injection",
-				"Test for injection vulnerabilities",
 			},
 			notExpected: []string{"Configuration:"},
 		},
@@ -485,7 +483,6 @@ func TestJSONOutputHandler_Events(t *testing.T) {
 	opts := &AttackOptions{
 		TargetURL: "https://api.example.com",
 		AgentName: "test-agent",
-		Goal:      "Test goal",
 		MaxTurns:  10,
 		Timeout:   5 * time.Minute,
 	}

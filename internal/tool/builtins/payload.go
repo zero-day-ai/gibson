@@ -9,7 +9,8 @@ import (
 	"github.com/zero-day-ai/gibson/internal/payload"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/sdk/schema"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // PayloadSearchTool provides search capabilities over the payload library.
@@ -45,104 +46,48 @@ func (t *PayloadSearchTool) Tags() []string {
 	return []string{"payload", "search", "attack"}
 }
 
-// InputSchema returns the JSON schema defining valid input parameters.
-func (t *PayloadSearchTool) InputSchema() schema.JSON {
-	return schema.Object(map[string]schema.JSON{
-		"query": schema.JSON{
-			Type:        "string",
-			Description: "Search query for full-text search across payload names and descriptions",
-		},
-		"categories": schema.JSON{
-			Type:        "array",
-			Description: "Filter by payload categories (jailbreak, prompt_injection, etc.)",
-			Items:       &schema.JSON{Type: "string"},
-		},
-		"tags": schema.JSON{
-			Type:        "array",
-			Description: "Filter by tags",
-			Items:       &schema.JSON{Type: "string"},
-		},
-		"target_type": schema.JSON{
-			Type:        "string",
-			Description: "Filter by target type (llm_chat, llm_api, etc.)",
-		},
-		"severity": schema.JSON{
-			Type:        "string",
-			Description: "Filter by minimum severity (critical, high, medium, low, info)",
-		},
-		"limit": schema.JSON{
-			Type:        "number",
-			Description: "Maximum number of results to return (default: 10)",
-			Default:     10,
-		},
-	})
+// InputMessageType returns the protobuf message type for input.
+// Using google.protobuf.Struct as temporary type until task 4.1 creates PayloadSearchRequest.
+func (t *PayloadSearchTool) InputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-// OutputSchema returns the JSON schema defining the output structure.
-func (t *PayloadSearchTool) OutputSchema() schema.JSON {
-	return schema.Object(map[string]schema.JSON{
-		"results": schema.Array(
-			schema.Object(map[string]schema.JSON{
-				"id": schema.JSON{
-					Type:        "string",
-					Description: "Payload ID for execution",
-				},
-				"name": schema.JSON{
-					Type:        "string",
-					Description: "Payload name",
-				},
-				"description": schema.JSON{
-					Type:        "string",
-					Description: "What this payload does",
-				},
-				"categories": schema.JSON{
-					Type:        "array",
-					Description: "Payload categories",
-					Items:       &schema.JSON{Type: "string"},
-				},
-				"severity": schema.JSON{
-					Type:        "string",
-					Description: "Severity level",
-				},
-				"reliability": schema.JSON{
-					Type:        "number",
-					Description: "Reliability score 0.0-1.0",
-				},
-				"target_types": schema.JSON{
-					Type:        "array",
-					Description: "Compatible target types",
-					Items:       &schema.JSON{Type: "string"},
-				},
-			}),
-		),
-		"count": schema.JSON{
-			Type:        "number",
-			Description: "Number of results returned",
-		},
-	})
+// OutputMessageType returns the protobuf message type for output.
+// Using google.protobuf.Struct as temporary type until task 4.1 creates PayloadSearchResponse.
+func (t *PayloadSearchTool) OutputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-// Execute runs the tool with the given input and returns the result.
-func (t *PayloadSearchTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	// Handle nil registry gracefully
-	if t.registry == nil {
-		return map[string]any{
-			"results": []any{},
-			"count":   0,
-		}, nil
+// ExecuteProto runs the tool with protobuf input and returns protobuf output.
+func (t *PayloadSearchTool) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
+	// Type-assert to structpb.Struct (temporary until task 4.1 creates PayloadSearchRequest)
+	req, ok := input.(*structpb.Struct)
+	if !ok {
+		return nil, fmt.Errorf("expected *structpb.Struct, got %T", input)
 	}
 
-	// Build filter from input
+	// Handle nil registry gracefully
+	if t.registry == nil {
+		emptyResults, _ := structpb.NewStruct(map[string]interface{}{
+			"results": []interface{}{},
+			"count":   0,
+		})
+		return emptyResults, nil
+	}
+
+	// Build filter from proto struct fields
 	filter := &payload.PayloadFilter{
 		Enabled: boolPtr(true), // Only return enabled payloads
 	}
 
+	fields := req.GetFields()
+
 	// Extract categories
-	if categoriesVal, ok := input["categories"]; ok {
-		if categoriesArr, ok := categoriesVal.([]interface{}); ok {
-			categories := make([]payload.PayloadCategory, 0, len(categoriesArr))
-			for _, cat := range categoriesArr {
-				if catStr, ok := cat.(string); ok {
+	if categoriesVal, ok := fields["categories"]; ok {
+		if categoriesList := categoriesVal.GetListValue(); categoriesList != nil {
+			categories := make([]payload.PayloadCategory, 0)
+			for _, cat := range categoriesList.GetValues() {
+				if catStr := cat.GetStringValue(); catStr != "" {
 					categories = append(categories, payload.PayloadCategory(catStr))
 				}
 			}
@@ -151,11 +96,11 @@ func (t *PayloadSearchTool) Execute(ctx context.Context, input map[string]any) (
 	}
 
 	// Extract tags
-	if tagsVal, ok := input["tags"]; ok {
-		if tagsArr, ok := tagsVal.([]interface{}); ok {
-			tags := make([]string, 0, len(tagsArr))
-			for _, tag := range tagsArr {
-				if tagStr, ok := tag.(string); ok {
+	if tagsVal, ok := fields["tags"]; ok {
+		if tagsList := tagsVal.GetListValue(); tagsList != nil {
+			tags := make([]string, 0)
+			for _, tag := range tagsList.GetValues() {
+				if tagStr := tag.GetStringValue(); tagStr != "" {
 					tags = append(tags, tagStr)
 				}
 			}
@@ -164,28 +109,24 @@ func (t *PayloadSearchTool) Execute(ctx context.Context, input map[string]any) (
 	}
 
 	// Extract target type
-	if targetTypeVal, ok := input["target_type"]; ok {
-		if targetTypeStr, ok := targetTypeVal.(string); ok {
+	if targetTypeVal, ok := fields["target_type"]; ok {
+		if targetTypeStr := targetTypeVal.GetStringValue(); targetTypeStr != "" {
 			filter.TargetTypes = []string{targetTypeStr}
 		}
 	}
 
 	// Extract severity
-	if severityVal, ok := input["severity"]; ok {
-		if severityStr, ok := severityVal.(string); ok {
-			// Convert string to FindingSeverity and add to filter
+	if severityVal, ok := fields["severity"]; ok {
+		if severityStr := severityVal.GetStringValue(); severityStr != "" {
 			filter.Severities = []agent.FindingSeverity{agent.FindingSeverity(severityStr)}
 		}
 	}
 
 	// Extract limit
 	limit := 10
-	if limitVal, ok := input["limit"]; ok {
-		switch v := limitVal.(type) {
-		case float64:
-			limit = int(v)
-		case int:
-			limit = v
+	if limitVal, ok := fields["limit"]; ok {
+		if limitNum := limitVal.GetNumberValue(); limitNum > 0 {
+			limit = int(limitNum)
 		}
 	}
 	if limit < 1 {
@@ -200,7 +141,12 @@ func (t *PayloadSearchTool) Execute(ctx context.Context, input map[string]any) (
 	var payloads []*payload.Payload
 	var err error
 
-	if query, ok := input["query"].(string); ok && query != "" {
+	query := ""
+	if queryVal, ok := fields["query"]; ok {
+		query = queryVal.GetStringValue()
+	}
+
+	if query != "" {
 		// Full-text search
 		payloads, err = t.registry.Search(ctx, query, filter)
 	} else {
@@ -213,21 +159,23 @@ func (t *PayloadSearchTool) Execute(ctx context.Context, input map[string]any) (
 	}
 
 	// Format results (summaries only, no templates)
-	formattedResults := make([]map[string]any, 0, len(payloads))
+	formattedResults := make([]interface{}, 0, len(payloads))
 	for _, p := range payloads {
 		// Convert categories to strings
-		categoryStrs := make([]string, len(p.Categories))
+		categoryStrs := make([]interface{}, len(p.Categories))
 		for i, cat := range p.Categories {
 			categoryStrs[i] = cat.String()
 		}
 
 		// Get target types
-		targetTypes := make([]string, 0)
+		targetTypes := make([]interface{}, 0)
 		if p.TargetTypes != nil {
-			targetTypes = p.TargetTypes
+			for _, tt := range p.TargetTypes {
+				targetTypes = append(targetTypes, tt)
+			}
 		}
 
-		formattedResults = append(formattedResults, map[string]any{
+		formattedResults = append(formattedResults, map[string]interface{}{
 			"id":           p.ID.String(),
 			"name":         p.Name,
 			"description":  p.Description,
@@ -238,10 +186,16 @@ func (t *PayloadSearchTool) Execute(ctx context.Context, input map[string]any) (
 		})
 	}
 
-	return map[string]any{
+	// Create response as structpb.Struct
+	response, err := structpb.NewStruct(map[string]interface{}{
 		"results": formattedResults,
 		"count":   len(formattedResults),
-	}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create response struct: %w", err)
+	}
+
+	return response, nil
 }
 
 // Health returns the current health status of this tool.
@@ -285,114 +239,75 @@ func (t *PayloadExecuteTool) Tags() []string {
 	return []string{"payload", "execute", "attack"}
 }
 
-// InputSchema returns the JSON schema defining valid input parameters.
-func (t *PayloadExecuteTool) InputSchema() schema.JSON {
-	return schema.Object(map[string]schema.JSON{
-		"payload_id": schema.JSON{
-			Type:        "string",
-			Description: "ID of the payload to execute (from payload_search)",
-		},
-		"target": schema.JSON{
-			Type:        "string",
-			Description: "Target ID or identifier",
-		},
-		"params": schema.JSON{
-			Type:        "object",
-			Description: "Parameter overrides for payload template",
-			Properties:  map[string]schema.JSON{},
-		},
-		"timeout": schema.JSON{
-			Type:        "number",
-			Description: "Execution timeout in seconds (default: 30)",
-			Default:     30,
-		},
-	}, "payload_id", "target") // payload_id and target are required
+// InputMessageType returns the protobuf message type for input.
+// Using google.protobuf.Struct as temporary type until task 4.1 creates PayloadExecuteRequest.
+func (t *PayloadExecuteTool) InputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-// OutputSchema returns the JSON schema defining the output structure.
-func (t *PayloadExecuteTool) OutputSchema() schema.JSON {
-	return schema.Object(map[string]schema.JSON{
-		"success": schema.JSON{
-			Type:        "boolean",
-			Description: "Whether the payload execution succeeded",
-		},
-		"confidence": schema.JSON{
-			Type:        "number",
-			Description: "Confidence score 0.0-1.0 based on indicator matches",
-		},
-		"execution": schema.Object(map[string]schema.JSON{
-			"duration_ms": schema.Number(),
-			"exit_code":   schema.Number(),
-			"stdout":      schema.String(),
-			"stderr":      schema.String(),
-		}),
-		"indicators_matched": schema.Array(
-			schema.Object(map[string]schema.JSON{
-				"type":    schema.String(),
-				"pattern": schema.String(),
-				"matched": schema.Bool(),
-			}),
-		),
-		"suggested_finding": schema.JSON{
-			Type:        "object",
-			Description: "Pre-filled finding details if attack succeeded",
-			Properties: map[string]schema.JSON{
-				"title":       schema.String(),
-				"description": schema.String(),
-				"severity":    schema.String(),
-				"category":    schema.String(),
-			},
-		},
-		"suggested_next": schema.JSON{
-			Type:        "array",
-			Description: "Related payload IDs to try next",
-			Items:       &schema.JSON{Type: "string"},
-		},
-	})
+// OutputMessageType returns the protobuf message type for output.
+// Using google.protobuf.Struct as temporary type until task 4.1 creates PayloadExecuteResponse.
+func (t *PayloadExecuteTool) OutputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-// Execute runs the tool with the given input and returns the result.
-func (t *PayloadExecuteTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
+// ExecuteProto runs the tool with protobuf input and returns protobuf output.
+func (t *PayloadExecuteTool) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
+	// Type-assert to structpb.Struct (temporary until task 4.1 creates PayloadExecuteRequest)
+	req, ok := input.(*structpb.Struct)
+	if !ok {
+		return nil, fmt.Errorf("expected *structpb.Struct, got %T", input)
+	}
 	// Handle nil executor gracefully
 	if t.executor == nil {
 		return nil, fmt.Errorf("payload executor not initialized")
 	}
 
+	fields := req.GetFields()
+
 	// Extract payload_id (required)
-	payloadIDStr, ok := input["payload_id"].(string)
-	if !ok || payloadIDStr == "" {
-		return nil, fmt.Errorf("payload_id parameter is required and must be a non-empty string")
+	payloadIDVal, ok := fields["payload_id"]
+	if !ok {
+		return nil, fmt.Errorf("payload_id parameter is required")
+	}
+	payloadIDStr := payloadIDVal.GetStringValue()
+	if payloadIDStr == "" {
+		return nil, fmt.Errorf("payload_id parameter must be a non-empty string")
 	}
 	payloadID := types.ID(payloadIDStr)
 
 	// Extract target (required)
-	target, ok := input["target"].(string)
-	if !ok || target == "" {
-		return nil, fmt.Errorf("target parameter is required and must be a non-empty string")
+	targetVal, ok := fields["target"]
+	if !ok {
+		return nil, fmt.Errorf("target parameter is required")
+	}
+	target := targetVal.GetStringValue()
+	if target == "" {
+		return nil, fmt.Errorf("target parameter must be a non-empty string")
 	}
 	targetID := types.ID(target)
 
 	// Extract optional params
 	params := make(map[string]interface{})
-	if paramsVal, ok := input["params"]; ok {
-		if paramsMap, ok := paramsVal.(map[string]interface{}); ok {
-			params = paramsMap
+	if paramsVal, ok := fields["params"]; ok {
+		if paramsStruct := paramsVal.GetStructValue(); paramsStruct != nil {
+			// Convert structpb.Struct to map[string]interface{}
+			for k, v := range paramsStruct.GetFields() {
+				params[k] = v.AsInterface()
+			}
 		}
 	}
 
 	// Extract timeout
 	timeout := 30 * time.Second
-	if timeoutVal, ok := input["timeout"]; ok {
-		switch v := timeoutVal.(type) {
-		case float64:
-			timeout = time.Duration(v) * time.Second
-		case int:
-			timeout = time.Duration(v) * time.Second
+	if timeoutVal, ok := fields["timeout"]; ok {
+		if timeoutNum := timeoutVal.GetNumberValue(); timeoutNum > 0 {
+			timeout = time.Duration(timeoutNum) * time.Second
 		}
 	}
 
 	// Build execution request
-	req := &payload.ExecutionRequest{
+	execReq := &payload.ExecutionRequest{
 		PayloadID:  payloadID,
 		TargetID:   targetID,
 		Parameters: params,
@@ -401,30 +316,30 @@ func (t *PayloadExecuteTool) Execute(ctx context.Context, input map[string]any) 
 	}
 
 	// Execute payload
-	result, err := t.executor.Execute(ctx, req)
+	result, err := t.executor.Execute(ctx, execReq)
 	if err != nil {
 		return nil, fmt.Errorf("payload execution failed: %w", err)
 	}
 
 	// Format execution details
-	execution := map[string]any{
-		"duration_ms": result.ResponseTime.Milliseconds(),
+	execution := map[string]interface{}{
+		"duration_ms": float64(result.ResponseTime.Milliseconds()),
 	}
 	if result.Response != "" {
 		execution["response"] = result.Response
 	}
 
-	// Format indicators matched (list of strings)
-	indicatorsMatched := make([]map[string]any, len(result.IndicatorsMatched))
+	// Format indicators matched (list of objects)
+	indicatorsMatched := make([]interface{}, len(result.IndicatorsMatched))
 	for i, indicator := range result.IndicatorsMatched {
-		indicatorsMatched[i] = map[string]any{
+		indicatorsMatched[i] = map[string]interface{}{
 			"indicator": indicator,
 			"matched":   true,
 		}
 	}
 
 	// Build output
-	output := map[string]any{
+	output := map[string]interface{}{
 		"success":            result.Success,
 		"confidence":         result.ConfidenceScore,
 		"execution":          execution,
@@ -433,7 +348,7 @@ func (t *PayloadExecuteTool) Execute(ctx context.Context, input map[string]any) 
 
 	// Add finding details if attack succeeded and created a finding
 	if result.Success && result.Finding != nil {
-		output["suggested_finding"] = map[string]any{
+		output["suggested_finding"] = map[string]interface{}{
 			"title":       result.Finding.Title,
 			"description": result.Finding.Description,
 			"severity":    string(result.Finding.Severity),
@@ -441,7 +356,13 @@ func (t *PayloadExecuteTool) Execute(ctx context.Context, input map[string]any) 
 		}
 	}
 
-	return output, nil
+	// Create response as structpb.Struct
+	response, err := structpb.NewStruct(output)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create response struct: %w", err)
+	}
+
+	return response, nil
 }
 
 // Health returns the current health status of this tool.

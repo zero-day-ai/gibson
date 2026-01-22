@@ -9,35 +9,34 @@ import (
 	"time"
 
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/sdk/schema"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// MockTool implements Tool interface for testing
+// MockTool implements Tool interface for testing with proto-based execution
 type MockTool struct {
-	name         string
-	description  string
-	version      string
-	tags         []string
-	inputSchema  schema.JSON
-	outputSchema schema.JSON
-	executeFn    func(ctx context.Context, input map[string]any) (map[string]any, error)
-	healthFn     func(ctx context.Context) types.HealthStatus
+	name              string
+	description       string
+	version           string
+	tags              []string
+	inputMessageType  string
+	outputMessageType string
+	executeProtoFn    func(ctx context.Context, input proto.Message) (proto.Message, error)
+	healthFn          func(ctx context.Context) types.HealthStatus
 }
 
 func NewMockTool(name string) *MockTool {
 	return &MockTool{
-		name:        name,
-		description: fmt.Sprintf("Mock tool: %s", name),
-		version:     "1.0.0",
-		tags:        []string{"mock", "test"},
-		inputSchema: schema.Object(map[string]schema.JSON{
-			"input": schema.StringWithDesc("test input"),
-		}, "input"),
-		outputSchema: schema.Object(map[string]schema.JSON{
-			"output": schema.StringWithDesc("test output"),
-		}, "output"),
-		executeFn: func(ctx context.Context, input map[string]any) (map[string]any, error) {
-			return map[string]any{"output": "success"}, nil
+		name:              name,
+		description:       fmt.Sprintf("Mock tool: %s", name),
+		version:           "1.0.0",
+		tags:              []string{"mock", "test"},
+		inputMessageType:  "google.protobuf.Struct",
+		outputMessageType: "google.protobuf.Struct",
+		executeProtoFn: func(ctx context.Context, input proto.Message) (proto.Message, error) {
+			// Default implementation returns a simple success message
+			output, _ := structpb.NewStruct(map[string]any{"output": "success"})
+			return output, nil
 		},
 		healthFn: func(ctx context.Context) types.HealthStatus {
 			return types.Healthy("mock tool is healthy")
@@ -49,10 +48,10 @@ func (m *MockTool) Name() string              { return m.name }
 func (m *MockTool) Description() string       { return m.description }
 func (m *MockTool) Version() string           { return m.version }
 func (m *MockTool) Tags() []string            { return m.tags }
-func (m *MockTool) InputSchema() schema.JSON  { return m.inputSchema }
-func (m *MockTool) OutputSchema() schema.JSON { return m.outputSchema }
-func (m *MockTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	return m.executeFn(ctx, input)
+func (m *MockTool) InputMessageType() string  { return m.inputMessageType }
+func (m *MockTool) OutputMessageType() string { return m.outputMessageType }
+func (m *MockTool) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
+	return m.executeProtoFn(ctx, input)
 }
 func (m *MockTool) Health(ctx context.Context) types.HealthStatus {
 	return m.healthFn(ctx)
@@ -63,8 +62,8 @@ func (m *MockTool) WithTags(tags ...string) *MockTool {
 	return m
 }
 
-func (m *MockTool) WithExecuteFunc(fn func(ctx context.Context, input map[string]any) (map[string]any, error)) *MockTool {
-	m.executeFn = fn
+func (m *MockTool) WithExecuteProtoFunc(fn func(ctx context.Context, input proto.Message) (proto.Message, error)) *MockTool {
+	m.executeProtoFn = fn
 	return m
 }
 
@@ -302,12 +301,11 @@ func TestToolRegistry_ListByTag(t *testing.T) {
 	}
 }
 
-// TestToolRegistry_Execute tests tool execution and error handling
-func TestToolRegistry_Execute(t *testing.T) {
+// TestToolRegistry_ExecuteProto tests proto-based tool execution and error handling
+func TestToolRegistry_ExecuteProto(t *testing.T) {
 	tests := []struct {
 		name      string
 		toolName  string
-		input     map[string]any
 		setupFn   func(*DefaultToolRegistry)
 		wantError bool
 		errorCode types.ErrorCode
@@ -315,7 +313,6 @@ func TestToolRegistry_Execute(t *testing.T) {
 		{
 			name:     "successful execution",
 			toolName: "test-tool",
-			input:    map[string]any{"input": "test"},
 			setupFn: func(r *DefaultToolRegistry) {
 				tool := NewMockTool("test-tool")
 				_ = r.RegisterInternal(tool)
@@ -325,7 +322,6 @@ func TestToolRegistry_Execute(t *testing.T) {
 		{
 			name:      "tool not found",
 			toolName:  "non-existent",
-			input:     map[string]any{"input": "test"},
 			setupFn:   func(r *DefaultToolRegistry) {},
 			wantError: true,
 			errorCode: ErrToolNotFound,
@@ -333,9 +329,8 @@ func TestToolRegistry_Execute(t *testing.T) {
 		{
 			name:     "execution failure",
 			toolName: "failing-tool",
-			input:    map[string]any{"input": "test"},
 			setupFn: func(r *DefaultToolRegistry) {
-				tool := NewMockTool("failing-tool").WithExecuteFunc(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+				tool := NewMockTool("failing-tool").WithExecuteProtoFunc(func(ctx context.Context, input proto.Message) (proto.Message, error) {
 					return nil, errors.New("execution failed")
 				})
 				_ = r.RegisterInternal(tool)
@@ -351,13 +346,12 @@ func TestToolRegistry_Execute(t *testing.T) {
 			tt.setupFn(registry)
 
 			ctx := context.Background()
-			output, err := registry.Execute(ctx, tt.toolName, tt.input)
+			// Create a simple proto input message
+			input, _ := structpb.NewStruct(map[string]any{"input": "test"})
 
-			if tt.wantError {
-				if err == nil {
-					t.Errorf("expected error but got nil")
-					return
-				}
+			tool, err := registry.Get(tt.toolName)
+			if tt.wantError && err != nil {
+				// Expected error during Get
 				var gibsonErr *types.GibsonError
 				if !errors.As(err, &gibsonErr) {
 					t.Errorf("expected GibsonError but got %T", err)
@@ -365,6 +359,20 @@ func TestToolRegistry_Execute(t *testing.T) {
 				}
 				if gibsonErr.Code != tt.errorCode {
 					t.Errorf("expected error code %q but got %q", tt.errorCode, gibsonErr.Code)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("failed to get tool: %v", err)
+			}
+
+			output, err := tool.ExecuteProto(ctx, input)
+
+			if tt.wantError {
+				if err == nil {
+					t.Errorf("expected error but got nil")
+					return
 				}
 			} else {
 				if err != nil {
@@ -378,21 +386,26 @@ func TestToolRegistry_Execute(t *testing.T) {
 	}
 }
 
-// TestToolRegistry_Metrics tests metrics tracking
+// TestToolRegistry_Metrics tests metrics tracking with proto execution
 func TestToolRegistry_Metrics(t *testing.T) {
 	registry := NewToolRegistry()
-	tool := NewMockTool("test-tool")
+	mockTool := NewMockTool("test-tool")
 
-	if err := registry.RegisterInternal(tool); err != nil {
+	if err := registry.RegisterInternal(mockTool); err != nil {
 		t.Fatalf("registration failed: %v", err)
 	}
 
 	ctx := context.Background()
-	input := map[string]any{"input": "test"}
+	input, _ := structpb.NewStruct(map[string]any{"input": "test"})
+
+	tool, err := registry.Get("test-tool")
+	if err != nil {
+		t.Fatalf("failed to get tool: %v", err)
+	}
 
 	// Execute tool multiple times
 	for i := 0; i < 5; i++ {
-		_, err := registry.Execute(ctx, "test-tool", input)
+		_, err := tool.ExecuteProto(ctx, input)
 		if err != nil {
 			t.Fatalf("execution %d failed: %v", i, err)
 		}
@@ -421,15 +434,16 @@ func TestToolRegistry_Metrics(t *testing.T) {
 	}
 
 	// Test failed execution
-	failingTool := NewMockTool("failing-tool").WithExecuteFunc(func(ctx context.Context, input map[string]any) (map[string]any, error) {
+	failingMockTool := NewMockTool("failing-tool").WithExecuteProtoFunc(func(ctx context.Context, input proto.Message) (proto.Message, error) {
 		return nil, errors.New("execution failed")
 	})
 
-	if err := registry.RegisterInternal(failingTool); err != nil {
+	if err := registry.RegisterInternal(failingMockTool); err != nil {
 		t.Fatalf("registration failed: %v", err)
 	}
 
-	_, _ = registry.Execute(ctx, "failing-tool", input)
+	failingTool, _ := registry.Get("failing-tool")
+	_, _ = failingTool.ExecuteProto(ctx, input)
 
 	metrics, err = registry.Metrics("failing-tool")
 	if err != nil {
@@ -593,8 +607,12 @@ func TestToolRegistry_ConcurrentAccess(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			toolName := fmt.Sprintf("tool-%d", idx%10)
-			input := map[string]any{"input": fmt.Sprintf("test-%d", idx)}
-			_, _ = registry.Execute(ctx, toolName, input)
+			tool, err := registry.Get(toolName)
+			if err != nil {
+				return
+			}
+			input, _ := structpb.NewStruct(map[string]any{"input": fmt.Sprintf("test-%d", idx)})
+			_, _ = tool.ExecuteProto(ctx, input)
 		}(i)
 	}
 

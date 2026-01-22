@@ -67,6 +67,11 @@ type MissionStore interface {
 	// IncrementRunNumber atomically increments and returns the next run number for a mission name
 	IncrementRunNumber(ctx context.Context, name string) (int, error)
 
+	// FindOrCreateByName looks up a mission by name, or creates it if it doesn't exist.
+	// This ensures missions have stable IDs across multiple runs.
+	// Returns the mission and a boolean indicating if it was created (true) or found (false).
+	FindOrCreateByName(ctx context.Context, mission *Mission) (*Mission, bool, error)
+
 	// Mission definition methods (etcd-backed)
 
 	// CreateDefinition stores a new mission definition in etcd.
@@ -1074,6 +1079,42 @@ func (s *DBMissionStore) IncrementRunNumber(ctx context.Context, name string) (i
 
 	// Next run number is max + 1
 	return maxRunNumber + 1, nil
+}
+
+// FindOrCreateByName looks up a mission by name, or creates it if it doesn't exist.
+// This ensures missions have stable IDs across multiple runs.
+// Returns the mission and a boolean indicating if it was created (true) or found (false).
+func (s *DBMissionStore) FindOrCreateByName(ctx context.Context, mission *Mission) (*Mission, bool, error) {
+	if mission == nil {
+		return nil, false, fmt.Errorf("mission cannot be nil")
+	}
+
+	if mission.Name == "" {
+		return nil, false, fmt.Errorf("mission name is required")
+	}
+
+	// Try to find existing mission by name
+	existing, err := s.GetByName(ctx, mission.Name)
+	if err == nil {
+		// Found existing mission - return it
+		return existing, false, nil
+	}
+
+	// Check if error is "not found"
+	if !IsNotFoundError(err) {
+		return nil, false, fmt.Errorf("failed to lookup mission by name: %w", err)
+	}
+
+	// Mission doesn't exist - create it
+	if err := s.Save(ctx, mission); err != nil {
+		// Handle race condition: another process might have created it
+		if existing, lookupErr := s.GetByName(ctx, mission.Name); lookupErr == nil {
+			return existing, false, nil
+		}
+		return nil, false, fmt.Errorf("failed to create mission: %w", err)
+	}
+
+	return mission, true, nil
 }
 
 // Mission Definition Storage (etcd-backed)

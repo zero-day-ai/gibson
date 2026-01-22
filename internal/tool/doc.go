@@ -21,15 +21,21 @@
 //	registry := tool.NewToolRegistry()
 //
 //	// Register an internal tool
-//	myTool := &MyTool{} // implements Tool interface
+//	myTool := &MyTool{} // implements Tool interface with ExecuteProto
 //	if err := registry.RegisterInternal(myTool); err != nil {
 //	    log.Fatal(err)
 //	}
 //
-//	// Execute the tool
+//	// Get the tool and execute it with proto messages
 //	ctx := context.Background()
-//	input := map[string]any{"param": "value"}
-//	output, err := registry.Execute(ctx, "my-tool", input)
+//	tool, err := registry.Get("my-tool")
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//
+//	// Execute with proto message (type depends on tool's InputMessageType)
+//	protoInput := &pb.MyToolRequest{Param: "value"}
+//	protoOutput, err := tool.ExecuteProto(ctx, protoInput)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}

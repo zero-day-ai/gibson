@@ -79,18 +79,25 @@ func MissionShow(cc *CommandContext, name string) (*CommandResult, error) {
 // MissionRunResult represents the structured output from MissionRun
 type MissionRunResult struct {
 	Mission     *mission.Mission
+	Run         *mission.MissionRun
 	Definition  *mission.MissionDefinition
 	Status      string
 	NodesCount  int
 	EntryPoints int
 	ExitPoints  int
+	IsNewMission bool // True if a new mission was created, false if reusing existing
 }
 
-// MissionRun creates and runs a new mission from a workflow YAML file.
+// MissionRun creates and runs a new mission execution from a workflow YAML file.
+// If a mission with the same name already exists, it reuses the mission's stable ID
+// and creates a new MissionRun to track this execution.
 func MissionRun(cc *CommandContext, workflowFile string, targetFlag string) (*CommandResult, error) {
-	// Validate mission store
+	// Validate stores
 	if cc.MissionStore == nil {
 		return nil, fmt.Errorf("mission store not initialized")
+	}
+	if cc.MissionRunStore == nil {
+		return nil, fmt.Errorf("mission run store not initialized")
 	}
 
 	// Parse mission definition file
@@ -127,14 +134,14 @@ func MissionRun(cc *CommandContext, workflowFile string, targetFlag string) (*Co
 		}, nil
 	}
 
-	// Create mission with resolved target
+	// Find or create mission with stable ID
 	now := time.Now()
-	m := &mission.Mission{
+	missionTemplate := &mission.Mission{
 		ID:               types.NewID(),
 		Name:             def.Name,
 		Description:      def.Description,
 		Status:           mission.MissionStatusPending,
-		TargetID:         targetID, // Use resolved target ID from CLI flag or YAML
+		TargetID:         targetID,
 		WorkflowID:       def.ID,
 		WorkflowJSON:     string(definitionJSON),
 		Progress:         0.0,
@@ -145,34 +152,46 @@ func MissionRun(cc *CommandContext, workflowFile string, targetFlag string) (*Co
 		UpdatedAt:        now,
 	}
 
-	if err := cc.MissionStore.Save(cc.Ctx, m); err != nil {
+	m, isNewMission, err := cc.MissionStore.FindOrCreateByName(cc.Ctx, missionTemplate)
+	if err != nil {
 		return &CommandResult{
-			Error: fmt.Errorf("failed to create mission: %w", err),
+			Error: fmt.Errorf("failed to find or create mission: %w", err),
 		}, nil
 	}
 
-	// Update status to running
-	m.Status = mission.MissionStatusRunning
-	m.StartedAt = &now
-	if err := cc.MissionStore.Update(cc.Ctx, m); err != nil {
+	// Get next run number for this mission
+	runNumber, err := cc.MissionRunStore.GetNextRunNumber(cc.Ctx, m.ID)
+	if err != nil {
 		return &CommandResult{
-			Error: fmt.Errorf("failed to start mission: %w", err),
+			Error: fmt.Errorf("failed to get next run number: %w", err),
+		}, nil
+	}
+
+	// Create new mission run
+	run := mission.NewMissionRun(m.ID, runNumber)
+	run.MarkStarted()
+
+	if err := cc.MissionRunStore.Save(cc.Ctx, run); err != nil {
+		return &CommandResult{
+			Error: fmt.Errorf("failed to create mission run: %w", err),
 		}, nil
 	}
 
 	// TODO: Actually execute the mission with orchestrator
-	// For now, this just creates and saves the mission without executing it
+	// The orchestrator should receive the run.ID (not mission.ID) for tracking this execution
 
 	return &CommandResult{
 		Data: &MissionRunResult{
-			Mission:     m,
-			Definition:  def,
-			Status:      "started",
-			NodesCount:  len(def.Nodes),
-			EntryPoints: len(def.EntryPoints),
-			ExitPoints:  len(def.ExitPoints),
+			Mission:      m,
+			Run:          run,
+			Definition:   def,
+			Status:       "started",
+			NodesCount:   len(def.Nodes),
+			EntryPoints:  len(def.EntryPoints),
+			ExitPoints:   len(def.ExitPoints),
+			IsNewMission: isNewMission,
 		},
-		Message: fmt.Sprintf("Mission '%s' started successfully", m.Name),
+		Message: fmt.Sprintf("Mission '%s' run #%d started successfully (run_id: %s)", m.Name, runNumber, run.ID),
 	}, nil
 }
 
@@ -262,21 +281,36 @@ func MissionStop(cc *CommandContext, name string) (*CommandResult, error) {
 	}, nil
 }
 
-// MissionDelete deletes a mission.
+// MissionDelete deletes a mission by ID or name.
+// The identifier can be either a UUID (mission ID) or mission name.
 // The force parameter determines whether to skip confirmation prompts (handled by caller).
 // This function only performs the actual deletion logic.
-func MissionDelete(cc *CommandContext, name string, force bool) (*CommandResult, error) {
+func MissionDelete(cc *CommandContext, identifier string, force bool) (*CommandResult, error) {
 	// Validate mission store
 	if cc.MissionStore == nil {
 		return nil, fmt.Errorf("mission store not initialized")
 	}
 
-	// Get mission to retrieve ID
-	m, err := cc.MissionStore.GetByName(cc.Ctx, name)
-	if err != nil {
-		return &CommandResult{
-			Error: fmt.Errorf("failed to get mission: %w", err),
-		}, nil
+	// Try to parse as UUID first, then fall back to name lookup
+	var m *mission.Mission
+	var err error
+
+	if id, parseErr := types.ParseID(identifier); parseErr == nil {
+		// Valid UUID - look up by ID
+		m, err = cc.MissionStore.Get(cc.Ctx, id)
+		if err != nil {
+			return &CommandResult{
+				Error: fmt.Errorf("failed to get mission by ID: %w", err),
+			}, nil
+		}
+	} else {
+		// Not a valid UUID - look up by name
+		m, err = cc.MissionStore.GetByName(cc.Ctx, identifier)
+		if err != nil {
+			return &CommandResult{
+				Error: fmt.Errorf("failed to get mission by name: %w", err),
+			}, nil
+		}
 	}
 
 	// Delete mission
@@ -289,9 +323,10 @@ func MissionDelete(cc *CommandContext, name string, force bool) (*CommandResult,
 	return &CommandResult{
 		Data: map[string]interface{}{
 			"mission": m.Name,
+			"id":      m.ID.String(),
 			"status":  "deleted",
 		},
-		Message: fmt.Sprintf("Mission '%s' deleted successfully", m.Name),
+		Message: fmt.Sprintf("Mission '%s' (ID: %s) deleted successfully", m.Name, m.ID.String()),
 	}, nil
 }
 

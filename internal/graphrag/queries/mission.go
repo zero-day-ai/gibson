@@ -42,8 +42,9 @@ func NewMissionQueries(client graph.GraphClient) *MissionQueries {
 }
 
 // CreateMission creates or updates a mission node in the graph.
-// Uses MERGE for idempotency - if mission exists, updates its status.
-// On create, sets all properties. On match, only updates status and started_at.
+// Uses MERGE on ID for idempotency - the SQLite mission ID is stable (same across runs).
+// All runs of the same workflow share one Mission node in Neo4j with the same stable ID.
+// On create, sets all properties. On match, updates status and latest run info.
 // Returns an error if validation fails or if the database operation fails.
 func (mq *MissionQueries) CreateMission(ctx context.Context, m *schema.Mission) error {
 	if m == nil {
@@ -56,7 +57,8 @@ func (mq *MissionQueries) CreateMission(ctx context.Context, m *schema.Mission) 
 			"invalid mission", err)
 	}
 
-	// Build Cypher query with MERGE for idempotency
+	// Build Cypher query with MERGE on ID (SQLite mission ID is stable across runs)
+	// This ensures all runs of the same workflow share one Mission node
 	cypher := `
 		MERGE (m:Mission {id: $id})
 		ON CREATE SET
@@ -97,13 +99,13 @@ func (mq *MissionQueries) CreateMission(ctx context.Context, m *schema.Mission) 
 	result, err := mq.client.Query(ctx, cypher, params)
 	if err != nil {
 		return types.WrapError(graph.ErrCodeGraphNodeCreateFailed,
-			fmt.Sprintf("failed to create mission %s", m.ID), err)
+			fmt.Sprintf("failed to create mission %s", m.Name), err)
 	}
 
 	// Verify result (should always have one record with MERGE)
 	if len(result.Records) == 0 {
 		return types.NewError(graph.ErrCodeGraphNodeCreateFailed,
-			fmt.Sprintf("no result returned when creating mission %s", m.ID))
+			fmt.Sprintf("no result returned when creating mission %s", m.Name))
 	}
 
 	return nil
@@ -389,6 +391,7 @@ func (mq *MissionQueries) CreateWorkflowNode(ctx context.Context, node *schema.W
 
 	// Create workflow node with MERGE for idempotency
 	// Also creates PART_OF relationship to mission in the same query
+	// Match Mission by ID (stable SQLite ID)
 	cypher := `
 		MERGE (n:WorkflowNode {id: $id})
 		SET n.mission_id = $mission_id,
@@ -412,8 +415,8 @@ func (mq *MissionQueries) CreateWorkflowNode(ctx context.Context, node *schema.W
 	`
 
 	params := map[string]any{
-		"id":           node.ID.String(),
-		"mission_id":   node.MissionID.String(),
+		"id":         node.ID.String(),
+		"mission_id": node.MissionID.String(),
 		"type":         string(node.Type),
 		"name":         node.Name,
 		"description":  node.Description,
@@ -676,6 +679,115 @@ func recordToDecision(data any) (*schema.Decision, error) {
 	}
 
 	return decision, nil
+}
+
+// CreateMissionRun creates a new mission_run node and links it to its Mission.
+// Each call creates a NEW node - run numbers must be unique per mission.
+// Returns the generated mission run ID.
+//
+// IMPORTANT: Uses lowercase :mission_run label to match GraphLoader expectations.
+// The GraphLoader attaches discovered nodes (hosts, ports, etc.) to mission_run
+// via BELONGS_TO relationships, so the label must be consistent.
+//
+// Parameters:
+//   - ctx: Context for cancellation
+//   - missionID: The stable SQLite mission ID (used to match Mission node)
+//   - runID: The SQLite mission_run ID (stored on mission_run node)
+//   - runNumber: Sequential run number (1, 2, 3...)
+//
+// Returns:
+//   - error: Any error during creation
+func (mq *MissionQueries) CreateMissionRun(ctx context.Context, missionID types.ID, runID types.ID, runNumber int) error {
+	if err := missionID.Validate(); err != nil {
+		return types.NewError(graph.ErrCodeGraphInvalidQuery, "invalid mission ID")
+	}
+	if err := runID.Validate(); err != nil {
+		return types.NewError(graph.ErrCodeGraphInvalidQuery, "invalid run ID")
+	}
+	if runNumber < 1 {
+		return types.NewError(graph.ErrCodeGraphInvalidQuery, "run number must be >= 1")
+	}
+
+	// Use lowercase :mission_run to match GraphLoader's attachToMissionRun() expectations
+	// GraphLoader queries: MATCH (run:mission_run {id: $run_id})
+	// Match Mission by ID (stable SQLite ID)
+	cypher := `
+		MATCH (m:Mission {id: $mission_id})
+		CREATE (r:mission_run {
+			id: $run_id,
+			mission_id: $mission_id,
+			run_number: $run_number,
+			status: 'running',
+			created_at: datetime()
+		})
+		CREATE (r)-[:BELONGS_TO]->(m)
+		RETURN r.id as run_id
+	`
+
+	params := map[string]any{
+		"mission_id": missionID.String(),
+		"run_id":     runID.String(),
+		"run_number": runNumber,
+	}
+
+	result, err := mq.client.Query(ctx, cypher, params)
+	if err != nil {
+		return types.WrapError(graph.ErrCodeGraphNodeCreateFailed,
+			"failed to create mission run", err)
+	}
+
+	if len(result.Records) == 0 {
+		return types.NewError(graph.ErrCodeGraphNodeCreateFailed,
+			"mission not found - cannot create mission_run without parent Mission")
+	}
+
+	return nil
+}
+
+// UpdateMissionRunStatus updates the status of a mission run.
+// Valid statuses: running, completed, failed, cancelled.
+// Terminal statuses (completed, failed, cancelled) also set completed_at.
+func (mq *MissionQueries) UpdateMissionRunStatus(ctx context.Context, runID string, status string) error {
+	if runID == "" {
+		return types.NewError(graph.ErrCodeGraphInvalidQuery, "run ID cannot be empty")
+	}
+
+	validStatuses := map[string]bool{"running": true, "completed": true, "failed": true, "cancelled": true}
+	if !validStatuses[status] {
+		return types.NewError(graph.ErrCodeGraphInvalidQuery, "invalid status: "+status)
+	}
+
+	// Use lowercase :mission_run to match CreateMissionRun
+	cypher := `
+		MATCH (r:mission_run {id: $run_id})
+		SET r.status = $status, r.updated_at = datetime()
+	`
+
+	// For terminal states, set completed_at
+	if status == "completed" || status == "failed" || status == "cancelled" {
+		cypher += `, r.completed_at = datetime()`
+	}
+
+	cypher += `
+		RETURN r.id as run_id
+	`
+
+	params := map[string]any{
+		"run_id": runID,
+		"status": status,
+	}
+
+	result, err := mq.client.Query(ctx, cypher, params)
+	if err != nil {
+		return types.WrapError(graph.ErrCodeGraphQueryFailed,
+			"failed to update mission run status", err)
+	}
+
+	if len(result.Records) == 0 {
+		return types.NewError(graph.ErrCodeGraphNodeNotFound, "mission run not found")
+	}
+
+	return nil
 }
 
 func recordToAgentExecution(data any) (*schema.AgentExecution, error) {

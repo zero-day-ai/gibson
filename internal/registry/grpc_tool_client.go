@@ -2,15 +2,17 @@ package registry
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"google.golang.org/grpc"
+	protobuf "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 
 	"github.com/zero-day-ai/gibson/internal/types"
 	proto "github.com/zero-day-ai/sdk/api/gen/proto"
 	"github.com/zero-day-ai/sdk/registry"
-	"github.com/zero-day-ai/sdk/schema"
 )
 
 // GRPCToolClient implements tool.Tool interface for tools discovered via etcd registry.
@@ -24,7 +26,7 @@ import (
 // - Parses tags from ServiceInfo metadata
 // - Delegates execution to remote tool via gRPC
 // - Handles descriptor caching and health checks
-// - Marshals/unmarshals JSON for Execute RPC
+// - Proto-based execution using ExecuteProto
 type GRPCToolClient struct {
 	conn   *grpc.ClientConn
 	client proto.ToolServiceClient
@@ -38,12 +40,12 @@ type GRPCToolClient struct {
 // toolDescriptor holds cached metadata from the tool's GetDescriptor RPC.
 // This struct is internal and used only for caching purposes.
 type toolDescriptor struct {
-	Name         string
-	Description  string
-	Version      string
-	Tags         []string
-	InputSchema  schema.JSON
-	OutputSchema schema.JSON
+	Name              string
+	Description       string
+	Version           string
+	Tags              []string
+	InputMessageType  string
+	OutputMessageType string
 }
 
 // NewGRPCToolClient creates a new GRPCToolClient wrapping an existing gRPC connection.
@@ -104,11 +106,8 @@ func (c *GRPCToolClient) Tags() []string {
 	return parseCommaSeparated(c.info.Metadata["tags"])
 }
 
-// InputSchema returns the JSON schema defining valid input parameters.
-//
-// This calls fetchDescriptor() to retrieve the schema from the remote tool
-// if not already cached. The schema is used for input validation.
-func (c *GRPCToolClient) InputSchema() schema.JSON {
+// InputMessageType returns the fully-qualified proto message type name for input
+func (c *GRPCToolClient) InputMessageType() string {
 	// Ensure descriptor is loaded
 	if c.descriptor == nil {
 		ctx := context.Background()
@@ -116,18 +115,14 @@ func (c *GRPCToolClient) InputSchema() schema.JSON {
 	}
 
 	if c.descriptor != nil {
-		return c.descriptor.InputSchema
+		return c.descriptor.InputMessageType
 	}
 
-	// Return empty schema if fetch failed
-	return schema.JSON{}
+	return ""
 }
 
-// OutputSchema returns the JSON schema defining the output structure.
-//
-// This calls fetchDescriptor() to retrieve the schema from the remote tool
-// if not already cached. The schema documents the expected output format.
-func (c *GRPCToolClient) OutputSchema() schema.JSON {
+// OutputMessageType returns the fully-qualified proto message type name for output
+func (c *GRPCToolClient) OutputMessageType() string {
 	// Ensure descriptor is loaded
 	if c.descriptor == nil {
 		ctx := context.Background()
@@ -135,28 +130,30 @@ func (c *GRPCToolClient) OutputSchema() schema.JSON {
 	}
 
 	if c.descriptor != nil {
-		return c.descriptor.OutputSchema
+		return c.descriptor.OutputMessageType
 	}
 
-	// Return empty schema if fetch failed
-	return schema.JSON{}
+	return ""
 }
 
-// Execute runs the tool with the given input and returns the result.
+// ExecuteProto runs the tool with proto message input and returns proto message output.
 //
 // This method:
-//  1. Marshals the input to JSON
+//  1. Marshals the proto input to JSON
 //  2. Sends an Execute RPC to the remote tool
-//  3. Receives the result via gRPC
-//  4. Unmarshals and returns the result
+//  3. Receives the JSON result via gRPC
+//  4. Unmarshals JSON to proto message and returns it
 //
-// The input and output maps must conform to the InputSchema and OutputSchema respectively.
-// Returns an error if execution fails or input validation fails.
-func (c *GRPCToolClient) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
-	// Marshal input to JSON
-	inputJSON, err := json.Marshal(input)
+// Returns an error if execution fails or proto conversion fails.
+func (c *GRPCToolClient) ExecuteProto(ctx context.Context, input protobuf.Message) (protobuf.Message, error) {
+	// Marshal proto input to JSON
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames:   true,
+		EmitUnpopulated: false,
+	}
+	inputJSON, err := marshaler.Marshal(input)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal input: %w", err)
+		return nil, fmt.Errorf("failed to marshal proto input: %w", err)
 	}
 
 	// Send Execute RPC
@@ -175,9 +172,25 @@ func (c *GRPCToolClient) Execute(ctx context.Context, input map[string]any) (map
 		return nil, fmt.Errorf("%s: %s", resp.Error.Code, resp.Error.Message)
 	}
 
-	// Unmarshal output from JSON
-	var output map[string]any
-	if err := json.Unmarshal([]byte(resp.OutputJson), &output); err != nil {
+	// Get output message type
+	outputType := c.OutputMessageType()
+	if outputType == "" {
+		return nil, fmt.Errorf("output message type not available")
+	}
+
+	// Create output proto message dynamically
+	msgType, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(outputType))
+	if err != nil {
+		return nil, fmt.Errorf("failed to find output message type %q: %w", outputType, err)
+	}
+
+	output := msgType.New().Interface()
+
+	// Unmarshal JSON to proto
+	unmarshaler := protojson.UnmarshalOptions{
+		DiscardUnknown: true,
+	}
+	if err := unmarshaler.Unmarshal([]byte(resp.OutputJson), output); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal output: %w", err)
 	}
 
@@ -225,44 +238,22 @@ func (c *GRPCToolClient) fetchDescriptor(ctx context.Context) (*toolDescriptor, 
 		return nil, fmt.Errorf("failed to get descriptor: %w", err)
 	}
 
-	// Convert proto schemas to internal type
-	inputSchema, err := protoSchemaToInternal(resp.InputSchema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert input schema: %w", err)
-	}
-
-	outputSchema, err := protoSchemaToInternal(resp.OutputSchema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert output schema: %w", err)
-	}
+	// TODO: Once SDK task 1.3 is complete and tool.proto has input_message_type/output_message_type fields,
+	// use resp.InputMessageType and resp.OutputMessageType instead.
+	// For now, default to google.protobuf.Struct as the proto interface.
+	inputMsgType := "google.protobuf.Struct"
+	outputMsgType := "google.protobuf.Struct"
 
 	// Build descriptor
 	desc := &toolDescriptor{
-		Name:         resp.Name,
-		Description:  resp.Description,
-		Version:      resp.Version,
-		Tags:         resp.Tags,
-		InputSchema:  inputSchema,
-		OutputSchema: outputSchema,
+		Name:              resp.Name,
+		Description:       resp.Description,
+		Version:           resp.Version,
+		Tags:              resp.Tags,
+		InputMessageType:  inputMsgType,
+		OutputMessageType: outputMsgType,
 	}
 
 	c.descriptor = desc
 	return desc, nil
-}
-
-// protoSchemaToInternal converts a proto JSONSchema to SDK schema.JSON.
-//
-// The proto JSONSchema contains a serialized JSON string that needs to be
-// unmarshaled into the SDK schema.JSON struct.
-func protoSchemaToInternal(protoSchema *proto.JSONSchema) (schema.JSON, error) {
-	if protoSchema == nil || protoSchema.Json == "" {
-		return schema.JSON{}, nil
-	}
-
-	var internalSchema schema.JSON
-	if err := json.Unmarshal([]byte(protoSchema.Json), &internalSchema); err != nil {
-		return schema.JSON{}, fmt.Errorf("failed to unmarshal schema: %w", err)
-	}
-
-	return internalSchema, nil
 }

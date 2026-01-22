@@ -7,10 +7,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/graphrag/queries"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/types"
+	pb "github.com/zero-day-ai/sdk/api/gen/proto"
+	"github.com/zero-day-ai/sdk/api/gen/workflowpb"
 )
 
 // MissionAdapter adapts the orchestrator to the mission.MissionOrchestrator interface.
@@ -294,8 +297,16 @@ func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mi
 		}
 	}
 
+	// Create PolicyChecker for data reuse enforcement
+	var policyChecker PolicyChecker
+	if def != nil {
+		policySource := NewMissionPolicySource(def)
+		nodeStore := NewGraphNodeStore(m.config.GraphRAGClient, missionRunID)
+		policyChecker = NewPolicyChecker(policySource, nodeStore, m.config.Logger.With("component", "policy_checker"))
+	}
+
 	// Create Actor
-	actor := NewActor(harnessAdapter, executionQueries, missionQueries, m.config.GraphRAGClient, inventory, m.config.MissionTracer)
+	actor := NewActor(harnessAdapter, executionQueries, missionQueries, m.config.GraphRAGClient, inventory, m.config.MissionTracer, policyChecker)
 
 	// Create the orchestrator
 	orchOptions := []OrchestratorOption{
@@ -507,6 +518,293 @@ func (m *MissionAdapter) parseCheckpointState(checkpoint *mission.MissionCheckpo
 	state["pending_nodes"] = checkpoint.PendingNodes
 
 	return state, nil
+}
+
+// ExecuteProto executes a mission using a proto WorkflowDefinition instead of MissionDefinition.
+// This provides type-safe workflow execution with proto enum validation and oneof accessors.
+func (m *MissionAdapter) ExecuteProto(ctx context.Context, mis *mission.Mission, workflowDef *workflowpb.WorkflowDefinition) (*mission.MissionResult, error) {
+	// Convert proto WorkflowDefinition to internal MissionDefinition
+	def, err := protoWorkflowToMissionDefinition(workflowDef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert proto workflow to mission definition: %w", err)
+	}
+
+	// Store converted definition in mission for existing Execute method
+	defJSON, err := json.Marshal(def)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal mission definition: %w", err)
+	}
+	mis.WorkflowJSON = string(defJSON)
+
+	// Use existing Execute method
+	return m.Execute(ctx, mis)
+}
+
+// protoWorkflowToMissionDefinition converts a proto WorkflowDefinition to internal MissionDefinition.
+// This function uses proto enum types and oneof accessors as specified in Phase 3 requirements.
+func protoWorkflowToMissionDefinition(proto *workflowpb.WorkflowDefinition) (*mission.MissionDefinition, error) {
+	if proto == nil {
+		return nil, fmt.Errorf("proto workflow definition is nil")
+	}
+
+	// Convert proto nodes to mission nodes
+	nodes := make(map[string]*mission.MissionNode)
+	for nodeID, protoNode := range proto.Nodes {
+		missionNode, err := protoNodeToMissionNode(nodeID, protoNode)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert node %s: %w", nodeID, err)
+		}
+		nodes[nodeID] = missionNode
+	}
+
+	// Convert proto edges to mission edges
+	edges := make([]mission.MissionEdge, len(proto.Edges))
+	for i, protoEdge := range proto.Edges {
+		edges[i] = mission.MissionEdge{
+			From:      protoEdge.From,
+			To:        protoEdge.To,
+			Condition: protoEdge.Condition,
+		}
+	}
+
+	// Convert dependencies if present
+	var deps *mission.MissionDependencies
+	if proto.Dependencies != nil {
+		deps = &mission.MissionDependencies{
+			Agents:  proto.Dependencies.Agents,
+			Tools:   proto.Dependencies.Tools,
+			Plugins: proto.Dependencies.Plugins,
+		}
+	}
+
+	// Convert metadata map
+	metadata := make(map[string]any)
+	for k, v := range proto.Metadata {
+		metadata[k] = v
+	}
+
+	def := &mission.MissionDefinition{
+		ID:           types.ID(proto.Id),
+		Name:         proto.Name,
+		Description:  proto.Description,
+		Version:      proto.Version,
+		TargetRef:    proto.TargetRef,
+		Nodes:        nodes,
+		Edges:        edges,
+		EntryPoints:  proto.EntryPoints,
+		ExitPoints:   proto.ExitPoints,
+		Metadata:     metadata,
+		Dependencies: deps,
+		Source:       proto.Source,
+	}
+
+	if proto.InstalledAt != nil {
+		def.InstalledAt = proto.InstalledAt.AsTime()
+	}
+	if proto.CreatedAt != nil {
+		def.CreatedAt = proto.CreatedAt.AsTime()
+	}
+
+	return def, nil
+}
+
+// protoNodeToMissionNode converts a proto WorkflowNode to internal MissionNode.
+// Uses proto enum types and oneof accessors for type-safe node configuration.
+func protoNodeToMissionNode(nodeID string, protoNode *workflowpb.WorkflowNode) (*mission.MissionNode, error) {
+	if protoNode == nil {
+		return nil, fmt.Errorf("proto node is nil")
+	}
+
+	// Convert node type enum to internal type
+	var nodeType mission.NodeType
+	switch protoNode.Type {
+	case workflowpb.NodeType_NODE_TYPE_AGENT:
+		nodeType = mission.NodeTypeAgent
+	case workflowpb.NodeType_NODE_TYPE_TOOL:
+		nodeType = mission.NodeTypeTool
+	case workflowpb.NodeType_NODE_TYPE_PLUGIN:
+		nodeType = mission.NodeTypePlugin
+	case workflowpb.NodeType_NODE_TYPE_CONDITION:
+		nodeType = mission.NodeTypeCondition
+	case workflowpb.NodeType_NODE_TYPE_PARALLEL:
+		nodeType = mission.NodeTypeParallel
+	case workflowpb.NodeType_NODE_TYPE_JOIN:
+		nodeType = mission.NodeTypeJoin
+	default:
+		return nil, fmt.Errorf("unknown node type: %v", protoNode.Type)
+	}
+
+	node := &mission.MissionNode{
+		ID:           nodeID,
+		Type:         nodeType,
+		Name:         protoNode.Name,
+		Description:  protoNode.Description,
+		Dependencies: protoNode.Dependencies,
+	}
+
+	// Convert timeout if present
+	if protoNode.Timeout != nil {
+		node.Timeout = protoNode.Timeout.AsDuration()
+	}
+
+	// Convert retry policy if present
+	if protoNode.RetryPolicy != nil {
+		node.RetryPolicy = &mission.RetryPolicy{
+			MaxRetries: int(protoNode.RetryPolicy.MaxRetries),
+		}
+
+		// Convert backoff strategy enum
+		switch protoNode.RetryPolicy.BackoffStrategy {
+		case workflowpb.BackoffStrategy_BACKOFF_STRATEGY_CONSTANT:
+			node.RetryPolicy.BackoffStrategy = mission.BackoffConstant
+		case workflowpb.BackoffStrategy_BACKOFF_STRATEGY_LINEAR:
+			node.RetryPolicy.BackoffStrategy = mission.BackoffLinear
+		case workflowpb.BackoffStrategy_BACKOFF_STRATEGY_EXPONENTIAL:
+			node.RetryPolicy.BackoffStrategy = mission.BackoffExponential
+		}
+
+		if protoNode.RetryPolicy.InitialDelay != nil {
+			node.RetryPolicy.InitialDelay = protoNode.RetryPolicy.InitialDelay.AsDuration()
+		}
+		if protoNode.RetryPolicy.MaxDelay != nil {
+			node.RetryPolicy.MaxDelay = protoNode.RetryPolicy.MaxDelay.AsDuration()
+		}
+		node.RetryPolicy.Multiplier = protoNode.RetryPolicy.Multiplier
+	}
+
+	// Convert metadata (string map to any map)
+	if protoNode.Metadata != nil {
+		node.Metadata = make(map[string]any, len(protoNode.Metadata))
+		for k, v := range protoNode.Metadata {
+			node.Metadata[k] = v
+		}
+	}
+
+	// Use oneof accessors to get node-specific configuration
+	switch nodeType {
+	case mission.NodeTypeAgent:
+		agentConfig := protoNode.GetAgentConfig()
+		if agentConfig != nil {
+			node.AgentName = agentConfig.AgentName
+			if agentConfig.Task != nil {
+				node.AgentTask = protoTaskToAgentTask(agentConfig.Task)
+			}
+		}
+
+	case mission.NodeTypeTool:
+		toolConfig := protoNode.GetToolConfig()
+		if toolConfig != nil {
+			node.ToolName = toolConfig.ToolName
+			if toolConfig.Input != nil {
+				node.ToolInput = make(map[string]any, len(toolConfig.Input))
+				for k, v := range toolConfig.Input {
+					node.ToolInput[k] = v
+				}
+			}
+		}
+
+	case mission.NodeTypePlugin:
+		pluginConfig := protoNode.GetPluginConfig()
+		if pluginConfig != nil {
+			node.PluginName = pluginConfig.PluginName
+			node.PluginMethod = pluginConfig.Method
+			if pluginConfig.Params != nil {
+				node.PluginParams = make(map[string]any, len(pluginConfig.Params))
+				for k, v := range pluginConfig.Params {
+					node.PluginParams[k] = v
+				}
+			}
+		}
+
+	case mission.NodeTypeCondition:
+		condConfig := protoNode.GetConditionConfig()
+		if condConfig != nil {
+			node.Condition = &mission.NodeCondition{
+				Expression:  condConfig.Expression,
+				TrueBranch:  condConfig.TrueBranch,
+				FalseBranch: condConfig.FalseBranch,
+			}
+		}
+
+	case mission.NodeTypeParallel:
+		parallelConfig := protoNode.GetParallelConfig()
+		if parallelConfig != nil {
+			// Convert sub-nodes
+			subNodes := make([]*mission.MissionNode, len(parallelConfig.SubNodes))
+			for i, subProtoNode := range parallelConfig.SubNodes {
+				subNode, err := protoNodeToMissionNode(subProtoNode.Id, subProtoNode)
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert sub-node %s: %w", subProtoNode.Id, err)
+				}
+				subNodes[i] = subNode
+			}
+			node.SubNodes = subNodes
+		}
+	}
+
+	return node, nil
+}
+
+// protoTaskToAgentTask converts a proto Task to an internal agent.Task.
+func protoTaskToAgentTask(protoTask *pb.Task) *agent.Task {
+	if protoTask == nil {
+		return nil
+	}
+
+	task := &agent.Task{
+		ID:   types.ID(protoTask.Id),
+		Goal: protoTask.Goal,
+	}
+
+	// Convert context (TypedValue map to any map)
+	if protoTask.Context != nil {
+		task.Context = make(map[string]any, len(protoTask.Context))
+		for k, v := range protoTask.Context {
+			task.Context[k] = typedValueToAny(v)
+		}
+	}
+
+	return task
+}
+
+// typedValueToAny converts a proto TypedValue to any.
+func typedValueToAny(tv *pb.TypedValue) any {
+	if tv == nil {
+		return nil
+	}
+
+	switch v := tv.GetKind().(type) {
+	case *pb.TypedValue_StringValue:
+		return v.StringValue
+	case *pb.TypedValue_IntValue:
+		return v.IntValue
+	case *pb.TypedValue_DoubleValue:
+		return v.DoubleValue
+	case *pb.TypedValue_BoolValue:
+		return v.BoolValue
+	case *pb.TypedValue_BytesValue:
+		return v.BytesValue
+	case *pb.TypedValue_ArrayValue:
+		if v.ArrayValue == nil {
+			return nil
+		}
+		list := make([]any, len(v.ArrayValue.Items))
+		for i, item := range v.ArrayValue.Items {
+			list[i] = typedValueToAny(item)
+		}
+		return list
+	case *pb.TypedValue_MapValue:
+		if v.MapValue == nil {
+			return nil
+		}
+		m := make(map[string]any, len(v.MapValue.Entries))
+		for k, item := range v.MapValue.Entries {
+			m[k] = typedValueToAny(item)
+		}
+		return m
+	default:
+		return nil
+	}
 }
 
 // Ensure MissionAdapter implements mission.MissionOrchestrator

@@ -62,6 +62,18 @@ func (m MissionContext) WithMetadata(key string, value any) MissionContext {
 	return m
 }
 
+// WithMissionRunID sets the mission run ID for GraphRAG mission-scoped storage.
+func (m MissionContext) WithMissionRunID(missionRunID string) MissionContext {
+	m.MissionRunID = missionRunID
+	return m
+}
+
+// WithRunNumber sets the sequential run number for this mission.
+func (m MissionContext) WithRunNumber(runNumber int) MissionContext {
+	m.RunNumber = runNumber
+	return m
+}
+
 // TargetInfo represents information about a target system or service.
 // It provides agents with the necessary details to interact with targets
 // including authentication headers and provider-specific metadata.

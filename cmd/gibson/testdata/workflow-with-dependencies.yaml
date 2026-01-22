@@ -16,6 +16,10 @@ nodes:
   - id: recon
     type: agent
     agent: recon-agent
+    data_policy:
+      output_scope: mission
+      input_scope: mission
+      reuse: skip
     task:
       target: example.com
 
@@ -23,5 +27,9 @@ nodes:
     type: agent
     agent: scan-agent
     depends_on: [recon]
+    data_policy:
+      output_scope: mission
+      input_scope: mission
+      reuse: never
     task:
       target: example.com

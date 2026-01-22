@@ -3,6 +3,7 @@ package eval
 import (
 	"context"
 	"log/slog"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,7 +14,20 @@ import (
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/proto"
 )
+
+// createTempGroundTruth creates a temporary ground truth file for testing
+func createTempGroundTruth(t *testing.T) string {
+	tmpFile, err := os.CreateTemp("", "ground_truth_test_*.json")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpFile.WriteString("{}")
+	tmpFile.Close()
+	t.Cleanup(func() { os.Remove(tmpFile.Name()) })
+	return tmpFile.Name()
+}
 
 // mockHarnessFactory is a mock implementation of HarnessFactoryInterface for testing
 type mockHarnessFactory struct {
@@ -45,9 +59,11 @@ func (m *mockHarnessFactory) CreateChild(parent harness.AgentHarness, agentName 
 
 // mockAgentHarness is a minimal mock harness for testing
 type mockAgentHarness struct {
-	agentName  string
-	missionCtx harness.MissionContext
-	targetInfo harness.TargetInfo
+	agentName        string
+	missionCtx       harness.MissionContext
+	targetInfo       harness.TargetInfo
+	toolProtoOutputs map[string]proto.Message
+	toolErrors       map[string]error
 }
 
 func (m *mockAgentHarness) Mission() harness.MissionContext {
@@ -70,11 +86,20 @@ func (m *mockAgentHarness) Stream(ctx context.Context, slot string, messages []l
 	close(ch)
 	return ch, nil
 }
-func (m *mockAgentHarness) CallTool(ctx context.Context, name string, input map[string]any) (map[string]any, error) {
-	return make(map[string]any), nil
+func (m *mockAgentHarness) CallToolProto(ctx context.Context, name string, request, response proto.Message) error {
+	if err, ok := m.toolErrors[name]; ok {
+		return err
+	}
+	if protoOut, ok := m.toolProtoOutputs[name]; ok {
+		proto.Merge(response, protoOut)
+	}
+	return nil
 }
 func (m *mockAgentHarness) ListTools() []harness.ToolDescriptor {
 	return []harness.ToolDescriptor{}
+}
+func (m *mockAgentHarness) GetToolDescriptor(ctx context.Context, name string) (*harness.ToolDescriptor, error) {
+	return nil, nil
 }
 func (m *mockAgentHarness) QueryPlugin(ctx context.Context, name string, method string, params map[string]any) (any, error) {
 	return nil, nil
@@ -109,20 +134,11 @@ func (m *mockAgentHarness) TokenUsage() *llm.TokenTracker {
 func (m *mockAgentHarness) Metrics() harness.MetricsRecorder {
 	return nil
 }
-func (m *mockAgentHarness) PlanContext() *harness.PlanningContext {
-	return nil
-}
-func (m *mockAgentHarness) GetStepBudget() int {
-	return 0
-}
-func (m *mockAgentHarness) SignalReplanRecommended(ctx context.Context, reason string) error {
-	return nil
-}
-func (m *mockAgentHarness) ReportStepHints(ctx context.Context, hints *harness.StepHints) error {
-	return nil
-}
 func (m *mockAgentHarness) CompleteStructuredAny(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (any, error) {
 	return nil, nil
+}
+func (m *mockAgentHarness) CompleteStructuredAnyWithUsage(ctx context.Context, slot string, messages []llm.Message, schemaType any, opts ...harness.CompletionOption) (*harness.StructuredCompletionResult, error) {
+	return &harness.StructuredCompletionResult{}, nil
 }
 func (m *mockAgentHarness) GetAllRunFindings(ctx context.Context, filter harness.FindingFilter) ([]agent.Finding, error) {
 	return []agent.Finding{}, nil
@@ -228,7 +244,7 @@ func TestEvalHarnessFactory_Create(t *testing.T) {
 		opts := NewEvalOptions()
 		opts.Enabled = true
 		opts.FeedbackEnabled = false
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 
 		factory, err := NewEvalHarnessFactory(innerFactory, opts)
 		require.NoError(t, err)
@@ -246,7 +262,7 @@ func TestEvalHarnessFactory_Create(t *testing.T) {
 		innerFactory := &mockHarnessFactory{}
 		opts := NewEvalOptions()
 		opts.Enabled = true
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 		opts.FeedbackEnabled = true
 		opts.WarningThreshold = 0.6
 		opts.CriticalThreshold = 0.3
@@ -276,7 +292,7 @@ func TestEvalHarnessFactory_Create(t *testing.T) {
 
 		opts := NewEvalOptions()
 		opts.Enabled = true
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 
 		factory, err := NewEvalHarnessFactory(innerFactory, opts)
 		require.NoError(t, err)
@@ -290,7 +306,7 @@ func TestEvalHarnessFactory_Create(t *testing.T) {
 		innerFactory := &mockHarnessFactory{}
 		opts := NewEvalOptions()
 		opts.Enabled = true
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 		opts.FeedbackEnabled = true
 
 		factory, err := NewEvalHarnessFactory(innerFactory, opts)
@@ -349,7 +365,7 @@ func TestEvalHarnessFactory_CreateChild(t *testing.T) {
 		innerFactory := &mockHarnessFactory{}
 		opts := NewEvalOptions()
 		opts.Enabled = true
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 		opts.FeedbackEnabled = true
 
 		factory, err := NewEvalHarnessFactory(innerFactory, opts)
@@ -374,7 +390,7 @@ func TestEvalHarnessFactory_CreateChild(t *testing.T) {
 		innerFactory := &mockHarnessFactory{}
 		opts := NewEvalOptions()
 		opts.Enabled = true
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 
 		factory, err := NewEvalHarnessFactory(innerFactory, opts)
 		require.NoError(t, err)
@@ -389,7 +405,7 @@ func TestEvalHarnessFactory_CreateChild(t *testing.T) {
 		innerFactory := &mockHarnessFactory{}
 		opts := NewEvalOptions()
 		opts.Enabled = true
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 
 		factory, err := NewEvalHarnessFactory(innerFactory, opts)
 		require.NoError(t, err)
@@ -410,7 +426,7 @@ func TestEvalHarnessFactory_CreateChild(t *testing.T) {
 		innerFactory := &mockHarnessFactory{}
 		opts := NewEvalOptions()
 		opts.Enabled = true
-		opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+		opts.GroundTruthPath = createTempGroundTruth(t)
 		opts.FeedbackEnabled = true
 
 		factory, err := NewEvalHarnessFactory(innerFactory, opts)
@@ -440,7 +456,7 @@ func TestEvalHarnessFactory_Results(t *testing.T) {
 	opts := NewEvalOptions()
 	opts.Enabled = true
 	opts.FeedbackEnabled = true
-	opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+	opts.GroundTruthPath = createTempGroundTruth(t)
 
 	factory, err := NewEvalHarnessFactory(innerFactory, opts)
 	require.NoError(t, err)
@@ -478,7 +494,7 @@ func TestEvalHarnessFactory_Integration(t *testing.T) {
 	opts.FeedbackEnabled = true
 	opts.WarningThreshold = 0.5
 	opts.CriticalThreshold = 0.2
-	opts.GroundTruthPath = "/tmp/ground_truth_test.json"
+	opts.GroundTruthPath = createTempGroundTruth(t)
 
 	factory, err := NewEvalHarnessFactory(innerFactory, opts)
 	require.NoError(t, err)

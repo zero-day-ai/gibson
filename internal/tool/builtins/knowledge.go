@@ -7,7 +7,8 @@ import (
 	"github.com/zero-day-ai/gibson/internal/knowledge"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/sdk/schema"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // KnowledgeSearchTool provides semantic search over the knowledge store.
@@ -53,82 +54,51 @@ func (t *KnowledgeSearchTool) Tags() []string {
 	return []string{"knowledge", "search", "rag", "semantic"}
 }
 
-// InputSchema returns the JSON schema defining valid input parameters.
-func (t *KnowledgeSearchTool) InputSchema() schema.JSON {
-	return schema.Object(map[string]schema.JSON{
-		"query": schema.JSON{
-			Type:        "string",
-			Description: "The search query to find relevant knowledge",
-		},
-		"limit": schema.JSON{
-			Type:        "number",
-			Description: "Maximum number of results to return (default: 10)",
-			Default:     10,
-		},
-		"threshold": schema.JSON{
-			Type:        "number",
-			Description: "Minimum similarity threshold 0.0-1.0 (default: 0.7)",
-			Default:     0.7,
-		},
-		"source": schema.JSON{
-			Type:        "string",
-			Description: "Optional: filter results by source file/URL",
-		},
-	}, "query") // query is required
+// InputMessageType returns the fully-qualified proto message type name for input.
+// Uses google.protobuf.Struct as temporary type until task 4.1 completes.
+func (t *KnowledgeSearchTool) InputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-// OutputSchema returns the JSON schema defining the output structure.
-func (t *KnowledgeSearchTool) OutputSchema() schema.JSON {
-	return schema.Object(map[string]schema.JSON{
-		"results": schema.Array(
-			schema.Object(map[string]schema.JSON{
-				"text": schema.JSON{
-					Type:        "string",
-					Description: "The text content of the knowledge chunk",
-				},
-				"source": schema.JSON{
-					Type:        "string",
-					Description: "Source file path or URL",
-				},
-				"similarity": schema.JSON{
-					Type:        "number",
-					Description: "Similarity score 0.0-1.0",
-				},
-				"metadata": schema.Object(map[string]schema.JSON{
-					"section":     schema.String(),
-					"page_number": schema.Number(),
-					"has_code":    schema.Bool(),
-					"language":    schema.String(),
-					"title":       schema.String(),
-				}),
-			}),
-		),
-		"count": schema.JSON{
-			Type:        "number",
-			Description: "Number of results returned",
-		},
-	})
+// OutputMessageType returns the fully-qualified proto message type name for output.
+// Uses google.protobuf.Struct as temporary type until task 4.1 completes.
+func (t *KnowledgeSearchTool) OutputMessageType() string {
+	return "google.protobuf.Struct"
 }
 
-// Execute runs the tool with the given input and returns the result.
-func (t *KnowledgeSearchTool) Execute(ctx context.Context, input map[string]any) (map[string]any, error) {
+// ExecuteProto runs the tool with proto message input and returns proto message output.
+// Uses google.protobuf.Struct as temporary type until task 4.1 completes with proper proto definitions.
+func (t *KnowledgeSearchTool) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
+	// Type-assert input to *structpb.Struct
+	inputStruct, ok := input.(*structpb.Struct)
+	if !ok {
+		return nil, fmt.Errorf("input must be *structpb.Struct, got %T", input)
+	}
+
+	// Convert struct to map for easier access
+	inputMap := inputStruct.AsMap()
+
 	// Handle nil store gracefully (knowledge store not initialized)
 	if t.store == nil {
-		return map[string]any{
+		emptyResult, err := structpb.NewStruct(map[string]any{
 			"results": []any{},
 			"count":   0,
-		}, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create empty result: %w", err)
+		}
+		return emptyResult, nil
 	}
 
 	// Extract query parameter (required)
-	query, ok := input["query"].(string)
+	query, ok := inputMap["query"].(string)
 	if !ok || query == "" {
 		return nil, fmt.Errorf("query parameter is required and must be a non-empty string")
 	}
 
 	// Extract optional parameters with defaults
 	limit := 10
-	if limitVal, ok := input["limit"]; ok {
+	if limitVal, ok := inputMap["limit"]; ok {
 		switch v := limitVal.(type) {
 		case float64:
 			limit = int(v)
@@ -138,14 +108,14 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, input map[string]any)
 	}
 
 	threshold := 0.7
-	if thresholdVal, ok := input["threshold"]; ok {
+	if thresholdVal, ok := inputMap["threshold"]; ok {
 		if v, ok := thresholdVal.(float64); ok {
 			threshold = v
 		}
 	}
 
 	source := ""
-	if sourceVal, ok := input["source"]; ok {
+	if sourceVal, ok := inputMap["source"]; ok {
 		if v, ok := sourceVal.(string); ok {
 			source = v
 		}
@@ -176,10 +146,14 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, input map[string]any)
 	results, err := t.store.Search(ctx, query, opts)
 	if err != nil {
 		// Return empty results on error (knowledge store may be empty)
-		return map[string]any{
+		emptyResult, structErr := structpb.NewStruct(map[string]any{
 			"results": []any{},
 			"count":   0,
-		}, nil
+		})
+		if structErr != nil {
+			return nil, fmt.Errorf("failed to create empty result after search error: %w", structErr)
+		}
+		return emptyResult, nil
 	}
 
 	// Format results for output
@@ -210,10 +184,16 @@ func (t *KnowledgeSearchTool) Execute(ctx context.Context, input map[string]any)
 		})
 	}
 
-	return map[string]any{
+	// Convert results to proto Struct
+	outputStruct, err := structpb.NewStruct(map[string]any{
 		"results": formattedResults,
 		"count":   len(formattedResults),
-	}, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create output struct: %w", err)
+	}
+
+	return outputStruct, nil
 }
 
 // Health returns the current health status of this tool.

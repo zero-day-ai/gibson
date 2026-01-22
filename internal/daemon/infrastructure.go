@@ -65,6 +65,9 @@ type Infrastructure struct {
 
 	// missionTracer provides mission-aware Langfuse tracing (nil when disabled)
 	missionTracer *observability.MissionTracer
+
+	// taxonomyRegistry manages core taxonomy and agent-installed extensions
+	taxonomyRegistry graphrag.TaxonomyRegistry
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -111,6 +114,14 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		return nil, fmt.Errorf("failed to create memory manager factory: %w", err)
 	}
 	d.logger.Info("initialized memory manager factory")
+
+	// Initialize TaxonomyRegistry with core taxonomy
+	// This provides the canonical node/relationship types and parent relationship rules
+	// Must be initialized before GraphRAG so relationship builders can use it
+	coreTaxonomy := graphrag.NewSimpleTaxonomy()
+	taxonomyRegistry := graphrag.NewTaxonomyRegistry(coreTaxonomy)
+	d.logger.Info("initialized taxonomy registry",
+		"taxonomy_version", coreTaxonomy.Version())
 
 	// Initialize Neo4j GraphRAG - this is REQUIRED as GraphRAG is a core component
 	// GraphRAG is always required - fail fast if initialization fails
@@ -171,6 +182,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		graphRAGBridge:       graphRAGBridge,
 		graphRAGQueryBridge:  graphRAGQueryBridge,
 		missionTracer:        missionTracer,
+		taxonomyRegistry:     taxonomyRegistry,
 	}
 	d.infrastructure = infra
 

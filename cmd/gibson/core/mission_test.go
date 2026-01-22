@@ -229,6 +229,18 @@ func (m *mockMissionStore) IncrementRunNumber(ctx context.Context, name string) 
 	return maxRun + 1, nil
 }
 
+func (m *mockMissionStore) FindOrCreateByName(ctx context.Context, mis *mission.Mission) (*mission.Mission, bool, error) {
+	// Try to find existing mission
+	for _, existing := range m.missions {
+		if existing.Name == mis.Name {
+			return existing, false, nil
+		}
+	}
+	// Create new mission
+	m.missions = append(m.missions, mis)
+	return mis, true, nil
+}
+
 // Mission definition methods (stubs for testing)
 func (m *mockMissionStore) CreateDefinition(ctx context.Context, def *mission.MissionDefinition) error {
 	return nil

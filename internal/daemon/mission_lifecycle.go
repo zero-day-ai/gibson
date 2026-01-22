@@ -69,6 +69,7 @@ func (d *daemonImpl) ensureMissionManager() error {
 			d.logger,
 			d.registryAdapter,
 			d.missionStore,
+			d.missionRunStore,
 			findingStore,
 			llmReg,
 			d.callback,

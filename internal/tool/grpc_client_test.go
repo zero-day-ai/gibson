@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const bufSize = 1024 * 1024
@@ -118,22 +119,19 @@ func createTestClient(t *testing.T, lis *bufconn.Listener) *GRPCToolClient {
 	descriptor, err := client.GetDescriptor(descCtx, &proto.ToolGetDescriptorRequest{})
 	require.NoError(t, err)
 
-	// Convert schemas
-	inputSchema, err := protoSchemaToInternal(descriptor.GetInputSchema())
-	require.NoError(t, err)
-
-	outputSchema, err := protoSchemaToInternal(descriptor.GetOutputSchema())
-	require.NoError(t, err)
+	// TODO: Once SDK task 1.3 is complete, use descriptor.GetInputMessageType() and descriptor.GetOutputMessageType()
+	inputMsgType := "google.protobuf.Struct"
+	outputMsgType := "google.protobuf.Struct"
 
 	return &GRPCToolClient{
-		name:         descriptor.GetName(),
-		description:  descriptor.GetDescription(),
-		version:      descriptor.GetVersion(),
-		tags:         descriptor.GetTags(),
-		conn:         conn,
-		client:       client,
-		inputSchema:  inputSchema,
-		outputSchema: outputSchema,
+		name:              descriptor.GetName(),
+		description:       descriptor.GetDescription(),
+		version:           descriptor.GetVersion(),
+		tags:              descriptor.GetTags(),
+		conn:              conn,
+		client:            client,
+		inputMessageType:  inputMsgType,
+		outputMessageType: outputMsgType,
 	}
 }
 
@@ -181,11 +179,9 @@ func TestNewGRPCToolClient(t *testing.T) {
 	assert.Equal(t, "1.0.0", client.Version())
 	assert.Equal(t, []string{"test", "mock"}, client.Tags())
 
-	// Verify schemas are cached
-	assert.NotNil(t, client.InputSchema())
-	assert.NotNil(t, client.OutputSchema())
-	assert.Equal(t, "object", client.InputSchema().Type)
-	assert.Equal(t, "object", client.OutputSchema().Type)
+	// Verify message types are set
+	assert.Equal(t, "google.protobuf.Struct", client.InputMessageType())
+	assert.Equal(t, "google.protobuf.Struct", client.OutputMessageType())
 }
 
 func TestNewGRPCToolClient_ConnectionFailure(t *testing.T) {
@@ -254,18 +250,20 @@ func TestGRPCToolClient_Execute_Success(t *testing.T) {
 	client := createTestClient(t, lis)
 	defer client.Close()
 
-	// Execute with valid input
+	// Execute with valid proto input
 	ctx := context.Background()
-	input := map[string]any{
+	input, err := structpb.NewStruct(map[string]any{
 		"target": "test-target",
-	}
-
-	output, err := client.Execute(ctx, input)
+	})
 	require.NoError(t, err)
-	require.NotNil(t, output)
 
-	assert.Equal(t, "success", output["result"])
-	assert.Equal(t, "test data", output["data"])
+	outputProto, err := client.ExecuteProto(ctx, input)
+	require.NoError(t, err)
+	require.NotNil(t, outputProto)
+
+	output := outputProto.(*structpb.Struct)
+	assert.Equal(t, "success", output.Fields["result"].GetStringValue())
+	assert.Equal(t, "test data", output.Fields["data"].GetStringValue())
 }
 
 func TestGRPCToolClient_Execute_WithError(t *testing.T) {
@@ -296,11 +294,12 @@ func TestGRPCToolClient_Execute_WithError(t *testing.T) {
 	defer client.Close()
 
 	ctx := context.Background()
-	input := map[string]any{
+	input, err := structpb.NewStruct(map[string]any{
 		"target": "test-target",
-	}
+	})
+	require.NoError(t, err)
 
-	_, err := client.Execute(ctx, input)
+	_, err = client.ExecuteProto(ctx, input)
 	require.Error(t, err)
 
 	gibsonErr, ok := err.(*types.GibsonError)
@@ -332,11 +331,12 @@ func TestGRPCToolClient_Execute_GRPCError(t *testing.T) {
 	defer client.Close()
 
 	ctx := context.Background()
-	input := map[string]any{
+	input, err := structpb.NewStruct(map[string]any{
 		"target": "test-target",
-	}
+	})
+	require.NoError(t, err)
 
-	_, err := client.Execute(ctx, input)
+	_, err = client.ExecuteProto(ctx, input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "gRPC tool \"test-tool\" execution failed")
 }
@@ -361,15 +361,12 @@ func TestGRPCToolClient_Execute_InvalidInput(t *testing.T) {
 	client := createTestClient(t, lis)
 	defer client.Close()
 
-	ctx := context.Background()
-	// Create input with un-marshallable value
-	input := map[string]any{
-		"target": make(chan int), // channels can't be marshaled to JSON
-	}
-
-	_, err := client.Execute(ctx, input)
+	// Try to create input with un-marshallable value - structpb.NewStruct should fail
+	_, err := structpb.NewStruct(map[string]any{
+		"target": make(chan int), // channels can't be marshaled
+	})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to marshal input to JSON")
+	assert.Contains(t, err.Error(), "invalid type")
 }
 
 func TestGRPCToolClient_Execute_InvalidOutput(t *testing.T) {
@@ -396,13 +393,14 @@ func TestGRPCToolClient_Execute_InvalidOutput(t *testing.T) {
 	defer client.Close()
 
 	ctx := context.Background()
-	input := map[string]any{
+	input, err := structpb.NewStruct(map[string]any{
 		"target": "test-target",
-	}
+	})
+	require.NoError(t, err)
 
-	_, err := client.Execute(ctx, input)
+	_, err = client.ExecuteProto(ctx, input)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to unmarshal output JSON")
+	assert.Contains(t, err.Error(), "failed to unmarshal output")
 }
 
 func TestGRPCToolClient_Execute_ContextCancellation(t *testing.T) {
@@ -429,11 +427,12 @@ func TestGRPCToolClient_Execute_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	input := map[string]any{
+	input, err := structpb.NewStruct(map[string]any{
 		"target": "test-target",
-	}
+	})
+	require.NoError(t, err)
 
-	_, err := client.Execute(ctx, input)
+	_, err = client.ExecuteProto(ctx, input)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "context canceled")
 }
@@ -641,87 +640,9 @@ func TestGRPCToolClient_Close_NilConnection(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestGRPCToolClient_InputSchema(t *testing.T) {
-	inputSchemaJSON := `{"type":"object","properties":{"target":{"type":"string"},"port":{"type":"integer"}},"required":["target"]}`
-	outputSchemaJSON := `{"type":"object"}`
-
-	mock := &mockToolServiceServer{
-		descriptor: &proto.ToolDescriptor{
-			Name:         "test-tool",
-			Description:  "A test tool",
-			Version:      "1.0.0",
-			InputSchema:  &proto.JSONSchema{Json: inputSchemaJSON},
-			OutputSchema: &proto.JSONSchema{Json: outputSchemaJSON},
-		},
-	}
-
-	_, lis, cleanup := setupTestServer(t, mock)
-	defer cleanup()
-
-	client := createTestClient(t, lis)
-	defer client.Close()
-
-	schema := client.InputSchema()
-	assert.Equal(t, "object", schema.Type)
-	assert.NotNil(t, schema.Properties)
-	assert.Contains(t, schema.Properties, "target")
-	assert.Contains(t, schema.Properties, "port")
-	assert.Equal(t, []string{"target"}, schema.Required)
-}
-
-func TestGRPCToolClient_OutputSchema(t *testing.T) {
-	inputSchemaJSON := `{"type":"object"}`
-	outputSchemaJSON := `{"type":"object","properties":{"result":{"type":"string"},"success":{"type":"boolean"}},"required":["result","success"]}`
-
-	mock := &mockToolServiceServer{
-		descriptor: &proto.ToolDescriptor{
-			Name:         "test-tool",
-			Description:  "A test tool",
-			Version:      "1.0.0",
-			InputSchema:  &proto.JSONSchema{Json: inputSchemaJSON},
-			OutputSchema: &proto.JSONSchema{Json: outputSchemaJSON},
-		},
-	}
-
-	_, lis, cleanup := setupTestServer(t, mock)
-	defer cleanup()
-
-	client := createTestClient(t, lis)
-	defer client.Close()
-
-	schema := client.OutputSchema()
-	assert.Equal(t, "object", schema.Type)
-	assert.NotNil(t, schema.Properties)
-	assert.Contains(t, schema.Properties, "result")
-	assert.Contains(t, schema.Properties, "success")
-	assert.Equal(t, []string{"result", "success"}, schema.Required)
-}
-
-func TestProtoSchemaToInternal_NilSchema(t *testing.T) {
-	schema, err := protoSchemaToInternal(nil)
-	require.NoError(t, err)
-	assert.Equal(t, "object", schema.Type)
-}
-
-func TestProtoSchemaToInternal_ValidSchema(t *testing.T) {
-	protoSchema := &proto.JSONSchema{
-		Json: `{"type":"string","minLength":1,"maxLength":100}`,
-	}
-
-	schema, err := protoSchemaToInternal(protoSchema)
-	require.NoError(t, err)
-	assert.Equal(t, "string", schema.Type)
-}
-
-func TestProtoSchemaToInternal_InvalidJSON(t *testing.T) {
-	protoSchema := &proto.JSONSchema{
-		Json: `{invalid`,
-	}
-
-	_, err := protoSchemaToInternal(protoSchema)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to unmarshal JSON schema")
-}
+// Note: InputSchema and OutputSchema tests removed as tools now use proto-based message types
+// instead of JSON schemas. Tools now expose InputMessageType() and OutputMessageType() which
+// return fully-qualified proto message type names.
 
 func TestGRPCToolClient_Metadata(t *testing.T) {
 	inputSchemaJSON := `{"type":"object"}`
@@ -828,16 +749,20 @@ func TestGRPCToolClient_ComplexOutput(t *testing.T) {
 	defer client.Close()
 
 	ctx := context.Background()
-	output, err := client.Execute(ctx, map[string]any{})
+	input, err := structpb.NewStruct(map[string]any{})
+	require.NoError(t, err)
+
+	outputProto, err := client.ExecuteProto(ctx, input)
 	require.NoError(t, err)
 
 	// Verify complex structure is preserved
-	hosts, ok := output["hosts"].([]any)
-	require.True(t, ok)
-	assert.Len(t, hosts, 2)
+	output := outputProto.(*structpb.Struct)
+	hosts := output.Fields["hosts"].GetListValue()
+	require.NotNil(t, hosts)
+	assert.Len(t, hosts.Values, 2)
 
-	summary, ok := output["summary"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, float64(2), summary["total_hosts"])
-	assert.Equal(t, float64(4), summary["total_ports"])
+	summary := output.Fields["summary"].GetStructValue()
+	require.NotNil(t, summary)
+	assert.Equal(t, float64(2), summary.Fields["total_hosts"].GetNumberValue())
+	assert.Equal(t, float64(4), summary.Fields["total_ports"].GetNumberValue())
 }

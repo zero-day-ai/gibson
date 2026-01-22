@@ -121,7 +121,7 @@ func mapOperationToEvent(opType OperationType, req any, result any, err error) (
 	case OpStream:
 		return events.EventLLMStreamCompleted, buildLLMStreamCompletedPayload(result)
 
-	case OpCallTool:
+	case OpCallToolProto:
 		return events.EventToolCallCompleted, buildToolResultPayload(req, result)
 
 	case OpQueryPlugin:
@@ -148,7 +148,7 @@ func mapOperationToFailedEvent(opType OperationType, req any, err error) (events
 	case OpStream:
 		return events.EventLLMRequestFailed, buildLLMRequestFailedPayload(req, err)
 
-	case OpCallTool:
+	case OpCallToolProto:
 		return events.EventToolCallFailed, buildToolCallFailedPayload(req, err)
 
 	case OpQueryPlugin:

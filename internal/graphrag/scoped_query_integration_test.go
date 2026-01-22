@@ -2,8 +2,6 @@ package graphrag
 
 import (
 	"context"
-	"log/slog"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,11 +18,6 @@ import (
 func TestIntegration_ScopedGraphRAGQueries(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelError, // Keep test output clean
-	}))
-
 	// Setup mock components
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
@@ -39,18 +32,8 @@ func TestIntegration_ScopedGraphRAGQueries(t *testing.T) {
 	// Create a different mission for cross-mission testing
 	otherMissionID := types.NewID()
 
-	// Setup mock mission lister for scoper
-	mockLister := &mockMissionLister{
-		missions: []*Mission{
-			{ID: mission1ID, Name: missionName},
-			{ID: mission2ID, Name: missionName},
-			{ID: mission3ID, Name: missionName},
-		},
-	}
-
-	// Create scoper with mock lister
-	scoper := NewQueryScoper(mockLister, logger)
-	processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
+	// Create processor
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{
 		Provider: "local",
@@ -332,11 +315,6 @@ func TestIntegration_ScopedQueryWithRunMetadata(t *testing.T) {
 func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup logger
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelError,
-	}))
-
 	// Setup mock components
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
@@ -347,12 +325,7 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 		missionName := "first-run-mission"
 
 		// Mock lister returns only current mission (first run)
-		mockLister := &mockMissionLister{
-			missions: []*Mission{{ID: missionID, Name: missionName}},
-		}
-
-		scoper := NewQueryScoper(mockLister, logger)
-		processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
+		processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 		config := GraphRAGConfig{}
 		store := &DefaultGraphRAGStore{
@@ -399,19 +372,14 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 	t.Run("ManyRuns_LargeHistory", func(t *testing.T) {
 		missionName := "many-runs-mission"
 
-		// Create many missions (simulating many runs)
+		// Create many mission IDs (simulating many runs)
 		numRuns := 100
-		missions := make([]*Mission, numRuns)
+		missionIDs := make([]types.ID, numRuns)
 		for i := 0; i < numRuns; i++ {
-			missions[i] = &Mission{
-				ID:   types.NewID(),
-				Name: missionName,
-			}
+			missionIDs[i] = types.NewID()
 		}
 
-		mockLister := &mockMissionLister{missions: missions}
-		scoper := NewQueryScoper(mockLister, logger)
-		processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
+		processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 		config := GraphRAGConfig{}
 		store := &DefaultGraphRAGStore{
@@ -422,7 +390,7 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 		}
 
 		// Create a test finding
-		currentMissionID := missions[numRuns-1].ID
+		currentMissionID := missionIDs[numRuns-1]
 		finding := NewFindingNode(
 			types.NewID(),
 			"Many Runs Finding",
@@ -454,9 +422,7 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 	})
 
 	t.Run("EmptyMissionName_ReturnsValidationError", func(t *testing.T) {
-		mockLister := &mockMissionLister{missions: []*Mission{}}
-		scoper := NewQueryScoper(mockLister, logger)
-		processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
+		processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 		config := GraphRAGConfig{}
 		store := &DefaultGraphRAGStore{
@@ -483,37 +449,25 @@ func TestIntegration_ScopedQueryEdgeCases(t *testing.T) {
 }
 
 // TestIntegration_QueryScopeResolutionWithProcessor tests that the query
-// processor correctly integrates with the QueryScoper to filter results.
+// processor correctly handles mission scope filtering.
 func TestIntegration_QueryScopeResolutionWithProcessor(t *testing.T) {
 	ctx := context.Background()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelError,
-	}))
 
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
 
 	missionName := "scope-resolution-mission"
-	mission1 := &Mission{ID: types.NewID(), Name: missionName}
-	mission2 := &Mission{ID: types.NewID(), Name: missionName}
-	mission3 := &Mission{ID: types.NewID(), Name: missionName}
+	mission3ID := types.NewID()
 
-	// Mock lister returns all missions with same name
-	mockLister := &mockMissionLister{
-		missions: []*Mission{mission1, mission2, mission3},
-	}
-
-	scoper := NewQueryScoper(mockLister, logger)
-	processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	// Create query with ScopeSameMission
 	query := NewGraphRAGQuery("test query").
 		WithTopK(10).
 		WithMissionScope(ScopeSameMission).
 		WithMissionName(missionName).
-		WithMission(mission3.ID) // Current mission is mission3
+		WithMission(mission3ID) // Current mission is mission3
 
 	embedder.SetEmbedding("test query", generateMockEmbedding("test query", 1536))
 
@@ -534,23 +488,13 @@ func TestIntegration_QueryScopeResolutionWithProcessor(t *testing.T) {
 func TestIntegration_ScopedFindingsSimilarity(t *testing.T) {
 	ctx := context.Background()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelError,
-	}))
-
 	embedder := NewMockEmbedder()
 	provider := NewMockGraphRAGProvider()
 	reranker := NewDefaultMergeReranker(0.6, 0.4)
 
-	missionName := "similarity-mission"
 	missionID := types.NewID()
 
-	mockLister := &mockMissionLister{
-		missions: []*Mission{{ID: missionID, Name: missionName}},
-	}
-
-	scoper := NewQueryScoper(mockLister, logger)
-	processor := NewDefaultQueryProcessor(embedder, reranker, nil).WithScoper(scoper)
+	processor := NewDefaultQueryProcessor(embedder, reranker, nil)
 
 	config := GraphRAGConfig{}
 	store := &DefaultGraphRAGStore{

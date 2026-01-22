@@ -456,46 +456,6 @@ func TestLLMClassifier_BulkClassify(t *testing.T) {
 	assert.Equal(t, 2, mockCaller.GetCallCount())
 }
 
-func TestLLMClassifier_ExtractJSON(t *testing.T) {
-	classifier := &LLMFindingClassifier{}
-
-	tests := []struct {
-		name     string
-		input    string
-		contains string
-	}{
-		{
-			name:     "Plain JSON",
-			input:    `{"category": "jailbreak"}`,
-			contains: "jailbreak",
-		},
-		{
-			name: "JSON in markdown code block",
-			input: "```json\n" +
-				`{"category": "jailbreak"}` + "\n```",
-			contains: "jailbreak",
-		},
-		{
-			name: "JSON in generic code block",
-			input: "```\n" +
-				`{"category": "jailbreak"}` + "\n```",
-			contains: "jailbreak",
-		},
-		{
-			name:     "JSON with surrounding text",
-			input:    `Here is the result: {"category": "jailbreak"} - analysis complete`,
-			contains: "jailbreak",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := classifier.extractJSON(tt.input)
-			assert.Contains(t, result, tt.contains)
-		})
-	}
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // CompositeClassifier Tests
 // ────────────────────────────────────────────────────────────────────────────

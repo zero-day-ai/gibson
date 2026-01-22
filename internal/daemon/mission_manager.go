@@ -39,6 +39,7 @@ type missionManager struct {
 	logger          *slog.Logger
 	registry        registry.ComponentDiscovery
 	missionStore    mission.MissionStore
+	missionRunStore mission.MissionRunStore // Stores individual run records
 	findingStore    finding.FindingStore
 	llmRegistry     llm.LLMRegistry
 	callbackManager *harness.CallbackManager
@@ -61,6 +62,7 @@ type missionManager struct {
 // activeMission tracks a running mission with its context and event channel
 type activeMission struct {
 	mission      *mission.Mission
+	missionRun   *mission.MissionRun // The specific run instance
 	ctx          context.Context
 	cancel       context.CancelFunc
 	eventChan    chan api.MissionEventData
@@ -74,6 +76,7 @@ func newMissionManager(
 	logger *slog.Logger,
 	reg registry.ComponentDiscovery,
 	missionStore mission.MissionStore,
+	missionRunStore mission.MissionRunStore,
 	findingStore finding.FindingStore,
 	llmRegistry llm.LLMRegistry,
 	callbackMgr *harness.CallbackManager,
@@ -96,6 +99,7 @@ func newMissionManager(
 		logger:          logger.With("component", "mission-manager"),
 		registry:        reg,
 		missionStore:    missionStore,
+		missionRunStore: missionRunStore,
 		findingStore:    findingStore,
 		llmRegistry:     llmRegistry,
 		callbackManager: callbackMgr,
@@ -209,9 +213,10 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 		return nil, fmt.Errorf("failed to serialize mission definition: %w", err)
 	}
 
-	// Create mission record with Pending status (orchestrator will transition to Running)
-	missionRecord := &mission.Mission{
-		ID:               types.ID(missionID),
+	// Find or create stable mission record (one per workflow name)
+	now := time.Now()
+	missionTemplate := &mission.Mission{
+		ID:               types.NewID(), // Template ID, may be replaced by existing
 		Name:             def.Name,
 		Description:      def.Description,
 		Status:           mission.MissionStatusPending,
@@ -219,7 +224,8 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 		WorkflowJSON:     string(definitionJSON),
 		TargetID:         targetID,
 		MemoryContinuity: memoryContinuity,
-		CreatedAt:        time.Now(),
+		CreatedAt:        now,
+		UpdatedAt:        now,
 		FindingsCount:    0,
 		Metrics: &mission.MissionMetrics{
 			TotalNodes:     len(def.Nodes),
@@ -230,32 +236,58 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 
 	// Store variables in metadata
 	if len(variables) > 0 {
-		missionRecord.Metadata["variables"] = variables
+		missionTemplate.Metadata["variables"] = variables
 	}
 
-	// Save mission to store using run linker if available
-	if m.runLinker != nil {
-		if err := m.runLinker.CreateRun(ctx, def.Name, missionRecord); err != nil {
-			// Check if error is about active mission
-			if activeErr, ok := err.(error); ok && activeErr != nil {
-				errStr := activeErr.Error()
-				if containsStr(errStr, "active run exists") {
-					m.logger.Error("cannot start mission: active run already exists",
-						"mission_name", def.Name,
-						"error", err,
-					)
-					return nil, fmt.Errorf("cannot start mission '%s': %w. Use 'gibson mission list' to see active missions or 'gibson mission pause <id>' to pause the active mission", def.Name, err)
-				}
-			}
-			m.logger.Warn("failed to create mission run", "error", err)
-			return nil, fmt.Errorf("failed to create mission run: %w", err)
+	// Use FindOrCreateByName to get stable mission ID
+	var missionRecord *mission.Mission
+	var isNewMission bool
+	if m.missionStore != nil {
+		missionRecord, isNewMission, err = m.missionStore.FindOrCreateByName(ctx, missionTemplate)
+		if err != nil {
+			m.logger.Error("failed to find or create mission", "error", err, "mission_name", def.Name)
+			return nil, fmt.Errorf("failed to find or create mission: %w", err)
 		}
-	} else if m.missionStore != nil {
-		// Fallback to direct save if run linker not available
-		if err := m.missionStore.Save(ctx, missionRecord); err != nil {
-			m.logger.Warn("failed to save mission to store", "error", err)
-			// Continue execution - this is not critical
+		m.logger.Info("mission lookup result",
+			"mission_id", missionRecord.ID,
+			"mission_name", missionRecord.Name,
+			"is_new", isNewMission,
+		)
+	} else {
+		// No store available, use template directly
+		missionRecord = missionTemplate
+		isNewMission = true
+	}
+
+	// Create new MissionRun for this execution
+	var missionRun *mission.MissionRun
+	if m.missionRunStore != nil {
+		// Get next run number
+		runNumber, err := m.missionRunStore.GetNextRunNumber(ctx, missionRecord.ID)
+		if err != nil {
+			m.logger.Error("failed to get next run number", "error", err)
+			return nil, fmt.Errorf("failed to get next run number: %w", err)
 		}
+
+		// Create the run record
+		missionRun = mission.NewMissionRun(missionRecord.ID, runNumber)
+		missionRun.MarkStarted()
+
+		if err := m.missionRunStore.Save(ctx, missionRun); err != nil {
+			m.logger.Error("failed to save mission run", "error", err)
+			return nil, fmt.Errorf("failed to save mission run: %w", err)
+		}
+
+		m.logger.Info("created mission run",
+			"mission_id", missionRecord.ID,
+			"run_id", missionRun.ID,
+			"run_number", runNumber,
+		)
+	} else {
+		// Fallback: create ephemeral run for graph bootstrap
+		missionRun = mission.NewMissionRun(missionRecord.ID, 1)
+		missionRun.MarkStarted()
+		m.logger.Warn("mission run store not available, using ephemeral run")
 	}
 
 	// Create event channel for mission updates
@@ -264,30 +296,31 @@ func (m *missionManager) Run(ctx context.Context, workflowPath string, missionID
 	// Create mission context with cancellation
 	missionCtx, cancel := context.WithCancel(context.Background())
 
-	// Create active mission entry
+	// Create active mission entry - use mission.ID (stable) for tracking
 	active := &activeMission{
-		mission:   missionRecord,
-		ctx:       missionCtx,
-		cancel:    cancel,
-		eventChan: eventChan,
-		startTime: time.Now(),
+		mission:    missionRecord,
+		missionRun: missionRun,
+		ctx:        missionCtx,
+		cancel:     cancel,
+		eventChan:  eventChan,
+		startTime:  time.Now(),
 	}
 
-	// Register active mission
+	// Register active mission by stable mission ID
 	m.mu.Lock()
-	m.activeMissions[missionID] = active
+	m.activeMissions[missionRecord.ID.String()] = active
 	m.mu.Unlock()
 
 	// Emit mission started event
 	m.emitEvent(eventChan, api.MissionEventData{
 		EventType: "mission.started",
 		Timestamp: time.Now(),
-		MissionID: missionID,
-		Message:   fmt.Sprintf("Mission %s started", missionID),
+		MissionID: missionRecord.ID.String(),
+		Message:   fmt.Sprintf("Mission %s run #%d started", missionRecord.Name, missionRun.RunNumber),
 	})
 
-	// Launch mission executor in goroutine
-	go m.executeMission(missionCtx, missionID, def, eventChan)
+	// Launch mission executor in goroutine - pass mission ID (stable)
+	go m.executeMission(missionCtx, missionRecord.ID.String(), def, eventChan)
 
 	return eventChan, nil
 }
@@ -374,9 +407,23 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 	missionQueries := queries.NewMissionQueries(graphClient)
 	executionQueries := queries.NewExecutionQueries(graphClient)
 
+	// Use the MissionRun from active mission (already created in Run())
+	missionRun := active.missionRun
+	if missionRun == nil {
+		m.logger.Error("mission run not found in active mission", "mission_id", missionID)
+		m.emitEvent(eventChan, api.MissionEventData{
+			EventType: "mission.failed",
+			Timestamp: time.Now(),
+			MissionID: missionID,
+			Error:     "internal error: mission run not initialized",
+		})
+		return
+	}
+
 	// Bootstrap mission graph structure before execution
 	bootstrapper := NewGraphBootstrapper(graphClient, m.logger)
-	if err := bootstrapper.Bootstrap(ctx, active.mission, def); err != nil {
+	bootstrapResult, err := bootstrapper.Bootstrap(ctx, active.mission, def, missionRun)
+	if err != nil {
 		m.logger.Error("failed to bootstrap mission graph", "error", err, "mission_id", missionID)
 		m.emitEvent(eventChan, api.MissionEventData{
 			EventType: "mission.failed",
@@ -388,7 +435,10 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 	}
 
 	// Create mission context and target info for harness
-	missionCtx := harness.NewMissionContext(active.mission.ID, active.mission.Name, "")
+	// Include MissionRunID for GraphRAG mission-scoped storage
+	missionCtx := harness.NewMissionContext(active.mission.ID, active.mission.Name, "").
+		WithMissionRunID(bootstrapResult.MissionRunID).
+		WithRunNumber(missionRun.RunNumber)
 
 	// Load target entity to get connection details
 	var targetInfo harness.TargetInfo
@@ -457,7 +507,13 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 		orchestrator.WithMaxRetries(3),
 		orchestrator.WithThinkerTemperature(0.2),
 	)
-	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient, inventory, m.infrastructure.missionTracer)
+
+	// Create PolicyChecker for data policy enforcement
+	policySource := orchestrator.NewMissionPolicySource(def)
+	nodeStore := orchestrator.NewGraphNodeStore(graphClient, active.missionRun.ID.String())
+	policyChecker := orchestrator.NewPolicyChecker(policySource, nodeStore, m.logger)
+
+	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient, inventory, m.infrastructure.missionTracer, policyChecker)
 
 	// Create DecisionLogWriterAdapter for Langfuse tracing if tracer is available
 	var decisionLogWriter orchestrator.DecisionLogWriter
@@ -798,13 +854,36 @@ func (m *missionManager) Resume(ctx context.Context, missionID string) (<-chan a
 		m.logger.Warn("failed to update mission status", "error", err)
 	}
 
+	// Create new MissionRun for resumed execution
+	var missionRun *mission.MissionRun
+	if m.missionRunStore != nil {
+		runNumber, err := m.missionRunStore.GetNextRunNumber(ctx, missionRecord.ID)
+		if err != nil {
+			m.logger.Error("failed to get next run number", "error", err)
+			return nil, fmt.Errorf("failed to get next run number: %w", err)
+		}
+
+		missionRun = mission.NewMissionRun(missionRecord.ID, runNumber)
+		missionRun.MarkStarted()
+
+		if err := m.missionRunStore.Save(ctx, missionRun); err != nil {
+			m.logger.Error("failed to save mission run", "error", err)
+			return nil, fmt.Errorf("failed to save mission run: %w", err)
+		}
+	} else {
+		// Fallback: create ephemeral run
+		missionRun = mission.NewMissionRun(missionRecord.ID, 1)
+		missionRun.MarkStarted()
+	}
+
 	// Create active mission entry
 	active := &activeMission{
-		mission:   missionRecord,
-		ctx:       missionCtx,
-		cancel:    cancel,
-		eventChan: eventChan,
-		startTime: time.Now(),
+		mission:    missionRecord,
+		missionRun: missionRun,
+		ctx:        missionCtx,
+		cancel:     cancel,
+		eventChan:  eventChan,
+		startTime:  time.Now(),
 	}
 
 	// Register active mission
@@ -817,7 +896,7 @@ func (m *missionManager) Resume(ctx context.Context, missionID string) (<-chan a
 		EventType: "mission.resumed",
 		Timestamp: time.Now(),
 		MissionID: missionID,
-		Message:   fmt.Sprintf("Mission %s resumed from checkpoint", missionID),
+		Message:   fmt.Sprintf("Mission %s run #%d resumed from checkpoint", missionRecord.Name, missionRun.RunNumber),
 	})
 
 	// Launch mission executor in goroutine
@@ -1117,11 +1196,6 @@ type orchestratorHarnessAdapter struct {
 // DelegateToAgent delegates a task to another agent via the harness.
 func (a *orchestratorHarnessAdapter) DelegateToAgent(ctx context.Context, agentName string, task agent.Task) (agent.Result, error) {
 	return a.harness.DelegateToAgent(ctx, agentName, task)
-}
-
-// CallTool executes a tool via the harness.
-func (a *orchestratorHarnessAdapter) CallTool(ctx context.Context, toolName string, input map[string]interface{}) (interface{}, error) {
-	return a.harness.CallTool(ctx, toolName, input)
 }
 
 // buildMissionTraceSummary constructs a MissionTraceSummary from orchestrator results.

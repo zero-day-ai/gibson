@@ -102,9 +102,9 @@ var missionStopCmd = &cobra.Command{
 }
 
 var missionDeleteCmd = &cobra.Command{
-	Use:   "delete NAME",
+	Use:   "delete <mission-id|name>",
 	Short: "Delete a mission",
-	Long:  `Delete a mission and all associated data`,
+	Long:  `Delete a mission and all associated data. Accepts either a mission UUID or name.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runMissionDelete,
 }
@@ -970,13 +970,13 @@ func runMissionStop(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runMissionDelete deletes a mission
+// runMissionDelete deletes a mission by ID or name
 func runMissionDelete(cmd *cobra.Command, args []string) error {
-	missionName := args[0]
+	identifier := args[0]
 
 	// Confirmation prompt unless --force is set
 	if !missionForceDelete {
-		fmt.Printf("Are you sure you want to delete mission '%s'? This action cannot be undone.\n", missionName)
+		fmt.Printf("Are you sure you want to delete mission '%s'? This action cannot be undone.\n", identifier)
 		fmt.Print("Type 'yes' to confirm: ")
 
 		reader := bufio.NewReader(os.Stdin)
@@ -1000,7 +1000,7 @@ func runMissionDelete(cmd *cobra.Command, args []string) error {
 	defer internal.CloseWithLog(cc, nil, "gRPC connection")
 
 	// Call core function
-	result, err := core.MissionDelete(cc, missionName, missionForceDelete)
+	result, err := core.MissionDelete(cc, identifier, missionForceDelete)
 	if err != nil {
 		return err
 	}
