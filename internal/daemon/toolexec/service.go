@@ -241,22 +241,27 @@ func (s *toolExecutorServiceImpl) ListTools() []ToolDescriptor {
 
 	for _, entry := range s.tools {
 		descriptor := ToolDescriptor{
-			Name:         entry.info.Name,
-			Description:  entry.info.Description,
-			Version:      entry.info.Version,
-			Tags:         entry.info.Tags,
-			InputSchema:  entry.info.InputSchema,
-			OutputSchema: entry.info.OutputSchema,
-			BinaryPath:   entry.info.Path,
-			Metrics:      s.cloneMetrics(&entry.metrics),
-			Timeout:      entry.info.Timeout,
+			Name:              entry.info.Name,
+			Description:       entry.info.Description,
+			Version:           entry.info.Version,
+			Tags:              entry.info.Tags,
+			InputSchema:       entry.info.InputSchema,
+			OutputSchema:      entry.info.OutputSchema,
+			InputMessageType:  entry.info.InputMessageType,
+			OutputMessageType: entry.info.OutputMessageType,
+			BinaryPath:        entry.info.Path,
+			Metrics:           s.cloneMetrics(&entry.metrics),
+			Timeout:           entry.info.Timeout,
 		}
 
-		// Determine status
+		// Determine status - tool is ready if it has either JSON schemas or proto message types
+		hasJSONSchemas := entry.info.InputSchema.Type != "" && entry.info.OutputSchema.Type != ""
+		hasProtoTypes := entry.info.InputMessageType != "" && entry.info.OutputMessageType != ""
+
 		if entry.info.Error != nil {
 			descriptor.Status = "error"
 			descriptor.ErrorMessage = entry.info.Error.Error()
-		} else if entry.info.InputSchema.Type == "" || entry.info.OutputSchema.Type == "" {
+		} else if !hasJSONSchemas && !hasProtoTypes {
 			descriptor.Status = "schema-unknown"
 		} else {
 			descriptor.Status = "ready"
@@ -284,8 +289,10 @@ func (s *toolExecutorServiceImpl) GetToolSchema(name string) (*ToolSchema, error
 	}
 
 	return &ToolSchema{
-		InputSchema:  entry.info.InputSchema,
-		OutputSchema: entry.info.OutputSchema,
+		InputSchema:       entry.info.InputSchema,
+		OutputSchema:      entry.info.OutputSchema,
+		InputMessageType:  entry.info.InputMessageType,
+		OutputMessageType: entry.info.OutputMessageType,
 	}, nil
 }
 

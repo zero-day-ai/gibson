@@ -99,7 +99,7 @@ func (s *defaultBinaryScanner) Scan(ctx context.Context, toolsDir string) ([]Too
 			Path: path,
 		}
 
-		schema, err := s.GetSchema(ctx, path)
+		toolSchema, err := s.GetSchema(ctx, path)
 		if err != nil {
 			// Log warning but include tool with error status
 			slog.Warn("failed to fetch schema for tool",
@@ -108,9 +108,11 @@ func (s *defaultBinaryScanner) Scan(ctx context.Context, toolsDir string) ([]Too
 				"error", err)
 			toolInfo.Error = err
 		} else {
-			// Populate tool info from schema
-			toolInfo.InputSchema = schema.InputSchema
-			toolInfo.OutputSchema = schema.OutputSchema
+			// Populate tool info from schema (supports both legacy JSON and proto types)
+			toolInfo.InputSchema = toolSchema.InputSchema
+			toolInfo.OutputSchema = toolSchema.OutputSchema
+			toolInfo.InputMessageType = toolSchema.InputMessageType
+			toolInfo.OutputMessageType = toolSchema.OutputMessageType
 		}
 
 		// Look for component.yaml in the tool's directory
@@ -186,36 +188,45 @@ func (s *defaultBinaryScanner) GetSchema(ctx context.Context, binaryPath string)
 		return nil, fmt.Errorf("failed to execute binary: %w", err)
 	}
 
-	// Parse the JSON schema response
+	// Parse the JSON schema response - supports both legacy JSON schemas and proto message types
 	var schemaResponse struct {
-		Name         string      `json:"name"`
-		Version      string      `json:"version"`
-		Description  string      `json:"description"`
-		Tags         []string    `json:"tags"`
-		InputSchema  schema.JSON `json:"input_schema"`
-		OutputSchema schema.JSON `json:"output_schema"`
+		Name              string      `json:"name"`
+		Version           string      `json:"version"`
+		Description       string      `json:"description"`
+		Tags              []string    `json:"tags"`
+		InputSchema       schema.JSON `json:"input_schema"`
+		OutputSchema      schema.JSON `json:"output_schema"`
+		InputMessageType  string      `json:"input_message_type"`
+		OutputMessageType string      `json:"output_message_type"`
 	}
 
 	if err := json.Unmarshal(output, &schemaResponse); err != nil {
 		return nil, fmt.Errorf("failed to parse schema JSON: %w (output: %s)", err, string(output))
 	}
 
-	// Validate that we have at least input and output schemas
-	if schemaResponse.InputSchema.Type == "" {
-		return nil, fmt.Errorf("schema missing input_schema field")
-	}
-	if schemaResponse.OutputSchema.Type == "" {
-		return nil, fmt.Errorf("schema missing output_schema field")
+	// Check for proto-based tools (new format)
+	hasProtoTypes := schemaResponse.InputMessageType != "" && schemaResponse.OutputMessageType != ""
+
+	// Check for legacy JSON schema tools
+	hasJSONSchemas := schemaResponse.InputSchema.Type != "" && schemaResponse.OutputSchema.Type != ""
+
+	// Validate that we have at least one valid format
+	if !hasProtoTypes && !hasJSONSchemas {
+		return nil, fmt.Errorf("schema must have either input_schema/output_schema (JSON) or input_message_type/output_message_type (proto)")
 	}
 
 	slog.Debug("successfully fetched schema",
 		"binary", binaryPath,
 		"name", schemaResponse.Name,
-		"version", schemaResponse.Version)
+		"version", schemaResponse.Version,
+		"has_proto_types", hasProtoTypes,
+		"has_json_schemas", hasJSONSchemas)
 
 	return &ToolSchema{
-		InputSchema:  schemaResponse.InputSchema,
-		OutputSchema: schemaResponse.OutputSchema,
+		InputSchema:       schemaResponse.InputSchema,
+		OutputSchema:      schemaResponse.OutputSchema,
+		InputMessageType:  schemaResponse.InputMessageType,
+		OutputMessageType: schemaResponse.OutputMessageType,
 	}, nil
 }
 

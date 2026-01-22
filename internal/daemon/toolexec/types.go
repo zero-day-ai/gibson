@@ -57,11 +57,17 @@ type ToolBinaryInfo struct {
 	// Tags are optional labels for categorizing and filtering tools.
 	Tags []string
 
-	// InputSchema defines the expected structure of the tool's input.
+	// InputSchema defines the expected structure of the tool's input (legacy JSON schema).
 	InputSchema schema.JSON
 
-	// OutputSchema defines the structure of the tool's output.
+	// OutputSchema defines the structure of the tool's output (legacy JSON schema).
 	OutputSchema schema.JSON
+
+	// InputMessageType is the proto message type for input (e.g., "tools.v1.NmapRequest").
+	InputMessageType string
+
+	// OutputMessageType is the proto message type for output (e.g., "tools.v1.NmapResponse").
+	OutputMessageType string
 
 	// Timeout defines the timeout configuration for this tool.
 	// Zero value means no timeout constraints are configured.
@@ -73,13 +79,19 @@ type ToolBinaryInfo struct {
 }
 
 // ToolSchema defines a tool's input and output schemas for validation
-// and documentation purposes.
+// and documentation purposes. Supports both legacy JSON schemas and proto message types.
 type ToolSchema struct {
-	// InputSchema defines the expected structure of the tool's input.
-	InputSchema schema.JSON `json:"input_schema"`
+	// InputSchema defines the expected structure of the tool's input (legacy JSON schema).
+	InputSchema schema.JSON `json:"input_schema,omitempty"`
 
-	// OutputSchema defines the structure of the tool's output.
-	OutputSchema schema.JSON `json:"output_schema"`
+	// OutputSchema defines the structure of the tool's output (legacy JSON schema).
+	OutputSchema schema.JSON `json:"output_schema,omitempty"`
+
+	// InputMessageType is the proto message type for input (e.g., "tools.v1.NmapRequest").
+	InputMessageType string `json:"input_message_type,omitempty"`
+
+	// OutputMessageType is the proto message type for output (e.g., "tools.v1.NmapResponse").
+	OutputMessageType string `json:"output_message_type,omitempty"`
 }
 
 // ExecuteRequest contains all information needed to execute a tool subprocess.
@@ -129,11 +141,17 @@ type ToolDescriptor struct {
 	// Tags are labels for categorizing the tool.
 	Tags []string `json:"tags"`
 
-	// InputSchema defines the expected input structure.
-	InputSchema schema.JSON `json:"input_schema"`
+	// InputSchema defines the expected input structure (legacy JSON schema).
+	InputSchema schema.JSON `json:"input_schema,omitempty"`
 
-	// OutputSchema defines the output structure.
-	OutputSchema schema.JSON `json:"output_schema"`
+	// OutputSchema defines the output structure (legacy JSON schema).
+	OutputSchema schema.JSON `json:"output_schema,omitempty"`
+
+	// InputMessageType is the proto message type for input (e.g., "tools.v1.NmapRequest").
+	InputMessageType string `json:"input_message_type,omitempty"`
+
+	// OutputMessageType is the proto message type for output (e.g., "tools.v1.NmapResponse").
+	OutputMessageType string `json:"output_message_type,omitempty"`
 
 	// BinaryPath is the absolute path to the tool binary.
 	BinaryPath string `json:"binary_path"`
