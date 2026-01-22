@@ -13,7 +13,7 @@ import (
 )
 
 // toolExecutorServiceImpl is the concrete implementation of ToolExecutorService.
-// It orchestrates tool discovery, caching, and subprocess-based execution.
+// It orchestrates tool discovery, caching, and gRPC-based execution.
 type toolExecutorServiceImpl struct {
 	// toolsDir is the directory containing tool binaries
 	toolsDir string
@@ -27,8 +27,8 @@ type toolExecutorServiceImpl struct {
 	// scanner is responsible for discovering tool binaries
 	scanner BinaryScanner
 
-	// executor is responsible for running tool subprocesses
-	executor *SubprocessExecutor
+	// grpcExecutor is responsible for running tools via gRPC
+	grpcExecutor *GRPCExecutor
 
 	// mu protects concurrent access to the tool registry and metrics
 	mu sync.RWMutex
@@ -67,8 +67,11 @@ func NewToolExecutorService(toolsDir string, defaultTimeout time.Duration, logge
 		defaultTimeout: defaultTimeout,
 		logger:         logger,
 		scanner:        NewBinaryScanner(),
-		executor:       NewSubprocessExecutor(),
-		tools:          make(map[string]*toolEntry),
+		grpcExecutor:   &GRPCExecutor{
+			runningTools: make(map[string]*runningTool),
+			logger:       logger,
+		},
+		tools: make(map[string]*toolEntry),
 	}
 }
 
@@ -121,10 +124,12 @@ func (s *toolExecutorServiceImpl) Start(ctx context.Context) error {
 }
 
 // Stop gracefully shuts down the service, cleaning up any resources.
-// Currently, this is a no-op as tool executions are short-lived subprocesses
-// that are cleaned up by the OS when they complete.
+// This stops all running tool gRPC server processes.
 func (s *toolExecutorServiceImpl) Stop(ctx context.Context) error {
 	s.logger.Info("stopping tool executor service")
+	if s.grpcExecutor != nil {
+		s.grpcExecutor.Stop()
+	}
 	return nil
 }
 
@@ -190,9 +195,9 @@ func (s *toolExecutorServiceImpl) Execute(ctx context.Context, name string, inpu
 		Env:        os.Environ(),
 	}
 
-	// Execute the tool
+	// Execute the tool via gRPC
 	startTime := time.Now()
-	result, err := s.executor.Execute(ctx, req)
+	result, err := s.grpcExecutor.Execute(ctx, req)
 	duration := time.Since(startTime)
 
 	// Update metrics
