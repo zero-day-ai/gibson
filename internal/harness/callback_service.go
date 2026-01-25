@@ -17,7 +17,6 @@ import (
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	sdkfinding "github.com/zero-day-ai/sdk/finding"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
-	"github.com/zero-day-ai/sdk/graphrag/domain"
 	"github.com/zero-day-ai/sdk/schema"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
@@ -44,6 +43,15 @@ type CredentialStore interface {
 // to the daemon's event bus for graph processing.
 type EventBusPublisher interface {
 	Publish(ctx context.Context, event interface{}) error
+}
+
+// DiscoveryProcessor processes proto DiscoveryResult from tool responses.
+// This interface is implemented by the graphrag/processor package to
+// extract, convert, and store discovered entities to Neo4j.
+type DiscoveryProcessor interface {
+	// Process extracts discovered nodes from a proto DiscoveryResult and stores them in the graph.
+	// Takes graphragpb.DiscoveryResult (proto-first approach) for processing.
+	Process(ctx context.Context, execCtx loader.ExecContext, discovery *graphragpb.DiscoveryResult) (interface{}, error)
 }
 
 // HarnessCallbackService implements the gRPC HarnessCallbackService server.
@@ -95,14 +103,8 @@ type HarnessCallbackService struct {
 	// metadataInjector adds mission context metadata to graph nodes before storage
 	metadataInjector MetadataInjector
 
-	// taxonomyRegistry provides taxonomy lookups for relationship building
-	taxonomyRegistry TaxonomyRegistry
-
-	// nodeStore provides access to graph nodes for parent lookup
-	nodeStore NodeStore
-
-	// relationshipBuilder creates taxonomy-driven relationships when nodes are stored
-	relationshipBuilder RelationshipBuilder
+	// discoveryProcessor processes DiscoveryResult from tool responses and stores to Neo4j
+	discoveryProcessor DiscoveryProcessor
 
 	// mu protects spanProcessors for concurrent access
 	mu sync.RWMutex
@@ -156,21 +158,12 @@ func WithGraphLoader(graphLoader *loader.GraphLoader) CallbackServiceOption {
 	}
 }
 
-// WithTaxonomyRegistry sets the TaxonomyRegistry for relationship building.
-// When both TaxonomyRegistry and NodeStore are set, a RelationshipBuilder will be
-// created automatically to build taxonomy-driven relationships when nodes are stored.
-func WithTaxonomyRegistry(registry TaxonomyRegistry) CallbackServiceOption {
+// WithDiscoveryProcessor sets the DiscoveryProcessor for automatic graph storage.
+// When set, the callback service will extract DiscoveryResult from tool responses
+// and automatically persist discovered entities to Neo4j.
+func WithDiscoveryProcessor(processor DiscoveryProcessor) CallbackServiceOption {
 	return func(s *HarnessCallbackService) {
-		s.taxonomyRegistry = registry
-	}
-}
-
-// WithNodeStore sets the NodeStore for relationship building.
-// When both TaxonomyRegistry and NodeStore are set, a RelationshipBuilder will be
-// created automatically to build taxonomy-driven relationships when nodes are stored.
-func WithNodeStore(store NodeStore) CallbackServiceOption {
-	return func(s *HarnessCallbackService) {
-		s.nodeStore = store
+		s.discoveryProcessor = processor
 	}
 }
 
@@ -188,12 +181,6 @@ func NewHarnessCallbackService(logger *slog.Logger, opts ...CallbackServiceOptio
 
 	for _, opt := range opts {
 		opt(s)
-	}
-
-	// Create RelationshipBuilder if both TaxonomyRegistry and NodeStore are available
-	if s.taxonomyRegistry != nil && s.nodeStore != nil {
-		s.relationshipBuilder = NewRelationshipBuilder(s.taxonomyRegistry, s.nodeStore, s.logger)
-		s.logger.Info("RelationshipBuilder initialized with TaxonomyRegistry and NodeStore")
 	}
 
 	return s
@@ -225,12 +212,6 @@ func NewHarnessCallbackServiceWithRegistry(logger *slog.Logger, registry *Callba
 
 	for _, opt := range opts {
 		opt(s)
-	}
-
-	// Create RelationshipBuilder if both TaxonomyRegistry and NodeStore are available
-	if s.taxonomyRegistry != nil && s.nodeStore != nil {
-		s.relationshipBuilder = NewRelationshipBuilder(s.taxonomyRegistry, s.nodeStore, s.logger)
-		s.logger.Info("RelationshipBuilder initialized with TaxonomyRegistry and NodeStore")
 	}
 
 	return s
@@ -577,29 +558,30 @@ func (s *HarnessCallbackService) LLMCompleteStructured(ctx context.Context, req 
 // Tool Operations
 // ============================================================================
 
-// CallTool implements the tool execution RPC.
-// This handler now uses CallToolProto internally for type-safe tool execution.
-func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolRequest) (*pb.CallToolResponse, error) {
+// CallToolProto implements the proto-based tool execution RPC.
+// This is the canonical way to execute tools from external agents.
+func (s *HarnessCallbackService) CallToolProto(ctx context.Context, req *pb.CallToolProtoRequest) (*pb.CallToolProtoResponse, error) {
 	harness, err := s.getHarness(ctx, req.Context)
 	if err != nil {
 		return nil, err
 	}
 
 	// Publish tool.call.started event
-	// Include parent_span_id from context so taxonomy engine can create EXECUTED_BY relationship
 	s.publishEvent(ctx, "tool.call.started", map[string]interface{}{
 		"tool_name":      req.Name,
 		"mission_id":     req.Context.MissionId,
 		"agent_name":     req.Context.AgentName,
 		"task_id":        req.Context.TaskId,
-		"parent_span_id": req.Context.SpanId, // Agent's span ID becomes tool call's parent
+		"parent_span_id": req.Context.SpanId,
+		"input_type":     req.InputType,
+		"output_type":    req.OutputType,
 	})
 
-	// Get tool descriptor to determine proto message types
+	// Get tool descriptor to validate it exists
 	toolDesc, err := harness.GetToolDescriptor(ctx, req.Name)
 	if err != nil {
 		s.logger.Error("tool not found", "error", err, "tool", req.Name)
-		return &pb.CallToolResponse{
+		return &pb.CallToolProtoResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_TOOL_NOT_FOUND,
 				Message: fmt.Sprintf("tool not found: %s", req.Name),
@@ -607,59 +589,25 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 		}, nil
 	}
 
-	// Convert input TypedValue map to map[string]any for JSON marshaling
-	input := make(map[string]any)
-	for k, v := range req.Input {
-		input[k] = typedValueToAny(v)
-	}
-
-	// Marshal input to JSON
-	inputJSON, err := json.Marshal(input)
-	if err != nil {
-		s.logger.Error("failed to marshal input to JSON", "error", err, "tool", req.Name)
-		return &pb.CallToolResponse{
-			Error: &pb.HarnessError{
-				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
-				Message: fmt.Sprintf("failed to marshal input: %v", err),
-			},
-		}, nil
-	}
-
-	// Get proto message types from tool descriptor
-	// The tool must implement the protoTool interface with InputMessageType() and OutputMessageType()
-	inputTypeName := toolDesc.InputProtoType
-	outputTypeName := toolDesc.OutputProtoType
-
-	if inputTypeName == "" || outputTypeName == "" {
-		// Tool doesn't support proto - this shouldn't happen after CallTool removal
-		s.logger.Error("tool does not support proto execution", "tool", req.Name)
-		return &pb.CallToolResponse{
-			Error: &pb.HarnessError{
-				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
-				Message: fmt.Sprintf("tool %s does not support proto execution", req.Name),
-			},
-		}, nil
-	}
-
 	// Create proto message instances dynamically using proto registry
-	inputMsgType, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(inputTypeName))
+	inputMsgType, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(req.InputType))
 	if err != nil {
-		s.logger.Error("failed to find input message type", "error", err, "type", inputTypeName)
-		return &pb.CallToolResponse{
+		s.logger.Error("failed to find input message type", "error", err, "type", req.InputType)
+		return &pb.CallToolProtoResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
-				Message: fmt.Sprintf("failed to find input message type %s: %v", inputTypeName, err),
+				Message: fmt.Sprintf("failed to find input message type %s: %v", req.InputType, err),
 			},
 		}, nil
 	}
 
-	outputMsgType, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(outputTypeName))
+	outputMsgType, err := protoregistry.GlobalTypes.FindMessageByName(protoreflect.FullName(req.OutputType))
 	if err != nil {
-		s.logger.Error("failed to find output message type", "error", err, "type", outputTypeName)
-		return &pb.CallToolResponse{
+		s.logger.Error("failed to find output message type", "error", err, "type", req.OutputType)
+		return &pb.CallToolProtoResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
-				Message: fmt.Sprintf("failed to find output message type %s: %v", outputTypeName, err),
+				Message: fmt.Sprintf("failed to find output message type %s: %v", req.OutputType, err),
 			},
 		}, nil
 	}
@@ -669,9 +617,9 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 	responseMsg := outputMsgType.New().Interface()
 
 	// Unmarshal JSON to proto request using protojson
-	if err := protojson.Unmarshal(inputJSON, requestMsg); err != nil {
+	if err := protojson.Unmarshal(req.InputJson, requestMsg); err != nil {
 		s.logger.Error("failed to unmarshal JSON to proto request", "error", err, "tool", req.Name)
-		return &pb.CallToolResponse{
+		return &pb.CallToolProtoResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				Message: fmt.Sprintf("failed to unmarshal input: %v", err),
@@ -693,7 +641,7 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 			"parent_span_id": req.Context.SpanId,
 		})
 
-		return &pb.CallToolResponse{
+		return &pb.CallToolProtoResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: err.Error(),
@@ -701,26 +649,54 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 		}, nil
 	}
 
+	// Process discovery if present (async, non-blocking)
+	if s.discoveryProcessor != nil {
+		if pbDiscovery := sdkgraphrag.ExtractDiscovery(responseMsg); pbDiscovery != nil {
+			// Build execution context from request context
+			execCtx := loader.ExecContext{
+				MissionRunID:    req.Context.MissionRunId,
+				MissionID:       req.Context.MissionId,
+				AgentName:       req.Context.AgentName,
+				AgentRunID:      req.Context.AgentRunId,
+				ToolExecutionID: req.Context.ToolExecutionId,
+			}
+
+			// Process discovery asynchronously with timeout
+			// This doesn't block the tool response
+			// NOTE: Now passing proto directly (proto-first approach)
+			go func() {
+				processCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+
+				result, err := s.discoveryProcessor.Process(processCtx, execCtx, pbDiscovery)
+				if err != nil {
+					s.logger.ErrorContext(processCtx, "failed to process discovery",
+						"error", err,
+						"tool", req.Name,
+						"mission_run_id", execCtx.MissionRunID,
+					)
+				} else if result != nil {
+					// Log success (result type varies by processor implementation)
+					s.logger.DebugContext(processCtx, "discovery processed successfully",
+						"tool", req.Name,
+						"mission_run_id", execCtx.MissionRunID,
+					)
+				}
+			}()
+		}
+	}
+
 	// Marshal proto response to JSON
-	responseJSON, err := protojson.Marshal(responseMsg)
+	marshaler := protojson.MarshalOptions{
+		UseProtoNames: true, // Use snake_case (proto field names) instead of camelCase
+	}
+	responseJSON, err := marshaler.Marshal(responseMsg)
 	if err != nil {
 		s.logger.Error("failed to marshal proto response to JSON", "error", err, "tool", req.Name)
-		return &pb.CallToolResponse{
+		return &pb.CallToolProtoResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
 				Message: fmt.Sprintf("failed to marshal response: %v", err),
-			},
-		}, nil
-	}
-
-	// Unmarshal JSON to map[string]any for conversion to TypedValue
-	var output map[string]any
-	if err := json.Unmarshal(responseJSON, &output); err != nil {
-		s.logger.Error("failed to unmarshal JSON to map", "error", err, "tool", req.Name)
-		return &pb.CallToolResponse{
-			Error: &pb.HarnessError{
-				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
-				Message: fmt.Sprintf("failed to unmarshal response: %v", err),
 			},
 		}, nil
 	}
@@ -734,111 +710,11 @@ func (s *HarnessCallbackService) CallTool(ctx context.Context, req *pb.CallToolR
 		"parent_span_id": req.Context.SpanId,
 	})
 
-	// Graph tool output automatically
-	if output != nil {
-		// Get context fields from proto - prefer explicit proto fields, fallback for backward compatibility
-		missionRunID := req.Context.MissionRunId
-		if missionRunID == "" {
-			// Fallback: try Go context (for older agents that don't send proto field)
-			missionRunID = MissionRunIDFromContext(ctx)
-			if missionRunID == "" {
-				// Last resort: use mission ID (not ideal but better than nothing)
-				missionRunID = req.Context.MissionId
-			}
-		}
+	// Suppress unused variable warning for toolDesc
+	_ = toolDesc
 
-		agentRunID := req.Context.AgentRunId
-		if agentRunID == "" {
-			// Fallback for backward compatibility
-			agentRunID = s.extractAgentRunID(ctx, req.Context)
-		}
-
-		toolExecutionID := req.Context.ToolExecutionId
-		if toolExecutionID == "" {
-			// Fallback: use task ID
-			toolExecutionID = req.Context.TaskId
-		}
-
-		// Process tool output in background to avoid blocking the tool response
-		// Graphing errors are non-fatal and shouldn't fail the tool execution
-		go func() {
-			// Use background context with timeout for graphing
-			graphCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			s.logger.Info("CallTool: processing output for graphing",
-				"tool", req.Name,
-				"has_graphLoader", s.graphLoader != nil,
-				"mission_run_id", missionRunID)
-
-			// Check if output is a DiscoveryResult and use GraphLoader
-			if s.graphLoader != nil {
-				// Tools return map[string]any with DiscoveryResult under "discovery_result" key.
-				// Extract it if present, otherwise try to unmarshal the entire output.
-				var toMarshal any = output
-				if dr, ok := output["discovery_result"]; ok {
-					toMarshal = dr
-				}
-
-				outputJSON, marshalErr := json.Marshal(toMarshal)
-				if marshalErr == nil {
-					var discoveryResult domain.DiscoveryResult
-					if unmarshalErr := json.Unmarshal(outputJSON, &discoveryResult); unmarshalErr == nil {
-						// Check if this is actually a non-empty DiscoveryResult
-						if !discoveryResult.IsEmpty() {
-							s.logger.Info("processing DiscoveryResult with GraphLoader",
-								"tool", req.Name,
-								"node_count", discoveryResult.NodeCount(),
-								"hosts", len(discoveryResult.Hosts),
-								"ports", len(discoveryResult.Ports),
-								"services", len(discoveryResult.Services),
-								"agent_run_id", agentRunID,
-								"mission_id", req.Context.MissionId,
-								"mission_run_id", missionRunID)
-
-							// Construct execution context from proto fields
-							execCtx := loader.ExecContext{
-								MissionRunID:    missionRunID,
-								MissionID:       req.Context.MissionId,
-								AgentName:       req.Context.AgentName,
-								AgentRunID:      agentRunID,
-								ToolExecutionID: toolExecutionID,
-							}
-
-							// Load all discovered nodes into the graph
-							result, err := s.graphLoader.Load(graphCtx, execCtx, discoveryResult.AllNodes())
-							if err != nil {
-								s.logger.Warn("GraphLoader failed to load nodes",
-									"tool", req.Name,
-									"agent_run_id", agentRunID,
-									"error", err)
-							} else {
-								s.logger.Info("GraphLoader successfully loaded nodes",
-									"tool", req.Name,
-									"nodes_created", result.NodesCreated,
-									"nodes_updated", result.NodesUpdated,
-									"relationships_created", result.RelationshipsCreated,
-									"errors", len(result.Errors))
-
-								// Log any partial errors
-								if result.HasErrors() {
-									for i, err := range result.Errors {
-										s.logger.Warn("GraphLoader partial error",
-											"tool", req.Name,
-											"error_index", i,
-											"error", err)
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}()
-	}
-
-	return &pb.CallToolResponse{
-		Output: anyToTypedValue(output),
+	return &pb.CallToolProtoResponse{
+		OutputJson: responseJSON,
 	}, nil
 }
 
@@ -1858,17 +1734,6 @@ func (s *HarnessCallbackService) StoreGraphNode(ctx context.Context, req *pb.Sto
 				Message: err.Error(),
 			},
 		}, nil
-	}
-
-	// Build and store taxonomy-driven relationships if RelationshipBuilder is available
-	if s.relationshipBuilder != nil && s.nodeStore != nil {
-		if err := s.buildAndStoreRelationships(ctx, nodeID, graphRAG); err != nil {
-			// Log warning but don't fail the request - relationship creation is optional
-			s.logger.WarnContext(ctx, "Failed to build/store relationships for node",
-				"node_id", nodeID,
-				"node_type", req.Node.Type,
-				"error", err)
-		}
 	}
 
 	return &pb.StoreGraphNodeResponse{
@@ -3302,13 +3167,23 @@ func protoQueryToSDKQuery(pq *pb.GraphQuery) sdkgraphrag.Query {
 		return sdkgraphrag.Query{}
 	}
 
+	// Apply default weights if both are zero (proto default values)
+	// SDK requires VectorWeight + GraphWeight == 1.0
+	vectorWeight := pq.VectorWeight
+	graphWeight := pq.GraphWeight
+	if vectorWeight == 0.0 && graphWeight == 0.0 {
+		// Use SDK default weights: 0.6 vector, 0.4 graph
+		vectorWeight = 0.6
+		graphWeight = 0.4
+	}
+
 	query := sdkgraphrag.Query{
 		Text:         pq.Text,
 		NodeTypes:    pq.NodeTypes,
 		TopK:         int(pq.TopK),
 		MinScore:     float64(pq.MinScore),
-		VectorWeight: pq.VectorWeight,
-		GraphWeight:  pq.GraphWeight,
+		VectorWeight: vectorWeight,
+		GraphWeight:  graphWeight,
 		MissionRunID: pq.MissionRunId,
 	}
 
@@ -3352,11 +3227,11 @@ func (s *HarnessCallbackService) StoreNode(ctx context.Context, req *pb.StoreNod
 		s.logger.Info("StoreNode (proto-canonical): injected context IDs",
 			"mission_run_id", missionRunID,
 			"agent_run_id", agentRunID,
-			"node_type", req.Node.Type.String(),
+			"node_type", req.Node.Type,
 			"agent_name", req.Context.AgentName)
 	} else {
 		s.logger.Warn("StoreNode (proto-canonical): no context info in request",
-			"node_type", req.Node.Type.String())
+			"node_type", req.Node.Type)
 	}
 
 	// Convert graphragpb.GraphNode to SDK node
@@ -3364,7 +3239,7 @@ func (s *HarnessCallbackService) StoreNode(ctx context.Context, req *pb.StoreNod
 
 	// Inject mission context metadata before storage
 	if err := s.metadataInjector.Inject(ctx, &node); err != nil {
-		s.logger.Error("metadata injection failed", "error", err, "node_type", req.Node.Type.String())
+		s.logger.Error("metadata injection failed", "error", err, "node_type", req.Node.Type)
 		return &pb.StoreNodeResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
@@ -3383,17 +3258,6 @@ func (s *HarnessCallbackService) StoreNode(ctx context.Context, req *pb.StoreNod
 				Message: err.Error(),
 			},
 		}, nil
-	}
-
-	// Build and store taxonomy-driven relationships if RelationshipBuilder is available
-	if s.relationshipBuilder != nil && s.nodeStore != nil {
-		if err := s.buildAndStoreRelationships(ctx, nodeID, graphRAG); err != nil {
-			// Log warning but don't fail the request - relationship creation is optional
-			s.logger.WarnContext(ctx, "Failed to build/store relationships for node",
-				"node_id", nodeID,
-				"node_type", req.Node.Type.String(),
-				"error", err)
-		}
 	}
 
 	return &pb.StoreNodeResponse{
@@ -3451,17 +3315,13 @@ func (s *HarnessCallbackService) graphragpbNodeToSDKNode(pn *graphragpb.GraphNod
 		return sdkgraphrag.GraphNode{}
 	}
 
-	// Convert NodeType enum to string
-	nodeType := pn.Type.String()
-	// Remove "NODE_TYPE_" prefix for SDK compatibility
-	if len(nodeType) > 10 && nodeType[:10] == "NODE_TYPE_" {
-		nodeType = nodeType[10:]
-	}
+	// Type is now a string field
+	nodeType := pn.Type
 
-	// Convert string properties to map[string]any
+	// Convert Value properties to map[string]any
 	props := make(map[string]any, len(pn.Properties))
 	for k, v := range pn.Properties {
-		props[k] = v
+		props[k] = s.graphragpbValueToAny(v)
 	}
 
 	return sdkgraphrag.GraphNode{
@@ -3471,118 +3331,101 @@ func (s *HarnessCallbackService) graphragpbNodeToSDKNode(pn *graphragpb.GraphNod
 	}
 }
 
+// graphragpbValueToAny converts a graphragpb.Value to any.
+func (s *HarnessCallbackService) graphragpbValueToAny(v *graphragpb.Value) any {
+	if v == nil {
+		return nil
+	}
+	switch k := v.Kind.(type) {
+	case *graphragpb.Value_StringValue:
+		return k.StringValue
+	case *graphragpb.Value_IntValue:
+		return k.IntValue
+	case *graphragpb.Value_DoubleValue:
+		return k.DoubleValue
+	case *graphragpb.Value_BoolValue:
+		return k.BoolValue
+	case *graphragpb.Value_BytesValue:
+		return k.BytesValue
+	case *graphragpb.Value_TimestampValue:
+		return k.TimestampValue
+	default:
+		return nil
+	}
+}
+
 // graphragpbQueryToSDKQuery converts a graphragpb.GraphQuery to an SDK sdkgraphrag.Query.
 func (s *HarnessCallbackService) graphragpbQueryToSDKQuery(pq *graphragpb.GraphQuery) sdkgraphrag.Query {
 	if pq == nil {
 		return sdkgraphrag.Query{}
 	}
 
-	// Convert NodeType enums to strings
+	// NodeTypes is now a repeated string field - just copy directly
 	nodeTypes := make([]string, len(pq.NodeTypes))
-	for i, nt := range pq.NodeTypes {
-		nodeType := nt.String()
-		// Remove "NODE_TYPE_" prefix for SDK compatibility
-		if len(nodeType) > 10 && nodeType[:10] == "NODE_TYPE_" {
-			nodeType = nodeType[10:]
-		}
-		nodeTypes[i] = nodeType
-	}
+	copy(nodeTypes, pq.NodeTypes)
 
 	// Note: QueryScope from proto is handled via MissionRunID injection in the context,
 	// not through the query struct. The SDK Query struct does not have a Scope field.
 
+	// graphragpb.GraphQuery does not have VectorWeight/GraphWeight fields,
+	// so we always use SDK default weights (0.6 vector, 0.4 graph).
+	// SDK requires VectorWeight + GraphWeight == 1.0
+
 	return sdkgraphrag.Query{
-		Text:      pq.Text,
-		NodeTypes: nodeTypes,
-		TopK:      int(pq.TopK),
-		MinScore:  pq.MinScore,
+		Text:         pq.Text,
+		NodeTypes:    nodeTypes,
+		TopK:         int(pq.TopK),
+		MinScore:     pq.MinScore,
+		VectorWeight: 0.6,
+		GraphWeight:  0.4,
 	}
 }
 
 // sdkResultToGraphragpbResult converts an SDK sdkgraphrag.Result to a graphragpb.QueryResult.
 func (s *HarnessCallbackService) sdkResultToGraphragpbResult(r sdkgraphrag.Result) *graphragpb.QueryResult {
-	// Convert node type string to enum
-	nodeType := graphragpb.NodeType_NODE_TYPE_UNSPECIFIED
-	if r.Node.Type != "" {
-		// Try to parse the node type enum
-		enumName := "NODE_TYPE_" + r.Node.Type
-		if v, ok := graphragpb.NodeType_value[enumName]; ok {
-			nodeType = graphragpb.NodeType(v)
-		}
-	}
+	// Type is now a string field
+	nodeType := r.Node.Type
 
-	// Convert properties to string map
-	props := make(map[string]string, len(r.Node.Properties))
+	// Convert properties to Value map
+	props := make(map[string]*graphragpb.Value, len(r.Node.Properties))
 	for k, v := range r.Node.Properties {
-		props[k] = fmt.Sprintf("%v", v)
+		props[k] = s.anyToGraphragpbValue(v)
 	}
 
 	return &graphragpb.QueryResult{
 		Node: &graphragpb.GraphNode{
+			Id:         r.Node.ID,
 			Type:       nodeType,
 			Content:    r.Node.Content,
 			Properties: props,
 		},
-		Score:  r.Score,
-		NodeId: r.Node.ID,
+		Score: r.Score,
 	}
 }
 
-// buildAndStoreRelationships fetches the stored node and builds taxonomy-driven relationships.
-// This method is called after a node is successfully stored to create DISCOVERED and parent
-// relationships based on taxonomy rules.
-//
-// Parameters:
-//   - ctx: Context with agent_run_id for DISCOVERED relationships
-//   - nodeID: The ID of the node that was just stored
-//   - graphRAG: The GraphRAGSupport interface for creating relationships
-//
-// Returns:
-//   - error: Non-nil if fetching node or storing relationships fails
-func (s *HarnessCallbackService) buildAndStoreRelationships(ctx context.Context, nodeID string, graphRAG GraphRAGSupport) error {
-	// Parse node ID as types.ID
-	nodeTypeID, err := types.ParseID(nodeID)
-	if err != nil {
-		return fmt.Errorf("invalid node ID format: %w", err)
+// anyToGraphragpbValue converts any to a graphragpb.Value.
+func (s *HarnessCallbackService) anyToGraphragpbValue(v any) *graphragpb.Value {
+	if v == nil {
+		return nil
 	}
-
-	// Fetch the stored node from the graph to get internal representation
-	internalNode, err := s.nodeStore.GetNode(ctx, nodeTypeID)
-	if err != nil {
-		return fmt.Errorf("failed to fetch stored node: %w", err)
+	switch val := v.(type) {
+	case string:
+		return &graphragpb.Value{Kind: &graphragpb.Value_StringValue{StringValue: val}}
+	case int:
+		return &graphragpb.Value{Kind: &graphragpb.Value_IntValue{IntValue: int64(val)}}
+	case int32:
+		return &graphragpb.Value{Kind: &graphragpb.Value_IntValue{IntValue: int64(val)}}
+	case int64:
+		return &graphragpb.Value{Kind: &graphragpb.Value_IntValue{IntValue: val}}
+	case float32:
+		return &graphragpb.Value{Kind: &graphragpb.Value_DoubleValue{DoubleValue: float64(val)}}
+	case float64:
+		return &graphragpb.Value{Kind: &graphragpb.Value_DoubleValue{DoubleValue: val}}
+	case bool:
+		return &graphragpb.Value{Kind: &graphragpb.Value_BoolValue{BoolValue: val}}
+	case []byte:
+		return &graphragpb.Value{Kind: &graphragpb.Value_BytesValue{BytesValue: val}}
+	default:
+		return &graphragpb.Value{Kind: &graphragpb.Value_StringValue{StringValue: fmt.Sprintf("%v", val)}}
 	}
-
-	// Build relationships using RelationshipBuilder
-	relationships, err := s.relationshipBuilder.BuildRelationships(ctx, internalNode)
-	if err != nil {
-		return fmt.Errorf("failed to build relationships: %w", err)
-	}
-
-	// Store each relationship
-	for _, rel := range relationships {
-		// Convert internal relationship to SDK relationship
-		sdkRel := sdkgraphrag.Relationship{
-			FromID:     rel.FromID.String(),
-			ToID:       rel.ToID.String(),
-			Type:       string(rel.Type),
-			Properties: rel.Properties,
-		}
-
-		// Store relationship via GraphRAG harness
-		if err := graphRAG.CreateGraphRelationship(ctx, sdkRel); err != nil {
-			// Log error but continue with other relationships
-			s.logger.WarnContext(ctx, "Failed to store relationship",
-				"from_id", sdkRel.FromID,
-				"to_id", sdkRel.ToID,
-				"type", sdkRel.Type,
-				"error", err)
-		} else {
-			s.logger.DebugContext(ctx, "Created taxonomy-driven relationship",
-				"from_id", sdkRel.FromID,
-				"to_id", sdkRel.ToID,
-				"type", sdkRel.Type)
-		}
-	}
-
-	return nil
 }

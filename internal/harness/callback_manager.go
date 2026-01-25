@@ -460,3 +460,19 @@ func (m *CallbackManager) SetGraphLoader(gl *loader.GraphLoader) {
 		m.logger.Debug("set graph loader on callback service")
 	}
 }
+
+// SetDiscoveryProcessor sets the DiscoveryProcessor on the callback service.
+// This enables automatic extraction and storage of DiscoveryResult from tool responses.
+//
+// This method should be called after NewCallbackManager but before Start().
+//
+// Parameters:
+//   - processor: DiscoveryProcessor instance for processing discoveries
+//
+// Thread-safe: Can be called from multiple goroutines.
+func (m *CallbackManager) SetDiscoveryProcessor(processor DiscoveryProcessor) {
+	if m.server != nil {
+		m.server.SetDiscoveryProcessor(processor)
+		m.logger.Debug("set discovery processor on callback service")
+	}
+}

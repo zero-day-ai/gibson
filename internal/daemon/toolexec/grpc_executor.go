@@ -171,7 +171,10 @@ func (e *GRPCExecutor) startTool(ctx context.Context, toolName, binaryPath strin
 		"port", port)
 
 	// Start the tool process with --port flag
-	cmd := exec.CommandContext(ctx, binaryPath, "--port", strconv.Itoa(port))
+	// IMPORTANT: Use exec.Command (not CommandContext) so the process lifecycle
+	// is NOT tied to the request context. Tools are meant to stay alive as
+	// persistent gRPC servers across multiple requests.
+	cmd := exec.Command(binaryPath, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ() // Don't set GIBSON_TOOL_MODE - let it run as gRPC server
 
 	// Capture stderr for debugging

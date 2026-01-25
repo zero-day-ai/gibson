@@ -18,6 +18,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/observability"
 	"github.com/zero-day-ai/gibson/internal/plan"
+	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -67,7 +68,7 @@ type Infrastructure struct {
 	missionTracer *observability.MissionTracer
 
 	// taxonomyRegistry manages core taxonomy and agent-installed extensions
-	taxonomyRegistry graphrag.TaxonomyRegistry
+	taxonomyRegistry sdkgraphrag.TaxonomyRegistry
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -118,8 +119,8 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 	// Initialize TaxonomyRegistry with core taxonomy
 	// This provides the canonical node/relationship types and parent relationship rules
 	// Must be initialized before GraphRAG so relationship builders can use it
-	coreTaxonomy := graphrag.NewSimpleTaxonomy()
-	taxonomyRegistry := graphrag.NewTaxonomyRegistry(coreTaxonomy)
+	coreTaxonomy := sdkgraphrag.NewSimpleTaxonomy()
+	taxonomyRegistry := sdkgraphrag.NewTaxonomyRegistry(coreTaxonomy)
 	d.logger.Info("initialized taxonomy registry",
 		"taxonomy_version", coreTaxonomy.Version())
 

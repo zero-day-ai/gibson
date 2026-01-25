@@ -291,7 +291,7 @@ func (b *DefaultGraphRAGQueryBridge) StoreNode(ctx context.Context, node sdkgrap
 		discoveredRel := sdkgraphrag.Relationship{
 			FromID: agentRunID,
 			ToID:   nodeID,
-			Type:   sdkgraphrag.RelTypeDiscovered,
+			Type:   sdkgraphrag.RelTypeDISCOVERED,
 			Properties: map[string]any{
 				"discovered_at":    time.Now().UTC(),
 				"discovery_method": agentName,
@@ -506,7 +506,7 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 				discoveredRel := sdkgraphrag.Relationship{
 					FromID: agentRunID,
 					ToID:   nodeIDs[i],
-					Type:   sdkgraphrag.RelTypeDiscovered,
+					Type:   sdkgraphrag.RelTypeDISCOVERED,
 					Properties: map[string]any{
 						"discovered_at":    time.Now().UTC(),
 						"discovery_method": agentName,
@@ -650,7 +650,7 @@ func (b *DefaultGraphRAGQueryBridge) StoreStructured(ctx context.Context, node s
 		discoveredRel := sdkgraphrag.Relationship{
 			FromID: agentRunID,
 			ToID:   nodeID,
-			Type:   sdkgraphrag.RelTypeDiscovered,
+			Type:   sdkgraphrag.RelTypeDISCOVERED,
 			Properties: map[string]any{
 				"discovered_at":    time.Now().UTC(),
 				"discovery_method": agentName,
@@ -1074,7 +1074,7 @@ func (b *DefaultGraphRAGQueryBridge) createHierarchyRelationships(ctx context.Co
 		// TODO: Replace "host_id" with sdkgraphrag.PropHostID when SDK is updated
 		if hostID, ok := props["host_id"].(string); ok && hostID != "" {
 			fromID = hostID
-			relType = sdkgraphrag.RelTypeHasPort
+			relType = sdkgraphrag.RelTypeHASPORT
 		}
 
 	case sdkgraphrag.NodeTypeService:
@@ -1082,7 +1082,7 @@ func (b *DefaultGraphRAGQueryBridge) createHierarchyRelationships(ctx context.Co
 		// TODO: Replace "port_id" with sdkgraphrag.PropPortID when SDK is updated
 		if portID, ok := props["port_id"].(string); ok && portID != "" {
 			fromID = portID
-			relType = sdkgraphrag.RelTypeRunsService
+			relType = sdkgraphrag.RelTypeRUNSSERVICE
 		}
 
 	case sdkgraphrag.NodeTypeEndpoint:
@@ -1090,7 +1090,7 @@ func (b *DefaultGraphRAGQueryBridge) createHierarchyRelationships(ctx context.Co
 		// TODO: Replace "service_id" with sdkgraphrag.PropServiceID when SDK is updated
 		if serviceID, ok := props["service_id"].(string); ok && serviceID != "" {
 			fromID = serviceID
-			relType = sdkgraphrag.RelTypeHasEndpoint
+			relType = sdkgraphrag.RelTypeHASENDPOINT
 		}
 
 	case sdkgraphrag.NodeTypeSubdomain:
@@ -1098,7 +1098,7 @@ func (b *DefaultGraphRAGQueryBridge) createHierarchyRelationships(ctx context.Co
 		// TODO: Replace "parent_domain" with sdkgraphrag.PropParentDomain when SDK is updated
 		if parentDomain, ok := props["parent_domain"].(string); ok && parentDomain != "" {
 			fromID = parentDomain
-			relType = sdkgraphrag.RelTypeHasSubdomain
+			relType = sdkgraphrag.RelTypeHASSUBDOMAIN
 		}
 	}
 

@@ -8,11 +8,13 @@ import (
 
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/types"
-	"github.com/zero-day-ai/sdk/graphrag/domain"
+	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
+	"github.com/zero-day-ai/sdk/graphrag/protoconv"
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// GraphLoader loads domain nodes into Neo4j using the GraphNode interface.
-// It handles node creation/updates, relationship creation, and provenance tracking.
+// GraphLoader loads proto nodes into Neo4j.
+// It handles node creation, relationship creation, and provenance tracking.
 type GraphLoader struct {
 	client graph.GraphClient
 }
@@ -75,460 +77,8 @@ func (r *LoadResult) HasErrors() bool {
 	return len(r.Errors) > 0
 }
 
-// Load loads a slice of GraphNode domain objects into Neo4j.
-// For each node:
-//  1. Validates the node (child nodes must have BelongsTo set)
-//  2. Creates the node using CREATE (never MERGE - each node is unique per mission run)
-//  3. Creates a relationship to the parent node (if ParentRef is non-nil) OR
-//     attaches to MissionRun (if root node)
-//  4. Creates a DISCOVERED relationship from the agent run to the node
-//
-// Uses parameterized queries to prevent injection attacks.
-func (l *GraphLoader) Load(ctx context.Context, execCtx ExecContext, nodes []domain.GraphNode) (*LoadResult, error) {
-	if l.client == nil {
-		return nil, types.NewError("GRAPHRAG_LOADER", "client is nil")
-	}
 
-	result := &LoadResult{}
 
-	for _, node := range nodes {
-		if node == nil {
-			result.AddError(fmt.Errorf("nil node in input"))
-			continue
-		}
-
-		// Validate node using SDK validation framework (Task 11.2)
-		if err := domain.ValidateGraphNode(node); err != nil {
-			result.AddError(fmt.Errorf("validation failed for node: %w", err))
-			continue
-		}
-
-		// Get node information from the domain object
-		nodeType := node.NodeType()
-		allProps := node.Properties()
-		parentRef := node.ParentRef()
-
-		if nodeType == "" {
-			result.AddError(fmt.Errorf("node has empty NodeType"))
-			continue
-		}
-
-		// Generate unique ID for this node if not already set
-		if _, hasID := allProps["id"]; !hasID {
-			allProps["id"] = types.NewID().String()
-		}
-
-		// Inject mission context into node properties
-		// This ensures all nodes are tied to their mission for proper scoping
-		if execCtx.MissionID != "" {
-			allProps["mission_id"] = execCtx.MissionID
-		}
-		if execCtx.MissionRunID != "" {
-			allProps["mission_run_id"] = execCtx.MissionRunID
-		}
-		if execCtx.AgentRunID != "" {
-			allProps["agent_run_id"] = execCtx.AgentRunID
-		}
-		if execCtx.AgentName != "" {
-			allProps["discovered_by"] = execCtx.AgentName
-		}
-		allProps["discovered_at"] = time.Now().UnixMilli()
-
-		// Build CREATE query (Task 9.1 - never use MERGE for domain nodes)
-		// Each node is unique within a mission run - no deduplication
-		cypher := fmt.Sprintf(`
-			CREATE (n:%s $props)
-			SET n.created_at = timestamp()
-			RETURN elementId(n) as node_id
-		`, nodeType)
-
-		params := map[string]any{
-			"props": allProps,
-		}
-
-		// Execute the CREATE query
-		queryResult, err := l.client.Query(ctx, cypher, params)
-		if err != nil {
-			result.AddError(fmt.Errorf("failed to create node type %s: %w", nodeType, err))
-			continue
-		}
-
-		result.NodesCreated++
-
-		// Get the Neo4j element ID for relationship creation
-		if len(queryResult.Records) == 0 {
-			result.AddError(fmt.Errorf("no records returned after creating node type %s", nodeType))
-			continue
-		}
-
-		nodeID, ok := queryResult.Records[0]["node_id"].(string)
-		if !ok {
-			result.AddError(fmt.Errorf("failed to get node_id for node type %s", nodeType))
-			continue
-		}
-
-		// Create parent relationship if specified (child node)
-		if parentRef != nil {
-			relType := node.RelationshipType()
-			if relType == "" {
-				result.AddError(fmt.Errorf("node type %s has ParentRef but no RelationshipType", nodeType))
-				continue
-			}
-
-			// Task 9.4: Scope parent lookup by mission_run_id
-			if err := l.createParentRelationshipScoped(ctx, nodeID, parentRef, relType, execCtx.MissionRunID); err != nil {
-				result.AddError(fmt.Errorf("failed to create parent relationship for node type %s: %w", nodeType, err))
-				continue
-			}
-			result.RelationshipsCreated++
-		} else {
-			// Root node - attach to MissionRun (Task 9.3)
-			if execCtx.MissionRunID != "" {
-				if err := l.attachToMissionRun(ctx, nodeID, execCtx.MissionRunID); err != nil {
-					result.AddError(fmt.Errorf("failed to attach root node type %s to MissionRun: %w", nodeType, err))
-					continue
-				}
-				result.RelationshipsCreated++
-			}
-		}
-
-		// Create DISCOVERED relationship from agent run
-		if execCtx.AgentRunID != "" {
-			if err := l.createDiscoveredRelationship(ctx, execCtx.AgentRunID, nodeID); err != nil {
-				result.AddError(fmt.Errorf("failed to create DISCOVERED relationship for node type %s: %w", nodeType, err))
-				// Don't continue - this is non-critical
-			} else {
-				result.RelationshipsCreated++
-			}
-		}
-	}
-
-	return result, nil
-}
-
-// attachToMissionRun creates a BELONGS_TO relationship from a root node to its MissionRun.
-// This is called for all root nodes (nodes without a parent) to establish the mission scope.
-// Task 9.3: Root nodes are attached to MissionRun via BELONGS_TO relationship.
-func (l *GraphLoader) attachToMissionRun(ctx context.Context, nodeElementID, missionRunID string) error {
-	if missionRunID == "" {
-		return nil // No mission run context - skip (shouldn't happen in normal operation)
-	}
-
-	cypher := `
-		MATCH (run:mission_run {id: $run_id})
-		MATCH (n) WHERE elementId(n) = $node_id
-		CREATE (n)-[:BELONGS_TO]->(run)
-		RETURN n
-	`
-
-	params := map[string]any{
-		"run_id":  missionRunID,
-		"node_id": nodeElementID,
-	}
-
-	_, err := l.client.Query(ctx, cypher, params)
-	return err
-}
-
-// createParentRelationshipScoped creates a relationship from a parent node to a child node,
-// scoping the parent lookup to the current mission run.
-// Task 9.4: Parent relationships are scoped by mission_run_id to prevent cross-run collisions.
-func (l *GraphLoader) createParentRelationshipScoped(ctx context.Context, childNodeID string, parentRef *domain.NodeRef, relType string, missionRunID string) error {
-	if parentRef == nil {
-		return nil // Nothing to do
-	}
-
-	// Build MATCH clause for parent node using its identifying properties
-	parentProps := parentRef.Properties
-	if len(parentProps) == 0 {
-		return fmt.Errorf("parent node ref has no properties")
-	}
-
-	// Build WHERE clause for parent identification
-	// Scope by mission_run_id to find the correct parent in this mission run
-	whereClauses := make([]string, 0, len(parentProps)+1)
-	params := make(map[string]any)
-
-	for key, val := range parentProps {
-		paramKey := fmt.Sprintf("parent_%s", key)
-		whereClauses = append(whereClauses, fmt.Sprintf("parent.%s = $%s", key, paramKey))
-		params[paramKey] = val
-	}
-
-	// Add mission_run_id scoping if available (Task 9.4)
-	if missionRunID != "" {
-		whereClauses = append(whereClauses, "parent.mission_run_id = $mission_run_id")
-		params["mission_run_id"] = missionRunID
-	}
-
-	whereStr := strings.Join(whereClauses, " AND ")
-
-	// Add child node ID parameter
-	params["child_id"] = childNodeID
-
-	// Build CREATE query for relationship (not MERGE - each relationship is unique)
-	// MATCH (parent:ParentType) WHERE parent.prop1 = $parent_prop1 AND parent.mission_run_id = $mission_run_id
-	// MATCH (child) WHERE elementId(child) = $child_id
-	// CREATE (parent)-[r:REL_TYPE]->(child)
-	// RETURN r
-	cypher := fmt.Sprintf(`
-		MATCH (parent:%s) WHERE %s
-		MATCH (child) WHERE elementId(child) = $child_id
-		CREATE (parent)-[r:%s]->(child)
-		RETURN r
-	`, parentRef.NodeType, whereStr, relType)
-
-	// Execute relationship creation
-	_, err := l.client.Query(ctx, cypher, params)
-	return err
-}
-
-// createParentRelationship creates a relationship from a parent node to a child node.
-// DEPRECATED: Use createParentRelationshipScoped instead for mission-scoped storage.
-// The parent is identified by its NodeRef (type + identifying properties).
-func (l *GraphLoader) createParentRelationship(ctx context.Context, childNodeID string, parentRef *domain.NodeRef, relType string) error {
-	// Delegate to scoped version with empty mission run ID for backward compatibility
-	return l.createParentRelationshipScoped(ctx, childNodeID, parentRef, relType, "")
-}
-
-// createDiscoveredRelationship creates a DISCOVERED relationship from an agent run to a node.
-// The agent run is matched by its 'id' property (Gibson UUID stored as node.id).
-func (l *GraphLoader) createDiscoveredRelationship(ctx context.Context, agentRunID, nodeID string) error {
-	cypher := `
-		MATCH (run {id: $agent_run_id})
-		MATCH (node) WHERE elementId(node) = $node_id
-		MERGE (run)-[r:DISCOVERED]->(node)
-		SET r.discovered_at = timestamp()
-		RETURN r
-	`
-
-	params := map[string]any{
-		"agent_run_id": agentRunID,
-		"node_id":      nodeID,
-	}
-
-	_, err := l.client.Query(ctx, cypher, params)
-	return err
-}
-
-// LoadBatch loads a slice of GraphNode domain objects into Neo4j using optimized batch operations.
-// This method uses a single transaction and UNWIND optimization for better performance with large datasets.
-//
-// The batch loading process:
-//  1. Validates all nodes (child nodes must have BelongsTo set)
-//  2. Groups nodes by NodeType for efficient UNWIND processing
-//  3. Uses a single Neo4j transaction for all operations (atomic - all or nothing)
-//  4. Creates all nodes using CREATE with UNWIND (never MERGE)
-//  5. Creates parent relationships in batch (scoped by mission_run_id)
-//  6. Attaches root nodes to MissionRun via BELONGS_TO
-//  7. Creates DISCOVERED relationships in batch
-//  8. Rolls back the entire transaction on any error
-//
-// For small datasets (< 100 nodes), Load() may be more appropriate as it provides
-// per-node error handling. LoadBatch() is optimized for bulk inserts where
-// transactional consistency is important.
-func (l *GraphLoader) LoadBatch(ctx context.Context, execCtx ExecContext, nodes []domain.GraphNode) (*LoadResult, error) {
-	if l.client == nil {
-		return nil, types.NewError("GRAPHRAG_LOADER", "client is nil")
-	}
-
-	if len(nodes) == 0 {
-		return &LoadResult{}, nil
-	}
-
-	result := &LoadResult{}
-
-	// Validate all nodes first (Task 11.2)
-	for _, node := range nodes {
-		if node == nil {
-			result.AddError(fmt.Errorf("nil node in input"))
-			continue
-		}
-		if err := domain.ValidateGraphNode(node); err != nil {
-			result.AddError(fmt.Errorf("validation failed for node type %s: %w", node.NodeType(), err))
-			continue
-		}
-	}
-
-	// If validation failed, don't proceed
-	if result.HasErrors() {
-		return result, fmt.Errorf("input validation failed: %d errors", len(result.Errors))
-	}
-
-	// Group nodes by type for UNWIND optimization
-	nodesByType := make(map[string][]domain.GraphNode)
-	for _, node := range nodes {
-		if node == nil {
-			continue // Already handled above
-		}
-		nodeType := node.NodeType()
-		if nodeType == "" {
-			result.AddError(fmt.Errorf("node has empty NodeType"))
-			continue
-		}
-		nodesByType[nodeType] = append(nodesByType[nodeType], node)
-	}
-
-	// If we have errors from empty NodeType, don't proceed
-	if result.HasErrors() {
-		return result, fmt.Errorf("input validation failed: %d errors", len(result.Errors))
-	}
-
-	// Track node IDs for relationship creation
-	var nodeInfos []nodeInfo
-	var rootNodeInfos []nodeInfo // Track root nodes for MissionRun attachment
-
-	// Process each node type separately to avoid complex multi-type queries
-	discoveredAt := time.Now().UnixMilli()
-
-	for nodeType, typeNodes := range nodesByType {
-		// Build list parameter with all nodes of this type
-		nodeDataList := make([]map[string]any, 0, len(typeNodes))
-		for idx, node := range typeNodes {
-			allProps := node.Properties()
-
-			// Generate unique ID for this node if not already set
-			if _, hasID := allProps["id"]; !hasID {
-				allProps["id"] = types.NewID().String()
-			}
-
-			// Inject mission context into node properties
-			if execCtx.MissionID != "" {
-				allProps["mission_id"] = execCtx.MissionID
-			}
-			if execCtx.MissionRunID != "" {
-				allProps["mission_run_id"] = execCtx.MissionRunID
-			}
-			if execCtx.AgentRunID != "" {
-				allProps["agent_run_id"] = execCtx.AgentRunID
-			}
-			if execCtx.AgentName != "" {
-				allProps["discovered_by"] = execCtx.AgentName
-			}
-			allProps["discovered_at"] = discoveredAt
-
-			nodeData := map[string]any{
-				"all_props": allProps,
-				"index":     idx, // Track original index for relationship creation
-			}
-			nodeDataList = append(nodeDataList, nodeData)
-
-			// Store node info for later relationship creation
-			parentRef := node.ParentRef()
-			info := nodeInfo{
-				nodeType:      nodeType,
-				parentRef:     parentRef,
-				relType:       node.RelationshipType(),
-				originalIndex: idx,
-			}
-			if parentRef != nil {
-				nodeInfos = append(nodeInfos, info)
-			} else {
-				// Root node - needs to be attached to MissionRun
-				rootNodeInfos = append(rootNodeInfos, info)
-			}
-		}
-
-		// Build CREATE query for this node type (Task 9.2 - never use MERGE)
-		cypher := fmt.Sprintf(`
-			UNWIND $nodes AS nodeData
-			CREATE (n:%s)
-			SET n = nodeData.all_props, n.created_at = timestamp()
-			RETURN elementId(n) as element_id, nodeData.index as idx
-		`, nodeType)
-
-		params := map[string]any{
-			"nodes": nodeDataList,
-		}
-
-		// Execute the batch CREATE query
-		queryResult, err := l.client.Query(ctx, cypher, params)
-		if err != nil {
-			return result, fmt.Errorf("batch node creation failed for type %s: %w", nodeType, err)
-		}
-
-		// Process results to get element IDs
-		for _, record := range queryResult.Records {
-			elementID, _ := record["element_id"].(string)
-			index, _ := record["idx"].(int64)
-			if index == 0 {
-				if indexFloat, ok := record["idx"].(float64); ok {
-					index = int64(indexFloat)
-				}
-			}
-
-			// Update nodeInfo with element ID
-			for i := range nodeInfos {
-				if nodeInfos[i].nodeType == nodeType && nodeInfos[i].originalIndex == int(index) {
-					nodeInfos[i].elementIDVar = elementID
-				}
-			}
-			for i := range rootNodeInfos {
-				if rootNodeInfos[i].nodeType == nodeType && rootNodeInfos[i].originalIndex == int(index) {
-					rootNodeInfos[i].elementIDVar = elementID
-				}
-			}
-
-			result.NodesCreated++
-		}
-	}
-
-	// Build elementIDMap for backward compatibility with existing batch methods
-	elementIDMap := make(map[string]string)
-	for _, info := range nodeInfos {
-		key := fmt.Sprintf("%s:%d", info.nodeType, info.originalIndex)
-		elementIDMap[key] = info.elementIDVar
-	}
-	for _, info := range rootNodeInfos {
-		key := fmt.Sprintf("%s:%d", info.nodeType, info.originalIndex)
-		elementIDMap[key] = info.elementIDVar
-	}
-
-	// Create parent relationships in batch (scoped by mission_run_id)
-	if len(nodeInfos) > 0 {
-		relCount, err := l.createParentRelationshipsBatchScoped(ctx, nodeInfos, elementIDMap, execCtx.MissionRunID)
-		if err != nil {
-			return result, fmt.Errorf("batch parent relationship creation failed: %w", err)
-		}
-		result.RelationshipsCreated += relCount
-	}
-
-	// Attach root nodes to MissionRun (Task 9.3)
-	if len(rootNodeInfos) > 0 && execCtx.MissionRunID != "" {
-		rootElementIDs := make([]string, 0, len(rootNodeInfos))
-		for _, info := range rootNodeInfos {
-			if info.elementIDVar != "" {
-				rootElementIDs = append(rootElementIDs, info.elementIDVar)
-			}
-		}
-
-		if len(rootElementIDs) > 0 {
-			relCount, err := l.attachToMissionRunBatch(ctx, rootElementIDs, execCtx.MissionRunID)
-			if err != nil {
-				return result, fmt.Errorf("batch MissionRun attachment failed: %w", err)
-			}
-			result.RelationshipsCreated += relCount
-		}
-	}
-
-	// Create DISCOVERED relationships in batch
-	if execCtx.AgentRunID != "" && len(elementIDMap) > 0 {
-		elementIDs := make([]string, 0, len(elementIDMap))
-		for _, elementID := range elementIDMap {
-			elementIDs = append(elementIDs, elementID)
-		}
-
-		discCount, err := l.createDiscoveredRelationshipsBatch(ctx, execCtx.AgentRunID, elementIDs)
-		if err != nil {
-			// Non-critical error - log but don't fail
-			result.AddError(fmt.Errorf("batch DISCOVERED relationship creation failed: %w", err))
-		} else {
-			result.RelationshipsCreated += discCount
-		}
-	}
-
-	return result, nil
-}
 
 // attachToMissionRunBatch creates BELONGS_TO relationships from root nodes to MissionRun in batch.
 // Task 9.3: Root nodes are attached to MissionRun via BELONGS_TO relationship.
@@ -566,112 +116,6 @@ func (l *GraphLoader) attachToMissionRunBatch(ctx context.Context, nodeElementID
 	return 0, nil
 }
 
-// createParentRelationshipsBatchScoped creates parent relationships in batch using UNWIND,
-// scoping parent lookups by mission_run_id to prevent cross-run collisions.
-// Task 9.4: Parent relationships are scoped by mission_run_id.
-func (l *GraphLoader) createParentRelationshipsBatchScoped(ctx context.Context, nodeInfos []nodeInfo, elementIDMap map[string]string, missionRunID string) (int, error) {
-	// Group by parent node type and relationship type for efficiency
-	type relKey struct {
-		parentType string
-		relType    string
-	}
-
-	relGroups := make(map[relKey][]map[string]any)
-
-	for _, info := range nodeInfos {
-		if info.parentRef == nil {
-			continue
-		}
-
-		// Get child element ID from map or from info
-		childID := info.elementIDVar
-		if childID == "" {
-			childKey := fmt.Sprintf("%s:%d", info.nodeType, info.originalIndex)
-			var ok bool
-			childID, ok = elementIDMap[childKey]
-			if !ok {
-				continue // Skip if we don't have the element ID
-			}
-		}
-
-		key := relKey{
-			parentType: info.parentRef.NodeType,
-			relType:    info.relType,
-		}
-
-		relData := map[string]any{
-			"child_id":     childID,
-			"parent_props": info.parentRef.Properties,
-		}
-
-		relGroups[key] = append(relGroups[key], relData)
-	}
-
-	totalRels := 0
-
-	// Create relationships for each group
-	for key, relDataList := range relGroups {
-		if len(relDataList) == 0 {
-			continue
-		}
-
-		sampleParentProps := relDataList[0]["parent_props"].(map[string]any)
-		propKeys := make([]string, 0, len(sampleParentProps))
-		for k := range sampleParentProps {
-			propKeys = append(propKeys, k)
-		}
-
-		// Build WHERE clause for parent matching with mission_run_id scoping
-		whereClauses := make([]string, 0, len(propKeys)+1)
-		for _, propKey := range propKeys {
-			whereClauses = append(whereClauses, fmt.Sprintf("parent.%s = relData.parent_props.%s", propKey, propKey))
-		}
-
-		// Add mission_run_id scoping (Task 9.4)
-		if missionRunID != "" {
-			whereClauses = append(whereClauses, "parent.mission_run_id = $mission_run_id")
-		}
-
-		whereStr := strings.Join(whereClauses, " AND ")
-
-		// Use CREATE not MERGE for relationships (each is unique within a mission run)
-		cypher := fmt.Sprintf(`
-			UNWIND $rel_data AS relData
-			MATCH (parent:%s) WHERE %s
-			MATCH (child) WHERE elementId(child) = relData.child_id
-			CREATE (parent)-[r:%s]->(child)
-			RETURN count(r) as rel_count
-		`, key.parentType, whereStr, key.relType)
-
-		params := map[string]any{
-			"rel_data":       relDataList,
-			"mission_run_id": missionRunID,
-		}
-
-		result, err := l.client.Query(ctx, cypher, params)
-		if err != nil {
-			return totalRels, err
-		}
-
-		if len(result.Records) > 0 {
-			if count, ok := result.Records[0]["rel_count"].(int64); ok {
-				totalRels += int(count)
-			} else if count, ok := result.Records[0]["rel_count"].(float64); ok {
-				totalRels += int(count)
-			}
-		}
-	}
-
-	return totalRels, nil
-}
-
-// createParentRelationshipsBatch creates parent relationships in batch using UNWIND.
-// DEPRECATED: Use createParentRelationshipsBatchScoped instead for mission-scoped storage.
-func (l *GraphLoader) createParentRelationshipsBatch(ctx context.Context, nodeInfos []nodeInfo, elementIDMap map[string]string) (int, error) {
-	// Delegate to scoped version with empty mission run ID for backward compatibility
-	return l.createParentRelationshipsBatchScoped(ctx, nodeInfos, elementIDMap, "")
-}
-
 // createDiscoveredRelationshipsBatch creates DISCOVERED relationships in batch.
 func (l *GraphLoader) createDiscoveredRelationshipsBatch(ctx context.Context, agentRunID string, elementIDs []string) (int, error) {
 	cypher := `
@@ -704,11 +148,635 @@ func (l *GraphLoader) createDiscoveredRelationshipsBatch(ctx context.Context, ag
 	return 0, nil
 }
 
-// nodeInfo tracks information about nodes for batch relationship creation
-type nodeInfo struct {
-	elementIDVar  string // Variable name in Cypher query (unused but kept for future)
-	nodeType      string
-	parentRef     *domain.NodeRef
-	relType       string
-	originalIndex int
+// ==================== PROTO-FIRST LOADING ====================
+
+// LoadDiscovery loads a DiscoveryResult proto directly into Neo4j.
+// This is the proto-first approach that bypasses the domain wrapper layer.
+//
+// The loading order ensures parent nodes exist before children:
+//  1. Hosts (root nodes)
+//  2. Ports (children of hosts)
+//  3. Services (children of ports)
+//  4. Endpoints (children of services)
+//  5. Domains (root nodes)
+//  6. Subdomains (children of domains)
+//  7. Technologies (root nodes)
+//  8. Certificates (root nodes)
+//  9. Findings (root nodes)
+//
+// 10. Evidence (children of findings)
+// 11. CustomNodes (may be root or child)
+// 12. ExplicitRelationships
+//
+// Each node type is processed in batch for efficiency.
+func (l *GraphLoader) LoadDiscovery(ctx context.Context, execCtx ExecContext, discovery *graphragpb.DiscoveryResult) (*LoadResult, error) {
+	if l.client == nil {
+		return nil, types.NewError("GRAPHRAG_LOADER", "client is nil")
+	}
+
+	if discovery == nil {
+		return &LoadResult{}, nil
+	}
+
+	result := &LoadResult{}
+
+	// Load in proper order to ensure parent nodes exist before children
+	// 1. Hosts (root nodes - no parent)
+	if len(discovery.Hosts) > 0 {
+		r, err := l.loadHosts(ctx, execCtx, discovery.Hosts)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load hosts: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 2. Ports (children of hosts)
+	if len(discovery.Ports) > 0 {
+		r, err := l.loadPorts(ctx, execCtx, discovery.Ports)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load ports: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 3. Services (children of ports)
+	if len(discovery.Services) > 0 {
+		r, err := l.loadServices(ctx, execCtx, discovery.Services)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load services: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 4. Endpoints (children of services)
+	if len(discovery.Endpoints) > 0 {
+		r, err := l.loadEndpoints(ctx, execCtx, discovery.Endpoints)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load endpoints: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 5. Domains (root nodes)
+	if len(discovery.Domains) > 0 {
+		r, err := l.loadDomains(ctx, execCtx, discovery.Domains)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load domains: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 6. Subdomains (children of domains)
+	if len(discovery.Subdomains) > 0 {
+		r, err := l.loadSubdomains(ctx, execCtx, discovery.Subdomains)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load subdomains: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 7. Technologies (root nodes)
+	if len(discovery.Technologies) > 0 {
+		r, err := l.loadTechnologies(ctx, execCtx, discovery.Technologies)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load technologies: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 8. Certificates (root nodes)
+	if len(discovery.Certificates) > 0 {
+		r, err := l.loadCertificates(ctx, execCtx, discovery.Certificates)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load certificates: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 9. Findings (root nodes)
+	if len(discovery.Findings) > 0 {
+		r, err := l.loadFindings(ctx, execCtx, discovery.Findings)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load findings: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 10. Evidence (children of findings)
+	if len(discovery.Evidence) > 0 {
+		r, err := l.loadEvidence(ctx, execCtx, discovery.Evidence)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load evidence: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 11. CustomNodes (may be root or child)
+	if len(discovery.CustomNodes) > 0 {
+		r, err := l.loadCustomNodes(ctx, execCtx, discovery.CustomNodes)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load custom nodes: %w", err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	// 12. ExplicitRelationships
+	if len(discovery.ExplicitRelationships) > 0 {
+		r, err := l.loadExplicitRelationships(ctx, execCtx, discovery.ExplicitRelationships)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load explicit relationships: %w", err))
+		} else {
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	return result, nil
 }
+
+// loadHosts loads Host protos as root nodes attached to MissionRun.
+func (l *GraphLoader) loadHosts(ctx context.Context, execCtx ExecContext, hosts []*graphragpb.Host) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(hosts))
+	for i, h := range hosts {
+		protos[i] = h
+	}
+	return l.loadProtoNodes(ctx, execCtx, "host", protos, nil, "")
+}
+
+// loadPorts loads Port protos with parent relationship to hosts.
+func (l *GraphLoader) loadPorts(ctx context.Context, execCtx ExecContext, ports []*graphragpb.Port) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(ports))
+	for i, p := range ports {
+		protos[i] = p
+	}
+	// Ports are children of hosts via host_id field
+	return l.loadProtoNodes(ctx, execCtx, "port", protos, &parentRefBuilder{
+		nodeType:     "host",
+		idFields:     []string{"host_id"},
+		relationship: "HAS_PORT",
+	}, "")
+}
+
+// loadServices loads Service protos with parent relationship to ports.
+func (l *GraphLoader) loadServices(ctx context.Context, execCtx ExecContext, services []*graphragpb.Service) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(services))
+	for i, s := range services {
+		protos[i] = s
+	}
+	// Services are children of ports via port_id field (composite: host_id:number:protocol)
+	return l.loadProtoNodes(ctx, execCtx, "service", protos, &parentRefBuilder{
+		nodeType:     "port",
+		idFields:     []string{"port_id"},
+		relationship: "RUNS_SERVICE",
+	}, "")
+}
+
+// loadEndpoints loads Endpoint protos with parent relationship to services.
+func (l *GraphLoader) loadEndpoints(ctx context.Context, execCtx ExecContext, endpoints []*graphragpb.Endpoint) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(endpoints))
+	for i, e := range endpoints {
+		protos[i] = e
+	}
+	// Endpoints are children of services via service_id field
+	return l.loadProtoNodes(ctx, execCtx, "endpoint", protos, &parentRefBuilder{
+		nodeType:     "service",
+		idFields:     []string{"service_id"},
+		relationship: "HAS_ENDPOINT",
+	}, "")
+}
+
+// loadDomains loads Domain protos as root nodes attached to MissionRun.
+func (l *GraphLoader) loadDomains(ctx context.Context, execCtx ExecContext, domains []*graphragpb.Domain) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(domains))
+	for i, d := range domains {
+		protos[i] = d
+	}
+	return l.loadProtoNodes(ctx, execCtx, "domain", protos, nil, "")
+}
+
+// loadSubdomains loads Subdomain protos with parent relationship to domains.
+func (l *GraphLoader) loadSubdomains(ctx context.Context, execCtx ExecContext, subdomains []*graphragpb.Subdomain) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(subdomains))
+	for i, s := range subdomains {
+		protos[i] = s
+	}
+	// Subdomains are children of domains via parent_domain field
+	return l.loadProtoNodes(ctx, execCtx, "subdomain", protos, &parentRefBuilder{
+		nodeType:     "domain",
+		idFields:     []string{"parent_domain"},
+		relationship: "HAS_SUBDOMAIN",
+	}, "")
+}
+
+// loadTechnologies loads Technology protos as root nodes attached to MissionRun.
+func (l *GraphLoader) loadTechnologies(ctx context.Context, execCtx ExecContext, technologies []*graphragpb.Technology) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(technologies))
+	for i, t := range technologies {
+		protos[i] = t
+	}
+	return l.loadProtoNodes(ctx, execCtx, "technology", protos, nil, "")
+}
+
+// loadCertificates loads Certificate protos as root nodes attached to MissionRun.
+func (l *GraphLoader) loadCertificates(ctx context.Context, execCtx ExecContext, certificates []*graphragpb.Certificate) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(certificates))
+	for i, c := range certificates {
+		protos[i] = c
+	}
+	return l.loadProtoNodes(ctx, execCtx, "certificate", protos, nil, "")
+}
+
+// loadFindings loads Finding protos as root nodes attached to MissionRun.
+func (l *GraphLoader) loadFindings(ctx context.Context, execCtx ExecContext, findings []*graphragpb.Finding) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(findings))
+	for i, f := range findings {
+		protos[i] = f
+	}
+	return l.loadProtoNodes(ctx, execCtx, "finding", protos, nil, "")
+}
+
+// loadEvidence loads Evidence protos with parent relationship to findings.
+func (l *GraphLoader) loadEvidence(ctx context.Context, execCtx ExecContext, evidence []*graphragpb.Evidence) (*LoadResult, error) {
+	protos := make([]protoreflect.ProtoMessage, len(evidence))
+	for i, e := range evidence {
+		protos[i] = e
+	}
+	// Evidence is children of findings via finding_id field
+	return l.loadProtoNodes(ctx, execCtx, "evidence", protos, &parentRefBuilder{
+		nodeType:     "finding",
+		idFields:     []string{"finding_id"},
+		relationship: "HAS_EVIDENCE",
+	}, "")
+}
+
+// loadCustomNodes loads CustomNode protos (may be root or child based on parent_type).
+func (l *GraphLoader) loadCustomNodes(ctx context.Context, execCtx ExecContext, customNodes []*graphragpb.CustomNode) (*LoadResult, error) {
+	result := &LoadResult{}
+
+	// Process each custom node individually since they may have different types and parents
+	for _, node := range customNodes {
+		if node == nil {
+			result.AddError(fmt.Errorf("nil custom node"))
+			continue
+		}
+
+		nodeType := node.NodeType
+		if nodeType == "" {
+			result.AddError(fmt.Errorf("custom node missing node_type"))
+			continue
+		}
+
+		// Build parent ref if specified
+		var parentRef *parentRefBuilder
+		if node.ParentType != nil && *node.ParentType != "" {
+			relType := "CHILD_OF"
+			if node.RelationshipType != nil && *node.RelationshipType != "" {
+				relType = *node.RelationshipType
+			}
+
+			// Extract parent ID field names and values from parent_id map
+			idFields := make([]string, 0, len(node.ParentId))
+			idValues := make(map[string]string)
+			for k, v := range node.ParentId {
+				idFields = append(idFields, k)
+				idValues[k] = v
+			}
+
+			parentRef = &parentRefBuilder{
+				nodeType:     *node.ParentType,
+				idFields:     idFields,
+				idValues:     idValues,
+				relationship: relType,
+			}
+		}
+
+		// Load single custom node
+		r, err := l.loadProtoNodes(ctx, execCtx, nodeType, []protoreflect.ProtoMessage{node}, parentRef, "")
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to load custom node type %s: %w", nodeType, err))
+		} else {
+			result.NodesCreated += r.NodesCreated
+			result.RelationshipsCreated += r.RelationshipsCreated
+			result.Errors = append(result.Errors, r.Errors...)
+		}
+	}
+
+	return result, nil
+}
+
+// loadExplicitRelationships loads ExplicitRelationship protos.
+func (l *GraphLoader) loadExplicitRelationships(ctx context.Context, execCtx ExecContext, relationships []*graphragpb.ExplicitRelationship) (*LoadResult, error) {
+	result := &LoadResult{}
+
+	for _, rel := range relationships {
+		if rel == nil {
+			result.AddError(fmt.Errorf("nil explicit relationship"))
+			continue
+		}
+
+		// Build WHERE clauses for from and to nodes
+		fromWhere := make([]string, 0, len(rel.FromId))
+		toWhere := make([]string, 0, len(rel.ToId))
+		params := make(map[string]any)
+
+		for k, v := range rel.FromId {
+			paramKey := fmt.Sprintf("from_%s", k)
+			fromWhere = append(fromWhere, fmt.Sprintf("from.%s = $%s", k, paramKey))
+			params[paramKey] = v
+		}
+
+		for k, v := range rel.ToId {
+			paramKey := fmt.Sprintf("to_%s", k)
+			toWhere = append(toWhere, fmt.Sprintf("to.%s = $%s", k, paramKey))
+			params[paramKey] = v
+		}
+
+		// Add mission_run_id scoping
+		if execCtx.MissionRunID != "" {
+			fromWhere = append(fromWhere, "from.mission_run_id = $mission_run_id")
+			toWhere = append(toWhere, "to.mission_run_id = $mission_run_id")
+			params["mission_run_id"] = execCtx.MissionRunID
+		}
+
+		fromWhereStr := strings.Join(fromWhere, " AND ")
+		toWhereStr := strings.Join(toWhere, " AND ")
+
+		// Build relationship properties
+		relProps := make(map[string]any)
+		for k, v := range rel.Properties {
+			relProps[k] = v
+		}
+
+		// Build Cypher query
+		cypher := fmt.Sprintf(`
+			MATCH (from:%s) WHERE %s
+			MATCH (to:%s) WHERE %s
+			CREATE (from)-[r:%s $rel_props]->(to)
+			RETURN count(r) as rel_count
+		`, rel.FromType, fromWhereStr, rel.ToType, toWhereStr, rel.RelationshipType)
+
+		params["rel_props"] = relProps
+
+		// Execute query
+		queryResult, err := l.client.Query(ctx, cypher, params)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to create explicit relationship %s: %w", rel.RelationshipType, err))
+			continue
+		}
+
+		if len(queryResult.Records) > 0 {
+			if count, ok := queryResult.Records[0]["rel_count"].(int64); ok {
+				result.RelationshipsCreated += int(count)
+			} else if count, ok := queryResult.Records[0]["rel_count"].(float64); ok {
+				result.RelationshipsCreated += int(count)
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// parentRefBuilder specifies how to build parent relationships for proto nodes.
+type parentRefBuilder struct {
+	nodeType     string            // Parent node type (e.g., "host")
+	idFields     []string          // Field names in child proto that reference parent (e.g., ["host_id"])
+	idValues     map[string]string // Pre-computed parent ID values (used for CustomNode where values come from ParentId map)
+	relationship string            // Relationship type (e.g., "HAS_PORT")
+}
+
+// loadProtoNodes is a helper that loads proto messages as nodes.
+// It uses reflection to extract properties from the proto message.
+//
+// Parameters:
+//   - nodeType: Neo4j node label (e.g., "host", "port")
+//   - protos: Slice of proto messages (must implement protoreflect.ProtoMessage)
+//   - parentRef: Optional parent relationship specification
+//   - idField: Optional custom ID field name (defaults to auto-generated UUID)
+func (l *GraphLoader) loadProtoNodes(
+	ctx context.Context,
+	execCtx ExecContext,
+	nodeType string,
+	protos []protoreflect.ProtoMessage,
+	parentRef *parentRefBuilder,
+	idField string,
+) (*LoadResult, error) {
+	if len(protos) == 0 {
+		return &LoadResult{}, nil
+	}
+
+	result := &LoadResult{}
+	discoveredAt := time.Now().UnixMilli()
+
+	// Build node data list for UNWIND
+	nodeDataList := make([]map[string]any, 0, len(protos))
+	var parentFieldValues []map[string]string // Track parent field values for relationship creation
+
+	for _, proto := range protos {
+		if proto == nil {
+			result.AddError(fmt.Errorf("nil proto in %s list", nodeType))
+			continue
+		}
+
+		// Extract properties from proto using protoconv
+		props, err := protoconv.ToProperties(proto)
+		if err != nil {
+			result.AddError(fmt.Errorf("failed to extract properties from %s: %w", nodeType, err))
+			continue
+		}
+
+		// Generate unique ID if not already set
+		if idField != "" {
+			if _, hasID := props[idField]; !hasID {
+				props["id"] = types.NewID().String()
+			}
+		} else {
+			if _, hasID := props["id"]; !hasID {
+				props["id"] = types.NewID().String()
+			}
+		}
+
+		// Inject mission context
+		if execCtx.MissionID != "" {
+			props["mission_id"] = execCtx.MissionID
+		}
+		if execCtx.MissionRunID != "" {
+			props["mission_run_id"] = execCtx.MissionRunID
+		}
+		if execCtx.AgentRunID != "" {
+			props["agent_run_id"] = execCtx.AgentRunID
+		}
+		if execCtx.AgentName != "" {
+			props["discovered_by"] = execCtx.AgentName
+		}
+		props["discovered_at"] = discoveredAt
+
+		// Track parent field values if this is a child node
+		if parentRef != nil {
+			parentVals := make(map[string]string)
+			// If idValues are pre-computed (for CustomNode), use them directly
+			if len(parentRef.idValues) > 0 {
+				for k, v := range parentRef.idValues {
+					parentVals[k] = v
+				}
+			} else {
+				// Otherwise extract from the proto's properties
+				for _, fieldName := range parentRef.idFields {
+					if val, ok := props[fieldName]; ok {
+						parentVals[fieldName] = fmt.Sprintf("%v", val)
+					}
+				}
+			}
+			parentFieldValues = append(parentFieldValues, parentVals)
+		}
+
+		nodeDataList = append(nodeDataList, map[string]any{
+			"all_props": props,
+			"index":     len(nodeDataList), // Track index for relationship creation
+		})
+	}
+
+	if len(nodeDataList) == 0 {
+		return result, nil
+	}
+
+	// Build CREATE query with UNWIND
+	cypher := fmt.Sprintf(`
+		UNWIND $nodes AS nodeData
+		CREATE (n:%s)
+		SET n = nodeData.all_props, n.created_at = timestamp()
+		RETURN elementId(n) as element_id, nodeData.index as idx
+	`, nodeType)
+
+	params := map[string]any{
+		"nodes": nodeDataList,
+	}
+
+	// Execute the batch CREATE query
+	queryResult, err := l.client.Query(ctx, cypher, params)
+	if err != nil {
+		return result, fmt.Errorf("batch node creation failed for type %s: %w", nodeType, err)
+	}
+
+	// Track element IDs for relationship creation
+	elementIDs := make([]string, len(nodeDataList))
+	for _, record := range queryResult.Records {
+		elementID, _ := record["element_id"].(string)
+		index, _ := record["idx"].(int64)
+		if index == 0 {
+			if indexFloat, ok := record["idx"].(float64); ok {
+				index = int64(indexFloat)
+			}
+		}
+
+		if int(index) < len(elementIDs) {
+			elementIDs[int(index)] = elementID
+		}
+
+		result.NodesCreated++
+	}
+
+	// Create parent relationships if specified
+	if parentRef != nil {
+		for idx, elementID := range elementIDs {
+			if elementID == "" || idx >= len(parentFieldValues) {
+				continue
+			}
+
+			parentVals := parentFieldValues[idx]
+			if len(parentVals) == 0 {
+				continue
+			}
+
+			// Build WHERE clause for parent matching
+			whereClauses := make([]string, 0, len(parentVals)+1)
+			parentParams := make(map[string]any)
+
+			for fieldName, fieldValue := range parentVals {
+				paramKey := fmt.Sprintf("parent_%s", fieldName)
+				whereClauses = append(whereClauses, fmt.Sprintf("parent.%s = $%s", fieldName, paramKey))
+				parentParams[paramKey] = fieldValue
+			}
+
+			// Add mission_run_id scoping
+			if execCtx.MissionRunID != "" {
+				whereClauses = append(whereClauses, "parent.mission_run_id = $mission_run_id")
+				parentParams["mission_run_id"] = execCtx.MissionRunID
+			}
+
+			whereStr := strings.Join(whereClauses, " AND ")
+			parentParams["child_id"] = elementID
+
+			// Create relationship
+			relCypher := fmt.Sprintf(`
+				MATCH (parent:%s) WHERE %s
+				MATCH (child) WHERE elementId(child) = $child_id
+				CREATE (parent)-[r:%s]->(child)
+				RETURN r
+			`, parentRef.nodeType, whereStr, parentRef.relationship)
+
+			_, err := l.client.Query(ctx, relCypher, parentParams)
+			if err != nil {
+				result.AddError(fmt.Errorf("failed to create parent relationship for %s: %w", nodeType, err))
+				continue
+			}
+
+			result.RelationshipsCreated++
+		}
+	} else {
+		// Root node - attach to MissionRun
+		if execCtx.MissionRunID != "" {
+			relCount, err := l.attachToMissionRunBatch(ctx, elementIDs, execCtx.MissionRunID)
+			if err != nil {
+				return result, fmt.Errorf("batch MissionRun attachment failed for %s: %w", nodeType, err)
+			}
+			result.RelationshipsCreated += relCount
+		}
+	}
+
+	// Create DISCOVERED relationships from agent run
+	if execCtx.AgentRunID != "" {
+		discCount, err := l.createDiscoveredRelationshipsBatch(ctx, execCtx.AgentRunID, elementIDs)
+		if err != nil {
+			// Non-critical error - log but don't fail
+			result.AddError(fmt.Errorf("batch DISCOVERED relationship creation failed for %s: %w", nodeType, err))
+		} else {
+			result.RelationshipsCreated += discCount
+		}
+	}
+
+	return result, nil
+}
+

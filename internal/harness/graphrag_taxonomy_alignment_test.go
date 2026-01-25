@@ -228,7 +228,7 @@ func TestHierarchyRelationships(t *testing.T) {
 				"port":    "443",
 			},
 			expectedFromID:  "host-123",
-			expectedRelType: sdkgraphrag.RelTypeHasPort,
+			expectedRelType: sdkgraphrag.RelTypeHASPORT,
 			description:     "Port nodes with host_id should create HAS_PORT from host to port",
 		},
 		{
@@ -239,7 +239,7 @@ func TestHierarchyRelationships(t *testing.T) {
 				"name":    "https",
 			},
 			expectedFromID:  "port-456",
-			expectedRelType: sdkgraphrag.RelTypeRunsService,
+			expectedRelType: sdkgraphrag.RelTypeRUNSSERVICE,
 			description:     "Service nodes with port_id should create RUNS_SERVICE from port to service",
 		},
 		{
@@ -250,7 +250,7 @@ func TestHierarchyRelationships(t *testing.T) {
 				"path":       "/api/users",
 			},
 			expectedFromID:  "service-789",
-			expectedRelType: sdkgraphrag.RelTypeHasEndpoint,
+			expectedRelType: sdkgraphrag.RelTypeHASENDPOINT,
 			description:     "Endpoint nodes with service_id should create HAS_ENDPOINT from service to endpoint",
 		},
 		{
@@ -261,7 +261,7 @@ func TestHierarchyRelationships(t *testing.T) {
 				"name":          "api.example.com",
 			},
 			expectedFromID:  "domain-012",
-			expectedRelType: sdkgraphrag.RelTypeHasSubdomain,
+			expectedRelType: sdkgraphrag.RelTypeHASSUBDOMAIN,
 			description:     "Subdomain nodes with parent_domain should create HAS_SUBDOMAIN from domain to subdomain",
 		},
 	}
@@ -717,17 +717,13 @@ func TestIsExecutionNode(t *testing.T) {
 		{sdkgraphrag.NodeTypeSubdomain, false},
 		{sdkgraphrag.NodeTypeCertificate, false},
 		{sdkgraphrag.NodeTypeTechnology, false},
-		{sdkgraphrag.NodeTypeApi, false},
-		{sdkgraphrag.NodeTypeCloudAsset, false},
 
 		// Finding nodes
 		{sdkgraphrag.NodeTypeFinding, false},
 		{sdkgraphrag.NodeTypeEvidence, false},
-		{sdkgraphrag.NodeTypeMitigation, false},
 
 		// Attack nodes
 		{sdkgraphrag.NodeTypeTechnique, false},
-		{sdkgraphrag.NodeTypeTactic, false},
 
 		// Unknown/custom node type
 		{"custom_node_type", false},

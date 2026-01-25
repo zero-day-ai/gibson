@@ -1211,16 +1211,9 @@ func protoQueryToSDK(protoQuery *graphragpb.GraphQuery) (*sdkgraphrag.Query, err
 		return nil, fmt.Errorf("proto query is nil")
 	}
 
-	// Convert node type enums to strings
+	// NodeTypes is now a repeated string field - just copy directly
 	nodeTypes := make([]string, len(protoQuery.NodeTypes))
-	for i, nt := range protoQuery.NodeTypes {
-		nodeType := nt.String()
-		// Remove the "NODE_TYPE_" prefix
-		if len(nodeType) > 10 && nodeType[:10] == "NODE_TYPE_" {
-			nodeType = nodeType[10:]
-		}
-		nodeTypes[i] = nodeType
-	}
+	copy(nodeTypes, protoQuery.NodeTypes)
 
 	query := &sdkgraphrag.Query{
 		Text:      protoQuery.Text,
@@ -1254,28 +1247,50 @@ func sdkResultToProto(sdkResult sdkgraphrag.Result) (*graphragpb.QueryResult, er
 
 // sdkNodeToProto converts an SDK GraphNode to proto GraphNode
 func sdkNodeToProto(sdkNode sdkgraphrag.GraphNode) (*graphragpb.GraphNode, error) {
-	// Convert node type string to enum
-	nodeTypeStr := "NODE_TYPE_" + sdkNode.Type
-	nodeType, ok := graphragpb.NodeType_value[nodeTypeStr]
-	if !ok {
-		// If type doesn't match enum, use UNSPECIFIED
-		nodeType = int32(graphragpb.NodeType_NODE_TYPE_UNSPECIFIED)
-	}
+	// Type is now a string field
+	nodeType := sdkNode.Type
 
-	// Convert map[string]any to map[string]string
-	properties := make(map[string]string)
+	// Convert map[string]any to map[string]*graphragpb.Value
+	properties := make(map[string]*graphragpb.Value)
 	for k, v := range sdkNode.Properties {
-		// Convert value to string (best effort)
-		properties[k] = fmt.Sprintf("%v", v)
+		properties[k] = anyToGraphragpbValue(v)
 	}
 
 	node := &graphragpb.GraphNode{
-		Type:       graphragpb.NodeType(nodeType),
+		Id:         sdkNode.ID,
+		Type:       nodeType,
 		Content:    sdkNode.Content,
 		Properties: properties,
 	}
 
 	return node, nil
+}
+
+// anyToGraphragpbValue converts any to a graphragpb.Value.
+func anyToGraphragpbValue(v any) *graphragpb.Value {
+	if v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case string:
+		return &graphragpb.Value{Kind: &graphragpb.Value_StringValue{StringValue: val}}
+	case int:
+		return &graphragpb.Value{Kind: &graphragpb.Value_IntValue{IntValue: int64(val)}}
+	case int32:
+		return &graphragpb.Value{Kind: &graphragpb.Value_IntValue{IntValue: int64(val)}}
+	case int64:
+		return &graphragpb.Value{Kind: &graphragpb.Value_IntValue{IntValue: val}}
+	case float32:
+		return &graphragpb.Value{Kind: &graphragpb.Value_DoubleValue{DoubleValue: float64(val)}}
+	case float64:
+		return &graphragpb.Value{Kind: &graphragpb.Value_DoubleValue{DoubleValue: val}}
+	case bool:
+		return &graphragpb.Value{Kind: &graphragpb.Value_BoolValue{BoolValue: val}}
+	case []byte:
+		return &graphragpb.Value{Kind: &graphragpb.Value_BytesValue{BytesValue: val}}
+	default:
+		return &graphragpb.Value{Kind: &graphragpb.Value_StringValue{StringValue: fmt.Sprintf("%v", val)}}
+	}
 }
 
 // QueryGraphRAG performs a semantic or hybrid query against the knowledge graph.
@@ -1422,7 +1437,7 @@ func (h *DefaultAgentHarness) StoreNode(ctx context.Context, node *graphragpb.Gr
 	defer span.End()
 
 	h.logger.Debug("storing graph node (proto)",
-		"node_type", node.Type.String())
+		"node_type", node.Type)
 
 	// Convert proto node to SDK GraphNode
 	sdkNode, err := protoNodeToSDK(node)
@@ -1436,7 +1451,7 @@ func (h *DefaultAgentHarness) StoreNode(ctx context.Context, node *graphragpb.Gr
 	nodeID, err := h.StoreGraphNode(ctx, *sdkNode)
 	if err != nil {
 		h.logger.Error("store graph node (proto) failed",
-			"node_type", node.Type.String(),
+			"node_type", node.Type,
 			"error", err)
 		return "", err
 	}
@@ -1454,7 +1469,7 @@ func protoNodeToSDK(protoNode *graphragpb.GraphNode) (*sdkgraphrag.GraphNode, er
 	}
 
 	// Convert node type enum to string
-	nodeType := protoNode.Type.String()
+	nodeType := protoNode.Type
 	// Remove the "NODE_TYPE_" prefix that proto enums have
 	if len(nodeType) > 10 && nodeType[:10] == "NODE_TYPE_" {
 		nodeType = nodeType[10:]

@@ -156,3 +156,9 @@ func (s *CallbackServer) SetCredentialStore(store CredentialStore) {
 func (s *CallbackServer) SetGraphLoader(gl *loader.GraphLoader) {
 	s.service.graphLoader = gl
 }
+
+// SetDiscoveryProcessor sets the DiscoveryProcessor for automatic graph storage.
+// This must be called before starting the server.
+func (s *CallbackServer) SetDiscoveryProcessor(processor DiscoveryProcessor) {
+	s.service.discoveryProcessor = processor
+}

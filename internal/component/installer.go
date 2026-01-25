@@ -1,9 +1,9 @@
 package component
 
 import (
-	sdkGraphrag "github.com/zero-day-ai/sdk/graphrag"
-	"github.com/zero-day-ai/gibson/internal/graphrag"
 	"context"
+
+	sdkGraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -2407,32 +2407,32 @@ func (i *DefaultInstaller) unregisterTaxonomyExtension(ctx context.Context, agen
 	}
 }
 
-// taxonomyRegistryAdapter adapts the graphrag.TaxonomyRegistry to work with component.TaxonomyExtension types.
+// taxonomyRegistryAdapter adapts the sdkGraphrag.TaxonomyRegistry to work with component.TaxonomyExtension types.
 // This avoids circular imports and type conflicts between packages.
 type taxonomyRegistryAdapter struct {
-	registry graphrag.TaxonomyRegistry
+	registry sdkGraphrag.TaxonomyRegistry
 }
 
-// NewTaxonomyRegistryAdapter creates a new adapter for the graphrag TaxonomyRegistry.
-func NewTaxonomyRegistryAdapter(registry graphrag.TaxonomyRegistry) TaxonomyRegistry {
+// NewTaxonomyRegistryAdapter creates a new adapter for the sdkGraphrag TaxonomyRegistry.
+func NewTaxonomyRegistryAdapter(registry sdkGraphrag.TaxonomyRegistry) TaxonomyRegistry {
 	return &taxonomyRegistryAdapter{registry: registry}
 }
 
-// RegisterExtension converts component.TaxonomyExtension to graphrag.TaxonomyExtension and registers it.
+// RegisterExtension converts component.TaxonomyExtension to sdkGraphrag.TaxonomyExtension and registers it.
 func (a *taxonomyRegistryAdapter) RegisterExtension(agentName string, ext *TaxonomyExtension) error {
 	if ext == nil {
 		return nil
 	}
 
 	// Convert component types to graphrag types
-	graphragExt := graphrag.TaxonomyExtension{
-		NodeTypes:     make([]graphrag.NodeTypeDefinition, len(ext.NodeTypes)),
-		Relationships: make([]graphrag.RelationshipDefinition, len(ext.Relationships)),
+	graphragExt := sdkGraphrag.TaxonomyExtension{
+		NodeTypes:     make([]sdkGraphrag.NodeTypeDefinition, len(ext.NodeTypes)),
+		Relationships: make([]sdkGraphrag.RelationshipDefinition, len(ext.Relationships)),
 	}
 
 	// Convert node types
 	for i, nt := range ext.NodeTypes {
-		graphragExt.NodeTypes[i] = graphrag.NodeTypeDefinition{
+		graphragExt.NodeTypes[i] = sdkGraphrag.NodeTypeDefinition{
 			Name:       nt.Name,
 			Category:   nt.Category,
 			Properties: make([]sdkGraphrag.PropertyInfo, len(nt.Properties)),
@@ -2447,7 +2447,7 @@ func (a *taxonomyRegistryAdapter) RegisterExtension(agentName string, ext *Taxon
 
 	// Convert relationships
 	for i, rel := range ext.Relationships {
-		graphragExt.Relationships[i] = graphrag.RelationshipDefinition{
+		graphragExt.Relationships[i] = sdkGraphrag.RelationshipDefinition{
 			Name:      rel.Name,
 			FromTypes: rel.FromTypes,
 			ToTypes:   rel.ToTypes,

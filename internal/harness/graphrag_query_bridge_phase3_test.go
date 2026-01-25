@@ -120,7 +120,7 @@ func TestCreateHierarchyRelationshipsDetection(t *testing.T) {
 				"host_id": "host-123",
 			},
 			expectFromID:  "host-123",
-			expectRelType: sdkgraphrag.RelTypeHasPort,
+			expectRelType: sdkgraphrag.RelTypeHASPORT,
 		},
 		{
 			name:     "Service with port_id creates RUNS_SERVICE relationship",
@@ -130,7 +130,7 @@ func TestCreateHierarchyRelationshipsDetection(t *testing.T) {
 				"port_id": "port-456",
 			},
 			expectFromID:  "port-456",
-			expectRelType: sdkgraphrag.RelTypeRunsService,
+			expectRelType: sdkgraphrag.RelTypeRUNSSERVICE,
 		},
 		{
 			name:     "Endpoint with service_id creates HAS_ENDPOINT relationship",
@@ -140,7 +140,7 @@ func TestCreateHierarchyRelationshipsDetection(t *testing.T) {
 				"service_id": "service-789",
 			},
 			expectFromID:  "service-789",
-			expectRelType: sdkgraphrag.RelTypeHasEndpoint,
+			expectRelType: sdkgraphrag.RelTypeHASENDPOINT,
 		},
 		{
 			name:     "Subdomain with parent_domain creates HAS_SUBDOMAIN relationship",
@@ -150,7 +150,7 @@ func TestCreateHierarchyRelationshipsDetection(t *testing.T) {
 				"parent_domain": "example.com",
 			},
 			expectFromID:  "example.com",
-			expectRelType: sdkgraphrag.RelTypeHasSubdomain,
+			expectRelType: sdkgraphrag.RelTypeHASSUBDOMAIN,
 		},
 		{
 			name:     "Port without host_id does not create relationship",
@@ -187,22 +187,22 @@ func TestCreateHierarchyRelationshipsDetection(t *testing.T) {
 			case sdkgraphrag.NodeTypePort:
 				if hostID, ok := tc.properties["host_id"].(string); ok && hostID != "" {
 					fromID = hostID
-					relType = sdkgraphrag.RelTypeHasPort
+					relType = sdkgraphrag.RelTypeHASPORT
 				}
 			case sdkgraphrag.NodeTypeService:
 				if portID, ok := tc.properties["port_id"].(string); ok && portID != "" {
 					fromID = portID
-					relType = sdkgraphrag.RelTypeRunsService
+					relType = sdkgraphrag.RelTypeRUNSSERVICE
 				}
 			case sdkgraphrag.NodeTypeEndpoint:
 				if serviceID, ok := tc.properties["service_id"].(string); ok && serviceID != "" {
 					fromID = serviceID
-					relType = sdkgraphrag.RelTypeHasEndpoint
+					relType = sdkgraphrag.RelTypeHASENDPOINT
 				}
 			case sdkgraphrag.NodeTypeSubdomain:
 				if parentDomain, ok := tc.properties["parent_domain"].(string); ok && parentDomain != "" {
 					fromID = parentDomain
-					relType = sdkgraphrag.RelTypeHasSubdomain
+					relType = sdkgraphrag.RelTypeHASSUBDOMAIN
 				}
 			}
 

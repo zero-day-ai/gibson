@@ -606,3 +606,53 @@ func (d *ComponentDependencies) GetEnv() map[string]string {
 func (d *ComponentDependencies) HasDependencies() bool {
 	return d.Gibson != "" || len(d.Components) > 0 || len(d.System) > 0 || len(d.Env) > 0
 }
+
+// TaxonomyExtension defines custom GraphRAG taxonomy extensions for a component.
+// Agents can extend the taxonomy with custom node types and relationships.
+type TaxonomyExtension struct {
+	NodeTypes     []NodeTypeExtension     `json:"node_types,omitempty" yaml:"node_types,omitempty"`
+	Relationships []RelationshipExtension `json:"relationships,omitempty" yaml:"relationships,omitempty"`
+}
+
+// NodeTypeExtension defines a custom node type for the taxonomy.
+type NodeTypeExtension struct {
+	Name        string              `json:"name" yaml:"name"`
+	Category    string              `json:"category,omitempty" yaml:"category,omitempty"`
+	Description string              `json:"description,omitempty" yaml:"description,omitempty"`
+	Properties  []PropertyExtension `json:"properties,omitempty" yaml:"properties,omitempty"`
+}
+
+// PropertyExtension defines a property for a node type extension.
+type PropertyExtension struct {
+	Name        string `json:"name" yaml:"name"`
+	Type        string `json:"type,omitempty" yaml:"type,omitempty"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
+}
+
+// RelationshipExtension defines a custom relationship type for the taxonomy.
+type RelationshipExtension struct {
+	Name        string   `json:"name" yaml:"name"`
+	Category    string   `json:"category,omitempty" yaml:"category,omitempty"`
+	Description string   `json:"description,omitempty" yaml:"description,omitempty"`
+	FromTypes   []string `json:"from_types,omitempty" yaml:"from_types,omitempty"`
+	ToTypes     []string `json:"to_types,omitempty" yaml:"to_types,omitempty"`
+}
+
+// Validate validates the TaxonomyExtension fields.
+func (t *TaxonomyExtension) Validate() error {
+	// Validate node types
+	for i, nt := range t.NodeTypes {
+		if nt.Name == "" {
+			return fmt.Errorf("node type at index %d has no name", i)
+		}
+	}
+
+	// Validate relationships
+	for i, rel := range t.Relationships {
+		if rel.Name == "" {
+			return fmt.Errorf("relationship at index %d has no name", i)
+		}
+	}
+
+	return nil
+}

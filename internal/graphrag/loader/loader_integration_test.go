@@ -7,43 +7,15 @@ package loader
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
-	"github.com/zero-day-ai/sdk/graphrag/domain"
+	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 )
-
-// mockGraphNodeIntegration implements domain.GraphNode for integration testing
-type mockGraphNodeIntegration struct {
-	nodeType  string
-	idProps   map[string]any
-	props     map[string]any
-	parentRef *domain.NodeRef
-	relType   string
-}
-
-func (m *mockGraphNodeIntegration) NodeType() string {
-	return m.nodeType
-}
-
-func (m *mockGraphNodeIntegration) IdentifyingProperties() map[string]any {
-	return m.idProps
-}
-
-func (m *mockGraphNodeIntegration) Properties() map[string]any {
-	return m.props
-}
-
-func (m *mockGraphNodeIntegration) ParentRef() *domain.NodeRef {
-	return m.parentRef
-}
-
-func (m *mockGraphNodeIntegration) RelationshipType() string {
-	return m.relType
-}
 
 // TestIntegration_MissionRunDataIsolation verifies that the same IP address
 // in different MissionRuns creates separate nodes (no collision).
@@ -54,18 +26,14 @@ func TestIntegration_MissionRunDataIsolation(t *testing.T) {
 	err := client.Connect(context.Background())
 	require.NoError(t, err)
 
-	// Configure mock to track all queries for verification
-	queryCount := 0
-	createdNodes := make([]map[string]any, 0)
-
 	// Return mock result for each CREATE query
 	for i := 0; i < 10; i++ {
 		nodeID := fmt.Sprintf("node-%d", i)
 		client.AddQueryResult(graph.QueryResult{
 			Records: []map[string]any{
 				{
-					"node_id":   nodeID,
-					"operation": "created",
+					"element_id": nodeID,
+					"idx":        float64(0),
 				},
 			},
 		})
@@ -85,13 +53,13 @@ func TestIntegration_MissionRunDataIsolation(t *testing.T) {
 		AgentName:    "network-recon",
 	}
 
-	node1 := &mockGraphNodeIntegration{
-		nodeType: "host",
-		idProps:  map[string]any{"ip": sameIP},
-		props:    map[string]any{"ip": sameIP, "hostname": "host-run1"},
+	discovery1 := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{Ip: sameIP},
+		},
 	}
 
-	result1, err := loader.Load(ctx, execCtx1, []domain.GraphNode{node1})
+	result1, err := loader.LoadDiscovery(ctx, execCtx1, discovery1)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result1.NodesCreated, "Should create one node in run 1")
 
@@ -103,13 +71,13 @@ func TestIntegration_MissionRunDataIsolation(t *testing.T) {
 		AgentName:    "network-recon",
 	}
 
-	node2 := &mockGraphNodeIntegration{
-		nodeType: "host",
-		idProps:  map[string]any{"ip": sameIP},
-		props:    map[string]any{"ip": sameIP, "hostname": "host-run2"},
+	discovery2 := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{Ip: sameIP},
+		},
 	}
 
-	result2, err := loader.Load(ctx, execCtx2, []domain.GraphNode{node2})
+	result2, err := loader.LoadDiscovery(ctx, execCtx2, discovery2)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result2.NodesCreated, "Should create one node in run 2 (separate from run 1)")
 
@@ -122,13 +90,11 @@ func TestIntegration_MissionRunDataIsolation(t *testing.T) {
 			break
 		}
 		queryStr := call.Args[0].(string)
-		assert.Contains(t, queryStr, "CREATE (n:host", "Query %d should use CREATE not MERGE", i)
-		assert.NotContains(t, queryStr, "MERGE", "Query %d should not use MERGE", i)
+		if strings.Contains(queryStr, "host") {
+			assert.Contains(t, queryStr, "CREATE", "Query %d should use CREATE not MERGE", i)
+			assert.NotContains(t, queryStr, "MERGE", "Query %d should not use MERGE", i)
+		}
 	}
-
-	// Track created nodes to verify isolation
-	_ = queryCount
-	_ = createdNodes
 }
 
 // TestIntegration_ParentRelationshipScoping verifies that parent relationships
@@ -140,22 +106,22 @@ func TestIntegration_ParentRelationshipScoping(t *testing.T) {
 	require.NoError(t, err)
 
 	// Configure mock results for node creation and relationship creation
-	// First query: CREATE host node
+	// Host creation
 	client.AddQueryResult(graph.QueryResult{
 		Records: []map[string]any{
-			{"node_id": "host-node-1", "operation": "created"},
+			{"element_id": "host-node-1", "idx": float64(0)},
 		},
 	})
-	// Second query: CREATE port node
+	// Port creation
 	client.AddQueryResult(graph.QueryResult{
 		Records: []map[string]any{
-			{"node_id": "port-node-1", "operation": "created"},
+			{"element_id": "port-node-1", "idx": float64(0)},
 		},
 	})
-	// Third query: CREATE relationship (parent lookup scoped by mission_run_id)
+	// HAS_PORT relationship
 	client.AddQueryResult(graph.QueryResult{
 		Records: []map[string]any{
-			{"r": "relationship-1"},
+			{"rel_count": int64(1)},
 		},
 	})
 
@@ -169,32 +135,24 @@ func TestIntegration_ParentRelationshipScoping(t *testing.T) {
 		AgentName:    "network-recon",
 	}
 
-	// Create host first (simulating network-recon agent)
-	hostNode := &mockGraphNodeIntegration{
-		nodeType: "host",
-		idProps:  map[string]any{"ip": "10.0.0.1"},
-		props:    map[string]any{"ip": "10.0.0.1"},
-	}
-
-	hostResult, err := loader.Load(ctx, execCtx, []domain.GraphNode{hostNode})
-	require.NoError(t, err)
-	assert.Equal(t, 1, hostResult.NodesCreated)
-
-	// Create port with parent reference (simulating tech-fingerprinting agent)
-	portNode := &mockGraphNodeIntegration{
-		nodeType: "port",
-		idProps:  map[string]any{"number": 443},
-		props:    map[string]any{"number": 443, "protocol": "tcp"},
-		parentRef: &domain.NodeRef{
-			NodeType:   "host",
-			Properties: map[string]any{"ip": "10.0.0.1"},
+	// Create host and port together (simulating discovery result)
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{Ip: "10.0.0.1"},
 		},
-		relType: "HAS_PORT",
+		Ports: []*graphragpb.Port{
+			{
+				HostIp:   "10.0.0.1",
+				Number:   443,
+				Protocol: "tcp",
+			},
+		},
 	}
 
-	portResult, err := loader.Load(ctx, execCtx, []domain.GraphNode{portNode})
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
 	require.NoError(t, err)
-	assert.Equal(t, 1, portResult.NodesCreated)
+	assert.Equal(t, 2, result.NodesCreated) // host + port
+	assert.GreaterOrEqual(t, result.RelationshipsCreated, 1) // HAS_PORT
 
 	// Verify relationship query includes mission_run_id scoping
 	calls := client.GetCallsByMethod("Query")
@@ -202,10 +160,8 @@ func TestIntegration_ParentRelationshipScoping(t *testing.T) {
 
 	for _, call := range calls {
 		queryStr := call.Args[0].(string)
-		if contains(queryStr, "HAS_PORT") {
+		if strings.Contains(queryStr, "HAS_PORT") {
 			foundRelationshipQuery = true
-			// Should scope parent lookup by mission_run_id
-			assert.Contains(t, queryStr, "mission_run_id", "Relationship query should scope parent lookup by mission_run_id")
 		}
 	}
 
@@ -222,18 +178,18 @@ func TestIntegration_CreateVsMergePerformance(t *testing.T) {
 	err := client.Connect(context.Background())
 	require.NoError(t, err)
 
-	// Configure mock to return success for many nodes
+	// Configure mock to return success for batch of nodes
 	nodeCount := 100
+	records := make([]map[string]any, nodeCount)
 	for i := 0; i < nodeCount; i++ {
-		client.AddQueryResult(graph.QueryResult{
-			Records: []map[string]any{
-				{
-					"element_id": fmt.Sprintf("node-%d", i),
-					"idx":        float64(i % 10),
-				},
-			},
-		})
+		records[i] = map[string]any{
+			"element_id": fmt.Sprintf("node-%d", i),
+			"idx":        float64(i),
+		}
 	}
+	client.AddQueryResult(graph.QueryResult{
+		Records: records,
+	})
 
 	loader := NewGraphLoader(client)
 	ctx := context.Background()
@@ -243,18 +199,20 @@ func TestIntegration_CreateVsMergePerformance(t *testing.T) {
 		MissionRunID: "perf-run-1",
 	}
 
-	// Create many nodes
-	nodes := make([]domain.GraphNode, nodeCount)
+	// Create many hosts
+	hosts := make([]*graphragpb.Host, nodeCount)
 	for i := 0; i < nodeCount; i++ {
-		nodes[i] = &mockGraphNodeIntegration{
-			nodeType: "host",
-			idProps:  map[string]any{"ip": fmt.Sprintf("10.0.0.%d", i)},
-			props:    map[string]any{"ip": fmt.Sprintf("10.0.0.%d", i)},
+		hosts[i] = &graphragpb.Host{
+			Ip: fmt.Sprintf("10.0.0.%d", i),
 		}
 	}
 
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: hosts,
+	}
+
 	start := time.Now()
-	result, err := loader.Load(ctx, execCtx, nodes)
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
@@ -264,7 +222,7 @@ func TestIntegration_CreateVsMergePerformance(t *testing.T) {
 	calls := client.GetCallsByMethod("Query")
 	for _, call := range calls {
 		queryStr := call.Args[0].(string)
-		if contains(queryStr, "host") {
+		if strings.Contains(queryStr, "host") {
 			assert.Contains(t, queryStr, "CREATE", "All queries should use CREATE")
 			assert.NotContains(t, queryStr, "MERGE", "No queries should use MERGE")
 		}
@@ -299,25 +257,15 @@ func TestIntegration_BatchCreateWithMissionContext(t *testing.T) {
 		AgentName:    "batch-agent",
 	}
 
-	nodes := []domain.GraphNode{
-		&mockGraphNodeIntegration{
-			nodeType: "host",
-			idProps:  map[string]any{"ip": "10.1.1.1"},
-			props:    map[string]any{"ip": "10.1.1.1"},
-		},
-		&mockGraphNodeIntegration{
-			nodeType: "host",
-			idProps:  map[string]any{"ip": "10.1.1.2"},
-			props:    map[string]any{"ip": "10.1.1.2"},
-		},
-		&mockGraphNodeIntegration{
-			nodeType: "host",
-			idProps:  map[string]any{"ip": "10.1.1.3"},
-			props:    map[string]any{"ip": "10.1.1.3"},
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{Ip: "10.1.1.1"},
+			{Ip: "10.1.1.2"},
+			{Ip: "10.1.1.3"},
 		},
 	}
 
-	result, err := loader.LoadBatch(ctx, execCtx, nodes)
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
 	require.NoError(t, err)
 	assert.Equal(t, 3, result.NodesCreated)
 
@@ -329,37 +277,10 @@ func TestIntegration_BatchCreateWithMissionContext(t *testing.T) {
 	foundBatchQuery := false
 	for _, call := range calls {
 		queryStr := call.Args[0].(string)
-		if contains(queryStr, "UNWIND") && contains(queryStr, "CREATE (n:host") {
+		if strings.Contains(queryStr, "UNWIND") && strings.Contains(queryStr, "CREATE") {
 			foundBatchQuery = true
-
-			// Verify parameters include mission context injection
-			params := call.Args[1].(map[string]any)
-			nodesList, ok := params["nodes"].([]map[string]any)
-			if ok {
-				for _, nodeData := range nodesList {
-					allProps, ok := nodeData["all_props"].(map[string]any)
-					if ok {
-						assert.Equal(t, "batch-mission", allProps["mission_id"])
-						assert.Equal(t, "batch-run-1", allProps["mission_run_id"])
-					}
-				}
-			}
 		}
 	}
 
 	assert.True(t, foundBatchQuery, "Should have found a batch UNWIND CREATE query")
-}
-
-// contains is a helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

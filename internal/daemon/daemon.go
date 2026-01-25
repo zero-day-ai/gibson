@@ -439,6 +439,12 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		graphLoader := loader.NewGraphLoader(d.infrastructure.graphRAGClient)
 		d.callback.SetGraphLoader(graphLoader)
 		d.logger.Info("configured callback service with GraphLoader for domain node persistence")
+
+		// TODO: Re-enable DiscoveryProcessor once SDK proto_converter.go compilation issues are fixed
+		// Create DiscoveryProcessor for automatic discovery storage
+		// discoveryProcessor := processor.NewDiscoveryProcessor(graphLoader, d.infrastructure.graphRAGClient, d.logger)
+		// d.callback.SetDiscoveryProcessor(discoveryProcessor)
+		// d.logger.Info("configured callback service with DiscoveryProcessor for automatic discovery storage")
 	}
 
 	// Perform crash recovery: find any missions that were running when daemon stopped

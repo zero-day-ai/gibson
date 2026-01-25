@@ -1,5 +1,3 @@
-//go:generate go run ../tools/taxonomy-gen/main.go -output taxonomy_generated.go
-
 // Package graphrag provides hybrid graph + semantic search capabilities for Gibson's security knowledge graph.
 //
 // GraphRAG combines graph database storage (Neo4j) with vector similarity search to enable
