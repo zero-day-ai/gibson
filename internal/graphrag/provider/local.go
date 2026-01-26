@@ -790,7 +790,7 @@ func (l *LocalGraphRAGProvider) recordToGraphNode(data map[string]any) graphrag.
 // recordToGraphNodeWithLabels converts a Neo4j result record to a GraphNode,
 // using the provided Neo4j labels to set the node type.
 func (l *LocalGraphRAGProvider) recordToGraphNodeWithLabels(data map[string]any, neo4jLabels []string) graphrag.GraphNode {
-	// Extract ID
+	// Extract ID from properties
 	idStr, _ := data["id"].(string)
 	nodeID, _ := types.ParseID(idStr)
 

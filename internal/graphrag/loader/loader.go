@@ -600,8 +600,12 @@ func (l *GraphLoader) loadProtoNodes(
 			continue
 		}
 
-		// Generate unique ID if not already set
-		if idField != "" {
+		// Extract ID directly from proto (protoconv excludes framework fields like 'id')
+		// This preserves agent-generated UUIDs for relationship linking
+		protoID := extractProtoID(proto)
+		if protoID != "" {
+			props["id"] = protoID
+		} else if idField != "" {
 			if _, hasID := props[idField]; !hasID {
 				props["id"] = types.NewID().String()
 			}
@@ -742,17 +746,32 @@ func (l *GraphLoader) loadProtoNodes(
 			whereStr := strings.Join(whereClauses, " AND ")
 			parentParams["child_id"] = elementID
 
-			// Create relationship
+			// Create relationship - use OPTIONAL MATCH to detect missing parents
 			relCypher := fmt.Sprintf(`
 				MATCH (parent:%s) WHERE %s
 				MATCH (child) WHERE elementId(child) = $child_id
 				CREATE (parent)-[r:%s]->(child)
-				RETURN r
+				RETURN count(r) as created
 			`, parentNodeType, whereStr, relationshipType)
 
-			_, err := l.client.Query(ctx, relCypher, parentParams)
+			queryResult, err := l.client.Query(ctx, relCypher, parentParams)
 			if err != nil {
 				result.AddError(fmt.Errorf("failed to create parent relationship for %s: %w", nodeType, err))
+				continue
+			}
+
+			// Check if relationship was actually created
+			created := int64(0)
+			if len(queryResult.Records) > 0 {
+				if val, ok := queryResult.Records[0]["created"].(int64); ok {
+					created = val
+				}
+			}
+
+			if created == 0 {
+				// Parent not found - log debug info
+				result.AddError(fmt.Errorf("PARENT_NOT_FOUND: parent %s not found for %s relationship to %s (params: %v)",
+					parentNodeType, relationshipType, nodeType, parentParams))
 				continue
 			}
 
@@ -781,5 +800,20 @@ func (l *GraphLoader) loadProtoNodes(
 	}
 
 	return result, nil
+}
+
+// extractProtoID extracts the 'id' field from a proto message if it exists.
+// This is needed because protoconv.ToProperties excludes framework fields like 'id'.
+func extractProtoID(proto protoreflect.ProtoMessage) string {
+	refl := proto.ProtoReflect()
+	idField := refl.Descriptor().Fields().ByName("id")
+	if idField == nil {
+		return ""
+	}
+	if !refl.Has(idField) {
+		return ""
+	}
+	val := refl.Get(idField)
+	return val.String()
 }
 
