@@ -12,6 +12,7 @@
 //	--output-domain  Output path for domain Go file
 //	--output-validators Output path for validators Go file
 //	--output-constants  Output path for constants Go file
+//	--output-helpers Output path for SDK helper functions Go file
 //	--package        Go package name for generated code (default: domain)
 package main
 
@@ -26,14 +27,16 @@ import (
 
 func main() {
 	var (
-		basePath         = flag.String("base", "", "Path to base taxonomy YAML (required)")
-		extensionPath    = flag.String("extension", "", "Path to extension YAML (optional)")
-		outputProto      = flag.String("output-proto", "", "Output path for .proto file")
-		outputDomain     = flag.String("output-domain", "", "Output path for domain Go file")
-		outputValidators = flag.String("output-validators", "", "Output path for validators Go file")
-		outputConstants  = flag.String("output-constants", "", "Output path for constants Go file")
-		outputQuery      = flag.String("output-query", "", "Output path for query builders Go file")
-		goPackage        = flag.String("package", "domain", "Go package name for generated code")
+		basePath            = flag.String("base", "", "Path to base taxonomy YAML (required)")
+		extensionPath       = flag.String("extension", "", "Path to extension YAML (optional)")
+		outputProto         = flag.String("output-proto", "", "Output path for .proto file")
+		outputDomain        = flag.String("output-domain", "", "Output path for domain Go file")
+		outputValidators    = flag.String("output-validators", "", "Output path for validators Go file")
+		outputConstants     = flag.String("output-constants", "", "Output path for constants Go file")
+		outputQuery         = flag.String("output-query", "", "Output path for query builders Go file")
+		outputHelpers       = flag.String("output-helpers", "", "Output path for SDK helper functions Go file")
+		outputRelationships = flag.String("output-relationships", "", "Output path for relationships mapping Go file")
+		goPackage           = flag.String("package", "domain", "Go package name for generated code")
 	)
 	flag.Parse()
 
@@ -115,6 +118,24 @@ func main() {
 		fmt.Printf("Generating query builders: %s\n", *outputQuery)
 		if err := generator.GenerateQueryBuilders(taxonomy, *outputQuery, *goPackage); err != nil {
 			fmt.Fprintf(os.Stderr, "error generating query builders: %v\n", err)
+			os.Exit(1)
+		}
+		generated++
+	}
+
+	if *outputHelpers != "" {
+		fmt.Printf("Generating SDK helpers: %s\n", *outputHelpers)
+		if err := generator.GenerateHelpers(taxonomy, *outputHelpers, *goPackage); err != nil {
+			fmt.Fprintf(os.Stderr, "error generating helpers: %v\n", err)
+			os.Exit(1)
+		}
+		generated++
+	}
+
+	if *outputRelationships != "" {
+		fmt.Printf("Generating relationships mapping: %s\n", *outputRelationships)
+		if err := generator.GenerateRelationships(taxonomy, *outputRelationships, *goPackage); err != nil {
+			fmt.Fprintf(os.Stderr, "error generating relationships: %v\n", err)
 			os.Exit(1)
 		}
 		generated++

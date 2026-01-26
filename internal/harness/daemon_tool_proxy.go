@@ -12,6 +12,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/schema"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -219,17 +220,34 @@ func (p *DaemonToolProxy) Execute(ctx context.Context, input map[string]any) (ma
 
 // ExecuteProto runs the tool with proto message input and returns proto message output.
 // This is a wrapper around Execute that converts between proto and map representations.
+// Supports both typed proto messages and generic structpb.Struct.
 func (p *DaemonToolProxy) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
 	// Convert proto input to map[string]any
-	inputStruct, ok := input.(*structpb.Struct)
-	if !ok {
-		return nil, types.NewError(
-			ErrProxyInputSerialization,
-			fmt.Sprintf("invalid input type: expected *structpb.Struct, got %T", input),
-		)
-	}
+	var inputMap map[string]any
 
-	inputMap := inputStruct.AsMap()
+	// Handle both typed proto messages and generic Struct
+	if inputStruct, ok := input.(*structpb.Struct); ok {
+		inputMap = inputStruct.AsMap()
+	} else {
+		// Convert typed proto message to JSON, then to map
+		marshaler := protojson.MarshalOptions{
+			UseProtoNames:   true,
+			EmitUnpopulated: false,
+		}
+		jsonBytes, err := marshaler.Marshal(input)
+		if err != nil {
+			return nil, types.NewError(
+				ErrProxyInputSerialization,
+				fmt.Sprintf("failed to marshal proto input: %v", err),
+			)
+		}
+		if err := json.Unmarshal(jsonBytes, &inputMap); err != nil {
+			return nil, types.NewError(
+				ErrProxyInputSerialization,
+				fmt.Sprintf("failed to convert proto to map: %v", err),
+			)
+		}
+	}
 
 	// Execute tool
 	outputMap, err := p.Execute(ctx, inputMap)
@@ -302,6 +320,17 @@ func (f *DaemonToolProxyFactory) CreateFromAvailableToolInfo(info *api.Available
 		}
 	}
 
+	// Get proto message types from AvailableToolInfo (populated from tool binary schema)
+	// Fall back to google.protobuf.Struct for legacy tools that don't declare proto types
+	inputProtoType := info.InputMessageType
+	if inputProtoType == "" {
+		inputProtoType = "google.protobuf.Struct"
+	}
+	outputProtoType := info.OutputMessageType
+	if outputProtoType == "" {
+		outputProtoType = "google.protobuf.Struct"
+	}
+
 	return NewDaemonToolProxy(DaemonToolProxyConfig{
 		Client:          f.client,
 		Name:            info.Name,
@@ -310,8 +339,8 @@ func (f *DaemonToolProxyFactory) CreateFromAvailableToolInfo(info *api.Available
 		Tags:            info.Tags,
 		InputSchema:     inputSchema,
 		OutputSchema:    outputSchema,
-		InputProtoType:  "google.protobuf.Struct",
-		OutputProtoType: "google.protobuf.Struct",
+		InputProtoType:  inputProtoType,
+		OutputProtoType: outputProtoType,
 	}), nil
 }
 
@@ -410,10 +439,16 @@ func NewDirectToolProxy(
 		outputSchema = toolSchema.OutputSchema
 	}
 
-	// For now, all tools use google.protobuf.Struct for proto messages
-	// TODO: Add proto type information to ToolSchema when tools support typed proto messages
-	inputProtoType := "google.protobuf.Struct"
-	outputProtoType := "google.protobuf.Struct"
+	// Get proto message types from ToolDescriptor (populated from tool binary schema)
+	// Fall back to google.protobuf.Struct for legacy tools that don't declare proto types
+	inputProtoType := descriptor.InputMessageType
+	if inputProtoType == "" {
+		inputProtoType = "google.protobuf.Struct"
+	}
+	outputProtoType := descriptor.OutputMessageType
+	if outputProtoType == "" {
+		outputProtoType = "google.protobuf.Struct"
+	}
 
 	return &DirectToolProxy{
 		service:         service,
@@ -455,17 +490,36 @@ func (p *DirectToolProxy) Execute(ctx context.Context, input map[string]any) (ma
 	return output, nil
 }
 
+// ExecuteProto runs the tool with proto message input and returns proto message output.
+// This is a wrapper around Execute that converts between proto and map representations.
+// Supports both typed proto messages and generic structpb.Struct.
 func (p *DirectToolProxy) ExecuteProto(ctx context.Context, input proto.Message) (proto.Message, error) {
 	// Convert proto input to map[string]any
-	inputStruct, ok := input.(*structpb.Struct)
-	if !ok {
-		return nil, types.NewError(
-			ErrProxyInputSerialization,
-			fmt.Sprintf("invalid input type: expected *structpb.Struct, got %T", input),
-		)
-	}
+	var inputMap map[string]any
 
-	inputMap := inputStruct.AsMap()
+	// Handle both typed proto messages and generic Struct
+	if inputStruct, ok := input.(*structpb.Struct); ok {
+		inputMap = inputStruct.AsMap()
+	} else {
+		// Convert typed proto message to JSON, then to map
+		marshaler := protojson.MarshalOptions{
+			UseProtoNames:   true,
+			EmitUnpopulated: false,
+		}
+		jsonBytes, err := marshaler.Marshal(input)
+		if err != nil {
+			return nil, types.NewError(
+				ErrProxyInputSerialization,
+				fmt.Sprintf("failed to marshal proto input: %v", err),
+			)
+		}
+		if err := json.Unmarshal(jsonBytes, &inputMap); err != nil {
+			return nil, types.NewError(
+				ErrProxyInputSerialization,
+				fmt.Sprintf("failed to convert proto to map: %v", err),
+			)
+		}
+	}
 
 	// Execute tool
 	outputMap, err := p.Execute(ctx, inputMap)

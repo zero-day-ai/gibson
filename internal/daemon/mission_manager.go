@@ -513,7 +513,9 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 	nodeStore := orchestrator.NewGraphNodeStore(graphClient, active.missionRun.ID.String())
 	policyChecker := orchestrator.NewPolicyChecker(policySource, nodeStore, m.logger)
 
-	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient, inventory, m.infrastructure.missionTracer, policyChecker)
+	// Pass DiscoveryProcessor from infrastructure to enable automatic storage of discovered
+	// hosts, ports, services, etc. from agent outputs to Neo4j for use by downstream agents.
+	actor := orchestrator.NewActor(harnessAdapter, executionQueries, missionQueries, graphClient, inventory, m.infrastructure.missionTracer, policyChecker, m.infrastructure.discoveryProcessor, m.logger)
 
 	// Create DecisionLogWriterAdapter for Langfuse tracing if tracer is available
 	var decisionLogWriter orchestrator.DecisionLogWriter

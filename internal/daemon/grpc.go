@@ -1127,15 +1127,17 @@ func (d *daemonImpl) GetAvailableTools(ctx context.Context) ([]api.AvailableTool
 		}
 
 		result[i] = api.AvailableToolData{
-			Name:             tool.Name,
-			Version:          tool.Version,
-			Description:      tool.Description,
-			Tags:             tool.Tags,
-			InputSchemaJSON:  inputSchemaJSON,
-			OutputSchemaJSON: outputSchemaJSON,
-			Status:           tool.Status,
-			ErrorMessage:     tool.ErrorMessage,
-			Metrics:          metrics,
+			Name:              tool.Name,
+			Version:           tool.Version,
+			Description:       tool.Description,
+			Tags:              tool.Tags,
+			InputSchemaJSON:   inputSchemaJSON,
+			OutputSchemaJSON:  outputSchemaJSON,
+			Status:            tool.Status,
+			ErrorMessage:      tool.ErrorMessage,
+			Metrics:           metrics,
+			InputMessageType:  tool.InputMessageType,
+			OutputMessageType: tool.OutputMessageType,
 		}
 	}
 

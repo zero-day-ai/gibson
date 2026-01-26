@@ -15,6 +15,8 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
+	// Import toolspb to register proto message types for CallToolProto reflection
+	_ "github.com/zero-day-ai/sdk/api/gen/toolspb"
 	sdkfinding "github.com/zero-day-ai/sdk/finding"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"github.com/zero-day-ai/sdk/schema"

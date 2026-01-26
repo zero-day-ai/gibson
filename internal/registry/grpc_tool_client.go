@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"google.golang.org/grpc"
 	protobuf "google.golang.org/protobuf/proto"
@@ -108,10 +109,22 @@ func (c *GRPCToolClient) Tags() []string {
 
 // InputMessageType returns the fully-qualified proto message type name for input
 func (c *GRPCToolClient) InputMessageType() string {
+	slog.Info("GRPCToolClient.InputMessageType called",
+		"tool", c.info.Name,
+		"descriptor_nil", c.descriptor == nil,
+		"metadata", c.info.Metadata)
+
 	// Ensure descriptor is loaded
 	if c.descriptor == nil {
 		ctx := context.Background()
-		_, _ = c.fetchDescriptor(ctx)
+		desc, err := c.fetchDescriptor(ctx)
+		if err != nil {
+			slog.Error("fetchDescriptor failed", "tool", c.info.Name, "error", err)
+		}
+		slog.Info("fetchDescriptor result",
+			"tool", c.info.Name,
+			"desc_nil", desc == nil,
+			"input_type", func() string { if desc != nil { return desc.InputMessageType }; return "" }())
 	}
 
 	if c.descriptor != nil {
@@ -227,6 +240,9 @@ func (c *GRPCToolClient) Health(ctx context.Context) types.HealthStatus {
 //
 // This is called lazily when descriptor information is needed. The result is
 // cached in c.descriptor to avoid repeated RPC calls.
+//
+// Proto message types are retrieved from ServiceInfo metadata (populated during
+// etcd registration) since the gRPC GetDescriptor response doesn't include them.
 func (c *GRPCToolClient) fetchDescriptor(ctx context.Context) (*toolDescriptor, error) {
 	if c.descriptor != nil {
 		return c.descriptor, nil
@@ -238,11 +254,25 @@ func (c *GRPCToolClient) fetchDescriptor(ctx context.Context) (*toolDescriptor, 
 		return nil, fmt.Errorf("failed to get descriptor: %w", err)
 	}
 
-	// TODO: Once SDK task 1.3 is complete and tool.proto has input_message_type/output_message_type fields,
-	// use resp.InputMessageType and resp.OutputMessageType instead.
-	// For now, default to google.protobuf.Struct as the proto interface.
-	inputMsgType := "google.protobuf.Struct"
-	outputMsgType := "google.protobuf.Struct"
+	// Get proto message types from ServiceInfo metadata (set during tool registration)
+	// The SDK's serve.Tool() populates these in metadata when registering with etcd
+	inputMsgType := c.info.Metadata["input_message_type"]
+	outputMsgType := c.info.Metadata["output_message_type"]
+
+	// Log metadata for debugging
+	slog.Info("fetchDescriptor: checking ServiceInfo metadata",
+		"tool", c.info.Name,
+		"metadata", c.info.Metadata,
+		"input_message_type", inputMsgType,
+		"output_message_type", outputMsgType)
+
+	// Fallback to google.protobuf.Struct if metadata is missing (legacy tools)
+	if inputMsgType == "" {
+		inputMsgType = "google.protobuf.Struct"
+	}
+	if outputMsgType == "" {
+		outputMsgType = "google.protobuf.Struct"
+	}
 
 	// Build descriptor
 	desc := &toolDescriptor{

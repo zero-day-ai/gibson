@@ -13,8 +13,11 @@ import (
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
 	"github.com/zero-day-ai/gibson/internal/graphrag/queries"
 	"github.com/zero-day-ai/gibson/internal/graphrag/schema"
+	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 	"github.com/zero-day-ai/sdk/toolerr"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // Harness defines the interface for agent delegation and tool execution.
@@ -24,16 +27,29 @@ type Harness interface {
 	DelegateToAgent(ctx context.Context, agentName string, task agent.Task) (agent.Result, error)
 }
 
+// DiscoveryProcessor processes DiscoveryResult from agent outputs and stores to Neo4j.
+// This interface is implemented by the graphrag/processor package or an adapter.
+type DiscoveryProcessor interface {
+	// ProcessAgentDiscovery stores discovered nodes from a proto DiscoveryResult in the graph.
+	// This is specifically for processing agent output (not tool output).
+	// The missionRunID parameter identifies which MissionRun node the discovered entities should be attached to,
+	// enabling mission-scoped data isolation and proper lineage tracking.
+	// Returns statistics about nodes/relationships created and any errors.
+	ProcessAgentDiscovery(ctx context.Context, missionID, missionRunID, agentName, agentRunID string, discovery *graphragpb.DiscoveryResult) (nodesCreated int, err error)
+}
+
 // Actor executes orchestrator decisions by performing the appropriate actions
 // in the graph and delegating to agents as needed.
 type Actor struct {
-	harness        Harness
-	execQueries    *queries.ExecutionQueries
-	missionQueries *queries.MissionQueries
-	graphClient    graph.GraphClient
-	inventory      *ComponentInventory // Component inventory for validation
-	missionTracer  interface{}         // *observability.MissionTracer for Langfuse tracing (optional, can be nil)
-	policyChecker  PolicyChecker       // Policy checker for data reuse enforcement (optional, can be nil)
+	harness            Harness
+	execQueries        *queries.ExecutionQueries
+	missionQueries     *queries.MissionQueries
+	graphClient        graph.GraphClient
+	inventory          *ComponentInventory // Component inventory for validation
+	missionTracer      interface{}         // *observability.MissionTracer for Langfuse tracing (optional, can be nil)
+	policyChecker      PolicyChecker       // Policy checker for data reuse enforcement (optional, can be nil)
+	discoveryProcessor DiscoveryProcessor  // Processes DiscoveryResult from agent outputs (optional, can be nil)
+	logger             *slog.Logger        // Logger for Actor operations
 }
 
 // NewActor creates a new Actor with the given dependencies.
@@ -42,15 +58,21 @@ type Actor struct {
 // The inventory parameter is optional and used for component validation.
 // The missionTracer parameter is optional and enables Langfuse observability when provided.
 // The policyChecker parameter is optional and enables data reuse policy enforcement when provided.
-func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient, inventory *ComponentInventory, missionTracer interface{}, policyChecker PolicyChecker) *Actor {
+// The discoveryProcessor parameter is optional and enables automatic storage of DiscoveryResult from agent outputs.
+func NewActor(harness Harness, execQueries *queries.ExecutionQueries, missionQueries *queries.MissionQueries, graphClient graph.GraphClient, inventory *ComponentInventory, missionTracer interface{}, policyChecker PolicyChecker, discoveryProcessor DiscoveryProcessor, logger *slog.Logger) *Actor {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Actor{
-		harness:        harness,
-		execQueries:    execQueries,
-		missionQueries: missionQueries,
-		graphClient:    graphClient,
-		inventory:      inventory,
-		missionTracer:  missionTracer,
-		policyChecker:  policyChecker,
+		harness:            harness,
+		execQueries:        execQueries,
+		missionQueries:     missionQueries,
+		graphClient:        graphClient,
+		inventory:          inventory,
+		missionTracer:      missionTracer,
+		policyChecker:      policyChecker,
+		discoveryProcessor: discoveryProcessor,
+		logger:             logger.With("component", "actor"),
 	}
 }
 
@@ -348,6 +370,13 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 		// Execution succeeded
 		execution.MarkCompleted()
 		execution.WithResult(result.Output)
+
+		// Extract missionRunID from context for discovery processing
+		missionRunID := harness.MissionRunIDFromContext(ctx)
+
+		// Process DiscoveryResult from agent output if present
+		// This stores discovered hosts, ports, services, etc. to Neo4j for use by downstream agents
+		a.processAgentDiscovery(ctx, result.Output, node.AgentName, execution.ID.String(), missionID, missionRunID)
 
 		// Update node status to completed
 		if updateErr := a.updateNodeStatus(ctx, node.ID, schema.WorkflowNodeStatusCompleted); updateErr != nil {
@@ -924,4 +953,168 @@ func (a *Actor) parseWorkflowNode(data map[string]interface{}) (*schema.Workflow
 	}
 
 	return node, nil
+}
+
+// processAgentDiscovery processes DiscoveryResult from an agent's output and stores it in Neo4j.
+// This enables downstream agents to query discovered hosts, ports, services, etc.
+//
+// The output can be:
+// - *graphragpb.DiscoveryResult directly
+// - map[string]any (when deserialized from gRPC TypedValue)
+//
+// This method is non-blocking and errors are logged but not propagated.
+func (a *Actor) processAgentDiscovery(ctx context.Context, output any, agentName string, agentRunID string, missionID types.ID, missionRunID string) {
+	a.logger.Info("processAgentDiscovery called",
+		"agent_name", agentName,
+		"has_discovery_processor", a.discoveryProcessor != nil,
+		"has_output", output != nil,
+		"output_type", fmt.Sprintf("%T", output),
+	)
+
+	if a.discoveryProcessor == nil {
+		a.logger.Warn("discoveryProcessor is nil, skipping discovery processing")
+		return // No processor configured
+	}
+
+	if output == nil {
+		a.logger.Debug("output is nil, skipping discovery processing")
+		return // No output to process
+	}
+
+	// Try to extract DiscoveryResult from output
+	var discovery *graphragpb.DiscoveryResult
+
+	switch v := output.(type) {
+	case *graphragpb.DiscoveryResult:
+		discovery = v
+		a.logger.Info("received direct DiscoveryResult from agent output",
+			"agent_name", agentName,
+			"hosts", len(discovery.Hosts),
+			"ports", len(discovery.Ports),
+		)
+	case map[string]any:
+		// Output is a map (deserialized from gRPC TypedValue) - try to convert to DiscoveryResult
+		// Log the map keys for debugging
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		a.logger.Info("processing agent output map for discovery data",
+			"agent_name", agentName,
+			"output_keys", keys,
+			"output_type", fmt.Sprintf("%T", output),
+		)
+
+		// Check if the map looks like a DiscoveryResult by checking for expected fields
+		if _, hasHosts := v["hosts"]; hasHosts {
+			// Convert map to JSON, then unmarshal into DiscoveryResult proto
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				a.logger.Debug("failed to marshal output map to JSON",
+					"error", err,
+					"agent_name", agentName,
+				)
+				return
+			}
+
+			discovery = &graphragpb.DiscoveryResult{}
+			unmarshaler := protojson.UnmarshalOptions{
+				DiscardUnknown: true,
+			}
+			if err := unmarshaler.Unmarshal(jsonBytes, discovery); err != nil {
+				a.logger.Debug("failed to unmarshal output to DiscoveryResult",
+					"error", err,
+					"agent_name", agentName,
+				)
+				return
+			}
+
+			a.logger.Debug("converted map output to DiscoveryResult",
+				"agent_name", agentName,
+				"hosts", len(discovery.Hosts),
+				"ports", len(discovery.Ports),
+			)
+		} else if _, hasPorts := v["ports"]; hasPorts {
+			// Also check for ports field (some outputs may only have ports)
+			jsonBytes, err := json.Marshal(v)
+			if err != nil {
+				return
+			}
+			discovery = &graphragpb.DiscoveryResult{}
+			unmarshaler := protojson.UnmarshalOptions{DiscardUnknown: true}
+			if err := unmarshaler.Unmarshal(jsonBytes, discovery); err != nil {
+				return
+			}
+		} else {
+			// Map doesn't look like a DiscoveryResult
+			a.logger.Debug("map output does not contain hosts or ports fields, skipping discovery processing",
+				"agent_name", agentName,
+				"keys", keys,
+			)
+			return
+		}
+	default:
+		// Output is not a DiscoveryResult or convertible map, nothing to process
+		a.logger.Debug("output is not DiscoveryResult or map, skipping discovery processing",
+			"agent_name", agentName,
+			"output_type", fmt.Sprintf("%T", output),
+		)
+		return
+	}
+
+	if discovery == nil {
+		return
+	}
+
+	// Check if discovery has any data
+	nodeCount := len(discovery.Hosts) + len(discovery.Ports) + len(discovery.Services) +
+		len(discovery.Endpoints) + len(discovery.Domains) + len(discovery.Subdomains) +
+		len(discovery.Technologies) + len(discovery.Certificates) + len(discovery.Findings) +
+		len(discovery.Evidence) + len(discovery.CustomNodes)
+
+	if nodeCount == 0 {
+		return // Empty discovery
+	}
+
+	// Log warning if missionRunID is not provided
+	if missionRunID == "" {
+		a.logger.Warn("missionRunID not provided, discovery relationships will not be scoped to mission run",
+			"agent_name", agentName,
+			"mission_id", missionID.String(),
+		)
+	}
+
+	a.logger.Info("processing discovery result from agent output",
+		"agent_name", agentName,
+		"mission_id", missionID.String(),
+		"mission_run_id", missionRunID,
+		"node_count", nodeCount,
+		"hosts", len(discovery.Hosts),
+		"ports", len(discovery.Ports),
+		"services", len(discovery.Services),
+		"endpoints", len(discovery.Endpoints),
+	)
+
+	// Process discovery asynchronously with timeout
+	go func() {
+		processCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		nodesCreated, err := a.discoveryProcessor.ProcessAgentDiscovery(processCtx, missionID.String(), missionRunID, agentName, agentRunID, discovery)
+		if err != nil {
+			a.logger.Error("failed to process agent discovery result",
+				"error", err,
+				"agent_name", agentName,
+				"mission_id", missionID.String(),
+				"mission_run_id", missionRunID,
+			)
+		} else {
+			a.logger.Info("successfully stored agent discovery result",
+				"agent_name", agentName,
+				"mission_id", missionID.String(),
+				"mission_run_id", missionRunID,
+				"nodes_created", nodesCreated,
+			)
+		}
+	}()
 }

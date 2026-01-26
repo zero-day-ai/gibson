@@ -305,8 +305,8 @@ func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mi
 		policyChecker = NewPolicyChecker(policySource, nodeStore, m.config.Logger.With("component", "policy_checker"))
 	}
 
-	// Create Actor
-	actor := NewActor(harnessAdapter, executionQueries, missionQueries, m.config.GraphRAGClient, inventory, m.config.MissionTracer, policyChecker)
+	// Create Actor with DiscoveryProcessor for storing agent output discoveries
+	actor := NewActor(harnessAdapter, executionQueries, missionQueries, m.config.GraphRAGClient, inventory, m.config.MissionTracer, policyChecker, m.config.DiscoveryProcessor, m.config.Logger)
 
 	// Create the orchestrator
 	orchOptions := []OrchestratorOption{

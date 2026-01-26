@@ -8,6 +8,8 @@ import (
 	"github.com/zero-day-ai/gibson/internal/finding"
 	"github.com/zero-day-ai/gibson/internal/graphrag"
 	"github.com/zero-day-ai/gibson/internal/graphrag/graph"
+	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
+	"github.com/zero-day-ai/gibson/internal/graphrag/processor"
 	"github.com/zero-day-ai/gibson/internal/graphrag/provider"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/llm"
@@ -69,6 +71,10 @@ type Infrastructure struct {
 
 	// taxonomyRegistry manages core taxonomy and agent-installed extensions
 	taxonomyRegistry sdkgraphrag.TaxonomyRegistry
+
+	// discoveryProcessor processes agent output discoveries to Neo4j
+	// This enables downstream agents to query discovered hosts, ports, services, etc.
+	discoveryProcessor *discoveryProcessorAdapter
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -140,6 +146,13 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 	}
 	d.logger.Info("initialized GraphRAG bridges with full store support")
 
+	// Create DiscoveryProcessor for processing agent output discoveries to Neo4j
+	// This enables downstream agents to query discovered hosts, ports, services, etc.
+	graphLoader := loader.NewGraphLoader(graphRAGClient)
+	discoveryProc := processor.NewDiscoveryProcessor(graphLoader, graphRAGClient, d.logger)
+	discoveryProcessorAdapter := &discoveryProcessorAdapter{processor: discoveryProc}
+	d.logger.Info("initialized DiscoveryProcessor for automatic discovery storage")
+
 	// Initialize Langfuse tracing if enabled
 	// Pass Neo4j client to enable dual export (Langfuse + Neo4j graph recording)
 	var tracerProvider *sdktrace.TracerProvider
@@ -184,6 +197,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		graphRAGQueryBridge:  graphRAGQueryBridge,
 		missionTracer:        missionTracer,
 		taxonomyRegistry:     taxonomyRegistry,
+		discoveryProcessor:   discoveryProcessorAdapter,
 	}
 	d.infrastructure = infra
 

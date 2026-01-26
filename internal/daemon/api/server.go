@@ -396,15 +396,17 @@ type ExecuteToolResult struct {
 
 // AvailableToolData describes a tool's capabilities and execution metrics.
 type AvailableToolData struct {
-	Name             string
-	Version          string
-	Description      string
-	Tags             []string
-	InputSchemaJSON  string
-	OutputSchemaJSON string
-	Status           string
-	ErrorMessage     string
-	Metrics          *ToolMetricsData
+	Name              string
+	Version           string
+	Description       string
+	Tags              []string
+	InputSchemaJSON   string
+	OutputSchemaJSON  string
+	Status            string
+	ErrorMessage      string
+	Metrics           *ToolMetricsData
+	InputMessageType  string // Proto message type for input (e.g., "gibson.tools.NmapRequest")
+	OutputMessageType string // Proto message type for output (e.g., "gibson.tools.NmapResponse")
 }
 
 // ToolMetricsData tracks execution statistics for a tool.
@@ -1404,15 +1406,17 @@ func (s *DaemonServer) GetAvailableTools(ctx context.Context, req *GetAvailableT
 		}
 
 		protoTools[i] = &AvailableToolInfo{
-			Name:             tool.Name,
-			Version:          tool.Version,
-			Description:      tool.Description,
-			Tags:             tool.Tags,
-			InputSchemaJson:  tool.InputSchemaJSON,
-			OutputSchemaJson: tool.OutputSchemaJSON,
-			Status:           tool.Status,
-			ErrorMessage:     tool.ErrorMessage,
-			Metrics:          protoMetrics,
+			Name:              tool.Name,
+			Version:           tool.Version,
+			Description:       tool.Description,
+			Tags:              tool.Tags,
+			InputSchemaJson:   tool.InputSchemaJSON,
+			OutputSchemaJson:  tool.OutputSchemaJSON,
+			Status:            tool.Status,
+			ErrorMessage:      tool.ErrorMessage,
+			Metrics:           protoMetrics,
+			InputMessageType:  tool.InputMessageType,
+			OutputMessageType: tool.OutputMessageType,
 		}
 
 		// Parse JSON schemas and convert to structured proto format (with taxonomy support)

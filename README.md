@@ -148,6 +148,176 @@ func (a *MyAgent) LLMSlots() []SlotDefinition {
 | **Mission** | SQLite + FTS5 | Mission lifetime | Scan results |
 | **Long-Term** | Vector store | Cross-mission | Semantic knowledge |
 
+### GraphRAG Taxonomy Relationships
+
+Gibson uses a taxonomy-driven approach to automatically create entity relationships in Neo4j. This enables powerful cross-mission queries and knowledge graph visualization.
+
+#### Overview
+
+Entity relationships are defined in the SDK's `core.yaml` taxonomy file. When agents submit discovery results, Gibson's loader automatically creates the appropriate Neo4j relationships based on entity types and their hierarchical structure.
+
+**Key Components:**
+
+- **Taxonomy Definition**: `github.com/zero-day-ai/sdk/taxonomy/core.yaml`
+- **Generated Code**: `github.com/zero-day-ai/sdk/taxonomy/taxonomy.go` (ParentRelationships map)
+- **Loader**: `gibson/internal/graphrag/loader.go` (relationship creation logic)
+
+#### Discovery Processing Flow
+
+```
+Agent → DiscoveryResult → act.go → discovery_adapter → loader → Neo4j
+```
+
+1. **Agent**: Generates discovery results with UUIDs and parent references
+2. **DiscoveryResult**: SDK struct containing entities with type information
+3. **act.go**: Orchestrator receives results, extracts missionRunID from context
+4. **discovery_adapter**: Converts SDK types to internal Gibson types, preserves missionRunID
+5. **loader**: Creates nodes and relationships in Neo4j using taxonomy rules
+
+The `missionRunID` flows through the entire pipeline via context, enabling proper scoping of discovery results to specific mission runs.
+
+#### Entity Identity
+
+All entities in Gibson's GraphRAG system use **UUID-based identity**:
+
+- **Primary Key**: Every entity has an `id` field containing a UUID string
+- **Generation**: Agents generate UUIDs using SDK helpers (`taxonomy.NewHost()`, etc.)
+- **Parent References**: Child entities reference parents via UUID fields (`host_id`, `port_id`, etc.)
+- **No Natural Keys**: Do not use IP addresses, domain names, or other natural keys as primary identifiers
+
+**Example:**
+
+```go
+// Agent code
+host := taxonomy.NewHost()  // Generates UUID automatically
+host.IP = "192.168.1.1"
+
+port := taxonomy.NewPort()  // Generates UUID automatically
+port.Number = 443
+port.HostID = host.ID       // Reference parent by UUID
+```
+
+#### Relationship Types
+
+The following parent-child relationships are automatically created:
+
+| Child Type | Parent Type | Relationship | Child Field | Description |
+|------------|-------------|--------------|-------------|-------------|
+| port | host | HAS_PORT | host_id | Host has open ports |
+| service | port | RUNS_SERVICE | port_id | Port runs services |
+| endpoint | service | EXPOSES | service_id | Service exposes endpoints |
+| subdomain | domain | HAS_SUBDOMAIN | domain_id | Domain has subdomains |
+| evidence | finding | SUPPORTS | finding_id | Evidence supports findings |
+| certificate | service | USES_CERTIFICATE | service_id | Service uses TLS cert |
+| vulnerability | service | AFFECTS_SERVICE | service_id | Vuln affects service |
+| technology | service | USES_TECHNOLOGY | service_id | Service uses tech stack |
+
+**Generated Cypher Example:**
+
+```cypher
+// Host → Port relationship
+MATCH (parent:host {id: $parent_id})
+MATCH (child:port {id: $child_id})
+MERGE (parent)-[:HAS_PORT]->(child)
+
+// Port → Service relationship
+MATCH (parent:port {id: $parent_id})
+MATCH (child:service {id: $child_id})
+MERGE (parent)-[:RUNS_SERVICE]->(child)
+```
+
+#### MissionRun Scoping
+
+All root-level entities are attached to a `MissionRun` node via `BELONGS_TO` relationship. This enables querying discoveries by mission.
+
+**Root Entity Types:**
+
+- `host`
+- `domain`
+- `finding`
+- `organization`
+- `person`
+
+**Flow:**
+
+1. `missionRunID` extracted from context in `act.go`
+2. Passed to `discovery_adapter` via `MissionRunID` field
+3. Loader checks if entity is root type (via SDK's `IsRootEntity()`)
+4. Creates `BELONGS_TO` relationship to `MissionRun` node
+
+**Generated Cypher:**
+
+```cypher
+// Create/merge MissionRun node
+MERGE (mr:MissionRun {id: $mission_run_id})
+
+// Link root entity to MissionRun
+MATCH (mr:MissionRun {id: $mission_run_id})
+MATCH (entity:host {id: $entity_id})
+MERGE (entity)-[:BELONGS_TO]->(mr)
+```
+
+**Query Example:**
+
+```cypher
+// Get all hosts from a specific mission run
+MATCH (mr:MissionRun {id: "abc-123"})
+MATCH (h:host)-[:BELONGS_TO]->(mr)
+RETURN h
+```
+
+#### Debugging Relationship Issues
+
+**Check if relationships exist:**
+
+```cypher
+// Verify parent-child relationship
+MATCH (parent:host {id: "parent-uuid"})
+MATCH (child:port {id: "child-uuid"})
+MATCH (parent)-[r:HAS_PORT]->(child)
+RETURN parent, r, child
+
+// Verify MissionRun scoping
+MATCH (mr:MissionRun {id: "mission-run-uuid"})
+MATCH (entity)-[r:BELONGS_TO]->(mr)
+RETURN entity, r, mr
+```
+
+**Common Issues:**
+
+| Issue | Symptom | Solution |
+|-------|---------|----------|
+| Missing parent | Orphaned child nodes | Verify child's reference field (e.g., `host_id`) contains valid parent UUID |
+| No BELONGS_TO | Can't query by mission | Check `missionRunID` is in context when agent submits discovery |
+| Wrong relationship type | Incorrect graph structure | Verify entity types match taxonomy definitions in `core.yaml` |
+| Duplicate relationships | Multiple edges between same nodes | Loader uses MERGE (idempotent), check for bugs in relationship detection |
+
+**Debugging Commands:**
+
+```bash
+# Enable debug logging
+export GIBSON_LOG_LEVEL=debug
+
+# Check loader logs
+gibson daemon logs | grep "creating relationship"
+
+# Verify Neo4j connection
+gibson graphrag status
+
+# Query Neo4j directly
+docker exec -it gibson-neo4j cypher-shell -u neo4j -p <password>
+```
+
+**Troubleshooting Checklist:**
+
+1. ✅ Entity has valid UUID in `id` field
+2. ✅ Child entity has parent reference field (`host_id`, `port_id`, etc.)
+3. ✅ Parent reference contains valid UUID (not empty, not zero-value)
+4. ✅ `missionRunID` present in context when `SubmitDiscovery()` called
+5. ✅ Entity type matches taxonomy definition (case-sensitive)
+6. ✅ Neo4j connection healthy (`gibson graphrag status`)
+7. ✅ Loader logs show "creating relationship" entries
+
 ### Tools vs Plugins
 
 | Aspect | Tools | Plugins |

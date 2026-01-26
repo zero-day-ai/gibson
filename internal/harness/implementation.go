@@ -15,7 +15,9 @@ import (
 	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // DefaultAgentHarness is the production implementation of the AgentHarness interface.
@@ -558,9 +560,53 @@ func (h *DefaultAgentHarness) CallToolProto(ctx context.Context, name string, re
 		)
 	}
 
-	// Verify output type matches
+	// Verify output type matches - or convert if necessary
 	actualOutputType := string(outputMsg.ProtoReflect().Descriptor().FullName())
 	if actualOutputType != expectedOutputType {
+		// Check if the output is a structpb.Struct that needs conversion to typed message
+		// This happens when tools run via subprocess (DirectToolProxy) return JSON
+		if structOutput, ok := outputMsg.(*structpb.Struct); ok && actualOutputType == "google.protobuf.Struct" {
+			h.logger.Debug("converting structpb.Struct output to typed message",
+				"tool", name,
+				"target_type", expectedOutputType)
+
+			// Convert Struct to JSON, then unmarshal into the response message
+			marshaler := protojson.MarshalOptions{
+				UseProtoNames:   true,
+				EmitUnpopulated: false,
+			}
+			jsonBytes, err := marshaler.Marshal(structOutput)
+			if err != nil {
+				h.logger.Error("failed to marshal struct output",
+					"tool", name,
+					"error", err)
+				return types.WrapError(
+					ErrHarnessToolExecutionFailed,
+					fmt.Sprintf("failed to convert tool output: %v", err),
+					err,
+				)
+			}
+
+			// Unmarshal JSON into the typed response message
+			unmarshaler := protojson.UnmarshalOptions{
+				DiscardUnknown: true,
+			}
+			if err := unmarshaler.Unmarshal(jsonBytes, response); err != nil {
+				h.logger.Error("failed to unmarshal output to typed message",
+					"tool", name,
+					"target_type", expectedOutputType,
+					"error", err)
+				return types.WrapError(
+					ErrHarnessToolExecutionFailed,
+					fmt.Sprintf("failed to convert tool output to %s: %v", expectedOutputType, err),
+					err,
+				)
+			}
+
+			// Skip the normal merge since we've directly populated the response
+			goto metricsSuccess
+		}
+
 		h.logger.Error("output message type mismatch",
 			"tool", name,
 			"expected", expectedOutputType,
@@ -574,6 +620,8 @@ func (h *DefaultAgentHarness) CallToolProto(ctx context.Context, name string, re
 
 	// Merge the output message into the response parameter
 	proto.Merge(response, outputMsg)
+
+metricsSuccess:
 
 	// Record success metrics
 	h.metrics.RecordCounter("tools.executions", 1, map[string]string{

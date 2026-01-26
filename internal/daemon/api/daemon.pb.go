@@ -3820,9 +3820,13 @@ type AvailableToolInfo struct {
 	// input_schema is the structured input schema with taxonomy support (new in v0.12.0)
 	InputSchema *JSONSchemaNode `protobuf:"bytes,10,opt,name=input_schema,json=inputSchema,proto3" json:"input_schema,omitempty"`
 	// output_schema is the structured output schema with taxonomy support (new in v0.12.0)
-	OutputSchema  *JSONSchemaNode `protobuf:"bytes,11,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	OutputSchema *JSONSchemaNode `protobuf:"bytes,11,opt,name=output_schema,json=outputSchema,proto3" json:"output_schema,omitempty"`
+	// input_message_type is the fully-qualified proto message type for input (e.g., "gibson.tools.NmapRequest")
+	InputMessageType string `protobuf:"bytes,12,opt,name=input_message_type,json=inputMessageType,proto3" json:"input_message_type,omitempty"`
+	// output_message_type is the fully-qualified proto message type for output (e.g., "gibson.tools.NmapResponse")
+	OutputMessageType string `protobuf:"bytes,13,opt,name=output_message_type,json=outputMessageType,proto3" json:"output_message_type,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *AvailableToolInfo) Reset() {
@@ -3930,6 +3934,20 @@ func (x *AvailableToolInfo) GetOutputSchema() *JSONSchemaNode {
 		return x.OutputSchema
 	}
 	return nil
+}
+
+func (x *AvailableToolInfo) GetInputMessageType() string {
+	if x != nil {
+		return x.InputMessageType
+	}
+	return ""
+}
+
+func (x *AvailableToolInfo) GetOutputMessageType() string {
+	if x != nil {
+		return x.OutputMessageType
+	}
+	return ""
 }
 
 // ToolExecutionMetrics tracks execution statistics for a tool.
@@ -8225,7 +8243,7 @@ const file_daemon_proto_rawDesc = "" +
 	"durationMsJ\x04\b\x05\x10\x06R\voutput_json\"\x1a\n" +
 	"\x18GetAvailableToolsRequest\"V\n" +
 	"\x19GetAvailableToolsResponse\x129\n" +
-	"\x05tools\x18\x01 \x03(\v2#.gibson.daemon.v1.AvailableToolInfoR\x05tools\"\xdc\x03\n" +
+	"\x05tools\x18\x01 \x03(\v2#.gibson.daemon.v1.AvailableToolInfoR\x05tools\"\xba\x04\n" +
 	"\x11AvailableToolInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -8238,7 +8256,9 @@ const file_daemon_proto_rawDesc = "" +
 	"\ametrics\x18\t \x01(\v2&.gibson.daemon.v1.ToolExecutionMetricsR\ametrics\x12C\n" +
 	"\finput_schema\x18\n" +
 	" \x01(\v2 .gibson.daemon.v1.JSONSchemaNodeR\vinputSchema\x12E\n" +
-	"\routput_schema\x18\v \x01(\v2 .gibson.daemon.v1.JSONSchemaNodeR\foutputSchema\"\xd1\x01\n" +
+	"\routput_schema\x18\v \x01(\v2 .gibson.daemon.v1.JSONSchemaNodeR\foutputSchema\x12,\n" +
+	"\x12input_message_type\x18\f \x01(\tR\x10inputMessageType\x12.\n" +
+	"\x13output_message_type\x18\r \x01(\tR\x11outputMessageType\"\xd1\x01\n" +
 	"\x14ToolExecutionMetrics\x12\x1f\n" +
 	"\vtotal_calls\x18\x01 \x01(\x03R\n" +
 	"totalCalls\x12#\n" +

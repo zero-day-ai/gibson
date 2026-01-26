@@ -18,6 +18,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
+	"github.com/zero-day-ai/gibson/internal/graphrag/processor"
 	"github.com/zero-day-ai/gibson/internal/harness"
 	"github.com/zero-day-ai/gibson/internal/mission"
 	"github.com/zero-day-ai/gibson/internal/observability"
@@ -496,6 +497,11 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 				"note", "DecisionLogWriter creation deferred to per-mission context (requires MissionAdapter enhancement)")
 		}
 
+		// Create DiscoveryProcessor for processing agent output discoveries
+		graphLoader := loader.NewGraphLoader(d.infrastructure.graphRAGClient)
+		discoveryProc := processor.NewDiscoveryProcessor(graphLoader, d.infrastructure.graphRAGClient, d.logger)
+		discoveryProcessorAdapter := &discoveryProcessorAdapter{processor: discoveryProc}
+
 		cfg := orchestrator.Config{
 			GraphRAGClient:     d.infrastructure.graphRAGClient,
 			HarnessFactory:     d.infrastructure.harnessFactory,
@@ -510,6 +516,7 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 			Registry:           d.registryAdapter,              // For component discovery and validation
 			DecisionLogWriter:  nil,                            // Cannot create without mission context - see comment above
 			MissionTracer:      d.infrastructure.missionTracer, // Pass for future per-mission adapter creation
+			DiscoveryProcessor: discoveryProcessorAdapter,      // Process agent output discoveries to Neo4j
 		}
 
 		var err error

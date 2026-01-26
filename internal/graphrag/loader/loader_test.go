@@ -380,8 +380,8 @@ func TestLoadDiscovery_SubdomainsWithParent(t *testing.T) {
 		},
 		Subdomains: []*graphragpb.Subdomain{
 			{
-				Name:         "www",
-				ParentDomain: "example.com",
+				Name:     "www",
+				DomainId: "example.com",
 			},
 		},
 	}
@@ -887,4 +887,652 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// ==================== RELATIONSHIP CREATION INTEGRATION TESTS ====================
+
+// TestRelationshipCreation_HostWithPorts verifies that HAS_PORT relationships
+// are created correctly between Host and Port nodes using UUID-based identity.
+func TestRelationshipCreation_HostWithPorts(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for host creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "host-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for BELONGS_TO relationship (host to mission_run)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"rel_count": int64(1)},
+		},
+	})
+
+	// Mock for port creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "port-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for HAS_PORT relationship creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_PORT"}},
+		},
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-123",
+		AgentRunID:   "",
+	}
+
+	// Create host with explicit ID
+	hostID := "host-uuid-1"
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{
+				Id: &hostID,
+				Ip: "192.168.1.100",
+			},
+		},
+		Ports: []*graphragpb.Port{
+			{
+				HostId:   hostID, // Reference parent host by UUID
+				Number:   443,
+				Protocol: "tcp",
+			},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, result.NodesCreated) // 1 host + 1 port
+	assert.GreaterOrEqual(t, result.RelationshipsCreated, 1) // At least HAS_PORT relationship
+	assert.False(t, result.HasErrors())
+
+	// Verify relationship creation query was executed
+	calls := client.GetCallsByMethod("Query")
+	foundRelQuery := false
+	for _, call := range calls {
+		queryStr := call.Args[0].(string)
+		if contains(queryStr, "HAS_PORT") && contains(queryStr, "parent:host") {
+			foundRelQuery = true
+			// Verify parent matching uses the ID field
+			assert.Contains(t, queryStr, "parent.id")
+			break
+		}
+	}
+	assert.True(t, foundRelQuery, "Expected HAS_PORT relationship query to be executed")
+}
+
+// TestRelationshipCreation_PortWithServices verifies that RUNS_SERVICE relationships
+// are created correctly between Port and Service nodes.
+func TestRelationshipCreation_PortWithServices(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for host creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "host-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for port creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "port-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for HAS_PORT relationship
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_PORT"}},
+		},
+	})
+
+	// Mock for service creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "service-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for RUNS_SERVICE relationship
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "RUNS_SERVICE"}},
+		},
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-123",
+	}
+
+	hostID := "host-uuid-1"
+	portID := "port-uuid-1"
+
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{Id: &hostID, Ip: "192.168.1.100"},
+		},
+		Ports: []*graphragpb.Port{
+			{
+				Id:       &portID,
+				HostId:   hostID,
+				Number:   443,
+				Protocol: "tcp",
+			},
+		},
+		Services: []*graphragpb.Service{
+			{
+				PortId: portID, // Reference parent port by UUID
+				Name:   "https",
+			},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 3, result.NodesCreated) // host + port + service
+	assert.False(t, result.HasErrors())
+
+	// Verify RUNS_SERVICE relationship query was executed
+	calls := client.GetCallsByMethod("Query")
+	foundRelQuery := false
+	for _, call := range calls {
+		queryStr := call.Args[0].(string)
+		if contains(queryStr, "RUNS_SERVICE") && contains(queryStr, "parent:port") {
+			foundRelQuery = true
+			// Verify parent matching uses port_id field from service
+			assert.Contains(t, queryStr, "parent.id")
+			break
+		}
+	}
+	assert.True(t, foundRelQuery, "Expected RUNS_SERVICE relationship query to be executed")
+}
+
+// TestRelationshipCreation_RootNodeMissionRun verifies that BELONGS_TO relationships
+// are created from root nodes to MissionRun.
+func TestRelationshipCreation_RootNodeMissionRun(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for host creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "host-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for BELONGS_TO relationship creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"rel_count": int64(1)},
+		},
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-456",
+		MissionID:    "mission-123",
+	}
+
+	hostID := "host-uuid-root"
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{
+				Id: &hostID,
+				Ip: "10.0.0.1",
+			},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, result.NodesCreated)
+	assert.GreaterOrEqual(t, result.RelationshipsCreated, 1) // BELONGS_TO relationship
+	assert.False(t, result.HasErrors())
+
+	// Verify BELONGS_TO relationship query was executed
+	calls := client.GetCallsByMethod("Query")
+	foundBelongsTo := false
+	for _, call := range calls {
+		queryStr := call.Args[0].(string)
+		if contains(queryStr, "BELONGS_TO") && contains(queryStr, "mission_run") {
+			foundBelongsTo = true
+			params := call.Args[1].(map[string]any)
+			assert.Equal(t, "run-456", params["run_id"])
+			break
+		}
+	}
+	assert.True(t, foundBelongsTo, "Expected BELONGS_TO relationship to MissionRun")
+}
+
+// TestRelationshipCreation_MissingParent verifies that the loader handles
+// missing parent nodes gracefully without failing the entire batch.
+func TestRelationshipCreation_MissingParent(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for port creation (host doesn't exist)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "port-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for relationship creation - returns no results (parent not found)
+	// The loader should log a warning but continue processing
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{}, // Empty result - no parent found
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-123",
+	}
+
+	discovery := &graphragpb.DiscoveryResult{
+		Ports: []*graphragpb.Port{
+			{
+				HostId:   "non-existent-host-id", // References non-existent parent
+				Number:   8080,
+				Protocol: "tcp",
+			},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	// Should not fail - nodes should still be created
+	assert.NoError(t, err)
+	assert.Equal(t, 1, result.NodesCreated) // Port node created
+	// Relationship may not be created, but no error should be added
+	// (the loader treats missing parents as a warning, not an error)
+	assert.False(t, result.HasErrors())
+}
+
+// TestRelationshipCreation_ChainedRelationships verifies that relationships
+// are created correctly across a deep hierarchy: Host -> Port -> Service -> Endpoint.
+func TestRelationshipCreation_ChainedRelationships(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for host creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "host-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for BELONGS_TO relationship (host to mission_run)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"rel_count": int64(1)},
+		},
+	})
+
+	// Mock for port creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "port-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for HAS_PORT relationship
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_PORT"}},
+		},
+	})
+
+	// Mock for service creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "service-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for RUNS_SERVICE relationship
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "RUNS_SERVICE"}},
+		},
+	})
+
+	// Mock for endpoint creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "endpoint-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for HAS_ENDPOINT relationship
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_ENDPOINT"}},
+		},
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-789",
+	}
+
+	hostID := "host-chain-1"
+	portID := "port-chain-1"
+	serviceID := "service-chain-1"
+
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{Id: &hostID, Ip: "10.10.10.10"},
+		},
+		Ports: []*graphragpb.Port{
+			{
+				Id:       &portID,
+				HostId:   hostID,
+				Number:   443,
+				Protocol: "tcp",
+			},
+		},
+		Services: []*graphragpb.Service{
+			{
+				Id:     &serviceID,
+				PortId: portID,
+				Name:   "https",
+			},
+		},
+		Endpoints: []*graphragpb.Endpoint{
+			{
+				ServiceId: serviceID,
+				Url:       "/api/v2/users",
+				Method:    strPtr("GET"),
+			},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 4, result.NodesCreated) // host + port + service + endpoint
+	assert.GreaterOrEqual(t, result.RelationshipsCreated, 3) // At least 3 parent relationships
+	assert.False(t, result.HasErrors())
+
+	// Verify all three relationships were created
+	calls := client.GetCallsByMethod("Query")
+	relationships := []string{"HAS_PORT", "RUNS_SERVICE", "HAS_ENDPOINT"}
+	foundRels := make(map[string]bool)
+
+	for _, call := range calls {
+		queryStr := call.Args[0].(string)
+		for _, relType := range relationships {
+			if contains(queryStr, relType) {
+				foundRels[relType] = true
+			}
+		}
+	}
+
+	for _, relType := range relationships {
+		assert.True(t, foundRels[relType], "Expected %s relationship to be created", relType)
+	}
+}
+
+// TestRelationshipCreation_MultiplePortsPerHost verifies that multiple child nodes
+// can be correctly linked to the same parent using UUID-based identity.
+func TestRelationshipCreation_MultiplePortsPerHost(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for host creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "host-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for BELONGS_TO relationship (host to mission_run)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"rel_count": int64(1)},
+		},
+	})
+
+	// Mock for batch port creation (3 ports)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "port-elem-1", "idx": float64(0)},
+			{"element_id": "port-elem-2", "idx": float64(1)},
+			{"element_id": "port-elem-3", "idx": float64(2)},
+		},
+	})
+
+	// Mock for HAS_PORT relationships (one per port)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_PORT"}},
+		},
+	})
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_PORT"}},
+		},
+	})
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_PORT"}},
+		},
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-123",
+	}
+
+	hostID := "host-multi-port"
+	discovery := &graphragpb.DiscoveryResult{
+		Hosts: []*graphragpb.Host{
+			{Id: &hostID, Ip: "192.168.1.50"},
+		},
+		Ports: []*graphragpb.Port{
+			{HostId: hostID, Number: 80, Protocol: "tcp"},
+			{HostId: hostID, Number: 443, Protocol: "tcp"},
+			{HostId: hostID, Number: 8080, Protocol: "tcp"},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 4, result.NodesCreated) // 1 host + 3 ports
+	assert.GreaterOrEqual(t, result.RelationshipsCreated, 3) // At least 3 HAS_PORT relationships
+	assert.False(t, result.HasErrors())
+
+	// Verify that relationship queries reference the same parent host ID
+	calls := client.GetCallsByMethod("Query")
+	relCallCount := 0
+	for _, call := range calls {
+		queryStr := call.Args[0].(string)
+		if contains(queryStr, "HAS_PORT") && contains(queryStr, "parent:host") {
+			relCallCount++
+			params := call.Args[1].(map[string]any)
+			// All relationship queries should reference the same parent host ID
+			assert.Equal(t, hostID, params["parent_id"])
+		}
+	}
+	assert.GreaterOrEqual(t, relCallCount, 3, "Expected 3 HAS_PORT relationship queries")
+}
+
+// TestRelationshipCreation_DomainSubdomain verifies HAS_SUBDOMAIN relationships
+// between Domain and Subdomain nodes.
+func TestRelationshipCreation_DomainSubdomain(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for domain creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "domain-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for BELONGS_TO relationship (domain to mission_run)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"rel_count": int64(1)},
+		},
+	})
+
+	// Mock for subdomain creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "subdomain-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for HAS_SUBDOMAIN relationship
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_SUBDOMAIN"}},
+		},
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-123",
+	}
+
+	domainID := "domain-uuid-1"
+	discovery := &graphragpb.DiscoveryResult{
+		Domains: []*graphragpb.Domain{
+			{Id: &domainID, Name: "example.com"},
+		},
+		Subdomains: []*graphragpb.Subdomain{
+			{
+				DomainId: domainID, // Reference parent domain by UUID
+				Name:     "api",
+			},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, result.NodesCreated) // domain + subdomain
+	assert.GreaterOrEqual(t, result.RelationshipsCreated, 1) // At least HAS_SUBDOMAIN relationship
+	assert.False(t, result.HasErrors())
+
+	// Verify HAS_SUBDOMAIN relationship query was executed
+	calls := client.GetCallsByMethod("Query")
+	foundRelQuery := false
+	for _, call := range calls {
+		queryStr := call.Args[0].(string)
+		if contains(queryStr, "HAS_SUBDOMAIN") && contains(queryStr, "parent:domain") {
+			foundRelQuery = true
+			break
+		}
+	}
+	assert.True(t, foundRelQuery, "Expected HAS_SUBDOMAIN relationship query to be executed")
+}
+
+// TestRelationshipCreation_FindingEvidence verifies HAS_EVIDENCE relationships
+// between Finding and Evidence nodes.
+func TestRelationshipCreation_FindingEvidence(t *testing.T) {
+	client := graph.NewMockGraphClient()
+	err := client.Connect(context.Background())
+	require.NoError(t, err)
+
+	// Mock for finding creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "finding-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for BELONGS_TO relationship (finding is root node)
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"rel_count": int64(1)},
+		},
+	})
+
+	// Mock for evidence creation
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"element_id": "evidence-elem-1", "idx": float64(0)},
+		},
+	})
+
+	// Mock for HAS_EVIDENCE relationship
+	client.AddQueryResult(graph.QueryResult{
+		Records: []map[string]any{
+			{"r": map[string]any{"type": "HAS_EVIDENCE"}},
+		},
+	})
+
+	loader := NewGraphLoader(client)
+	ctx := context.Background()
+	execCtx := ExecContext{
+		MissionRunID: "run-123",
+	}
+
+	findingID := "finding-uuid-1"
+	discovery := &graphragpb.DiscoveryResult{
+		Findings: []*graphragpb.Finding{
+			{
+				Id:       &findingID,
+				Title:    "XSS Vulnerability",
+				Severity: "high",
+			},
+		},
+		Evidence: []*graphragpb.Evidence{
+			{
+				FindingId: findingID, // Reference parent finding by UUID
+				Type:      "request",
+				Content:   strPtr("<script>alert('xss')</script>"),
+			},
+		},
+	}
+
+	result, err := loader.LoadDiscovery(ctx, execCtx, discovery)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 2, result.NodesCreated) // finding + evidence
+	assert.False(t, result.HasErrors())
+
+	// Verify HAS_EVIDENCE relationship query was executed
+	calls := client.GetCallsByMethod("Query")
+	foundRelQuery := false
+	for _, call := range calls {
+		queryStr := call.Args[0].(string)
+		if contains(queryStr, "HAS_EVIDENCE") && contains(queryStr, "parent:finding") {
+			foundRelQuery = true
+			break
+		}
+	}
+	assert.True(t, foundRelQuery, "Expected HAS_EVIDENCE relationship query to be executed")
 }

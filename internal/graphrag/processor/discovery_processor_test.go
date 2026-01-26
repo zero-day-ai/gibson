@@ -399,7 +399,7 @@ func TestProcess_AllNodeTypes(t *testing.T) {
 		Ports:        []*graphragpb.Port{{HostId: "192.168.1.1", Number: 80, Protocol: "tcp"}},
 		Services:     []*graphragpb.Service{{PortId: "192.168.1.1:80:tcp", Name: "http"}},
 		Domains:      []*graphragpb.Domain{{Name: "example.com"}},
-		Subdomains:   []*graphragpb.Subdomain{{ParentDomain: "example.com", Name: subName}},
+		Subdomains:   []*graphragpb.Subdomain{{DomainId: "example.com", Name: subName}},
 		Technologies: []*graphragpb.Technology{{Name: "nginx", Version: &version}},
 	}
 

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 
 	proto "github.com/zero-day-ai/sdk/api/gen/proto"
@@ -166,6 +167,8 @@ func typedValueMapToMap(m map[string]*proto.TypedValue) map[string]any {
 }
 
 // typedValueToMap converts a TypedValue to map[string]any if it's a map, otherwise returns empty map.
+// It also handles the case where the TypedValue is a JSON string that represents a map/struct.
+// This is needed because the SDK serializes proto messages (like DiscoveryResult) to JSON strings.
 func typedValueToMap(tv *proto.TypedValue) map[string]any {
 	if tv == nil {
 		return make(map[string]any)
@@ -175,7 +178,20 @@ func typedValueToMap(tv *proto.TypedValue) map[string]any {
 		return typedValueMapToMap(mapVal.MapValue.Entries)
 	}
 
-	// If not a map, return empty map
+	// If it's a string, try to parse it as JSON - this handles the case where
+	// the SDK serialized a proto message (like DiscoveryResult) to JSON
+	if strVal, ok := tv.Kind.(*proto.TypedValue_StringValue); ok && strVal.StringValue != "" {
+		// Check if it looks like JSON (starts with { or [)
+		str := strVal.StringValue
+		if len(str) > 0 && (str[0] == '{' || str[0] == '[') {
+			var result map[string]any
+			if err := json.Unmarshal([]byte(str), &result); err == nil {
+				return result
+			}
+		}
+	}
+
+	// If not a map and not a JSON string, return empty map
 	return make(map[string]any)
 }
 

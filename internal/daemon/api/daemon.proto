@@ -935,6 +935,12 @@ message AvailableToolInfo {
 
   // output_schema is the structured output schema with taxonomy support (new in v0.12.0)
   JSONSchemaNode output_schema = 11;
+
+  // input_message_type is the fully-qualified proto message type for input (e.g., "gibson.tools.NmapRequest")
+  string input_message_type = 12;
+
+  // output_message_type is the fully-qualified proto message type for output (e.g., "gibson.tools.NmapResponse")
+  string output_message_type = 13;
 }
 
 // ToolExecutionMetrics tracks execution statistics for a tool.

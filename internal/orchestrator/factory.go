@@ -70,6 +70,11 @@ type Config struct {
 	// When set, enables automatic mission graph node creation and status tracking
 	// for GraphRAG mission-scoped storage.
 	MissionGraphManager MissionGraphManager
+
+	// DiscoveryProcessor processes DiscoveryResult from agent outputs (optional)
+	// When set, enables automatic storage of discovered hosts, ports, services, etc.
+	// from agent outputs to Neo4j for use by downstream agents.
+	DiscoveryProcessor DiscoveryProcessor
 }
 
 // NewMissionAdapter creates a new mission orchestrator adapter.

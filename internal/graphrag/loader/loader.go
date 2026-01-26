@@ -10,6 +10,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 	"github.com/zero-day-ai/sdk/graphrag/protoconv"
+	"github.com/zero-day-ai/sdk/graphrag/taxonomy"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
@@ -342,12 +343,7 @@ func (l *GraphLoader) loadPorts(ctx context.Context, execCtx ExecContext, ports 
 	for i, p := range ports {
 		protos[i] = p
 	}
-	// Ports are children of hosts via host_id field
-	return l.loadProtoNodes(ctx, execCtx, "port", protos, &parentRefBuilder{
-		nodeType:     "host",
-		idFields:     []string{"host_id"},
-		relationship: "HAS_PORT",
-	}, "")
+	return l.loadProtoNodes(ctx, execCtx, "port", protos, nil, "")
 }
 
 // loadServices loads Service protos with parent relationship to ports.
@@ -356,12 +352,7 @@ func (l *GraphLoader) loadServices(ctx context.Context, execCtx ExecContext, ser
 	for i, s := range services {
 		protos[i] = s
 	}
-	// Services are children of ports via port_id field (composite: host_id:number:protocol)
-	return l.loadProtoNodes(ctx, execCtx, "service", protos, &parentRefBuilder{
-		nodeType:     "port",
-		idFields:     []string{"port_id"},
-		relationship: "RUNS_SERVICE",
-	}, "")
+	return l.loadProtoNodes(ctx, execCtx, "service", protos, nil, "")
 }
 
 // loadEndpoints loads Endpoint protos with parent relationship to services.
@@ -370,12 +361,7 @@ func (l *GraphLoader) loadEndpoints(ctx context.Context, execCtx ExecContext, en
 	for i, e := range endpoints {
 		protos[i] = e
 	}
-	// Endpoints are children of services via service_id field
-	return l.loadProtoNodes(ctx, execCtx, "endpoint", protos, &parentRefBuilder{
-		nodeType:     "service",
-		idFields:     []string{"service_id"},
-		relationship: "HAS_ENDPOINT",
-	}, "")
+	return l.loadProtoNodes(ctx, execCtx, "endpoint", protos, nil, "")
 }
 
 // loadDomains loads Domain protos as root nodes attached to MissionRun.
@@ -393,12 +379,7 @@ func (l *GraphLoader) loadSubdomains(ctx context.Context, execCtx ExecContext, s
 	for i, s := range subdomains {
 		protos[i] = s
 	}
-	// Subdomains are children of domains via parent_domain field
-	return l.loadProtoNodes(ctx, execCtx, "subdomain", protos, &parentRefBuilder{
-		nodeType:     "domain",
-		idFields:     []string{"parent_domain"},
-		relationship: "HAS_SUBDOMAIN",
-	}, "")
+	return l.loadProtoNodes(ctx, execCtx, "subdomain", protos, nil, "")
 }
 
 // loadTechnologies loads Technology protos as root nodes attached to MissionRun.
@@ -434,12 +415,7 @@ func (l *GraphLoader) loadEvidence(ctx context.Context, execCtx ExecContext, evi
 	for i, e := range evidence {
 		protos[i] = e
 	}
-	// Evidence is children of findings via finding_id field
-	return l.loadProtoNodes(ctx, execCtx, "evidence", protos, &parentRefBuilder{
-		nodeType:     "finding",
-		idFields:     []string{"finding_id"},
-		relationship: "HAS_EVIDENCE",
-	}, "")
+	return l.loadProtoNodes(ctx, execCtx, "evidence", protos, nil, "")
 }
 
 // loadCustomNodes loads CustomNode protos (may be root or child based on parent_type).
@@ -579,11 +555,12 @@ type parentRefBuilder struct {
 
 // loadProtoNodes is a helper that loads proto messages as nodes.
 // It uses reflection to extract properties from the proto message.
+// Parent relationships are automatically determined from the taxonomy.
 //
 // Parameters:
 //   - nodeType: Neo4j node label (e.g., "host", "port")
 //   - protos: Slice of proto messages (must implement protoreflect.ProtoMessage)
-//   - parentRef: Optional parent relationship specification
+//   - parentRef: Optional override for parent relationship (for CustomNode). If nil, uses taxonomy.
 //   - idField: Optional custom ID field name (defaults to auto-generated UUID)
 func (l *GraphLoader) loadProtoNodes(
 	ctx context.Context,
@@ -599,6 +576,12 @@ func (l *GraphLoader) loadProtoNodes(
 
 	result := &LoadResult{}
 	discoveredAt := time.Now().UnixMilli()
+
+	// Determine parent relationship from taxonomy if not explicitly provided
+	var taxonomyRel *taxonomy.ParentRelationship
+	if parentRef == nil {
+		taxonomyRel = taxonomy.GetParentRelationship(nodeType)
+	}
 
 	// Build node data list for UNWIND
 	nodeDataList := make([]map[string]any, 0, len(protos))
@@ -644,21 +627,31 @@ func (l *GraphLoader) loadProtoNodes(
 		props["discovered_at"] = discoveredAt
 
 		// Track parent field values if this is a child node
-		if parentRef != nil {
+		if parentRef != nil || taxonomyRel != nil {
 			parentVals := make(map[string]string)
-			// If idValues are pre-computed (for CustomNode), use them directly
-			if len(parentRef.idValues) > 0 {
-				for k, v := range parentRef.idValues {
-					parentVals[k] = v
-				}
-			} else {
-				// Otherwise extract from the proto's properties
-				for _, fieldName := range parentRef.idFields {
-					if val, ok := props[fieldName]; ok {
-						parentVals[fieldName] = fmt.Sprintf("%v", val)
+
+			if parentRef != nil {
+				// Custom parent ref (for CustomNode)
+				// If idValues are pre-computed, use them directly
+				if len(parentRef.idValues) > 0 {
+					for k, v := range parentRef.idValues {
+						parentVals[k] = v
+					}
+				} else {
+					// Otherwise extract from the proto's properties
+					for _, fieldName := range parentRef.idFields {
+						if val, ok := props[fieldName]; ok {
+							parentVals[fieldName] = fmt.Sprintf("%v", val)
+						}
 					}
 				}
+			} else if taxonomyRel != nil {
+				// Use taxonomy relationship
+				if val, ok := props[taxonomyRel.RefField]; ok {
+					parentVals[taxonomyRel.ParentField] = fmt.Sprintf("%v", val)
+				}
 			}
+
 			parentFieldValues = append(parentFieldValues, parentVals)
 		}
 
@@ -709,7 +702,17 @@ func (l *GraphLoader) loadProtoNodes(
 	}
 
 	// Create parent relationships if specified
-	if parentRef != nil {
+	if parentRef != nil || taxonomyRel != nil {
+		// Determine parent node type and relationship type
+		var parentNodeType, relationshipType string
+		if parentRef != nil {
+			parentNodeType = parentRef.nodeType
+			relationshipType = parentRef.relationship
+		} else if taxonomyRel != nil {
+			parentNodeType = taxonomyRel.ParentType
+			relationshipType = taxonomyRel.Relationship
+		}
+
 		for idx, elementID := range elementIDs {
 			if elementID == "" || idx >= len(parentFieldValues) {
 				continue
@@ -745,7 +748,7 @@ func (l *GraphLoader) loadProtoNodes(
 				MATCH (child) WHERE elementId(child) = $child_id
 				CREATE (parent)-[r:%s]->(child)
 				RETURN r
-			`, parentRef.nodeType, whereStr, parentRef.relationship)
+			`, parentNodeType, whereStr, relationshipType)
 
 			_, err := l.client.Query(ctx, relCypher, parentParams)
 			if err != nil {

@@ -35,6 +35,7 @@ type Property struct {
 // ParentConfig defines the parent relationship for a node type.
 type ParentConfig struct {
 	Type         string `yaml:"type"`         // Parent node type
+	RefField     string `yaml:"ref_field"`    // Field on child holding parent ID (e.g., host_id)
 	Relationship string `yaml:"relationship"` // Relationship name (e.g., HAS_PORT)
 	Required     bool   `yaml:"required"`     // Must have parent?
 }
