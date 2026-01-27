@@ -174,15 +174,15 @@ func runListWithDaemon(cmd *cobra.Command, clientIface interface{}, cfg Config) 
 
 		// Display tools in table format
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
-		fmt.Fprintln(w, "----\t-------\t------\t-------")
+		fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tCAPABILITIES")
+		fmt.Fprintln(w, "----\t-------\t------\t------------")
 
 		for _, tool := range tools {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 				tool.Name,
 				tool.Version,
 				tool.Status,
-				tool.Address,
+				formatCapabilities(tool.Capabilities),
 			)
 		}
 
@@ -485,4 +485,28 @@ func runBuild(cmd *cobra.Command, args []string, cfg Config) error {
 	}
 
 	return nil
+}
+
+// formatCapabilities formats tool capabilities into a human-readable string.
+// Returns "privileged", "unprivileged", "unprivileged (N blocked flags)", or "unknown".
+func formatCapabilities(caps *daemonclient.Capabilities) string {
+	if caps == nil {
+		return "unknown"
+	}
+
+	// Determine privilege level
+	var privilege string
+	if caps.HasRoot || caps.HasSudo || caps.CanRawSocket {
+		privilege = "privileged"
+	} else {
+		privilege = "unprivileged"
+	}
+
+	// Add blocked args count if present
+	blockedCount := len(caps.BlockedArgs)
+	if blockedCount > 0 {
+		return fmt.Sprintf("%s (%d blocked flags)", privilege, blockedCount)
+	}
+
+	return privilege
 }

@@ -190,6 +190,11 @@ func (c *GRPCToolClient) Health(ctx context.Context) types.HealthStatus {
 	}
 }
 
+// GetConn returns the underlying gRPC connection for streaming operations.
+func (c *GRPCToolClient) GetConn() *grpc.ClientConn {
+	return c.conn
+}
+
 // Close closes the underlying gRPC connection.
 func (c *GRPCToolClient) Close() error {
 	if c.conn != nil {

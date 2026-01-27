@@ -8,6 +8,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/types"
+	sdktypes "github.com/zero-day-ai/sdk/types"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
@@ -270,6 +271,57 @@ type AgentHarness interface {
 	//
 	// The output schema's Taxonomy field contains mappings for entity extraction.
 	GetToolDescriptor(ctx context.Context, name string) (*ToolDescriptor, error)
+
+	// GetToolCapabilities retrieves runtime capabilities for a registered tool.
+	// This method queries the tool to understand what operations it can perform
+	// based on the execution environment (e.g., root access, raw socket capability).
+	//
+	// Capabilities include:
+	//   - HasRoot: Tool is running with root privileges
+	//   - HasSudo: Passwordless sudo access is available
+	//   - CanRawSocket: Ability to create raw network sockets
+	//   - Features: Tool-specific feature availability flags
+	//   - BlockedArgs: Command-line arguments that cannot be used
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//   - toolName: Name of the tool to query (must be registered)
+	//
+	// Returns:
+	//   - *sdktypes.Capabilities: The tool's runtime capabilities
+	//   - error: Non-nil if tool not found or capabilities unavailable
+	//
+	// Example:
+	//   caps, err := harness.GetToolCapabilities(ctx, "nmap")
+	//   if err != nil {
+	//       return err
+	//   }
+	//   if caps.CanRawSocket {
+	//       // Use stealth scan (-sS)
+	//   } else {
+	//       // Fall back to connect scan (-sT)
+	//   }
+	GetToolCapabilities(ctx context.Context, toolName string) (*sdktypes.Capabilities, error)
+
+	// GetAllToolCapabilities returns capabilities for all registered tools.
+	// This enables agents to understand tool privilege requirements and limitations.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and tracing
+	//
+	// Returns:
+	//   - map[string]*sdktypes.Capabilities: Map of tool names to their capabilities
+	//   - error: Non-nil if retrieval fails
+	//
+	// Tools that don't implement CapabilityProvider are excluded from the result.
+	// The returned map can be stored in working memory for agent access.
+	//
+	// Example:
+	//   caps, err := harness.GetAllToolCapabilities(ctx)
+	//   if err == nil {
+	//       harness.Memory().Working().Set(ctx, "tool_capabilities", caps)
+	//   }
+	GetAllToolCapabilities(ctx context.Context) (map[string]*sdktypes.Capabilities, error)
 
 	// ────────────────────────────────────────────────────────────────────────────
 	// Plugin Access

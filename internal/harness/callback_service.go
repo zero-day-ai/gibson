@@ -18,6 +18,7 @@ import (
 	// Import toolspb to register proto message types for CallToolProto reflection
 	_ "github.com/zero-day-ai/sdk/api/gen/toolspb"
 	sdkfinding "github.com/zero-day-ai/sdk/finding"
+	"github.com/zero-day-ai/sdk/queue"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
 	"github.com/zero-day-ai/sdk/schema"
 	"go.opentelemetry.io/otel/attribute"
@@ -108,6 +109,9 @@ type HarnessCallbackService struct {
 	// discoveryProcessor processes DiscoveryResult from tool responses and stores to Neo4j
 	discoveryProcessor DiscoveryProcessor
 
+	// queueManager provides access to the Redis work queue for parallel tool execution
+	queueManager *QueueManager
+
 	// mu protects spanProcessors for concurrent access
 	mu sync.RWMutex
 
@@ -166,6 +170,14 @@ func WithGraphLoader(graphLoader *loader.GraphLoader) CallbackServiceOption {
 func WithDiscoveryProcessor(processor DiscoveryProcessor) CallbackServiceOption {
 	return func(s *HarnessCallbackService) {
 		s.discoveryProcessor = processor
+	}
+}
+
+// WithQueueManager sets the QueueManager for Redis-based work queue operations.
+// When set, the callback service can queue tool work and stream results back to agents.
+func WithQueueManager(queueMgr *QueueManager) CallbackServiceOption {
+	return func(s *HarnessCallbackService) {
+		s.queueManager = queueMgr
 	}
 }
 
@@ -585,7 +597,7 @@ func (s *HarnessCallbackService) CallToolProto(ctx context.Context, req *pb.Call
 		s.logger.Error("tool not found", "error", err, "tool", req.Name)
 		return &pb.CallToolProtoResponse{
 			Error: &pb.HarnessError{
-				Code:    pb.ErrorCode_ERROR_CODE_TOOL_NOT_FOUND,
+				Code:    pb.ErrorCode_ERROR_CODE_NOT_FOUND,
 				Message: fmt.Sprintf("tool not found: %s", req.Name),
 			},
 		}, nil
@@ -743,6 +755,140 @@ func (s *HarnessCallbackService) ListTools(ctx context.Context, req *pb.ListTool
 
 	return &pb.ListToolsResponse{
 		Tools: protoTools,
+	}, nil
+}
+
+
+// QueueToolWork implements the queue-based parallel tool execution RPC.
+// It queues multiple tool invocations to Redis for processing by distributed workers.
+func (s *HarnessCallbackService) QueueToolWork(ctx context.Context, req *pb.QueueToolWorkRequest) (*pb.QueueToolWorkResponse, error) {
+	// Check if queue manager is available
+	if s.queueManager == nil {
+		s.logger.Error("queue manager not configured", "tool", req.ToolName)
+		return &pb.QueueToolWorkResponse{
+			Error: &pb.HarnessError{
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
+				Message: "queue-based tool execution not available (Redis not configured)",
+			},
+		}, nil
+	}
+
+	// Publish tool.queue.started event
+	s.publishEvent(ctx, "tool.queue.started", map[string]interface{}{
+		"tool_name":      req.ToolName,
+		"mission_id":     req.Context.MissionId,
+		"agent_name":     req.Context.AgentName,
+		"task_id":        req.Context.TaskId,
+		"parent_span_id": req.Context.SpanId,
+		"input_type":     req.InputType,
+		"output_type":    req.OutputType,
+		"input_count":    len(req.InputJsons),
+	})
+
+	// Generate UUID for job ID
+	jobID := uuid.New().String()
+
+	// Get queue client
+	queueClient := s.queueManager.Client()
+
+	// Validate tool exists by checking Redis tools:available set
+	availableTools, err := queueClient.ListTools(ctx)
+	if err != nil {
+		s.logger.Error("failed to list available tools", "error", err)
+		return &pb.QueueToolWorkResponse{
+			Error: &pb.HarnessError{
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
+				Message: fmt.Sprintf("failed to check tool availability: %v", err),
+			},
+		}, nil
+	}
+
+	// Check if requested tool is available
+	toolFound := false
+	for _, tool := range availableTools {
+		if tool.Name == req.ToolName {
+			toolFound = true
+			break
+		}
+	}
+
+	if !toolFound {
+		s.logger.Warn("tool not found in queue", "tool", req.ToolName, "available", len(availableTools))
+		return &pb.QueueToolWorkResponse{
+			Error: &pb.HarnessError{
+				Code:    pb.ErrorCode_ERROR_CODE_NOT_FOUND,
+				Message: fmt.Sprintf("tool %s not available in queue (no workers registered)", req.ToolName),
+			},
+		}, nil
+	}
+
+	// Extract trace context from current span
+	var traceID, spanID string
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		spanCtx := span.SpanContext()
+		traceID = spanCtx.TraceID().String()
+		spanID = spanCtx.SpanID().String()
+	}
+
+	// Current timestamp for submitted_at
+	submittedAt := time.Now().UnixMilli()
+
+	// Queue name for this tool
+	queueName := fmt.Sprintf("tool:%s:queue", req.ToolName)
+
+	// Push work items to Redis queue
+	total := len(req.InputJsons)
+	for i, inputJSON := range req.InputJsons {
+		workItem := queue.WorkItem{
+			JobID:       jobID,
+			Index:       i,
+			Total:       total,
+			Tool:        req.ToolName,
+			InputJSON:   inputJSON,
+			InputType:   req.InputType,
+			OutputType:  req.OutputType,
+			TraceID:     traceID,
+			SpanID:      spanID,
+			SubmittedAt: submittedAt,
+		}
+
+		// Validate work item before pushing
+		if err := workItem.IsValid(); err != nil {
+			s.logger.Error("invalid work item", "error", err, "index", i)
+			return &pb.QueueToolWorkResponse{
+				Error: &pb.HarnessError{
+					Code:    pb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
+					Message: fmt.Sprintf("invalid work item at index %d: %v", i, err),
+				},
+			}, nil
+		}
+
+		// Push to queue
+		if err := queueClient.Push(ctx, queueName, workItem); err != nil {
+			s.logger.Error("failed to push work item to queue",
+				"error", err,
+				"tool", req.ToolName,
+				"job_id", jobID,
+				"index", i,
+			)
+			return &pb.QueueToolWorkResponse{
+				Error: &pb.HarnessError{
+					Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
+					Message: fmt.Sprintf("failed to queue work item %d: %v", i, err),
+				},
+			}, nil
+		}
+	}
+
+	s.logger.Info("queued tool work",
+		"tool", req.ToolName,
+		"job_id", jobID,
+		"count", total,
+		"queue", queueName,
+	)
+
+	return &pb.QueueToolWorkResponse{
+		JobId: jobID,
 	}, nil
 }
 

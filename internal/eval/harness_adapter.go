@@ -96,6 +96,14 @@ func (a *GibsonHarnessAdapter) CallToolProto(ctx context.Context, name string, r
 	return a.inner.CallToolProto(ctx, name, request, response)
 }
 
+// CallToolProtoStream invokes a tool with streaming support.
+// This is a placeholder implementation that falls back to non-streaming execution.
+func (a *GibsonHarnessAdapter) CallToolProtoStream(ctx context.Context, name string, request, response proto.Message, callback agent.ToolStreamCallback) error {
+	// For now, delegate to non-streaming CallToolProto
+	// Future: implement actual streaming through the harness
+	return a.inner.CallToolProto(ctx, name, request, response)
+}
+
 // ListTools returns descriptors for all available tools.
 func (a *GibsonHarnessAdapter) ListTools(ctx context.Context) ([]tool.Descriptor, error) {
 	gibsonTools := a.inner.ListTools()
@@ -733,6 +741,20 @@ func (a *GibsonHarnessAdapter) QueryNodes(ctx context.Context, query *graphragpb
 // StoreNode stores a graph node using proto message.
 func (a *GibsonHarnessAdapter) StoreNode(ctx context.Context, node *graphragpb.GraphNode) (string, error) {
 	return "", ErrNotImplemented
+}
+
+// QueueToolWork queues multiple tool executions for parallel processing.
+// Not implemented in eval adapter.
+func (a *GibsonHarnessAdapter) QueueToolWork(ctx context.Context, toolName string, inputs []proto.Message) (string, error) {
+	return "", ErrNotImplemented
+}
+
+// ToolResults returns a channel for receiving results from a queued tool job.
+// Not implemented in eval adapter.
+func (a *GibsonHarnessAdapter) ToolResults(ctx context.Context, jobID string) <-chan agent.QueuedToolResult {
+	ch := make(chan agent.QueuedToolResult)
+	close(ch)
+	return ch
 }
 
 var _ agent.Harness = (*GibsonHarnessAdapter)(nil)

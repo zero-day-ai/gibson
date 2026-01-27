@@ -97,6 +97,10 @@ type ToolSummary struct {
 	// OutputSchema contains the JSON schema for output (optional, omitted if empty)
 	OutputSchema map[string]any `json:"output_schema,omitempty"`
 
+	// Capabilities describes runtime privileges and features available to the tool.
+	// Nil if the tool does not implement CapabilityProvider or has no specific requirements.
+	Capabilities *CapabilitiesSummary `json:"capabilities,omitempty"`
+
 	// Instances is the number of running instances
 	Instances int `json:"instances"`
 
@@ -162,6 +166,28 @@ type MethodSummary struct {
 
 	// OutputSummary provides a brief description of output format
 	OutputSummary string `json:"output_summary"`
+}
+
+// CapabilitiesSummary describes runtime privileges and features available to a tool.
+// This is the orchestrator's representation of tool capabilities for prompt formatting.
+type CapabilitiesSummary struct {
+	// HasRoot indicates the tool is running as uid 0 (root user)
+	HasRoot bool `json:"has_root"`
+
+	// HasSudo indicates passwordless sudo access is available
+	HasSudo bool `json:"has_sudo"`
+
+	// CanRawSocket indicates the ability to create raw network sockets
+	CanRawSocket bool `json:"can_raw_socket"`
+
+	// Features contains tool-specific feature availability flags
+	Features map[string]bool `json:"features,omitempty"`
+
+	// BlockedArgs lists command-line arguments that cannot be used
+	BlockedArgs []string `json:"blocked_args,omitempty"`
+
+	// ArgAlternatives maps blocked arguments to their safer alternatives
+	ArgAlternatives map[string]string `json:"arg_alternatives,omitempty"`
 }
 
 // HasAgent checks if an agent with the given name exists in the inventory.

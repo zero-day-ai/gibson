@@ -437,16 +437,106 @@ func displayDaemonTools(cmd *cobra.Command, tools []dclient.ToolInfo, filter str
 		tools = filtered
 	}
 
-	// Display table
+	// If filter is set (showing single tool detail), display detailed view with capabilities
+	if filter != "" && len(tools) > 0 {
+		return displayToolsDetailed(cmd, tools)
+	}
+
+	// Display summary table
 	fmt.Printf("\nTOOLS (%d registered)\n\n", len(tools))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tADDRESS")
+	fmt.Fprintln(w, "NAME\tVERSION\tSTATUS\tPRIVILEGES\tADDRESS")
 	for _, t := range tools {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", t.Name, t.Version, t.Status, t.Address)
+		privileges := formatPrivileges(t.Capabilities)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", t.Name, t.Version, t.Status, privileges, t.Address)
 	}
 	w.Flush()
 
 	return nil
+}
+
+// displayToolsDetailed displays detailed information about tools including capabilities.
+func displayToolsDetailed(cmd *cobra.Command, tools []dclient.ToolInfo) error {
+	for i, t := range tools {
+		if i > 0 {
+			fmt.Println()
+		}
+
+		fmt.Printf("Tool: %s\n", t.Name)
+		fmt.Printf("Version: %s\n", t.Version)
+		fmt.Printf("Description: %s\n", t.Description)
+		fmt.Printf("Status: %s\n", t.Status)
+		fmt.Printf("Address: %s\n", t.Address)
+
+		if t.Capabilities != nil {
+			fmt.Printf("\nCapabilities:\n")
+
+			// Privilege level
+			if t.Capabilities.HasRoot {
+				fmt.Printf("  Privileges: root (full access)\n")
+			} else if t.Capabilities.HasSudo {
+				fmt.Printf("  Privileges: sudo (passwordless escalation available)\n")
+			} else if t.Capabilities.CanRawSocket {
+				fmt.Printf("  Privileges: unprivileged with raw socket capability\n")
+			} else {
+				fmt.Printf("  Privileges: unprivileged (no root, no sudo, no raw socket)\n")
+			}
+
+			// Blocked arguments
+			if len(t.Capabilities.BlockedArgs) > 0 {
+				fmt.Printf("  Blocked flags: %s\n", strings.Join(t.Capabilities.BlockedArgs, ", "))
+			}
+
+			// Argument alternatives
+			if len(t.Capabilities.ArgAlternatives) > 0 {
+				fmt.Printf("  Available alternatives:\n")
+				for blocked, alternative := range t.Capabilities.ArgAlternatives {
+					fmt.Printf("    - Use %s instead of %s\n", alternative, blocked)
+				}
+			}
+
+			// Features
+			if len(t.Capabilities.Features) > 0 {
+				var enabledFeatures []string
+				var disabledFeatures []string
+				for feature, enabled := range t.Capabilities.Features {
+					if enabled {
+						enabledFeatures = append(enabledFeatures, feature)
+					} else {
+						disabledFeatures = append(disabledFeatures, feature)
+					}
+				}
+				if len(enabledFeatures) > 0 {
+					fmt.Printf("  Available features: %s\n", strings.Join(enabledFeatures, ", "))
+				}
+				if len(disabledFeatures) > 0 {
+					fmt.Printf("  Unavailable features: %s\n", strings.Join(disabledFeatures, ", "))
+				}
+			}
+		} else {
+			fmt.Printf("\nCapabilities: not reported\n")
+		}
+	}
+
+	return nil
+}
+
+// formatPrivileges returns a short string summarizing tool privileges.
+func formatPrivileges(caps *dclient.Capabilities) string {
+	if caps == nil {
+		return "unknown"
+	}
+
+	if caps.HasRoot {
+		return "root"
+	}
+	if caps.HasSudo {
+		return "sudo"
+	}
+	if caps.CanRawSocket {
+		return "rawsock"
+	}
+	return "unprivileged"
 }
 
 // displayDaemonPlugins displays plugin components from daemon.

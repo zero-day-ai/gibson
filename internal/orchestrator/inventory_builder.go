@@ -321,6 +321,19 @@ func (b *InventoryBuilder) convertToolInfo(info registry.ToolInfo) ToolSummary {
 		healthStatus = "unavailable"
 	}
 
+	// Convert capabilities if present
+	var capabilities *CapabilitiesSummary
+	if info.Capabilities != nil {
+		capabilities = &CapabilitiesSummary{
+			HasRoot:         info.Capabilities.HasRoot,
+			HasSudo:         info.Capabilities.HasSudo,
+			CanRawSocket:    info.Capabilities.CanRawSocket,
+			Features:        info.Capabilities.Features,
+			BlockedArgs:     info.Capabilities.BlockedArgs,
+			ArgAlternatives: info.Capabilities.ArgAlternatives,
+		}
+	}
+
 	return ToolSummary{
 		Name:          info.Name,
 		Version:       info.Version,
@@ -328,6 +341,7 @@ func (b *InventoryBuilder) convertToolInfo(info registry.ToolInfo) ToolSummary {
 		Tags:          []string{}, // TODO: Fetch from descriptor when available
 		InputSummary:  "",         // TODO: Generate from schema
 		OutputSummary: "",         // TODO: Generate from schema
+		Capabilities:  capabilities,
 		Instances:     info.Instances,
 		HealthStatus:  healthStatus,
 		IsExternal:    len(info.Endpoints) > 0,

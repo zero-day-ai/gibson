@@ -178,13 +178,14 @@ type AgentStatusInternal struct {
 // ToolInfoInternal represents tool information for internal daemon operations.
 // This is separate from the proto-generated ToolInfo to avoid naming conflicts.
 type ToolInfoInternal struct {
-	ID          string
-	Name        string
-	Version     string
-	Endpoint    string
-	Description string
-	Health      string
-	LastSeen    time.Time
+	ID           string
+	Name         string
+	Version      string
+	Endpoint     string
+	Description  string
+	Health       string
+	LastSeen     time.Time
+	Capabilities *Capabilities
 }
 
 // PluginInfoInternal represents plugin information for internal daemon operations.
@@ -759,14 +760,26 @@ func (s *DaemonServer) ListTools(ctx context.Context, req *ListToolsRequest) (*L
 	// Convert to proto messages
 	protoTools := make([]*ToolInfo, len(tools))
 	for i, t := range tools {
+		var protoCaps *Capabilities
+		if t.Capabilities != nil {
+			protoCaps = &Capabilities{
+				HasRoot:         t.Capabilities.HasRoot,
+				HasSudo:         t.Capabilities.HasSudo,
+				CanRawSocket:    t.Capabilities.CanRawSocket,
+				Features:        t.Capabilities.Features,
+				BlockedArgs:     t.Capabilities.BlockedArgs,
+				ArgAlternatives: t.Capabilities.ArgAlternatives,
+			}
+		}
 		protoTools[i] = &ToolInfo{
-			Id:          t.ID,
-			Name:        t.Name,
-			Version:     t.Version,
-			Endpoint:    t.Endpoint,
-			Description: t.Description,
-			Health:      t.Health,
-			LastSeen:    t.LastSeen.Unix(),
+			Id:           t.ID,
+			Name:         t.Name,
+			Version:      t.Version,
+			Endpoint:     t.Endpoint,
+			Description:  t.Description,
+			Health:       t.Health,
+			LastSeen:     t.LastSeen.Unix(),
+			Capabilities: protoCaps,
 		}
 	}
 

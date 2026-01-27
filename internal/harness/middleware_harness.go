@@ -11,6 +11,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/memory"
 	"github.com/zero-day-ai/gibson/internal/types"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
+	sdktypes "github.com/zero-day-ai/sdk/types"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
@@ -183,6 +184,12 @@ func (h *MiddlewareHarness) Target() TargetInfo          { return h.inner.Target
 func (h *MiddlewareHarness) ListTools() []ToolDescriptor { return h.inner.ListTools() }
 func (h *MiddlewareHarness) GetToolDescriptor(ctx context.Context, name string) (*ToolDescriptor, error) {
 	return h.inner.GetToolDescriptor(ctx, name)
+}
+func (h *MiddlewareHarness) GetToolCapabilities(ctx context.Context, toolName string) (*sdktypes.Capabilities, error) {
+	return h.inner.GetToolCapabilities(ctx, toolName)
+}
+func (h *MiddlewareHarness) GetAllToolCapabilities(ctx context.Context) (map[string]*sdktypes.Capabilities, error) {
+	return h.inner.GetAllToolCapabilities(ctx)
 }
 func (h *MiddlewareHarness) ListPlugins() []PluginDescriptor { return h.inner.ListPlugins() }
 func (h *MiddlewareHarness) ListAgents() []AgentDescriptor   { return h.inner.ListAgents() }

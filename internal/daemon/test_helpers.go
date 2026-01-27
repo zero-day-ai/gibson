@@ -14,6 +14,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/registry"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/types"
+	sdktypes "github.com/zero-day-ai/sdk/types"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 )
@@ -215,6 +216,14 @@ func (m *mockAgentHarness) ListTools() []harness.ToolDescriptor {
 }
 
 func (m *mockAgentHarness) GetToolDescriptor(ctx context.Context, name string) (*harness.ToolDescriptor, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) GetToolCapabilities(ctx context.Context, toolName string) (*sdktypes.Capabilities, error) {
+	return nil, fmt.Errorf("not implemented in mock")
+}
+
+func (m *mockAgentHarness) GetAllToolCapabilities(ctx context.Context) (map[string]*sdktypes.Capabilities, error) {
 	return nil, fmt.Errorf("not implemented in mock")
 }
 

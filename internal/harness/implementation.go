@@ -14,6 +14,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
+	sdktypes "github.com/zero-day-ai/sdk/types"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -738,6 +739,171 @@ func (h *DefaultAgentHarness) GetToolDescriptor(ctx context.Context, name string
 		fmt.Sprintf("tool not found: %s", name),
 		err,
 	)
+}
+
+// GetToolCapabilities retrieves runtime capabilities for a specific registered tool.
+// Returns nil if the tool doesn't implement CapabilityProvider.
+func (h *DefaultAgentHarness) GetToolCapabilities(ctx context.Context, toolName string) (*sdktypes.Capabilities, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.GetToolCapabilities")
+	defer span.End()
+
+	h.logger.Debug("retrieving capabilities for tool", "tool", toolName)
+
+	// Try to get tool from local registry first
+	t, err := h.toolRegistry.Get(toolName)
+	if err != nil {
+		// Tool not found locally - try to discover via registry adapter
+		if h.registryAdapter != nil {
+			h.logger.Debug("tool not found locally, attempting remote discovery for capabilities",
+				"tool", toolName)
+
+			remoteTool, discErr := h.registryAdapter.DiscoverTool(ctx, toolName)
+			if discErr != nil {
+				h.logger.Error("tool not found (local or remote)",
+					"tool", toolName,
+					"local_error", err,
+					"discovery_error", discErr)
+				return nil, types.WrapError(
+					ErrHarnessToolExecutionFailed,
+					fmt.Sprintf("tool not found: %s", toolName),
+					err,
+				)
+			}
+
+			// Use discovered remote tool
+			t = remoteTool
+		} else {
+			// No registry adapter, can't discover remotely
+			h.logger.Error("tool not found locally and no registry adapter available",
+				"tool", toolName,
+				"error", err)
+			return nil, types.WrapError(
+				ErrHarnessToolExecutionFailed,
+				fmt.Sprintf("tool not found: %s", toolName),
+				err,
+			)
+		}
+	}
+
+	// Check if tool implements CapabilityProvider
+	type capabilityProvider interface {
+		Capabilities(ctx context.Context) *sdktypes.Capabilities
+	}
+
+	if provider, ok := t.(capabilityProvider); ok {
+		caps := provider.Capabilities(ctx)
+		if caps != nil {
+			h.logger.Debug("retrieved capabilities for tool",
+				"tool", toolName,
+				"has_root", caps.HasRoot,
+				"has_sudo", caps.HasSudo,
+				"can_raw_socket", caps.CanRawSocket,
+				"blocked_args_count", len(caps.BlockedArgs))
+			return caps, nil
+		}
+	}
+
+	// Tool doesn't implement CapabilityProvider or returned nil
+	h.logger.Debug("tool does not provide capabilities",
+		"tool", toolName)
+	return nil, nil
+}
+
+// GetAllToolCapabilities returns capabilities for all registered tools.
+// Tools that don't implement CapabilityProvider are excluded from the result.
+func (h *DefaultAgentHarness) GetAllToolCapabilities(ctx context.Context) (map[string]*sdktypes.Capabilities, error) {
+	// Create span for distributed tracing
+	ctx, span := h.tracer.Start(ctx, "harness.GetAllToolCapabilities")
+	defer span.End()
+
+	h.logger.Debug("retrieving capabilities for all tools")
+
+	// Get all tool descriptors from local registry
+	toolDescriptors := h.toolRegistry.List()
+
+	result := make(map[string]*sdktypes.Capabilities)
+
+	// Query each tool for capabilities
+	for _, desc := range toolDescriptors {
+		// Get the tool instance
+		t, err := h.toolRegistry.Get(desc.Name)
+		if err != nil {
+			h.logger.Warn("failed to get tool from registry",
+				"tool", desc.Name,
+				"error", err)
+			continue
+		}
+
+		// Check if tool implements CapabilityProvider
+		// Use SDK helper to safely check and retrieve capabilities
+		type capabilityProvider interface {
+			Capabilities(ctx context.Context) *sdktypes.Capabilities
+		}
+
+		if provider, ok := t.(capabilityProvider); ok {
+			caps := provider.Capabilities(ctx)
+			if caps != nil {
+				result[desc.Name] = caps
+				h.logger.Debug("retrieved capabilities for tool",
+					"tool", desc.Name,
+					"has_root", caps.HasRoot,
+					"has_sudo", caps.HasSudo,
+					"can_raw_socket", caps.CanRawSocket,
+					"blocked_args_count", len(caps.BlockedArgs))
+			}
+		}
+	}
+
+	// If registry adapter is available, query remote tools as well
+	if h.registryAdapter != nil {
+		remoteTools, err := h.registryAdapter.ListTools(ctx)
+		if err != nil {
+			h.logger.Warn("failed to list remote tools for capabilities",
+				"error", err)
+			// Continue with just local tools
+		} else {
+			// Query remote tools for capabilities
+			for _, remoteTool := range remoteTools {
+				// Skip if already have local tool with same name
+				if _, exists := result[remoteTool.Name]; exists {
+					continue
+				}
+
+				// Discover the remote tool
+				t, err := h.registryAdapter.DiscoverTool(ctx, remoteTool.Name)
+				if err != nil {
+					h.logger.Warn("failed to discover remote tool",
+						"tool", remoteTool.Name,
+						"error", err)
+					continue
+				}
+
+				// Check if remote tool implements CapabilityProvider
+				type capabilityProvider interface {
+					Capabilities(ctx context.Context) *sdktypes.Capabilities
+				}
+
+				if provider, ok := t.(capabilityProvider); ok {
+					caps := provider.Capabilities(ctx)
+					if caps != nil {
+						result[remoteTool.Name] = caps
+						h.logger.Debug("retrieved capabilities for remote tool",
+							"tool", remoteTool.Name,
+							"has_root", caps.HasRoot,
+							"has_sudo", caps.HasSudo,
+							"can_raw_socket", caps.CanRawSocket,
+							"blocked_args_count", len(caps.BlockedArgs))
+					}
+				}
+			}
+		}
+	}
+
+	h.logger.Info("retrieved tool capabilities",
+		"tools_with_capabilities", len(result))
+
+	return result, nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────

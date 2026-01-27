@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"reflect"
@@ -11,6 +12,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
+	"github.com/zero-day-ai/sdk/types"
 )
 
 // CallbackManager provides callback server functionality for agent harness operations.
@@ -193,6 +195,10 @@ type ToolInfo struct {
 
 	// Endpoints lists all instance endpoints
 	Endpoints []string `json:"endpoints"`
+
+	// Capabilities describes runtime privileges and features available to the tool.
+	// Nil if the tool does not implement CapabilityProvider or has no specific requirements.
+	Capabilities *types.Capabilities `json:"capabilities,omitempty"`
 }
 
 // PluginInfo provides metadata about a registered plugin.
@@ -569,13 +575,20 @@ func (a *RegistryAdapter) ListTools(ctx context.Context) ([]ToolInfo, error) {
 			info.Instances++
 			info.Endpoints = append(info.Endpoints, inst.Endpoint)
 		} else {
+			// Parse capabilities from metadata if present
+			var caps *types.Capabilities
+			if capsJSON, ok := inst.Metadata["capabilities"]; ok && capsJSON != "" {
+				caps = parseCapabilitiesJSON(capsJSON)
+			}
+
 			// Create new entry
 			toolMap[inst.Name] = &ToolInfo{
-				Name:        inst.Name,
-				Version:     inst.Version,
-				Description: inst.Metadata["description"],
-				Instances:   1,
-				Endpoints:   []string{inst.Endpoint},
+				Name:         inst.Name,
+				Version:      inst.Version,
+				Description:  inst.Metadata["description"],
+				Instances:    1,
+				Endpoints:    []string{inst.Endpoint},
+				Capabilities: caps,
 			}
 		}
 	}
@@ -1027,4 +1040,25 @@ type NoHealthyInstancesError struct {
 // Error implements the error interface.
 func (e *NoHealthyInstancesError) Error() string {
 	return fmt.Sprintf("no healthy instances of '%s' available (%d total instances)", e.Name, e.Total)
+}
+
+// parseCapabilitiesJSON deserializes a JSON-encoded Capabilities struct from metadata.
+//
+// Returns nil if the JSON is empty, invalid, or cannot be parsed. This ensures
+// graceful handling of tools that don't provide capabilities.
+//
+// Example input: {"has_root":true,"can_raw_socket":false,"features":{"stealth_scan":false}}
+func parseCapabilitiesJSON(capsJSON string) *types.Capabilities {
+	if capsJSON == "" {
+		return nil
+	}
+
+	var caps types.Capabilities
+	if err := json.Unmarshal([]byte(capsJSON), &caps); err != nil {
+		// Log the error but return nil to allow graceful degradation
+		slog.Warn("failed to parse tool capabilities JSON", "error", err, "json", capsJSON)
+		return nil
+	}
+
+	return &caps
 }

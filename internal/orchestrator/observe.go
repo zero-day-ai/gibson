@@ -660,6 +660,74 @@ func (s *ObservationState) FormatForPrompt() string {
 	}
 	sb.WriteString("\n")
 
+	// Tool capabilities (if available)
+	if s.ComponentInventory != nil {
+		// Check if any tools have non-nil capabilities
+		hasCapabilities := false
+		for _, tool := range s.ComponentInventory.Tools {
+			if tool.Capabilities != nil {
+				hasCapabilities = true
+				break
+			}
+		}
+
+		if hasCapabilities {
+			sb.WriteString("=== TOOL CAPABILITIES ===\n")
+			for _, tool := range s.ComponentInventory.Tools {
+				if tool.Capabilities == nil {
+					continue
+				}
+
+				caps := tool.Capabilities
+				sb.WriteString(fmt.Sprintf("\n### %s\n", tool.Name))
+
+				// Privilege level
+				if caps.HasRoot {
+					sb.WriteString("- Privileges: root (full access)\n")
+				} else if caps.HasSudo {
+					sb.WriteString("- Privileges: sudo (passwordless escalation available)\n")
+				} else if caps.CanRawSocket {
+					sb.WriteString("- Privileges: unprivileged with raw socket capability\n")
+				} else {
+					sb.WriteString("- Privileges: unprivileged (no root, no sudo, no raw socket)\n")
+				}
+
+				// Blocked arguments
+				if len(caps.BlockedArgs) > 0 {
+					sb.WriteString(fmt.Sprintf("- Blocked flags: %s\n", strings.Join(caps.BlockedArgs, ", ")))
+				}
+
+				// Argument alternatives
+				if len(caps.ArgAlternatives) > 0 {
+					sb.WriteString("- Available alternatives:\n")
+					for blocked, alternative := range caps.ArgAlternatives {
+						sb.WriteString(fmt.Sprintf("  - Use %s instead of %s\n", alternative, blocked))
+					}
+				}
+
+				// Features
+				if len(caps.Features) > 0 {
+					var enabledFeatures []string
+					var disabledFeatures []string
+					for feature, enabled := range caps.Features {
+						if enabled {
+							enabledFeatures = append(enabledFeatures, feature)
+						} else {
+							disabledFeatures = append(disabledFeatures, feature)
+						}
+					}
+					if len(enabledFeatures) > 0 {
+						sb.WriteString(fmt.Sprintf("- Available features: %s\n", strings.Join(enabledFeatures, ", ")))
+					}
+					if len(disabledFeatures) > 0 {
+						sb.WriteString(fmt.Sprintf("- Unavailable features: %s\n", strings.Join(disabledFeatures, ", ")))
+					}
+				}
+			}
+			sb.WriteString("\n")
+		}
+	}
+
 	// Ready nodes (most important for decision making)
 	if len(s.ReadyNodes) > 0 {
 		sb.WriteString("=== READY NODES (Can Execute Now) ===\n")

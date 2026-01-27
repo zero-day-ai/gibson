@@ -210,6 +210,30 @@ func (f *DefaultHarnessFactory) Create(agentName string, missionCtx MissionConte
 		logger.Debug("mission management disabled for harness (no mission client configured)")
 	}
 
+	// Store tool capabilities in working memory for agent access
+	// This allows agents to check tool privilege requirements before execution
+	if memoryStore != nil {
+		ctx := context.Background()
+		caps, err := harness.GetAllToolCapabilities(ctx)
+		if err != nil {
+			logger.Warn("failed to retrieve tool capabilities for working memory",
+				slog.String("error", err.Error()),
+			)
+		} else if len(caps) > 0 {
+			// Store capabilities in working memory under "tool_capabilities" key
+			err = memoryStore.Working().Set("tool_capabilities", caps)
+			if err != nil {
+				logger.Warn("failed to store tool capabilities in working memory",
+					slog.String("error", err.Error()),
+				)
+			} else {
+				logger.Info("stored tool capabilities in working memory",
+					slog.Int("tools_with_capabilities", len(caps)),
+				)
+			}
+		}
+	}
+
 	return harness, nil
 }
 

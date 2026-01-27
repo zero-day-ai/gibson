@@ -287,3 +287,8 @@ func (c *GRPCToolClient) fetchDescriptor(ctx context.Context) (*toolDescriptor, 
 	c.descriptor = desc
 	return desc, nil
 }
+
+// GetConn returns the underlying gRPC connection for streaming operations.
+func (c *GRPCToolClient) GetConn() *grpc.ClientConn {
+	return c.conn
+}

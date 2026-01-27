@@ -97,12 +97,25 @@ func convertProtoTools(tools []*api.ToolInfo) []ToolInfo {
 			continue
 		}
 
+		var caps *Capabilities
+		if t.Capabilities != nil {
+			caps = &Capabilities{
+				HasRoot:         t.Capabilities.HasRoot,
+				HasSudo:         t.Capabilities.HasSudo,
+				CanRawSocket:    t.Capabilities.CanRawSocket,
+				Features:        t.Capabilities.Features,
+				BlockedArgs:     t.Capabilities.BlockedArgs,
+				ArgAlternatives: t.Capabilities.ArgAlternatives,
+			}
+		}
+
 		result = append(result, ToolInfo{
-			Name:        t.Name,
-			Version:     t.Version,
-			Description: t.Description,
-			Address:     t.Endpoint,
-			Status:      t.Health,
+			Name:         t.Name,
+			Version:      t.Version,
+			Description:  t.Description,
+			Address:      t.Endpoint,
+			Status:       t.Health,
+			Capabilities: caps,
 		})
 	}
 

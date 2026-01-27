@@ -295,11 +295,22 @@ type AgentInfo struct {
 
 // ToolInfo represents information about a registered tool.
 type ToolInfo struct {
-	Name        string
-	Version     string
-	Description string
-	Address     string
-	Status      string
+	Name         string
+	Version      string
+	Description  string
+	Address      string
+	Status       string
+	Capabilities *Capabilities
+}
+
+// Capabilities represents the runtime privileges and features available to a tool.
+type Capabilities struct {
+	HasRoot         bool
+	HasSudo         bool
+	CanRawSocket    bool
+	Features        map[string]bool
+	BlockedArgs     []string
+	ArgAlternatives map[string]string
 }
 
 // PluginInfo represents information about a registered plugin.

@@ -408,6 +408,27 @@ message ListToolsResponse {
   repeated ToolInfo tools = 1;
 }
 
+// Capabilities describes runtime privileges and features available to a tool.
+message Capabilities {
+  // has_root indicates the tool is running as uid 0 (root user)
+  bool has_root = 1;
+
+  // has_sudo indicates passwordless sudo access is available
+  bool has_sudo = 2;
+
+  // can_raw_socket indicates the ability to create raw network sockets
+  bool can_raw_socket = 3;
+
+  // features contains tool-specific feature availability flags
+  map<string, bool> features = 4;
+
+  // blocked_args lists command-line arguments that cannot be used
+  repeated string blocked_args = 5;
+
+  // arg_alternatives maps blocked arguments to their safer alternatives
+  map<string, string> arg_alternatives = 6;
+}
+
 // ToolInfo describes a registered tool.
 message ToolInfo {
   // id is the unique tool identifier
@@ -430,6 +451,9 @@ message ToolInfo {
 
   // last_seen is when the tool was last seen (Unix timestamp)
   int64 last_seen = 7;
+
+  // capabilities describes runtime privileges and features (optional)
+  Capabilities capabilities = 8;
 }
 
 // ListPluginsRequest queries plugin registry.

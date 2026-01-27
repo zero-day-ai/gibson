@@ -213,6 +213,7 @@ func (d *daemonImpl) ListTools(ctx context.Context) ([]api.ToolInfoInternal, err
 	// Query registry to check which tools are running
 	runningTools := make(map[string]bool)
 	runningEndpoints := make(map[string]string)
+	toolCapabilities := make(map[string]*api.Capabilities)
 	if d.registryAdapter != nil {
 		running, err := d.registryAdapter.ListTools(ctx)
 		if err == nil {
@@ -220,6 +221,17 @@ func (d *daemonImpl) ListTools(ctx context.Context) ([]api.ToolInfoInternal, err
 				runningTools[r.Name] = true
 				if len(r.Endpoints) > 0 {
 					runningEndpoints[r.Name] = r.Endpoints[0]
+				}
+				// Capture capabilities if available
+				if r.Capabilities != nil {
+					toolCapabilities[r.Name] = &api.Capabilities{
+						HasRoot:         r.Capabilities.HasRoot,
+						HasSudo:         r.Capabilities.HasSudo,
+						CanRawSocket:    r.Capabilities.CanRawSocket,
+						Features:        r.Capabilities.Features,
+						BlockedArgs:     r.Capabilities.BlockedArgs,
+						ArgAlternatives: r.Capabilities.ArgAlternatives,
+					}
 				}
 			}
 		}
@@ -243,13 +255,14 @@ func (d *daemonImpl) ListTools(ctx context.Context) ([]api.ToolInfoInternal, err
 		}
 
 		result[i] = api.ToolInfoInternal{
-			ID:          tool.Name,
-			Name:        tool.Name,
-			Version:     tool.Version,
-			Endpoint:    endpoint,
-			Description: description,
-			Health:      health,
-			LastSeen:    tool.UpdatedAt,
+			ID:           tool.Name,
+			Name:         tool.Name,
+			Version:      tool.Version,
+			Endpoint:     endpoint,
+			Description:  description,
+			Health:       health,
+			LastSeen:     tool.UpdatedAt,
+			Capabilities: toolCapabilities[tool.Name],
 		}
 	}
 
