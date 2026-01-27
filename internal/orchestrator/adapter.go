@@ -237,8 +237,16 @@ func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mi
 	missionQueries := queries.NewMissionQueries(m.config.GraphRAGClient)
 	executionQueries := queries.NewExecutionQueries(m.config.GraphRAGClient)
 
-	// Create Observer
-	observer := NewObserver(missionQueries, executionQueries)
+	// Create inventory builder if registry available (used by both Observer and Actor)
+	var inventoryBuilder *InventoryBuilder
+	if m.config.Registry != nil {
+		inventoryBuilder = NewInventoryBuilder(m.config.Registry)
+	}
+
+	// Create Observer with inventory builder for component awareness in observations
+	observer := NewObserver(missionQueries, executionQueries,
+		WithInventoryBuilder(inventoryBuilder),
+	)
 
 	// Create harness for this mission
 	// Use the harness factory to create an appropriate harness
@@ -280,13 +288,12 @@ func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mi
 	// Create harness adapter for Actor
 	harnessAdapter := &orchestratorHarnessAdapter{harness: agentHarness}
 
-	// Build component inventory for validation (if registry available)
+	// Build component inventory snapshot for Actor validation
 	var inventory *ComponentInventory
-	if m.config.Registry != nil {
+	if inventoryBuilder != nil {
 		inventoryCtx, inventoryCancel := context.WithTimeout(ctx, 5*time.Second)
 		defer inventoryCancel()
 
-		inventoryBuilder := NewInventoryBuilder(m.config.Registry)
 		var err error
 		inventory, err = inventoryBuilder.Build(inventoryCtx)
 		if err != nil {
@@ -318,11 +325,6 @@ func (m *MissionAdapter) createOrchestrator(ctx context.Context, mis *mission.Mi
 		WithTracer(m.config.Tracer),
 		WithEventBus(m.config.EventBus),
 		WithDecisionLogWriter(m.config.DecisionLogWriter),
-	}
-
-	// Add component discovery if registry available
-	if m.config.Registry != nil {
-		orchOptions = append(orchOptions, WithComponentDiscovery(m.config.Registry))
 	}
 
 	orchestrator := NewOrchestrator(observer, thinker, actor, orchOptions...)

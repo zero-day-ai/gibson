@@ -502,7 +502,10 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 	}
 
 	// Create orchestrator components
-	observer := orchestrator.NewObserver(missionQueries, executionQueries)
+	// Pass inventoryBuilder to Observer so it can include available components in observations
+	observer := orchestrator.NewObserver(missionQueries, executionQueries,
+		orchestrator.WithInventoryBuilder(inventoryBuilder),
+	)
 	thinker := orchestrator.NewThinker(llmClient,
 		orchestrator.WithMaxRetries(3),
 		orchestrator.WithThinkerTemperature(0.2),
@@ -546,7 +549,6 @@ func (m *missionManager) executeMission(ctx context.Context, missionID string, d
 		orchestrator.WithMaxIterations(100),
 		orchestrator.WithMaxConcurrent(10),
 		orchestrator.WithLogger(m.logger.With("component", "orchestrator")),
-		orchestrator.WithComponentDiscovery(m.registry),
 	}
 
 	// Add decision log writer if available
