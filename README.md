@@ -1,38 +1,88 @@
 # Gibson
 
-**Autonomous LLM Red-Teaming Framework**
+**Autonomous Security Testing Framework**
 
-Gibson is an autonomous AI security testing platform for red-teaming LLM systems, RAG pipelines, and AI agents. It combines multi-agent orchestration, knowledge graphs, and workflow-based mission execution to conduct comprehensive security assessments.
+Gibson is an extensible framework for building and orchestrating autonomous security testing agents. It provides the infrastructure to rapidly develop agents that can test anything - APIs, networks, web applications, cloud infrastructure, smart contracts, LLMs, IoT devices, or any system you can write an agent for.
 
-## Features
+## What Gibson Does
 
-- **Autonomous Agent Coordination** - LLM-driven decision making with multi-agent orchestration
-- **Mission-Based Workflows** - DAG-based workflow execution with checkpointing and resumption
-- **Knowledge Graph Integration** - Neo4j-powered GraphRAG for semantic search and attack pattern discovery
-- **Real-Time Observability** - Langfuse and OpenTelemetry integration for tracing and monitoring
-- **Queue-Based Tool Execution** - Redis-powered distributed tool execution
-- **Extensible Architecture** - Agents, tools, and plugins can be developed with the SDK
+Gibson is **not** a security scanner. It's a **framework** that lets you:
+
+- **Build agents** that autonomously perform security testing tasks
+- **Orchestrate workflows** that coordinate multiple agents in complex testing scenarios
+- **Store knowledge** in a graph database for reasoning about attack paths and relationships
+- **Execute tools** in a distributed, queue-based architecture
+- **Track findings** with full provenance back to the agent and mission that discovered them
+
+Think of it as Kubernetes for security testing - you bring the agents, Gibson handles orchestration, scheduling, observability, and state management.
+
+## Core Concepts
+
+### Agents
+Autonomous units that perform security testing. An agent can be anything:
+- A network scanner that maps infrastructure
+- A web crawler that discovers endpoints
+- A fuzzer that tests input validation
+- A credential tester that checks authentication
+- An LLM red-teamer that probes AI systems
+- A smart contract auditor that analyzes bytecode
+
+Agents are built with the [Gibson SDK](../sdk) and can use any tools, call any APIs, and implement any testing logic.
+
+### Tools
+Reusable capabilities that agents invoke. Tools execute via a Redis queue for distributed processing:
+- Port scanners, DNS resolvers, HTTP clients
+- Exploit frameworks, payload generators
+- Cloud API wrappers, container inspectors
+- Custom integrations with your existing tooling
+
+### Missions
+YAML-defined workflows that orchestrate agents in a DAG (directed acyclic graph):
+- Sequential, parallel, and conditional execution
+- Checkpointing and resumption
+- Constraints (time, cost, finding limits)
+- Auto-installation of dependencies
+
+### GraphRAG
+Neo4j-powered knowledge graph that stores:
+- Discovered assets and their relationships
+- Attack patterns and technique mappings
+- Findings with full context
+- Semantic search over accumulated knowledge
+
+### Harness
+The runtime environment provided to agents:
+- LLM access (Anthropic, OpenAI, Ollama)
+- Tool invocation
+- Sub-agent delegation
+- Finding storage
+- Memory tiers (working, mission, long-term)
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Gibson CLI (Cobra)                       │
-│  mission | attack | agent | tool | target | credential |   │
-│  knowledge | payload | daemon | orchestrator | finding      │
+│                      Gibson CLI                             │
+│  mission | attack | agent | tool | target | finding | ...  │
 └────────────┬────────────────────────────────────────────────┘
              │
              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  Daemon (gRPC Server)                       │
-│  Long-running services for registry, callbacks, missions   │
+│     Orchestration · Registry · Callbacks · Persistence      │
 └────┬──────────────┬──────────────┬──────────────┬───────────┘
      │              │              │              │
      ▼              ▼              ▼              ▼
 ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐
-│  etcd   │  │ Callback │  │ Database │  │  GraphRAG    │
-│Registry │  │  Server  │  │ (SQLite) │  │  (Neo4j)     │
+│  etcd   │  │  Redis   │  │ Database │  │  GraphRAG    │
+│Registry │  │  Queue   │  │ (SQLite) │  │  (Neo4j)     │
 └─────────┘  └──────────┘  └──────────┘  └──────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Your Agents & Tools                       │
+│   network-scanner | web-fuzzer | cloud-auditor | ...        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -40,174 +90,129 @@ Gibson is an autonomous AI security testing platform for red-teaming LLM systems
 ### Prerequisites
 
 - Go 1.24+
-- Redis (for tool execution)
-- Neo4j (for GraphRAG - optional but recommended)
+- Redis 6.0+
+- Neo4j 5.0+ (optional, for GraphRAG)
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/zero-day-ai/gibson.git
 cd gibson
-
-# Build
 make build
-
-# Initialize Gibson
 ./bin/gibson init
 ```
 
-### Basic Usage
+### Run Your First Mission
 
 ```bash
 # Start the daemon
 gibson daemon start
 
 # Add a target
-gibson target add my-api --type http_api
-
-# Run a quick attack
-gibson attack --target my-api --agent prompt-injector
+gibson target add my-app --type http_api
 
 # Run a mission
-gibson mission run reconnaissance.yaml --target my-api
+gibson mission run recon.yaml --target my-app
 
-# Check findings
-gibson finding list --mission <mission-id>
+# View findings
+gibson finding list
 ```
 
-## CLI Commands
+## CLI Reference
 
-### Initialization & Configuration
+### Daemon
 
-| Command | Description |
-|---------|-------------|
-| `gibson init` | Initialize configuration, database, and encryption key |
-| `gibson config show` | Display current configuration |
-| `gibson config get <key>` | Get a specific configuration value |
-| `gibson config set <key> <value>` | Set a configuration value |
-| `gibson version` | Display version information |
+```bash
+gibson daemon start    # Start background services
+gibson daemon stop     # Stop daemon
+gibson daemon status   # Check status
+```
 
-### Daemon Management
+### Targets
 
-| Command | Description |
-|---------|-------------|
-| `gibson daemon start` | Start the Gibson daemon |
-| `gibson daemon stop` | Stop the running daemon |
-| `gibson daemon status` | Check daemon status |
-| `gibson daemon restart` | Restart the daemon |
+```bash
+gibson target add <name> --type <type>   # Add target (http_api, kubernetes, network, etc.)
+gibson target list                        # List targets
+gibson target test <name>                 # Test connectivity
+gibson target delete <name>               # Remove target
+```
 
-### Target Management
+### Missions
 
-| Command | Description |
-|---------|-------------|
-| `gibson target add <name>` | Add a new attack target |
-| `gibson target list` | List all configured targets |
-| `gibson target show <name>` | Show target details |
-| `gibson target test <name>` | Test target connectivity |
-| `gibson target delete <name>` | Remove a target |
-
-### Mission Execution
-
-| Command | Description |
-|---------|-------------|
-| `gibson mission run <name>` | Execute a mission (from file, URL, or installed) |
-| `gibson mission list` | List all missions |
-| `gibson mission show <id>` | Show mission details and progress |
-| `gibson mission pause <id>` | Pause a running mission |
-| `gibson mission resume <id>` | Resume a paused mission |
-| `gibson mission cancel <id>` | Cancel a mission |
-| `gibson mission plan <name>` | Display execution plan without running |
-| `gibson mission validate <file>` | Validate mission YAML syntax |
+```bash
+gibson mission run <file|url|name>       # Execute a mission
+gibson mission list                       # List missions
+gibson mission show <id>                  # Show progress
+gibson mission pause <id>                 # Pause execution
+gibson mission resume <id>                # Resume from checkpoint
+gibson mission cancel <id>                # Cancel mission
+gibson mission validate <file>            # Validate YAML
+```
 
 ### Quick Attack
 
 ```bash
-# Launch a single-agent attack
-gibson attack --target my-target --agent prompt-injector
-
-# With specific payload
-gibson attack --target my-target --agent sql-injector --payload "'; DROP TABLE users;--"
-
-# List available attack agents
-gibson attack --list-agents
+gibson attack --target <name> --agent <agent>   # Single-agent attack
+gibson attack --list-agents                      # List available agents
 ```
 
-### Agent & Tool Management
+### Agents & Tools
 
-| Command | Description |
-|---------|-------------|
-| `gibson agent list` | List installed agents |
-| `gibson agent install <url>` | Install an agent |
-| `gibson agent show <name>` | Show agent details |
-| `gibson agent start <name>` | Start an agent service |
-| `gibson agent stop <name>` | Stop an agent service |
-| `gibson tool list` | List installed tools |
-| `gibson tool install <url>` | Install a tool |
-| `gibson tool show <name>` | Show tool details |
+```bash
+gibson agent list                    # List installed agents
+gibson agent install <url>           # Install from URL/git
+gibson agent start <name>            # Start agent service
+gibson agent stop <name>             # Stop agent service
+
+gibson tool list                     # List installed tools
+gibson tool install <url>            # Install tool
+```
 
 ### Knowledge Store
 
 ```bash
-# Ingest documents
-gibson knowledge ingest --from-pdf ./docs/security-research.pdf
-gibson knowledge ingest --from-url https://owasp.org/
-gibson knowledge ingest --from-dir ./attack-patterns/
-
-# Search knowledge
-gibson knowledge search "SQL injection bypass techniques" --limit 10
+gibson knowledge ingest --from-dir ./data    # Ingest documents
+gibson knowledge search "query"               # Semantic search
 ```
 
-### Finding Management
+### Findings
 
-| Command | Description |
-|---------|-------------|
-| `gibson finding list` | List findings with filtering |
-| `gibson finding show <id>` | Show finding details |
-| `gibson finding classify <id>` | Apply classification/severity |
-| `gibson finding export` | Export findings (CSV, JSON, PDF) |
+```bash
+gibson finding list                  # List findings
+gibson finding show <id>             # Show details
+gibson finding export --format json  # Export findings
+```
+
+### Credentials
+
+```bash
+gibson credential add <name>         # Store encrypted credential
+gibson credential list               # List credentials
+```
 
 ## Configuration
 
-Gibson configuration is stored in `~/.gibson/config.yaml`. Copy the example configuration to get started:
-
-```bash
-cp configs/gibson.yaml ~/.gibson/config.yaml
-```
-
-### Key Configuration Sections
+Configuration lives at `~/.gibson/config.yaml`:
 
 ```yaml
-# Core settings
 core:
   home_dir: ~/.gibson
   parallel_limit: 10
   timeout: 5m
 
-# Database (SQLite with FTS5)
 database:
   path: ~/.gibson/gibson.db
-  wal_mode: true
 
-# LLM providers (via environment variables)
-llm:
-  default_provider: ""  # anthropic, openai, ollama
-  # ANTHROPIC_API_KEY, OPENAI_API_KEY, OLLAMA_HOST
+daemon:
+  grpc_address: localhost:50002
 
-# Service registry (etcd)
+redis:
+  url: redis://localhost:6379
+
 registry:
   type: embedded
   listen_address: localhost:2379
 
-# Daemon gRPC server
-daemon:
-  grpc_address: localhost:50002
-
-# Redis (for tool execution)
-redis:
-  url: redis://localhost:6379
-
-# GraphRAG (Neo4j knowledge graph)
 graphrag:
   enabled: true
   neo4j:
@@ -215,288 +220,238 @@ graphrag:
     username: neo4j
     password: password
 
-# Langfuse observability
-langfuse:
-  enabled: true
-  host: "https://cloud.langfuse.com"
-  public_key: "pk-lf-..."
-  secret_key: "sk-lf-..."
+# LLM providers (for agents that need them)
+# Set via environment: ANTHROPIC_API_KEY, OPENAI_API_KEY, OLLAMA_HOST
 
-# Callback server (agent communication)
+# Observability
+langfuse:
+  enabled: false
+  host: "https://cloud.langfuse.com"
+  public_key: ""
+  secret_key: ""
+
+tracing:
+  enabled: false
+  endpoint: localhost:4317
+
 callback:
   enabled: true
   listen_address: 0.0.0.0:50001
 ```
 
-### Environment Variables
+## Mission YAML
 
-```bash
-# LLM Providers
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-..."
-export OLLAMA_HOST="http://localhost:11434"
-
-# Langfuse (recommended over config file)
-export LANGFUSE_PUBLIC_KEY="pk-lf-..."
-export LANGFUSE_SECRET_KEY="sk-lf-..."
-export LANGFUSE_HOST="https://cloud.langfuse.com"
-```
-
-## Mission YAML Specification
-
-Missions are defined in YAML files with a DAG-based workflow structure:
+Missions define workflows as directed acyclic graphs:
 
 ```yaml
-name: "API Security Assessment"
-description: "Comprehensive API security testing"
+name: "Infrastructure Assessment"
+description: "Map and test network infrastructure"
 version: "1.0.0"
 
-# Target resolved at runtime
-target: my-api
-
-# Workflow nodes
 nodes:
-  # Agent node - executes an agent
-  recon:
+  # Discovery phase
+  network-scan:
     type: agent
-    agent: api-recon
+    agent: network-mapper
     parameters:
-      depth: 3
-      timeout: 5m
+      ports: "1-65535"
+      timeout: 10m
 
-  # Conditional branching
-  check-auth:
+  # Branch based on findings
+  check-services:
     type: condition
-    expression: "findings.auth_issues > 0"
-    on_true: auth-testing
-    on_false: injection-testing
+    expression: "findings.open_ports > 0"
+    on_true: service-enum
+    on_false: report
 
-  # Tool execution
-  auth-testing:
-    type: tool
-    tool: jwt-analyzer
-    parameters:
-      mode: comprehensive
-
-  injection-testing:
+  # Enumerate services
+  service-enum:
     type: agent
-    agent: injection-tester
+    agent: service-fingerprinter
 
-  # Parallel execution
-  parallel-scans:
+  # Parallel vulnerability testing
+  vuln-testing:
     type: parallel
-    nodes: [xss-scanner, sqli-scanner]
+    nodes: [web-scanner, ssh-auditor, db-tester]
 
-  # Join/sync point
+  web-scanner:
+    type: agent
+    agent: web-vulnerability-scanner
+
+  ssh-auditor:
+    type: agent
+    agent: ssh-config-auditor
+
+  db-tester:
+    type: agent
+    agent: database-security-tester
+
+  # Aggregate results
   aggregate:
     type: join
-    sources: [parallel-scans]
+    sources: [vuln-testing]
 
-  # Generate report
   report:
     type: agent
-    agent: report-writer
+    agent: report-generator
 
-# Flow definition
 edges:
-  - from: recon
-    to: check-auth
-  - from: auth-testing
-    to: parallel-scans
-  - from: injection-testing
-    to: parallel-scans
+  - from: network-scan
+    to: check-services
+  - from: service-enum
+    to: vuln-testing
   - from: aggregate
     to: report
 
-# Entry and exit points
-entry_points: [recon]
+entry_points: [network-scan]
 exit_points: [report]
 
-# Execution constraints
 constraints:
-  max_duration: 30m
-  max_findings: 1000
-  max_cost: 50.0
+  max_duration: 2h
+  max_findings: 5000
 
-# Auto-install dependencies
 dependencies:
   agents:
-    - github.com/zero-day-ai/agents/api-recon
-    - github.com/zero-day-ai/agents/injection-tester
-  tools:
-    - github.com/zero-day-ai/tools/jwt-analyzer
+    - github.com/your-org/agents/network-mapper
+    - github.com/your-org/agents/web-vulnerability-scanner
 ```
 
 ### Node Types
 
-| Type | Description |
-|------|-------------|
-| `agent` | Execute an agent with parameters |
+| Type | Purpose |
+|------|---------|
+| `agent` | Execute an agent |
 | `tool` | Execute a tool directly |
-| `plugin` | Invoke a plugin capability |
-| `condition` | Conditional branching based on expression |
-| `parallel` | Execute multiple paths concurrently |
-| `join` | Synchronization point for parallel paths |
+| `condition` | Branch based on expression |
+| `parallel` | Run multiple nodes concurrently |
+| `join` | Wait for parallel nodes to complete |
+| `plugin` | Invoke plugin capability |
 
-## SDK Integration
+## Building Agents with the SDK
 
-Gibson uses the [Gibson SDK](../sdk) for building agents, tools, and plugins. The SDK is maintained in a separate repository and linked via Go module replacement.
-
-### SDK Architecture
-
-```
-┌─────────────────────────────────────────┐
-│              Gibson SDK                  │
-├─────────────────────────────────────────┤
-│  Client Layer     - High-level APIs     │
-│  Protocol Layer   - gRPC communication  │
-│  Plugin Layer     - Extension APIs      │
-│  Observability    - OpenTelemetry       │
-└─────────────────────────────────────────┘
-```
-
-### Creating an Agent
+The [Gibson SDK](../sdk) provides everything you need to build agents:
 
 ```go
-import "github.com/zero-day-ai/sdk"
+package main
 
-type MyAgent struct {
+import (
+    "context"
+    "github.com/zero-day-ai/sdk"
+)
+
+type NetworkMapper struct {
     sdk.BaseAgent
 }
 
-func (a *MyAgent) Execute(ctx context.Context, input string) (string, error) {
-    // Use harness for LLM access, tool execution, etc.
-    result, err := a.Harness().InvokeTool(ctx, "my-tool", params)
+func (a *NetworkMapper) Execute(ctx context.Context, input string) (string, error) {
+    harness := a.Harness()
+
+    // Use tools
+    result, err := harness.InvokeTool(ctx, "nmap", map[string]any{
+        "target": input,
+        "ports":  "1-1024",
+    })
     if err != nil {
         return "", err
     }
-    return result, nil
+
+    // Store findings
+    for _, port := range result.OpenPorts {
+        harness.StoreFinding(ctx, sdk.Finding{
+            Title:    fmt.Sprintf("Open port %d", port.Number),
+            Severity: "info",
+            Data:     port,
+        })
+    }
+
+    // Optionally use LLM for analysis
+    analysis, err := harness.Complete(ctx, sdk.CompletionRequest{
+        Prompt: fmt.Sprintf("Analyze these scan results: %v", result),
+    })
+
+    return analysis, nil
+}
+
+func main() {
+    sdk.Run(&NetworkMapper{})
 }
 ```
 
-### Creating a Tool
+### Building Tools
 
 ```go
-import "github.com/zero-day-ai/sdk"
-
-type MyTool struct {
+type PortScanner struct {
     sdk.BaseTool
 }
 
-func (t *MyTool) Execute(ctx context.Context, params map[string]any) (any, error) {
-    // Tool implementation
-    return result, nil
+func (t *PortScanner) Execute(ctx context.Context, params map[string]any) (any, error) {
+    target := params["target"].(string)
+    ports := params["ports"].(string)
+
+    // Your scanning logic
+    results := scan(target, ports)
+
+    return results, nil
 }
 ```
 
-### Creating a Plugin
-
-```go
-import "github.com/zero-day-ai/sdk"
-
-type MyPlugin struct {
-    sdk.BasePlugin
-}
-
-func (p *MyPlugin) Initialize(ctx context.Context) error {
-    // Plugin initialization
-    return nil
-}
-```
-
-## Observability
-
-### Langfuse Integration
-
-Gibson integrates with Langfuse for comprehensive LLM observability:
-
-```
-Trace: mission-{mission_id}
-├── Generation: orchestrator-decision-1 (LLM reasoning)
-│   ├── input: prompt with graph state
-│   ├── output: Decision JSON
-│   └── metadata: {tokens, latency, graph_snapshot}
-├── Span: agent-execution-{id}
-│   ├── Span: tool-call-nmap
-│   ├── Span: tool-call-httpx
-│   └── Generation: agent-llm-call
-└── Span: mission-complete
-    └── metadata: {summary, total_tokens, duration}
-```
-
-### OpenTelemetry
-
-Distributed tracing is supported via OpenTelemetry:
-
-```yaml
-tracing:
-  enabled: true
-  endpoint: localhost:4317  # OTLP collector
-
-metrics:
-  enabled: true
-  port: 9090  # Prometheus endpoint
-```
-
-## Development
-
-### Building
-
-```bash
-# Build binary
-make build
-
-# Run tests
-make test
-
-# Run tests with coverage
-make test-coverage
-
-# Lint
-make lint
-
-# Generate protobuf
-make proto
-```
-
-### Project Structure
+## Project Structure
 
 ```
 gibson/
-├── cmd/gibson/          # CLI entry points and subcommands
-├── configs/             # Example configuration files
+├── cmd/gibson/           # CLI commands
+├── configs/              # Example configuration
 ├── internal/
-│   ├── agent/           # Agent interfaces and runtime
-│   ├── config/          # Configuration loading
-│   ├── daemon/          # Daemon and gRPC services
-│   ├── finding/         # Finding management
-│   ├── graphrag/        # Neo4j GraphRAG integration
-│   ├── harness/         # Agent harness implementation
-│   ├── llm/             # LLM provider abstractions
-│   ├── memory/          # Memory tiers (working, mission, long-term)
-│   ├── mission/         # Mission definitions and execution
-│   ├── orchestrator/    # Mission orchestration
-│   ├── registry/        # etcd service registry
-│   └── tool/            # Tool execution
-└── tests/e2e/           # End-to-end tests
+│   ├── agent/            # Agent interfaces
+│   ├── config/           # Configuration loading
+│   ├── daemon/           # Daemon and gRPC server
+│   ├── finding/          # Finding management
+│   ├── graphrag/         # Neo4j integration
+│   ├── harness/          # Agent runtime environment
+│   ├── llm/              # LLM provider abstraction
+│   ├── memory/           # Memory tiers
+│   ├── mission/          # Mission execution
+│   ├── orchestrator/     # Workflow orchestration
+│   ├── registry/         # Service discovery (etcd)
+│   └── tool/             # Tool execution (Redis)
+└── tests/
 ```
 
-### Key Interfaces
+## Building
 
-- **AgentHarness** - Runtime environment for agents (LLM access, tool execution, delegation)
-- **MissionStore** - Persistence for mission definitions
-- **MissionRunStore** - Persistence for mission execution instances
-- **ComponentRegistry** - Service discovery and registration
-- **GraphRAGStore** - Knowledge graph operations
+```bash
+make build          # Build binary
+make test           # Run tests
+make test-coverage  # Coverage report
+make lint           # Lint code
+make proto          # Generate protobuf
+```
 
-## Requirements
+## Use Cases
 
-| Component | Version | Purpose |
-|-----------|---------|---------|
-| Go | 1.24+ | Build |
-| Redis | 6.0+ | Tool execution queue |
-| Neo4j | 5.0+ | GraphRAG knowledge graph (optional) |
-| etcd | 3.5+ | Service registry (embedded by default) |
+Gibson is designed for building:
+
+- **Network Security Testing** - Autonomous infrastructure scanning and vulnerability discovery
+- **Web Application Testing** - Crawling, fuzzing, injection testing
+- **Cloud Security Auditing** - AWS/Azure/GCP configuration review
+- **API Security Testing** - Authentication, authorization, input validation
+- **Container Security** - Kubernetes, Docker security assessment
+- **Smart Contract Auditing** - Blockchain and DeFi security
+- **LLM Red-Teaming** - Prompt injection, jailbreak testing
+- **IoT Security** - Device and protocol testing
+- **Compliance Scanning** - Automated compliance checking
+- **Custom Security Workflows** - Whatever you can build an agent for
+
+## Why Gibson?
+
+| Problem | Gibson's Solution |
+|---------|-------------------|
+| Security tools don't integrate | Unified orchestration layer |
+| Manual testing doesn't scale | Autonomous agent execution |
+| Findings lack context | GraphRAG knowledge relationships |
+| Complex workflows are fragile | DAG-based missions with checkpointing |
+| Building security tools is slow | SDK with batteries included |
+| No visibility into testing | Langfuse/OpenTelemetry observability |
 
 ## License
 
@@ -505,9 +460,3 @@ gibson/
 ## Contributing
 
 [Contribution guidelines]
-
-## Support
-
-- Documentation: https://docs.gibson.ai
-- GitHub Issues: https://github.com/zero-day-ai/gibson/issues
-- Community: https://community.gibson.ai
