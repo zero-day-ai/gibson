@@ -26,6 +26,7 @@ type Config struct {
 	Embedder     embedder.EmbedderConfig `mapstructure:"embedder" yaml:"embedder"`
 	Langfuse     LangfuseConfig          `mapstructure:"langfuse" yaml:"langfuse"`
 	GraphRAG     GraphRAGConfig          `mapstructure:"graphrag" yaml:"graphrag"`
+	Redis        RedisConfig             `mapstructure:"redis" yaml:"redis"`
 	Plugins      PluginsConfig           `mapstructure:"plugins" yaml:"plugins,omitempty"`
 }
 
@@ -174,4 +175,12 @@ type Neo4jConfig struct {
 type GraphRAGConfig struct {
 	Enabled bool        `mapstructure:"enabled" yaml:"enabled"`
 	Neo4j   Neo4jConfig `mapstructure:"neo4j" yaml:"neo4j"`
+}
+
+// RedisConfig contains Redis connection settings for tool execution.
+type RedisConfig struct {
+	URL            string        `mapstructure:"url" yaml:"url"`
+	Database       int           `mapstructure:"database" yaml:"database"`
+	ConnectTimeout time.Duration `mapstructure:"connect_timeout" yaml:"connect_timeout"`
+	ReadTimeout    time.Duration `mapstructure:"read_timeout" yaml:"read_timeout"`
 }

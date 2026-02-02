@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/zero-day-ai/gibson/internal/graphrag"
@@ -227,8 +228,9 @@ func (l *LocalGraphRAGProvider) StoreNode(ctx context.Context, node graphrag.Gra
 			props[k] = v
 		}
 		props["id"] = node.ID.String()
-		props["created_at"] = node.CreatedAt.Unix()
-		props["updated_at"] = node.UpdatedAt.Unix()
+		// Use RFC3339 format (24-hour time with timezone) for consistency and readability
+		props["created_at"] = node.CreatedAt.UTC().Format(time.RFC3339)
+		props["updated_at"] = node.UpdatedAt.UTC().Format(time.RFC3339)
 		if node.MissionID != nil {
 			props["mission_id"] = node.MissionID.String()
 		}
@@ -303,7 +305,8 @@ func (l *LocalGraphRAGProvider) StoreRelationship(ctx context.Context, rel graph
 	}
 	props["id"] = rel.ID.String()
 	props["weight"] = rel.Weight
-	props["created_at"] = rel.CreatedAt.Unix()
+	// Use RFC3339 format (24-hour time with timezone) for consistency and readability
+	props["created_at"] = rel.CreatedAt.UTC().Format(time.RFC3339)
 
 	// Create relationship in Neo4j
 	err := l.graphClient.CreateRelationship(

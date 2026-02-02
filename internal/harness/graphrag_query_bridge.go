@@ -4,6 +4,7 @@ package harness
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -301,12 +302,21 @@ func (b *DefaultGraphRAGQueryBridge) StoreNode(ctx context.Context, node sdkgrap
 		// Create the DISCOVERED relationship (log warning on failure but don't fail the operation)
 		if err := b.CreateRelationship(ctx, discoveredRel); err != nil {
 			// Log warning but don't fail the node creation
+			slog.Warn("DISCOVERED relationship creation failed",
+				"agent_run_id", agentRunID,
+				"node_id", nodeID,
+				"node_type", node.Type,
+				"error", err.Error())
 			span.AddEvent("discovered_relationship_failed",
 				trace.WithAttributes(
 					attribute.String("agent_run_id", agentRunID),
 					attribute.String("error", err.Error()),
 				))
 		} else {
+			slog.Debug("DISCOVERED relationship created",
+				"agent_run_id", agentRunID,
+				"node_id", nodeID,
+				"node_type", node.Type)
 			span.AddEvent("discovered_relationship_created",
 				trace.WithAttributes(
 					attribute.String("agent_run_id", agentRunID),
@@ -338,19 +348,8 @@ func (b *DefaultGraphRAGQueryBridge) CreateRelationship(ctx context.Context, rel
 		return fmt.Errorf("relationship conversion failed: %w", err)
 	}
 
-	// Create a minimal graph record for the relationship
-	// We need a dummy node to carry the relationship
-	fromID, err := types.ParseID(rel.FromID)
-	if err != nil {
-		return fmt.Errorf("%w: invalid from_id: %v", sdkgraphrag.ErrInvalidQuery, err)
-	}
-
-	dummyNode := graphrag.NewGraphNode(fromID, graphrag.NodeType("entity"))
-	record := graphrag.NewGraphRecord(*dummyNode)
-	record.WithRelationship(*internalRel)
-
-	// Store the relationship
-	if err := b.store.Store(ctx, record); err != nil {
+	// Store relationship directly via provider (don't create dummy node)
+	if err := b.store.StoreRelationshipOnly(ctx, *internalRel); err != nil {
 		return fmt.Errorf("%w: %v", sdkgraphrag.ErrRelationshipFailed, err)
 	}
 
@@ -522,6 +521,10 @@ func (b *DefaultGraphRAGQueryBridge) StoreBatch(ctx context.Context, batch sdkgr
 				// Use CreateRelationship for each DISCOVERED relationship
 				// Log warning on failure but don't fail the batch operation
 				if err := b.CreateRelationship(ctx, rel); err != nil {
+					slog.Warn("DISCOVERED relationship creation failed (batch)",
+						"agent_run_id", rel.FromID,
+						"node_id", rel.ToID,
+						"error", err.Error())
 					span.AddEvent("discovered_relationship_failed",
 						trace.WithAttributes(
 							attribute.String("to_node_id", rel.ToID),
@@ -885,7 +888,9 @@ func sdkNodeToInternal(n sdkgraphrag.GraphNode, missionID, missionRunID, agentNa
 	}
 
 	// Create node with type as label
-	node := graphrag.NewGraphNode(nodeID, graphrag.NodeType(n.Type))
+	// Normalize node type to lowercase to ensure consistent Neo4j labels
+	nodeType := strings.ToLower(n.Type)
+	node := graphrag.NewGraphNode(nodeID, graphrag.NodeType(nodeType))
 
 	// Initialize properties map if not present
 	props := n.Properties

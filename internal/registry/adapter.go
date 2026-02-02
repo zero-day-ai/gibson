@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/zero-day-ai/gibson/internal/agent"
+	"github.com/zero-day-ai/gibson/internal/contextkeys"
 	"github.com/zero-day-ai/gibson/internal/plugin"
 	"github.com/zero-day-ai/gibson/internal/tool"
 	sdkregistry "github.com/zero-day-ai/sdk/registry"
@@ -739,12 +740,20 @@ func (a *RegistryAdapter) DelegateToAgent(ctx context.Context, name string, task
 			}
 		}
 
+		// Fall back to context for AgentRunID if not set on mission struct
+		// The orchestrator injects this via harness.ContextWithAgentRunID before delegation
+		if agentRunID == "" {
+			agentRunID = contextkeys.GetAgentRunID(ctx)
+		}
+
 		// Use mission-based registration if we have both mission ID and agent name
 		var registrationKey string
 		slog.Info("harness registration context",
 			"mission_id", missionID,
 			"agent_name", agentName,
 			"task_id", task.ID.String(),
+			"mission_run_id", missionRunID,
+			"agent_run_id", agentRunID,
 		)
 		if missionID != "" && agentName != "" && a.callbackManager != nil {
 			// Check if callback manager supports mission-based registration

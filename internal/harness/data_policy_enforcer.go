@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/zero-day-ai/gibson/internal/contextkeys"
 	"github.com/zero-day-ai/sdk/graphrag"
 )
 
@@ -148,21 +149,10 @@ func (e *dataPolicyEnforcer) ApplyInputScope(ctx context.Context, query *graphra
 	return nil
 }
 
-// Context keys for policy enforcement.
-// These use the existing contextKey type from context.go to avoid collisions.
-const (
-	// agentNameKey stores the current agent name for policy lookup
-	agentNameKey contextKey = "gibson.agent_name"
-
-	// missionIDKey stores the mission ID (not MissionContext.ID - raw string)
-	missionIDKey contextKey = "gibson.mission_id"
-)
-
 // agentNameFromContext retrieves the agent name from context.
 // Returns empty string if not set.
-// NOTE: This will be added to context.go in Task 3.3 - keeping it here for now.
 func agentNameFromContext(ctx context.Context) string {
-	if v := ctx.Value(agentNameKey); v != nil {
+	if v := ctx.Value(contextkeys.AgentName); v != nil {
 		if name, ok := v.(string); ok {
 			return name
 		}
@@ -173,9 +163,8 @@ func agentNameFromContext(ctx context.Context) string {
 // missionIDFromContext retrieves the mission ID from context.
 // This is different from MissionContext.ID which is a types.ID - this is the raw string.
 // Returns empty string if not set.
-// NOTE: This will be added to context.go in Task 3.3 - keeping it here for now.
 func missionIDFromContext(ctx context.Context) string {
-	if v := ctx.Value(missionIDKey); v != nil {
+	if v := ctx.Value(contextkeys.MissionID); v != nil {
 		if id, ok := v.(string); ok {
 			return id
 		}

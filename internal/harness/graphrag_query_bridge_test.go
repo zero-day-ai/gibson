@@ -17,33 +17,36 @@ import (
 // MockGraphRAGStore implements graphrag.GraphRAGStore for testing
 type MockGraphRAGStore struct {
 	// Control flags
-	ShouldFailQuery                 bool
-	ShouldFailFindSimilarAttacks    bool
-	ShouldFailFindSimilarFindings   bool
-	ShouldFailGetAttackChains       bool
-	ShouldFailGetRelatedFindings    bool
-	ShouldFailStore                 bool
-	ShouldFailStoreWithoutEmbedding bool
-	ShouldFailStoreBatch            bool
-	IsHealthy                       bool
-	HealthMessage                   string
+	ShouldFailQuery                   bool
+	ShouldFailFindSimilarAttacks      bool
+	ShouldFailFindSimilarFindings     bool
+	ShouldFailGetAttackChains         bool
+	ShouldFailGetRelatedFindings      bool
+	ShouldFailStore                   bool
+	ShouldFailStoreWithoutEmbedding   bool
+	ShouldFailStoreBatch              bool
+	ShouldFailStoreRelationshipOnly   bool
+	IsHealthy                         bool
+	HealthMessage                     string
 
 	// Capture method calls
-	QueryCalled                 bool
-	FindSimilarAttacksCalled    bool
-	FindSimilarFindingsCalled   bool
-	GetAttackChainsCalled       bool
-	GetRelatedFindingsCalled    bool
-	StoreCalled                 bool
-	StoreWithoutEmbeddingCalled bool
-	StoreBatchCalled            bool
-	HealthCalled                bool
-	CloseCalled                 bool
+	QueryCalled                   bool
+	FindSimilarAttacksCalled      bool
+	FindSimilarFindingsCalled     bool
+	GetAttackChainsCalled         bool
+	GetRelatedFindingsCalled      bool
+	StoreCalled                   bool
+	StoreWithoutEmbeddingCalled   bool
+	StoreBatchCalled              bool
+	StoreRelationshipOnlyCalled   bool
+	HealthCalled                  bool
+	CloseCalled                   bool
 
 	// Captured arguments
 	LastQuery              *graphrag.GraphRAGQuery
 	LastStoreRecord        *graphrag.GraphRecord
 	LastStoreBatchRecords  []graphrag.GraphRecord
+	LastStoreRelationship  *graphrag.Relationship
 	LastFindAttacksContent string
 	LastFindAttacksTopK    int
 	LastFindFindingsID     string
@@ -200,6 +203,18 @@ func (m *MockGraphRAGStore) Health(ctx context.Context) types.HealthStatus {
 // Close releases all resources
 func (m *MockGraphRAGStore) Close() error {
 	m.CloseCalled = true
+	return nil
+}
+
+// StoreRelationshipOnly stores a relationship without creating any nodes
+func (m *MockGraphRAGStore) StoreRelationshipOnly(ctx context.Context, rel graphrag.Relationship) error {
+	m.StoreRelationshipOnlyCalled = true
+	m.LastStoreRelationship = &rel
+
+	if m.ShouldFailStoreRelationshipOnly {
+		return errors.New("mock store relationship only error")
+	}
+
 	return nil
 }
 
@@ -792,15 +807,13 @@ func TestDefaultGraphRAGQueryBridge_CreateRelationship(t *testing.T) {
 			},
 			shouldFail: false,
 			checkResult: func(t *testing.T, mock *MockGraphRAGStore) {
-				assert.True(t, mock.StoreCalled)
-				require.NotNil(t, mock.LastStoreRecord)
+				assert.True(t, mock.StoreRelationshipOnlyCalled)
+				require.NotNil(t, mock.LastStoreRelationship)
 
-				// Check that relationship was added
-				assert.Len(t, mock.LastStoreRecord.Relationships, 1)
-				rel := mock.LastStoreRecord.Relationships[0]
-				assert.Equal(t, fromID, rel.FromID)
-				assert.Equal(t, toID, rel.ToID)
-				assert.Equal(t, graphrag.RelationType("SIMILAR_TO"), rel.Type)
+				// Check that relationship was stored correctly
+				assert.Equal(t, fromID, mock.LastStoreRelationship.FromID)
+				assert.Equal(t, toID, mock.LastStoreRelationship.ToID)
+				assert.Equal(t, graphrag.RelationType("SIMILAR_TO"), mock.LastStoreRelationship.Type)
 			},
 		},
 		{
@@ -834,8 +847,8 @@ func TestDefaultGraphRAGQueryBridge_CreateRelationship(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &MockGraphRAGStore{
-				ShouldFailStore: tt.shouldFail && tt.name == "store error",
-				IsHealthy:       true,
+				ShouldFailStoreRelationshipOnly: tt.shouldFail && tt.name == "store error",
+				IsHealthy:                       true,
 			}
 
 			bridge := NewGraphRAGQueryBridge(mock, nil)

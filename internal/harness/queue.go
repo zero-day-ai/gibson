@@ -74,6 +74,25 @@ func NewQueueManager(redisURL string, logger *slog.Logger) (*QueueManager, error
 	}, nil
 }
 
+// NewQueueManagerWithClient creates a new QueueManager with an existing queue client.
+// This is useful when a Redis client has already been initialized elsewhere (e.g., daemon infrastructure).
+//
+// Parameters:
+//   - client: An existing queue.Client (e.g., from daemon infrastructure)
+//   - logger: Structured logger for queue operations
+//
+// Returns:
+//   - *QueueManager: Queue manager wrapping the provided client
+func NewQueueManagerWithClient(client queue.Client, logger *slog.Logger) *QueueManager {
+	if logger == nil {
+		logger = slog.Default().With("component", "queue-manager")
+	}
+	return &QueueManager{
+		client: client,
+		logger: logger,
+	}
+}
+
 // Client returns the underlying queue client for queue operations.
 // Use this to access Push, Pop, Publish, Subscribe, and tool registration methods.
 //

@@ -476,3 +476,20 @@ func (m *CallbackManager) SetDiscoveryProcessor(processor DiscoveryProcessor) {
 		m.logger.Debug("set discovery processor on callback service")
 	}
 }
+
+// SetQueueManager sets the QueueManager on the callback service.
+// This enables Redis-based work queue operations for tool execution,
+// allowing agents to queue tool invocations for distributed processing.
+//
+// This method should be called after NewCallbackManager but before Start().
+//
+// Parameters:
+//   - queueMgr: QueueManager instance for Redis queue operations
+//
+// Thread-safe: Can be called from multiple goroutines.
+func (m *CallbackManager) SetQueueManager(queueMgr *QueueManager) {
+	if m.server != nil {
+		m.server.SetQueueManager(queueMgr)
+		m.logger.Debug("set queue manager on callback service")
+	}
+}

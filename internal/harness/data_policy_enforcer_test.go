@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/gibson/internal/contextkeys"
 	"github.com/zero-day-ai/sdk/graphrag"
 )
 
@@ -35,9 +36,9 @@ func TestDataPolicyEnforcer_FiltersByMissionRun(t *testing.T) {
 
 	// Create context with agent name and mission_run_id
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
 	ctx = ContextWithMissionRunID(ctx, "run-123")
-	ctx = context.WithValue(ctx, missionIDKey, "mission-456")
+	ctx = context.WithValue(ctx, contextkeys.MissionID, "mission-456")
 
 	// Create a query
 	query := graphrag.NewQuery("test query")
@@ -64,8 +65,8 @@ func TestDataPolicyEnforcer_FiltersByMission(t *testing.T) {
 
 	// Create context with agent name and mission_id
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
-	ctx = context.WithValue(ctx, missionIDKey, "mission-456")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.MissionID, "mission-456")
 	ctx = ContextWithMissionRunID(ctx, "run-123")
 
 	// Create a query
@@ -93,8 +94,8 @@ func TestDataPolicyEnforcer_NoFilterForGlobal(t *testing.T) {
 
 	// Create context with agent name
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
-	ctx = context.WithValue(ctx, missionIDKey, "mission-456")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.MissionID, "mission-456")
 	ctx = ContextWithMissionRunID(ctx, "run-123")
 
 	// Create a query
@@ -118,8 +119,8 @@ func TestDataPolicyEnforcer_UsesDefaults(t *testing.T) {
 
 	// Create context with agent name
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
-	ctx = context.WithValue(ctx, missionIDKey, "mission-456")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.MissionID, "mission-456")
 
 	// Create a query
 	query := graphrag.NewQuery("test query")
@@ -145,8 +146,8 @@ func TestDataPolicyEnforcer_RejectsMissionIDOverride(t *testing.T) {
 
 	// Create context
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
-	ctx = context.WithValue(ctx, missionIDKey, "mission-456")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.MissionID, "mission-456")
 
 	// Create a query with MissionID already set (agent trying to override)
 	query := graphrag.NewQuery("test query")
@@ -173,7 +174,7 @@ func TestDataPolicyEnforcer_RejectsMissionRunIDOverride(t *testing.T) {
 
 	// Create context
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
 	ctx = ContextWithMissionRunID(ctx, "run-123")
 
 	// Create a query with MissionRunID already set (agent trying to override)
@@ -201,7 +202,7 @@ func TestDataPolicyEnforcer_ErrorOnMissingMissionRunID(t *testing.T) {
 
 	// Create context WITHOUT mission_run_id
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
 
 	// Create a query
 	query := graphrag.NewQuery("test query")
@@ -227,7 +228,7 @@ func TestDataPolicyEnforcer_ErrorOnMissingMissionID(t *testing.T) {
 
 	// Create context WITHOUT mission_id
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
 
 	// Create a query
 	query := graphrag.NewQuery("test query")
@@ -280,7 +281,7 @@ func TestDataPolicyEnforcer_InvalidInputScope(t *testing.T) {
 
 	// Create context
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
 
 	// Create a query
 	query := graphrag.NewQuery("test query")
@@ -302,7 +303,7 @@ func TestDataPolicyEnforcer_PolicySourceError(t *testing.T) {
 
 	// Create context
 	ctx := context.Background()
-	ctx = context.WithValue(ctx, agentNameKey, "test-agent")
+	ctx = context.WithValue(ctx, contextkeys.AgentName, "test-agent")
 
 	// Create a query
 	query := graphrag.NewQuery("test query")

@@ -107,6 +107,10 @@ type GraphRAGStore interface {
 	// Returns the node if found, or an error if not found or query fails.
 	GetNode(ctx context.Context, nodeID types.ID) (*GraphNode, error)
 
+	// StoreRelationshipOnly stores a relationship without creating any nodes.
+	// Used when both nodes already exist and only a relationship needs to be added.
+	StoreRelationshipOnly(ctx context.Context, rel Relationship) error
+
 	// Health returns the current health status of the GraphRAG store.
 	// Aggregates health from provider, embedder, and processor.
 	Health(ctx context.Context) types.HealthStatus
@@ -588,6 +592,22 @@ func (s *DefaultGraphRAGStore) GetNode(ctx context.Context, nodeID types.ID) (*G
 	}
 
 	return &nodes[0], nil
+}
+
+// StoreRelationshipOnly stores a relationship without creating any nodes.
+// Used when both nodes already exist and only a relationship needs to be added.
+func (s *DefaultGraphRAGStore) StoreRelationshipOnly(ctx context.Context, rel Relationship) error {
+	// Validate the relationship
+	if err := rel.Validate(); err != nil {
+		return NewInvalidQueryError(fmt.Sprintf("invalid relationship: %v", err))
+	}
+
+	// Store relationship directly via provider
+	if err := s.provider.StoreRelationship(ctx, rel); err != nil {
+		return NewRelationshipError("failed to store relationship", err)
+	}
+
+	return nil
 }
 
 // Health returns the current health status of the GraphRAG store.

@@ -217,6 +217,19 @@ func applyInterpolation(cfg *Config, interpolated map[string]interface{}) error 
 		}
 	}
 
+	// Apply Langfuse config interpolation
+	if langfuse, ok := interpolated["langfuse"].(map[string]interface{}); ok {
+		if host, ok := langfuse["host"].(string); ok {
+			cfg.Langfuse.Host = interpolateString(host)
+		}
+		if publicKey, ok := langfuse["public_key"].(string); ok {
+			cfg.Langfuse.PublicKey = interpolateString(publicKey)
+		}
+		if secretKey, ok := langfuse["secret_key"].(string); ok {
+			cfg.Langfuse.SecretKey = interpolateString(secretKey)
+		}
+	}
+
 	// Apply Plugins config interpolation
 	if plugins, ok := interpolated["plugins"].(map[string]interface{}); ok {
 		if cfg.Plugins == nil {

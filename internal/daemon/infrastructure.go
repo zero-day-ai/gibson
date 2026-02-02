@@ -21,6 +21,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/observability"
 	"github.com/zero-day-ai/gibson/internal/plan"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
+	"github.com/zero-day-ai/sdk/queue"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -75,6 +76,9 @@ type Infrastructure struct {
 	// discoveryProcessor processes agent output discoveries to Neo4j
 	// This enables downstream agents to query discovered hosts, ports, services, etc.
 	discoveryProcessor *discoveryProcessorAdapter
+
+	// redisClient for tool execution queue management
+	redisClient queue.Client
 }
 
 // newInfrastructure creates and initializes all infrastructure components.
@@ -129,6 +133,16 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 	taxonomyRegistry := sdkgraphrag.NewTaxonomyRegistry(coreTaxonomy)
 	d.logger.Info("initialized taxonomy registry",
 		"taxonomy_version", coreTaxonomy.Version())
+
+	// Initialize Redis client for tool execution
+	// Redis is required for distributed tool execution via work queues
+	redisClient, err := d.initRedis(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Redis client (required): %w", err)
+	}
+	d.logger.Info("initialized Redis client",
+		"url", d.config.Redis.URL,
+		"database", d.config.Redis.Database)
 
 	// Initialize Neo4j GraphRAG - this is REQUIRED as GraphRAG is a core component
 	// GraphRAG is always required - fail fast if initialization fails
@@ -198,6 +212,7 @@ func (d *daemonImpl) newInfrastructure(ctx context.Context) (*Infrastructure, er
 		missionTracer:        missionTracer,
 		taxonomyRegistry:     taxonomyRegistry,
 		discoveryProcessor:   discoveryProcessorAdapter,
+		redisClient:          redisClient,
 	}
 	d.infrastructure = infra
 
@@ -451,4 +466,31 @@ func (d *daemonImpl) initMissionTracer(ctx context.Context) *observability.Missi
 		"host", d.config.Langfuse.Host)
 
 	return tracer
+}
+
+// initRedis initializes the Redis client for tool execution.
+// Returns the client or an error if initialization fails.
+func (d *daemonImpl) initRedis(ctx context.Context) (queue.Client, error) {
+	d.logger.Info("initializing Redis client",
+		"url", d.config.Redis.URL,
+		"database", d.config.Redis.Database)
+
+	// Create Redis client with daemon configuration
+	client, err := queue.NewRedisClient(queue.RedisOptions{
+		URL:            d.config.Redis.URL,
+		ConnectTimeout: d.config.Redis.ConnectTimeout,
+		ReadTimeout:    d.config.Redis.ReadTimeout,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Redis client: %w", err)
+	}
+
+	d.logger.Info("Redis client initialized successfully")
+	return client, nil
+}
+
+// RedisClient returns the Redis client for tool execution.
+// Returns nil if Redis is not initialized.
+func (i *Infrastructure) RedisClient() queue.Client {
+	return i.redisClient
 }

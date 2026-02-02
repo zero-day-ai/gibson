@@ -15,7 +15,6 @@ import (
 	"github.com/zero-day-ai/gibson/internal/component/git"
 	"github.com/zero-day-ai/gibson/internal/component/resolver"
 	"github.com/zero-day-ai/gibson/internal/config"
-	"github.com/zero-day-ai/gibson/internal/daemon/toolexec"
 	"github.com/zero-day-ai/gibson/internal/database"
 	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
 	"github.com/zero-day-ai/gibson/internal/graphrag/processor"
@@ -125,10 +124,6 @@ type daemonImpl struct {
 
 	// attackRunner executes ad-hoc attacks
 	attackRunner attack.AttackRunner
-
-	// toolExecutorService manages tool execution and discovery
-	// This will be wired in Task 8
-	toolExecutorService toolexec.ToolExecutorService
 
 	// dependencyResolver manages mission dependency resolution and validation
 	dependencyResolver dependencyResolver
@@ -347,30 +342,8 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		d.logger.Warn("etcd client not available, component store not initialized")
 	}
 
-	// Initialize and start Tool Executor Service BEFORE infrastructure
-	// This must happen before harness factory creation so tools can be wired in
-	d.logger.Info("initializing tool executor service")
-	toolsDir := filepath.Join(d.config.Core.HomeDir, "tools", "bin")
-	defaultTimeout := 5 * time.Minute
-	d.toolExecutorService = toolexec.NewToolExecutorService(
-		toolsDir,
-		defaultTimeout,
-		d.logger.With("component", "tool-executor"),
-	)
-	if err := d.toolExecutorService.Start(ctx); err != nil {
-		d.stopServices(ctx)
-		return fmt.Errorf("failed to start tool executor service: %w", err)
-	}
-	tools := d.toolExecutorService.ListTools()
-	d.logger.Info("tool executor service started successfully",
-		"tools_dir", toolsDir,
-		"total_tools", len(tools),
-		"default_timeout", defaultTimeout,
-	)
-
 	// Initialize infrastructure components (DAG executor, finding store, LLM registry, harness factory)
 	// This must happen before creating the orchestrator because the orchestrator needs the harness factory
-	// NOTE: Tool Executor Service is already started, so harness factory can access it
 	d.logger.Info("initializing infrastructure components")
 	infra, err := d.newInfrastructure(ctx)
 	if err != nil {
@@ -446,6 +419,13 @@ func (d *daemonImpl) Start(ctx context.Context) error {
 		// discoveryProcessor := processor.NewDiscoveryProcessor(graphLoader, d.infrastructure.graphRAGClient, d.logger)
 		// d.callback.SetDiscoveryProcessor(discoveryProcessor)
 		// d.logger.Info("configured callback service with DiscoveryProcessor for automatic discovery storage")
+	}
+
+	// Configure callback service with QueueManager for Redis-based tool execution
+	if d.infrastructure.redisClient != nil {
+		queueMgr := harness.NewQueueManagerWithClient(d.infrastructure.redisClient, d.logger)
+		d.callback.SetQueueManager(queueMgr)
+		d.logger.Info("configured callback service with QueueManager for Redis-based tool execution")
 	}
 
 	// Perform crash recovery: find any missions that were running when daemon stopped
@@ -659,14 +639,6 @@ func (d *daemonImpl) stopServices(ctx context.Context) {
 	}
 	d.missionsMu.Unlock()
 
-	// Stop Tool Executor Service (no new tool executions)
-	if d.toolExecutorService != nil {
-		d.logger.Info("stopping tool executor service")
-		if err := d.toolExecutorService.Stop(ctx); err != nil {
-			d.logger.Warn("error stopping tool executor service", "error", err)
-		}
-	}
-
 	// Stop gRPC server (no new client connections)
 	if d.grpcServer != nil {
 		d.logger.Info("stopping gRPC server")
@@ -708,6 +680,16 @@ func (d *daemonImpl) stopServices(ctx context.Context) {
 			d.logger.Warn("failed to close Neo4j connection", "error", err)
 		} else {
 			d.logger.Debug("Neo4j connection closed")
+		}
+	}
+
+	// Close Redis connection
+	if d.infrastructure != nil && d.infrastructure.redisClient != nil {
+		d.logger.Info("closing Redis connection")
+		if err := d.infrastructure.redisClient.Close(); err != nil {
+			d.logger.Warn("failed to close Redis connection", "error", err)
+		} else {
+			d.logger.Debug("Redis connection closed")
 		}
 	}
 

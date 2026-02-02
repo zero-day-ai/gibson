@@ -278,6 +278,11 @@ func (a *Actor) executeAgent(ctx context.Context, decision *Decision, missionID 
 		task.Input = node.TaskConfig
 	}
 
+	// Inject agent execution ID into context for callback services
+	// This allows the registry adapter to include AgentRunID in CallbackInfo
+	// The execution.ID is used for provenance tracking (DISCOVERED relationships)
+	ctx = harness.ContextWithAgentRunID(ctx, execution.ID.String())
+
 	// Delegate to agent
 	result, err := a.harness.DelegateToAgent(ctx, node.AgentName, task)
 

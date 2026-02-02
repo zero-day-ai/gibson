@@ -565,7 +565,7 @@ func (h *DefaultAgentHarness) CallToolProto(ctx context.Context, name string, re
 	actualOutputType := string(outputMsg.ProtoReflect().Descriptor().FullName())
 	if actualOutputType != expectedOutputType {
 		// Check if the output is a structpb.Struct that needs conversion to typed message
-		// This happens when tools run via subprocess (DirectToolProxy) return JSON
+		// This happens when tools return generic JSON via subprocess execution
 		if structOutput, ok := outputMsg.(*structpb.Struct); ok && actualOutputType == "google.protobuf.Struct" {
 			h.logger.Debug("converting structpb.Struct output to typed message",
 				"tool", name,

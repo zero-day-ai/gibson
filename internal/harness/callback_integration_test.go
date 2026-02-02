@@ -266,7 +266,9 @@ func TestCallbackIntegration(t *testing.T) {
 	require.NoError(t, err, "MemoryGet callback should succeed")
 	require.NotNil(t, getResp, "MemoryGet response should not be nil")
 	assert.True(t, getResp.Found, "MemoryGet should indicate value was found")
-	assert.Equal(t, fmt.Sprintf(`"%s"`, testValue), getResp.ValueJson, "Retrieved value should match what was set")
+	// The value is stored as a TypedValue - check string value
+	require.NotNil(t, getResp.Value, "MemoryGet response value should not be nil")
+	assert.Equal(t, testValue, getResp.Value.GetStringValue(), "Retrieved value should match what was set")
 
 	// Step 9: Test MemoryGet for non-existent key
 	getNonExistentCtx, getNonExistentCancel := context.WithTimeout(context.Background(), 2*time.Second)

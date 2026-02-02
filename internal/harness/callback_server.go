@@ -162,3 +162,9 @@ func (s *CallbackServer) SetGraphLoader(gl *loader.GraphLoader) {
 func (s *CallbackServer) SetDiscoveryProcessor(processor DiscoveryProcessor) {
 	s.service.discoveryProcessor = processor
 }
+
+// SetQueueManager sets the QueueManager for Redis-based work queue operations.
+// This must be called before starting the server.
+func (s *CallbackServer) SetQueueManager(queueMgr *QueueManager) {
+	s.service.queueManager = queueMgr
+}

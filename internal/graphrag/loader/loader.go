@@ -124,7 +124,7 @@ func (l *GraphLoader) createDiscoveredRelationshipsBatch(ctx context.Context, ag
 		UNWIND $element_ids AS element_id
 		MATCH (node) WHERE elementId(node) = element_id
 		MERGE (run)-[r:DISCOVERED]->(node)
-		SET r.discovered_at = timestamp()
+		SET r.discovered_at = datetime()
 		RETURN count(r) as rel_count
 	`
 
@@ -575,7 +575,8 @@ func (l *GraphLoader) loadProtoNodes(
 	}
 
 	result := &LoadResult{}
-	discoveredAt := time.Now().UnixMilli()
+	// Use RFC3339 format (24-hour time with timezone) for consistency and readability
+	discoveredAt := time.Now().UTC().Format(time.RFC3339)
 
 	// Determine parent relationship from taxonomy if not explicitly provided
 	var taxonomyRel *taxonomy.ParentRelationship

@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
+	"github.com/zero-day-ai/sdk/schema"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	status_grpc "google.golang.org/grpc/status"
@@ -379,6 +381,7 @@ type CheckpointData struct {
 	Version        int
 }
 
+// ExecuteToolResult represents the result of tool execution.
 // InstallMissionResult represents the result of installing a mission.
 type InstallMissionResult struct {
 	Name         string
@@ -1300,6 +1303,64 @@ func (s *DaemonServer) GetMissionCheckpoints(ctx context.Context, req *GetMissio
 
 	return &GetMissionCheckpointsResponse{
 		Checkpoints: protoCheckpoints,
+	}, nil
+}
+
+// ExecuteTool executes a tool via the Tool Executor Service.
+// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
+func (s *DaemonServer) InstallComponent(ctx context.Context, req *InstallComponentRequest) (*InstallComponentResponse, error) {
+	s.logger.Info("install component request received",
+		"kind", req.Kind,
+		"url", req.Url,
+		"branch", req.Branch,
+		"tag", req.Tag,
+		"force", req.Force,
+	)
+
+	// Validate request
+	if req.Kind == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component kind is required")
+	}
+	if req.Url == "" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "component URL is required")
+	}
+
+	// Validate kind is one of the supported types
+	if req.Kind != "agent" && req.Kind != "tool" && req.Kind != "plugin" {
+		return nil, status_grpc.Errorf(codes.InvalidArgument, "invalid component kind: %s (must be agent, tool, or plugin)", req.Kind)
+	}
+
+	// Call daemon implementation
+	result, err := s.daemon.InstallComponent(ctx, req.Kind, req.Url, req.Branch, req.Tag, req.Force, req.SkipBuild, req.Verbose)
+	if err != nil {
+		s.logger.Error("failed to install component", "error", err, "kind", req.Kind, "url", req.Url)
+
+		// Map errors to appropriate gRPC codes
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "already installed") {
+			return nil, status_grpc.Errorf(codes.AlreadyExists, "%v", err)
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "clone failed") {
+			return nil, status_grpc.Errorf(codes.NotFound, "%v", err)
+		}
+
+		return nil, status_grpc.Errorf(codes.Internal, "failed to install component: %v", err)
+	}
+
+	s.logger.Info("component installed successfully",
+		"kind", req.Kind,
+		"name", result.Name,
+		"version", result.Version,
+	)
+
+	return &InstallComponentResponse{
+		Success:     true,
+		Name:        result.Name,
+		Version:     result.Version,
+		RepoPath:    result.RepoPath,
+		BinPath:     result.BinPath,
+		BuildOutput: result.BuildOutput,
+		DurationMs:  result.DurationMs,
+		Message:     fmt.Sprintf("Component '%s' installed successfully", result.Name),
 	}, nil
 }
 

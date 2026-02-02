@@ -9,6 +9,7 @@ import (
 	"github.com/zero-day-ai/gibson/internal/tool"
 	"github.com/zero-day-ai/gibson/internal/tool/builtins"
 	"github.com/zero-day-ai/gibson/internal/types"
+	"github.com/zero-day-ai/sdk/queue"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -49,19 +50,48 @@ func (d *daemonImpl) newHarnessFactory(ctx context.Context) (harness.HarnessFact
 		}
 	}
 
-	// Create tool registry and populate with daemon tools
+	// Create tool registry and populate with Redis-based tools
 	toolRegistry := tool.NewToolRegistry()
-	if d.toolExecutorService != nil {
-		registered, err := harness.PopulateToolRegistryFromService(d.toolExecutorService, toolRegistry)
-		if err != nil {
-			d.logger.Warn("failed to populate tool registry from daemon",
-				"error", err.Error(),
-			)
+	if d.infrastructure.RedisClient() != nil {
+		// Create Redis tool registry
+		redisClient, ok := d.infrastructure.RedisClient().(*queue.RedisClient)
+		if !ok {
+			d.logger.Warn("Redis client type assertion failed, skipping Redis tool registry population")
 		} else {
-			d.logger.Info("populated tool registry with daemon tools",
-				"tools_registered", registered,
-			)
+			redisToolRegistry := harness.NewRedisToolRegistry(redisClient, d.logger)
+
+			// Refresh to discover available tools from Redis
+			if err := redisToolRegistry.Refresh(ctx); err != nil {
+				d.logger.Warn("failed to refresh Redis tool registry",
+					"error", err.Error(),
+				)
+			}
+
+			// Populate tool registry with Redis tools
+			registered := 0
+			for _, toolName := range redisToolRegistry.List() {
+				if proxy, ok := redisToolRegistry.Get(toolName); ok {
+					if err := toolRegistry.RegisterInternal(proxy); err != nil {
+						d.logger.Warn("failed to register Redis tool",
+							"tool", toolName,
+							"error", err.Error(),
+						)
+						continue
+					}
+					registered++
+				}
+			}
+
+			if registered > 0 {
+				d.logger.Info("populated tool registry with Redis tools",
+					"tools_registered", registered,
+				)
+			} else {
+				d.logger.Info("no Redis tools available yet (workers may not be registered)")
+			}
 		}
+	} else {
+		d.logger.Info("Redis client not available, skipping Redis tool registry population")
 	}
 
 	// Register builtin tools - Phase 8

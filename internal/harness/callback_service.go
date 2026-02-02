@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/graphrag/loader"
+	"github.com/zero-day-ai/gibson/internal/harness/middleware"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
 	"github.com/zero-day-ai/sdk/api/gen/graphragpb"
@@ -890,6 +892,92 @@ func (s *HarnessCallbackService) QueueToolWork(ctx context.Context, req *pb.Queu
 	return &pb.QueueToolWorkResponse{
 		JobId: jobID,
 	}, nil
+}
+
+// ToolResults implements the streaming RPC that delivers results from queued tool work.
+// It subscribes to the Redis pub/sub channel for the job and streams results as they arrive.
+func (s *HarnessCallbackService) ToolResults(req *pb.ToolResultsRequest, stream pb.HarnessCallbackService_ToolResultsServer) error {
+	ctx := stream.Context()
+
+	// Check if queue manager is available
+	if s.queueManager == nil {
+		s.logger.Error("queue manager not configured for ToolResults")
+		return status.Error(codes.Internal, "queue-based tool execution not available (Redis not configured)")
+	}
+
+	jobID := req.JobId
+	if jobID == "" {
+		s.logger.Error("missing job_id in ToolResults request")
+		return status.Error(codes.InvalidArgument, "job_id is required")
+	}
+
+	s.logger.Info("starting ToolResults stream",
+		"job_id", jobID,
+		"mission_id", req.Context.MissionId,
+		"agent_name", req.Context.AgentName,
+	)
+
+	// Subscribe to job results channel
+	channel := fmt.Sprintf("results:%s", jobID)
+	queueClient := s.queueManager.Client()
+	resultChan, err := queueClient.Subscribe(ctx, channel)
+	if err != nil {
+		s.logger.Error("failed to subscribe to results channel",
+			"error", err,
+			"job_id", jobID,
+			"channel", channel,
+		)
+		return status.Errorf(codes.Internal, "failed to subscribe to results: %v", err)
+	}
+
+	s.logger.Info("subscribed to results channel",
+		"job_id", jobID,
+		"channel", channel,
+	)
+
+	// Stream results as they arrive
+	// The channel is closed when context is cancelled, so we don't need to track total
+	resultCount := 0
+	for result := range resultChan {
+		resultCount++
+
+		// Convert queue.Result to proto ToolResultResponse
+		protoResult := &pb.ToolResultResponse{
+			Index: int32(result.Index),
+		}
+
+		if result.Error != "" {
+			protoResult.Error = &pb.HarnessError{
+				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
+				Message: result.Error,
+			}
+		} else {
+			protoResult.OutputJson = result.OutputJSON
+		}
+
+		// Send result to stream
+		if err := stream.Send(protoResult); err != nil {
+			s.logger.Error("failed to send result to stream",
+				"error", err,
+				"job_id", jobID,
+				"index", result.Index,
+			)
+			return err
+		}
+
+		s.logger.Debug("sent result to stream",
+			"job_id", jobID,
+			"index", result.Index,
+			"result_count", resultCount,
+		)
+	}
+
+	s.logger.Info("ToolResults stream closed",
+		"job_id", jobID,
+		"results_sent", resultCount,
+	)
+
+	return nil
 }
 
 // ============================================================================
@@ -1836,9 +1924,13 @@ func (s *HarnessCallbackService) StoreGraphNode(ctx context.Context, req *pb.Sto
 		}, nil
 	}
 
-	// Inject MissionRunID and AgentRunID from proto context into Go context
+	// Inject all context values from proto context into Go context
 	var missionRunID, agentRunID string
 	if req.Context != nil {
+		// Inject MissionID and AgentName for middleware (required by metadataInjector)
+		if req.Context.MissionId != "" {
+			ctx = middleware.WithMissionContext(ctx, req.Context.MissionId, req.Context.AgentName)
+		}
 		if req.Context.MissionRunId != "" {
 			missionRunID = req.Context.MissionRunId
 			ctx = ContextWithMissionRunID(ctx, missionRunID)
@@ -1849,6 +1941,7 @@ func (s *HarnessCallbackService) StoreGraphNode(ctx context.Context, req *pb.Sto
 		}
 
 		s.logger.Info("StoreGraphNode: injected context IDs",
+			"mission_id", req.Context.MissionId,
 			"mission_run_id", missionRunID,
 			"agent_run_id", agentRunID,
 			"node_type", req.Node.Type,
@@ -1930,16 +2023,26 @@ func (s *HarnessCallbackService) StoreGraphBatch(ctx context.Context, req *pb.St
 		}, nil
 	}
 
-	// Inject MissionRunID from proto context into Go context for mission-scoped storage
-	if req.Context != nil && req.Context.MissionRunId != "" {
-		ctx = ContextWithMissionRunID(ctx, req.Context.MissionRunId)
-		s.logger.Info("StoreGraphBatch: injected MissionRunID into context",
+	// Inject all context values from proto context into Go context for mission-scoped storage
+	if req.Context != nil {
+		// Inject MissionID and AgentName for middleware (required by metadataInjector)
+		if req.Context.MissionId != "" {
+			ctx = middleware.WithMissionContext(ctx, req.Context.MissionId, req.Context.AgentName)
+		}
+		if req.Context.MissionRunId != "" {
+			ctx = ContextWithMissionRunID(ctx, req.Context.MissionRunId)
+		}
+		if req.Context.AgentRunId != "" {
+			ctx = ContextWithAgentRunID(ctx, req.Context.AgentRunId)
+		}
+		s.logger.Info("StoreGraphBatch: injected context IDs",
+			"mission_id", req.Context.MissionId,
 			"mission_run_id", req.Context.MissionRunId,
+			"agent_run_id", req.Context.AgentRunId,
 			"node_count", len(req.Nodes),
 			"agent_name", req.Context.AgentName)
 	} else {
-		s.logger.Warn("StoreGraphBatch: no MissionRunID in request context",
-			"has_context", req.Context != nil,
+		s.logger.Warn("StoreGraphBatch: no context info in request",
 			"node_count", len(req.Nodes))
 	}
 
@@ -3360,9 +3463,13 @@ func (s *HarnessCallbackService) StoreNode(ctx context.Context, req *pb.StoreNod
 		}, nil
 	}
 
-	// Inject MissionRunID and AgentRunID from proto context into Go context
+	// Inject all context values from proto context into Go context
 	var missionRunID, agentRunID string
 	if req.Context != nil {
+		// Inject MissionID and AgentName for middleware (required by metadataInjector)
+		if req.Context.MissionId != "" {
+			ctx = middleware.WithMissionContext(ctx, req.Context.MissionId, req.Context.AgentName)
+		}
 		if req.Context.MissionRunId != "" {
 			missionRunID = req.Context.MissionRunId
 			ctx = ContextWithMissionRunID(ctx, missionRunID)
@@ -3373,6 +3480,7 @@ func (s *HarnessCallbackService) StoreNode(ctx context.Context, req *pb.StoreNod
 		}
 
 		s.logger.Info("StoreNode (proto-canonical): injected context IDs",
+			"mission_id", req.Context.MissionId,
 			"mission_run_id", missionRunID,
 			"agent_run_id", agentRunID,
 			"node_type", req.Node.Type,
@@ -3458,6 +3566,8 @@ func (s *HarnessCallbackService) QueryNodes(ctx context.Context, req *pb.QueryNo
 }
 
 // graphragpbNodeToSDKNode converts a graphragpb.GraphNode to an SDK sdkgraphrag.GraphNode.
+// It also injects parent relationship information from proto fields into underscore-prefixed
+// properties (_parent_id, _parent_type, _parent_relationship) for use by the RelationshipResolver.
 func (s *HarnessCallbackService) graphragpbNodeToSDKNode(pn *graphragpb.GraphNode) sdkgraphrag.GraphNode {
 	if pn == nil {
 		return sdkgraphrag.GraphNode{}
@@ -3470,6 +3580,21 @@ func (s *HarnessCallbackService) graphragpbNodeToSDKNode(pn *graphragpb.GraphNod
 	props := make(map[string]any, len(pn.Properties))
 	for k, v := range pn.Properties {
 		props[k] = s.graphragpbValueToAny(v)
+	}
+
+	// Inject parent relationship info from proto fields as underscore-prefixed properties.
+	// These are used by the RelationshipResolver to create parent relationships.
+	// The underscore prefix indicates these are internal transport properties that
+	// should be stripped before Neo4j storage.
+	if parentID := pn.GetParentId(); parentID != "" {
+		props["_parent_id"] = parentID
+	}
+	if parentType := pn.GetParentType(); parentType != "" {
+		// Normalize to lowercase for consistency with node types
+		props["_parent_type"] = strings.ToLower(parentType)
+	}
+	if parentRel := pn.GetParentRelationship(); parentRel != "" {
+		props["_parent_relationship"] = parentRel
 	}
 
 	return sdkgraphrag.GraphNode{

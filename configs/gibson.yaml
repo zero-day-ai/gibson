@@ -66,6 +66,13 @@ registry:
 daemon:
   grpc_address: localhost:50002    # gRPC API server address
 
+# Redis configuration (for tool execution)
+redis:
+  url: redis://localhost:6379      # Redis connection URL
+  database: 0                      # Redis database number
+  connect_timeout: 5s              # Connection timeout
+  read_timeout: 30s                # Read timeout for tool execution
+
 # Embedder configuration (for semantic search and GraphRAG)
 embedder:
   provider: native                 # Embedder provider: native, openai

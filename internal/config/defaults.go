@@ -78,6 +78,12 @@ func DefaultConfig() *Config {
 			GRPCAddress: "localhost:50002",
 		},
 		Embedder: embedder.DefaultEmbedderConfig(),
+		Redis: RedisConfig{
+			URL:            "redis://localhost:6379",
+			Database:       0,
+			ConnectTimeout: 5 * time.Second,
+			ReadTimeout:    30 * time.Second,
+		},
 	}
 }
 

@@ -38,8 +38,6 @@ const (
 	DaemonService_ResumeMission_FullMethodName               = "/gibson.daemon.v1.DaemonService/ResumeMission"
 	DaemonService_GetMissionHistory_FullMethodName           = "/gibson.daemon.v1.DaemonService/GetMissionHistory"
 	DaemonService_GetMissionCheckpoints_FullMethodName       = "/gibson.daemon.v1.DaemonService/GetMissionCheckpoints"
-	DaemonService_ExecuteTool_FullMethodName                 = "/gibson.daemon.v1.DaemonService/ExecuteTool"
-	DaemonService_GetAvailableTools_FullMethodName           = "/gibson.daemon.v1.DaemonService/GetAvailableTools"
 	DaemonService_InstallComponent_FullMethodName            = "/gibson.daemon.v1.DaemonService/InstallComponent"
 	DaemonService_InstallAllComponent_FullMethodName         = "/gibson.daemon.v1.DaemonService/InstallAllComponent"
 	DaemonService_UninstallComponent_FullMethodName          = "/gibson.daemon.v1.DaemonService/UninstallComponent"
@@ -116,14 +114,6 @@ type DaemonServiceClient interface {
 	// GetMissionCheckpoints returns all checkpoints for a specific mission,
 	// providing visibility into saved execution states for resume capability.
 	GetMissionCheckpoints(ctx context.Context, in *GetMissionCheckpointsRequest, opts ...grpc.CallOption) (*GetMissionCheckpointsResponse, error)
-	// ExecuteTool executes a tool via the Tool Executor Service.
-	// Routes tool execution through the centralized tool executor which handles
-	// schema validation, timeout management, and execution tracking.
-	ExecuteTool(ctx context.Context, in *ExecuteToolRequest, opts ...grpc.CallOption) (*ExecuteToolResponse, error)
-	// GetAvailableTools returns all available tools from the Tool Executor Service.
-	// Provides detailed information about each tool including schemas, capabilities,
-	// and execution metrics.
-	GetAvailableTools(ctx context.Context, in *GetAvailableToolsRequest, opts ...grpc.CallOption) (*GetAvailableToolsResponse, error)
 	// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
 	// Clones the repository, builds the component, and registers it in the registry.
 	InstallComponent(ctx context.Context, in *InstallComponentRequest, opts ...grpc.CallOption) (*InstallComponentResponse, error)
@@ -400,26 +390,6 @@ func (c *daemonServiceClient) GetMissionCheckpoints(ctx context.Context, in *Get
 	return out, nil
 }
 
-func (c *daemonServiceClient) ExecuteTool(ctx context.Context, in *ExecuteToolRequest, opts ...grpc.CallOption) (*ExecuteToolResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ExecuteToolResponse)
-	err := c.cc.Invoke(ctx, DaemonService_ExecuteTool_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *daemonServiceClient) GetAvailableTools(ctx context.Context, in *GetAvailableToolsRequest, opts ...grpc.CallOption) (*GetAvailableToolsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetAvailableToolsResponse)
-	err := c.cc.Invoke(ctx, DaemonService_GetAvailableTools_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *daemonServiceClient) InstallComponent(ctx context.Context, in *InstallComponentRequest, opts ...grpc.CallOption) (*InstallComponentResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(InstallComponentResponse)
@@ -629,14 +599,6 @@ type DaemonServiceServer interface {
 	// GetMissionCheckpoints returns all checkpoints for a specific mission,
 	// providing visibility into saved execution states for resume capability.
 	GetMissionCheckpoints(context.Context, *GetMissionCheckpointsRequest) (*GetMissionCheckpointsResponse, error)
-	// ExecuteTool executes a tool via the Tool Executor Service.
-	// Routes tool execution through the centralized tool executor which handles
-	// schema validation, timeout management, and execution tracking.
-	ExecuteTool(context.Context, *ExecuteToolRequest) (*ExecuteToolResponse, error)
-	// GetAvailableTools returns all available tools from the Tool Executor Service.
-	// Provides detailed information about each tool including schemas, capabilities,
-	// and execution metrics.
-	GetAvailableTools(context.Context, *GetAvailableToolsRequest) (*GetAvailableToolsResponse, error)
 	// InstallComponent installs a component (agent, tool, or plugin) from a Git repository.
 	// Clones the repository, builds the component, and registers it in the registry.
 	InstallComponent(context.Context, *InstallComponentRequest) (*InstallComponentResponse, error)
@@ -743,12 +705,6 @@ func (UnimplementedDaemonServiceServer) GetMissionHistory(context.Context, *GetM
 }
 func (UnimplementedDaemonServiceServer) GetMissionCheckpoints(context.Context, *GetMissionCheckpointsRequest) (*GetMissionCheckpointsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMissionCheckpoints not implemented")
-}
-func (UnimplementedDaemonServiceServer) ExecuteTool(context.Context, *ExecuteToolRequest) (*ExecuteToolResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ExecuteTool not implemented")
-}
-func (UnimplementedDaemonServiceServer) GetAvailableTools(context.Context, *GetAvailableToolsRequest) (*GetAvailableToolsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method GetAvailableTools not implemented")
 }
 func (UnimplementedDaemonServiceServer) InstallComponent(context.Context, *InstallComponentRequest) (*InstallComponentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method InstallComponent not implemented")
@@ -1127,42 +1083,6 @@ func _DaemonService_GetMissionCheckpoints_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
-func _DaemonService_ExecuteTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ExecuteToolRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(DaemonServiceServer).ExecuteTool(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: DaemonService_ExecuteTool_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DaemonServiceServer).ExecuteTool(ctx, req.(*ExecuteToolRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _DaemonService_GetAvailableTools_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetAvailableToolsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(DaemonServiceServer).GetAvailableTools(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: DaemonService_GetAvailableTools_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(DaemonServiceServer).GetAvailableTools(ctx, req.(*GetAvailableToolsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _DaemonService_InstallComponent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(InstallComponentRequest)
 	if err := dec(in); err != nil {
@@ -1474,14 +1394,6 @@ var DaemonService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMissionCheckpoints",
 			Handler:    _DaemonService_GetMissionCheckpoints_Handler,
-		},
-		{
-			MethodName: "ExecuteTool",
-			Handler:    _DaemonService_ExecuteTool_Handler,
-		},
-		{
-			MethodName: "GetAvailableTools",
-			Handler:    _DaemonService_GetAvailableTools_Handler,
 		},
 		{
 			MethodName: "InstallComponent",

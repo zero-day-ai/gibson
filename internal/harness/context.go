@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 
+	"github.com/zero-day-ai/gibson/internal/contextkeys"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -163,57 +164,39 @@ func (t TargetInfo) WithMetadata(key string, value any) TargetInfo {
 	return t
 }
 
-// contextKey is a type for context keys to avoid collisions with other packages.
-type contextKey string
-
-const (
-	agentRunIDKey      contextKey = "gibson.agent_run_id"
-	toolExecutionIDKey contextKey = "gibson.tool_execution_id"
-	missionRunIDKey    contextKey = "gibson.mission_run_id"
-)
-
 // ContextWithAgentRunID returns a new context with the agent run ID set.
 // The agent run ID format should be: agent_run:{trace_id}:{span_id}
 func ContextWithAgentRunID(ctx context.Context, agentRunID string) context.Context {
-	return context.WithValue(ctx, agentRunIDKey, agentRunID)
+	return contextkeys.WithAgentRunID(ctx, agentRunID)
 }
 
 // AgentRunIDFromContext retrieves the agent run ID from context.
 // Returns empty string if not set.
 func AgentRunIDFromContext(ctx context.Context) string {
-	if v := ctx.Value(agentRunIDKey); v != nil {
-		return v.(string)
-	}
-	return ""
+	return contextkeys.GetAgentRunID(ctx)
 }
 
 // ContextWithToolExecutionID returns a new context with the tool execution ID set.
 // The tool execution ID format should be: tool_execution:{trace_id}:{span_id}:{timestamp}
 func ContextWithToolExecutionID(ctx context.Context, toolExecutionID string) context.Context {
-	return context.WithValue(ctx, toolExecutionIDKey, toolExecutionID)
+	return contextkeys.WithToolExecutionID(ctx, toolExecutionID)
 }
 
 // ToolExecutionIDFromContext retrieves the tool execution ID from context.
 // Returns empty string if not set.
 func ToolExecutionIDFromContext(ctx context.Context) string {
-	if v := ctx.Value(toolExecutionIDKey); v != nil {
-		return v.(string)
-	}
-	return ""
+	return contextkeys.GetToolExecutionID(ctx)
 }
 
 // ContextWithMissionRunID returns a new context with the mission run ID set.
 // The mission run ID is used for GraphRAG mission-scoped storage, allowing agents
 // to automatically associate stored nodes with the current mission run.
 func ContextWithMissionRunID(ctx context.Context, missionRunID string) context.Context {
-	return context.WithValue(ctx, missionRunIDKey, missionRunID)
+	return contextkeys.WithMissionRunID(ctx, missionRunID)
 }
 
 // MissionRunIDFromContext retrieves the mission run ID from context.
 // Returns empty string if not set.
 func MissionRunIDFromContext(ctx context.Context) string {
-	if v := ctx.Value(missionRunIDKey); v != nil {
-		return v.(string)
-	}
-	return ""
+	return contextkeys.GetMissionRunID(ctx)
 }

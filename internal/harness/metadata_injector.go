@@ -108,7 +108,8 @@ func (m *metadataInjector) Inject(ctx context.Context, node *graphrag.GraphNode)
 	node.Properties["mission_id"] = missionID
 	node.Properties["mission_run_id"] = missionRunID
 	node.Properties["agent_run_id"] = agentRunID
-	node.Properties["discovered_at"] = time.Now().Unix()
+	// Use RFC3339 format (24-hour time with timezone) for consistency and readability
+	node.Properties["discovered_at"] = time.Now().UTC().Format(time.RFC3339)
 
 	return nil
 }
