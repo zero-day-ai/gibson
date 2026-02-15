@@ -27,6 +27,7 @@ const (
 	EventNodeStarted   EventType = "node.started"
 	EventNodeCompleted EventType = "node.completed"
 	EventNodeFailed    EventType = "node.failed"
+	EventNodeSkipped   EventType = "node.skipped"
 )
 
 // Agent Lifecycle Events
@@ -38,6 +39,7 @@ const (
 	EventAgentCompleted    EventType = "agent.completed"
 	EventAgentFailed       EventType = "agent.failed"
 	EventAgentDelegated    EventType = "agent.delegated"
+	EventAgentCancelled    EventType = "agent.cancelled"
 )
 
 // LLM Request Events
@@ -60,7 +62,25 @@ const (
 	EventToolNotFound      EventType = "tool.not_found"
 )
 
-// Plugin Events
+// Tool Progress Events
+// These events track tool execution progress, partial results, and warnings.
+const (
+	EventToolProgress        EventType = "tool.progress"
+	EventToolPartialResult   EventType = "tool.partial_result"
+	EventToolWarning         EventType = "tool.warning"
+	EventToolProgressStalled EventType = "tool.progress_stalled"
+)
+
+// Plugin Lifecycle Events
+// These events track plugin initialization, health, and shutdown.
+const (
+	EventPluginInitialized          EventType = "plugin.initialized"
+	EventPluginInitializationFailed EventType = "plugin.initialization_failed"
+	EventPluginShutdown             EventType = "plugin.shutdown"
+	EventPluginHealthChanged        EventType = "plugin.health_changed"
+)
+
+// Plugin Query Events
 // These events track plugin query execution.
 const (
 	EventPluginQueryStarted   EventType = "plugin.query.started"
@@ -254,6 +274,13 @@ type NodeFailedPayload struct {
 	Duration  time.Duration `json:"duration,omitempty"`
 }
 
+// NodeSkippedPayload contains data for node.skipped events.
+type NodeSkippedPayload struct {
+	MissionID  types.ID `json:"mission_id"`
+	NodeID     string   `json:"node_id"`
+	SkipReason string   `json:"skip_reason"`
+}
+
 // AgentRegisteredPayload contains data for agent.registered events.
 type AgentRegisteredPayload struct {
 	AgentID   string `json:"agent_id"`
@@ -304,6 +331,15 @@ type AgentDelegatedPayload struct {
 	// Trace context for the delegated agent's run
 	ToTraceID string `json:"to_trace_id,omitempty"`
 	ToSpanID  string `json:"to_span_id,omitempty"`
+}
+
+// AgentCancelledPayload contains data for agent.cancelled events.
+type AgentCancelledPayload struct {
+	AgentName        string        `json:"agent_name"`
+	TaskID           string        `json:"task_id,omitempty"`
+	CancelReason     string        `json:"cancel_reason"`
+	ProgressAtCancel string        `json:"progress_at_cancel,omitempty"`
+	Duration         time.Duration `json:"duration"`
 }
 
 // LLMRequestStartedPayload contains data for llm.request.started events.
@@ -398,6 +434,69 @@ type ToolCallFailedPayload struct {
 type ToolNotFoundPayload struct {
 	ToolName    string `json:"tool_name"`
 	RequestedBy string `json:"requested_by,omitempty"`
+}
+
+// ToolProgressPayload contains data for tool.progress events.
+type ToolProgressPayload struct {
+	ToolName        string `json:"tool_name"`
+	CallID          string `json:"call_id"`
+	PercentComplete int    `json:"percent_complete"`
+	Phase           string `json:"phase"`
+	Message         string `json:"message"`
+}
+
+// ToolPartialResultPayload contains data for tool.partial_result events.
+type ToolPartialResultPayload struct {
+	ToolName      string `json:"tool_name"`
+	CallID        string `json:"call_id"`
+	PartialOutput string `json:"partial_output"`
+	IsIncremental bool   `json:"is_incremental"`
+}
+
+// ToolWarningPayload contains data for tool.warning events.
+type ToolWarningPayload struct {
+	ToolName       string `json:"tool_name"`
+	CallID         string `json:"call_id"`
+	WarningMessage string `json:"warning_message"`
+	WarningContext string `json:"warning_context,omitempty"`
+}
+
+// ToolProgressStalledPayload contains data for tool.progress_stalled events.
+type ToolProgressStalledPayload struct {
+	ToolName            string        `json:"tool_name"`
+	CallID              string        `json:"call_id"`
+	LastProgressPercent int           `json:"last_progress_percent"`
+	StallDuration       time.Duration `json:"stall_duration"`
+}
+
+// PluginInitializedPayload contains data for plugin.initialized events.
+type PluginInitializedPayload struct {
+	PluginName             string        `json:"plugin_name"`
+	Version                string        `json:"version"`
+	MethodsAvailable       []string      `json:"methods_available"`
+	InitializationDuration time.Duration `json:"initialization_duration"`
+}
+
+// PluginInitializationFailedPayload contains data for plugin.initialization_failed events.
+type PluginInitializationFailedPayload struct {
+	PluginName string `json:"plugin_name"`
+	Error      string `json:"error"`
+	ErrorCode  string `json:"error_code,omitempty"`
+}
+
+// PluginShutdownPayload contains data for plugin.shutdown events.
+type PluginShutdownPayload struct {
+	PluginName     string `json:"plugin_name"`
+	ShutdownReason string `json:"shutdown_reason"`
+	QueriesServed  int64  `json:"queries_served"`
+}
+
+// PluginHealthChangedPayload contains data for plugin.health_changed events.
+type PluginHealthChangedPayload struct {
+	PluginName     string `json:"plugin_name"`
+	PreviousStatus string `json:"previous_status"`
+	CurrentStatus  string `json:"current_status"`
+	HealthDetails  string `json:"health_details,omitempty"`
 }
 
 // PluginQueryStartedPayload contains data for plugin.query.started events.

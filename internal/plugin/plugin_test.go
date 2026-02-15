@@ -10,8 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zero-day-ai/sdk/schema"
 
-	"github.com/zero-day-ai/gibson/internal/schema"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -110,7 +110,7 @@ func (m *MockPlugin) Health(ctx context.Context) types.HealthStatus {
 }
 
 // Helper methods for test setup
-func (m *MockPlugin) AddMethod(name, description string, inputSchema, outputSchema schema.JSONSchema) {
+func (m *MockPlugin) AddMethod(name, description string, inputSchema, outputSchema schema.JSON) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -181,7 +181,7 @@ func (m *MockPlugin) IsInitialized() bool {
 // Tests
 
 func TestNewPluginRegistry(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	assert.NotNil(t, registry)
 	assert.Empty(t, registry.plugins)
@@ -189,7 +189,7 @@ func TestNewPluginRegistry(t *testing.T) {
 }
 
 func TestRegister_Success(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 
 	cfg := PluginConfig{
@@ -208,7 +208,7 @@ func TestRegister_Success(t *testing.T) {
 }
 
 func TestRegister_EmptyName(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("", "1.0.0")
 
 	cfg := PluginConfig{}
@@ -219,7 +219,7 @@ func TestRegister_EmptyName(t *testing.T) {
 }
 
 func TestRegister_AlreadyRegistered(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin1 := NewMockPlugin("test-plugin", "1.0.0")
 	plugin2 := NewMockPlugin("test-plugin", "2.0.0")
 
@@ -234,7 +234,7 @@ func TestRegister_AlreadyRegistered(t *testing.T) {
 }
 
 func TestRegister_InitializationError(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 	plugin.SetInitError(errors.New("init failed"))
 
@@ -252,7 +252,7 @@ func TestRegister_InitializationError(t *testing.T) {
 }
 
 func TestRegisterExternal_Success(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	client := NewMockPlugin("external-plugin", "1.0.0")
 
 	cfg := PluginConfig{Name: "external-plugin"}
@@ -270,7 +270,7 @@ func TestRegisterExternal_Success(t *testing.T) {
 }
 
 func TestUnregister_Success(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 
 	cfg := PluginConfig{Name: "test-plugin"}
@@ -287,7 +287,7 @@ func TestUnregister_Success(t *testing.T) {
 }
 
 func TestUnregister_NotFound(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	err := registry.Unregister("nonexistent")
 	assert.Error(t, err)
@@ -295,7 +295,7 @@ func TestUnregister_NotFound(t *testing.T) {
 }
 
 func TestUnregister_ShutdownError(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 	plugin.SetShutdownError(errors.New("shutdown failed"))
 
@@ -311,7 +311,7 @@ func TestUnregister_ShutdownError(t *testing.T) {
 }
 
 func TestGet_Success(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 
 	cfg := PluginConfig{Name: "test-plugin"}
@@ -325,7 +325,7 @@ func TestGet_Success(t *testing.T) {
 }
 
 func TestGet_NotFound(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	_, err := registry.Get("nonexistent")
 	assert.Error(t, err)
@@ -333,7 +333,7 @@ func TestGet_NotFound(t *testing.T) {
 }
 
 func TestGet_NotRunning(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 	plugin.SetInitError(errors.New("init error"))
 
@@ -347,10 +347,10 @@ func TestGet_NotRunning(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	plugin1 := NewMockPlugin("plugin1", "1.0.0")
-	plugin1.AddMethod("method1", "test method", schema.JSONSchema{}, schema.JSONSchema{})
+	plugin1.AddMethod("method1", "test method", schema.JSON{}, schema.JSON{})
 
 	plugin2 := NewMockPlugin("plugin2", "2.0.0")
 
@@ -392,16 +392,16 @@ func TestList(t *testing.T) {
 }
 
 func TestMethods_Success(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 
-	inputSchema := schema.NewObjectSchema(map[string]schema.SchemaField{
-		"query": schema.NewStringField("search query"),
-	}, []string{"query"})
+	inputSchema := schema.Object(map[string]schema.JSON{
+		"query": schema.StringWithDesc("search query"),
+	}, "query")
 
-	outputSchema := schema.NewObjectSchema(map[string]schema.SchemaField{
-		"results": schema.NewStringField("search results"),
-	}, []string{"results"})
+	outputSchema := schema.Object(map[string]schema.JSON{
+		"results": schema.StringWithDesc("search results"),
+	}, "results")
 
 	plugin.AddMethod("search", "Search method", inputSchema, outputSchema)
 
@@ -418,7 +418,7 @@ func TestMethods_Success(t *testing.T) {
 }
 
 func TestMethods_PluginNotFound(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	_, err := registry.Methods("nonexistent")
 	assert.Error(t, err)
@@ -426,7 +426,7 @@ func TestMethods_PluginNotFound(t *testing.T) {
 }
 
 func TestQuery_Success(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 
 	expectedResult := map[string]any{"data": "test result"}
@@ -447,7 +447,7 @@ func TestQuery_Success(t *testing.T) {
 }
 
 func TestQuery_PluginNotFound(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	ctx := context.Background()
 
 	_, err := registry.Query(ctx, "nonexistent", "search", nil)
@@ -456,7 +456,7 @@ func TestQuery_PluginNotFound(t *testing.T) {
 }
 
 func TestQuery_UnknownMethod(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 
 	cfg := PluginConfig{Name: "test-plugin"}
@@ -472,7 +472,7 @@ func TestQuery_UnknownMethod(t *testing.T) {
 }
 
 func TestQuery_MethodError(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 	plugin.SetQueryError("search", errors.New("query failed"))
 
@@ -489,7 +489,7 @@ func TestQuery_MethodError(t *testing.T) {
 }
 
 func TestShutdown_ReverseOrder(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	// Use shared tracker for shutdown order
 	var shutdownOrder []string
@@ -571,7 +571,7 @@ func (tp *trackingPlugin) Shutdown(ctx context.Context) error {
 }
 
 func TestShutdown_WithErrors(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	plugin1 := NewMockPlugin("plugin1", "1.0.0")
 	plugin2 := NewMockPlugin("plugin2", "1.0.0")
@@ -596,7 +596,7 @@ func TestShutdown_WithErrors(t *testing.T) {
 }
 
 func TestHealth_NoPlugins(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 	ctx := context.Background()
 
 	health := registry.Health(ctx)
@@ -605,7 +605,7 @@ func TestHealth_NoPlugins(t *testing.T) {
 }
 
 func TestHealth_AllHealthy(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	plugin1 := NewMockPlugin("plugin1", "1.0.0")
 	plugin1.SetHealthStatus(types.Healthy("plugin1 ok"))
@@ -629,7 +629,7 @@ func TestHealth_AllHealthy(t *testing.T) {
 }
 
 func TestHealth_OneDegraded(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	plugin1 := NewMockPlugin("plugin1", "1.0.0")
 	plugin1.SetHealthStatus(types.Healthy("plugin1 ok"))
@@ -653,7 +653,7 @@ func TestHealth_OneDegraded(t *testing.T) {
 }
 
 func TestHealth_OneUnhealthy(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	plugin1 := NewMockPlugin("plugin1", "1.0.0")
 	plugin1.SetHealthStatus(types.Healthy("plugin1 ok"))
@@ -678,7 +678,7 @@ func TestHealth_OneUnhealthy(t *testing.T) {
 }
 
 func TestHealth_NotRunningPlugin(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	plugin := NewMockPlugin("plugin1", "1.0.0")
 	plugin.SetInitError(errors.New("init failed"))
@@ -695,7 +695,7 @@ func TestHealth_NotRunningPlugin(t *testing.T) {
 }
 
 func TestConcurrentAccess(t *testing.T) {
-	registry := NewPluginRegistry()
+	registry := NewPluginRegistry(nil)
 
 	plugin := NewMockPlugin("test-plugin", "1.0.0")
 	plugin.SetQueryResult("method1", "result1")

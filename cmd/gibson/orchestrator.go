@@ -116,7 +116,7 @@ func createOrchestratorWithOptions(ctx context.Context, opts *OrchestratorOption
 
 	// Step 3: Create legacy registries (tools and plugins still use legacy registries for now)
 	toolRegistry := tool.NewToolRegistry()
-	pluginRegistry := plugin.NewPluginRegistry()
+	pluginRegistry := plugin.NewPluginRegistry(nil) // TODO: Pass EventBus when available
 
 	// Step 4: Create LLM components
 	llmRegistry, slotManager, err := createLLMComponents()

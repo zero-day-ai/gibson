@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
+	"time"
 
+	"github.com/zero-day-ai/gibson/internal/events"
 	"github.com/zero-day-ai/gibson/internal/types"
 )
 
@@ -45,24 +48,30 @@ type ExternalPluginClient interface {
 
 // pluginEntry tracks a registered plugin
 type pluginEntry struct {
-	plugin   Plugin
-	config   PluginConfig
-	status   PluginStatus
-	external bool
+	plugin       Plugin
+	config       PluginConfig
+	status       PluginStatus
+	external     bool
+	queryCount   atomic.Int64
+	lastHealth   types.HealthStatus
+	healthMu     sync.RWMutex
+	initDuration time.Duration
 }
 
 // DefaultPluginRegistry implements PluginRegistry
 type DefaultPluginRegistry struct {
-	mu      sync.RWMutex
-	plugins map[string]*pluginEntry
-	order   []string // Track registration order for shutdown
+	mu       sync.RWMutex
+	plugins  map[string]*pluginEntry
+	order    []string // Track registration order for shutdown
+	eventBus events.EventBus
 }
 
 // NewPluginRegistry creates a new DefaultPluginRegistry
-func NewPluginRegistry() *DefaultPluginRegistry {
+func NewPluginRegistry(eventBus events.EventBus) *DefaultPluginRegistry {
 	return &DefaultPluginRegistry{
-		plugins: make(map[string]*pluginEntry),
-		order:   make([]string, 0),
+		plugins:  make(map[string]*pluginEntry),
+		order:    make([]string, 0),
+		eventBus: eventBus,
 	}
 }
 
@@ -81,11 +90,14 @@ func (r *DefaultPluginRegistry) Register(plugin Plugin, cfg PluginConfig) error 
 	}
 
 	// Create entry with initializing status
+	// Initialize lastHealth with current plugin health to avoid spurious event on first health check
+	initialHealth := plugin.Health(context.Background())
 	entry := &pluginEntry{
-		plugin:   plugin,
-		config:   cfg,
-		status:   PluginStatusInitializing,
-		external: false,
+		plugin:     plugin,
+		config:     cfg,
+		status:     PluginStatusInitializing,
+		external:   false,
+		lastHealth: initialHealth,
 	}
 	r.plugins[name] = entry
 	r.order = append(r.order, name)
@@ -93,15 +105,60 @@ func (r *DefaultPluginRegistry) Register(plugin Plugin, cfg PluginConfig) error 
 	// Initialize the plugin (unlock during initialization to allow concurrent queries)
 	r.mu.Unlock()
 	ctx := context.Background()
+
+	// Track initialization duration
+	startTime := time.Now()
 	err := plugin.Initialize(ctx, cfg)
+	initDuration := time.Since(startTime)
+
 	r.mu.Lock()
 
 	if err != nil {
 		entry.status = PluginStatusError
+
+		// Emit plugin.initialization_failed event
+		if r.eventBus != nil {
+			r.mu.Unlock()
+			_ = r.eventBus.Publish(ctx, events.Event{
+				Type:      events.EventPluginInitializationFailed,
+				Timestamp: time.Now(),
+				Payload: events.PluginInitializationFailedPayload{
+					PluginName: name,
+					Error:      err.Error(),
+				},
+			})
+			r.mu.Lock()
+		}
+
 		return fmt.Errorf("failed to initialize plugin %s: %w", name, err)
 	}
 
 	entry.status = PluginStatusRunning
+	entry.initDuration = initDuration
+
+	// Get method names for the event
+	methods := plugin.Methods()
+	methodNames := make([]string, len(methods))
+	for i, m := range methods {
+		methodNames[i] = m.Name
+	}
+
+	// Emit plugin.initialized event
+	if r.eventBus != nil {
+		r.mu.Unlock()
+		_ = r.eventBus.Publish(ctx, events.Event{
+			Type:      events.EventPluginInitialized,
+			Timestamp: time.Now(),
+			Payload: events.PluginInitializedPayload{
+				PluginName:             name,
+				Version:                plugin.Version(),
+				MethodsAvailable:       methodNames,
+				InitializationDuration: initDuration,
+			},
+		})
+		r.mu.Lock()
+	}
+
 	return nil
 }
 
@@ -119,11 +176,14 @@ func (r *DefaultPluginRegistry) RegisterExternal(name string, client ExternalPlu
 	}
 
 	// Create entry with initializing status
+	// Initialize lastHealth with current plugin health to avoid spurious event on first health check
+	initialHealth := client.Health(context.Background())
 	entry := &pluginEntry{
-		plugin:   client,
-		config:   cfg,
-		status:   PluginStatusInitializing,
-		external: true,
+		plugin:     client,
+		config:     cfg,
+		status:     PluginStatusInitializing,
+		external:   true,
+		lastHealth: initialHealth,
 	}
 	r.plugins[name] = entry
 	r.order = append(r.order, name)
@@ -131,15 +191,60 @@ func (r *DefaultPluginRegistry) RegisterExternal(name string, client ExternalPlu
 	// Initialize the plugin (unlock during initialization to allow concurrent queries)
 	r.mu.Unlock()
 	ctx := context.Background()
+
+	// Track initialization duration
+	startTime := time.Now()
 	err := client.Initialize(ctx, cfg)
+	initDuration := time.Since(startTime)
+
 	r.mu.Lock()
 
 	if err != nil {
 		entry.status = PluginStatusError
+
+		// Emit plugin.initialization_failed event
+		if r.eventBus != nil {
+			r.mu.Unlock()
+			_ = r.eventBus.Publish(ctx, events.Event{
+				Type:      events.EventPluginInitializationFailed,
+				Timestamp: time.Now(),
+				Payload: events.PluginInitializationFailedPayload{
+					PluginName: name,
+					Error:      err.Error(),
+				},
+			})
+			r.mu.Lock()
+		}
+
 		return fmt.Errorf("failed to initialize external plugin %s: %w", name, err)
 	}
 
 	entry.status = PluginStatusRunning
+	entry.initDuration = initDuration
+
+	// Get method names for the event
+	methods := client.Methods()
+	methodNames := make([]string, len(methods))
+	for i, m := range methods {
+		methodNames[i] = m.Name
+	}
+
+	// Emit plugin.initialized event
+	if r.eventBus != nil {
+		r.mu.Unlock()
+		_ = r.eventBus.Publish(ctx, events.Event{
+			Type:      events.EventPluginInitialized,
+			Timestamp: time.Now(),
+			Payload: events.PluginInitializedPayload{
+				PluginName:             name,
+				Version:                client.Version(),
+				MethodsAvailable:       methodNames,
+				InitializationDuration: initDuration,
+			},
+		})
+		r.mu.Lock()
+	}
+
 	return nil
 }
 
@@ -154,6 +259,7 @@ func (r *DefaultPluginRegistry) Unregister(name string) error {
 
 	entry.status = PluginStatusStopping
 	plugin := entry.plugin
+	queryCount := entry.queryCount.Load()
 	r.mu.Unlock()
 
 	// Shutdown the plugin (unlock during shutdown to avoid deadlock)
@@ -163,6 +269,19 @@ func (r *DefaultPluginRegistry) Unregister(name string) error {
 		entry.status = PluginStatusError
 		r.mu.Unlock()
 		return fmt.Errorf("failed to shutdown plugin %s: %w", name, err)
+	}
+
+	// Emit plugin.shutdown event
+	if r.eventBus != nil {
+		_ = r.eventBus.Publish(ctx, events.Event{
+			Type:      events.EventPluginShutdown,
+			Timestamp: time.Now(),
+			Payload: events.PluginShutdownPayload{
+				PluginName:     name,
+				ShutdownReason: "manual_unregister",
+				QueriesServed:  queryCount,
+			},
+		})
 	}
 
 	// Remove from registry
@@ -235,6 +354,14 @@ func (r *DefaultPluginRegistry) Query(ctx context.Context, pluginName, method st
 		return nil, err
 	}
 
+	// Track query count
+	r.mu.RLock()
+	entry, exists := r.plugins[pluginName]
+	r.mu.RUnlock()
+	if exists {
+		entry.queryCount.Add(1)
+	}
+
 	return plugin.Query(ctx, method, params)
 }
 
@@ -253,12 +380,27 @@ func (r *DefaultPluginRegistry) Shutdown(ctx context.Context) error {
 		}
 
 		entry.status = PluginStatusStopping
+		queryCount := entry.queryCount.Load()
 
 		// Unlock during shutdown to avoid deadlock
 		r.mu.Unlock()
 		if err := entry.plugin.Shutdown(ctx); err != nil {
 			errors = append(errors, fmt.Errorf("plugin %s: %w", name, err))
 		}
+
+		// Emit plugin.shutdown event
+		if r.eventBus != nil {
+			_ = r.eventBus.Publish(ctx, events.Event{
+				Type:      events.EventPluginShutdown,
+				Timestamp: time.Now(),
+				Payload: events.PluginShutdownPayload{
+					PluginName:     name,
+					ShutdownReason: "registry_shutdown",
+					QueriesServed:  queryCount,
+				},
+			})
+		}
+
 		r.mu.Lock()
 
 		entry.status = PluginStatusStopped
@@ -299,6 +441,33 @@ func (r *DefaultPluginRegistry) Health(ctx context.Context) types.HealthStatus {
 		r.mu.RUnlock()
 		health := entry.plugin.Health(ctx)
 		r.mu.RLock()
+
+		// Track health changes
+		entry.healthMu.RLock()
+		previousHealth := entry.lastHealth
+		entry.healthMu.RUnlock()
+
+		if previousHealth.State != health.State {
+			entry.healthMu.Lock()
+			entry.lastHealth = health
+			entry.healthMu.Unlock()
+
+			// Emit plugin.health_changed event
+			if r.eventBus != nil {
+				r.mu.RUnlock()
+				_ = r.eventBus.Publish(ctx, events.Event{
+					Type:      events.EventPluginHealthChanged,
+					Timestamp: time.Now(),
+					Payload: events.PluginHealthChangedPayload{
+						PluginName:     name,
+						PreviousStatus: string(previousHealth.State),
+						CurrentStatus:  string(health.State),
+						HealthDetails:  health.Message,
+					},
+				})
+				r.mu.RLock()
+			}
+		}
 
 		switch health.State {
 		case types.HealthStateHealthy:

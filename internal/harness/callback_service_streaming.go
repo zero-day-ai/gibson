@@ -5,6 +5,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/google/uuid"
 	pb "github.com/zero-day-ai/sdk/api/gen/proto"
 	"google.golang.org/grpc"
 )
@@ -212,6 +213,52 @@ func (s *HarnessCallbackService) CallToolProtoStream(req *pb.CallToolProtoStream
 		s.logger.Warn("failed to close tool stream send", "error", err, "tool", req.Name)
 	}
 
+	// Generate call_id for this tool execution
+	callID := uuid.New().String()
+
+	// Rate limiting for progress events (max 10 events/second = 100ms between events)
+	var lastProgressEvent time.Time
+	var lastProgressPercent int32
+
+	// Stall detection timer - emit event if no progress for 30 seconds
+	stallTimer := time.NewTimer(30 * time.Second)
+	defer stallTimer.Stop()
+
+	// Channel to signal progress updates
+	progressUpdated := make(chan struct{}, 1)
+
+	// Goroutine to detect stalls
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-progressUpdated:
+				// Reset timer on progress
+				if !stallTimer.Stop() {
+					select {
+					case <-stallTimer.C:
+					default:
+					}
+				}
+				stallTimer.Reset(30 * time.Second)
+			case <-stallTimer.C:
+				// No progress for 30 seconds - emit stall event
+				s.publishEvent(ctx, "tool.progress_stalled", map[string]interface{}{
+					"tool_name":             req.Name,
+					"call_id":               callID,
+					"last_progress_percent": lastProgressPercent,
+					"stall_duration_ms":     30000,
+					"mission_id":            req.Context.MissionId,
+					"agent_name":            req.Context.AgentName,
+					"task_id":               req.Context.TaskId,
+				})
+				// Reset timer to continue monitoring
+				stallTimer.Reset(30 * time.Second)
+			}
+		}
+	}()
+
 	// Forward all messages from tool to agent
 	sequence := int64(0)
 	for {
@@ -271,6 +318,29 @@ func (s *HarnessCallbackService) CallToolProtoStream(req *pb.CallToolProtoStream
 				TimestampMs: toolMsg.TimestampMs,
 			}
 
+			// Forward progress to EventBus with rate limiting (max 10 events/second)
+			now := time.Now()
+			if now.Sub(lastProgressEvent) > 100*time.Millisecond {
+				s.publishEvent(ctx, "tool.progress", map[string]interface{}{
+					"tool_name":        req.Name,
+					"call_id":          callID,
+					"percent_complete": payload.Progress.Percent,
+					"phase":            payload.Progress.Stage,
+					"message":          payload.Progress.Message,
+					"mission_id":       req.Context.MissionId,
+					"agent_name":       req.Context.AgentName,
+					"task_id":          req.Context.TaskId,
+				})
+				lastProgressEvent = now
+			}
+
+			// Update progress tracking for stall detection
+			lastProgressPercent = payload.Progress.Percent
+			select {
+			case progressUpdated <- struct{}{}:
+			default:
+			}
+
 		case *pb.ToolMessage_Partial:
 			response = &pb.CallToolProtoStreamResponse{
 				Payload: &pb.CallToolProtoStreamResponse_Partial{
@@ -285,6 +355,19 @@ func (s *HarnessCallbackService) CallToolProtoStream(req *pb.CallToolProtoStream
 				TimestampMs: toolMsg.TimestampMs,
 			}
 
+			// Forward partial result to EventBus
+			// Note: Description field indicates if this is incremental
+			s.publishEvent(ctx, "tool.partial_result", map[string]interface{}{
+				"tool_name":      req.Name,
+				"call_id":        callID,
+				"partial_output": payload.Partial.OutputJson,
+				"is_incremental": payload.Partial.Description != "", // Use description field to indicate incremental
+				"description":    payload.Partial.Description,
+				"mission_id":     req.Context.MissionId,
+				"agent_name":     req.Context.AgentName,
+				"task_id":        req.Context.TaskId,
+			})
+
 		case *pb.ToolMessage_Warning:
 			response = &pb.CallToolProtoStreamResponse{
 				Payload: &pb.CallToolProtoStreamResponse_Warning{
@@ -298,6 +381,18 @@ func (s *HarnessCallbackService) CallToolProtoStream(req *pb.CallToolProtoStream
 				Sequence:    sequence,
 				TimestampMs: toolMsg.TimestampMs,
 			}
+
+			// Forward warning to EventBus
+			s.publishEvent(ctx, "tool.warning", map[string]interface{}{
+				"tool_name":       req.Name,
+				"call_id":         callID,
+				"warning_message": payload.Warning.Message,
+				"warning_context": payload.Warning.Code, // Use code field as context
+				"warning_code":    payload.Warning.Code,
+				"mission_id":      req.Context.MissionId,
+				"agent_name":      req.Context.AgentName,
+				"task_id":         req.Context.TaskId,
+			})
 
 		case *pb.ToolMessage_Complete:
 			response = &pb.CallToolProtoStreamResponse{

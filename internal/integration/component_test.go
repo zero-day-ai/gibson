@@ -121,7 +121,7 @@ func TestToolLifecycle(t *testing.T) {
 // TestPluginLifecycle tests the complete plugin registration lifecycle
 func TestPluginLifecycle(t *testing.T) {
 	ctx := context.Background()
-	registry := plugin.NewPluginRegistry()
+	registry := plugin.NewPluginRegistry(nil)
 
 	// Step 1: Register a plugin
 	t.Run("RegisterPlugin", func(t *testing.T) {
@@ -366,7 +366,7 @@ func TestMixedComponents(t *testing.T) {
 		})
 
 		t.Run("MixedPlugins", func(t *testing.T) {
-			registry := plugin.NewPluginRegistry()
+			registry := plugin.NewPluginRegistry(nil)
 
 			// Register internal plugin
 			internalPlugin := newMockPlugin("internal-db", "1.0.0")
@@ -467,7 +467,7 @@ func TestConcurrentComponentOperations(t *testing.T) {
 		})
 
 		t.Run("ConcurrentPluginOps", func(t *testing.T) {
-			registry := plugin.NewPluginRegistry()
+			registry := plugin.NewPluginRegistry(nil)
 
 			// Register plugin
 			mockPlugin := newMockPlugin("concurrent-db", "1.0.0")
@@ -540,7 +540,7 @@ func TestComponentInteraction(t *testing.T) {
 
 		// Create all registries
 		toolRegistry := tool.NewToolRegistry()
-		pluginRegistry := plugin.NewPluginRegistry()
+		pluginRegistry := plugin.NewPluginRegistry(nil)
 		agentRegistry := agent.NewAgentRegistry()
 
 		// Register components

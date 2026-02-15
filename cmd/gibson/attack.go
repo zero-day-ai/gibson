@@ -456,7 +456,7 @@ func createAttackRunner(ctx context.Context) (attack.AttackRunner, error) {
 
 	// Step 2.5: Create registries (tools and plugins still use legacy registries for now)
 	toolRegistry := tool.NewToolRegistry()
-	pluginRegistry := plugin.NewPluginRegistry()
+	pluginRegistry := plugin.NewPluginRegistry(nil) // TODO: Pass EventBus when available
 	payloadRegistry := payload.NewPayloadRegistryWithDefaults(db)
 
 	// Step 3: Create LLM components

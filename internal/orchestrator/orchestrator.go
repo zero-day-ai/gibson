@@ -455,6 +455,33 @@ func (o *Orchestrator) Run(ctx context.Context, missionID string) (*Orchestrator
 		}
 
 		// 5. ACT - Execute the decision
+
+		// Emit node.started event before execution (for execute_agent and retry actions)
+		if thinkResult.Decision.Action == ActionExecuteAgent || thinkResult.Decision.Action == ActionRetry {
+			if o.eventBus != nil && thinkResult.Decision.TargetNodeID != "" {
+				// Get node type from state if available
+				nodeType := ""
+				for _, node := range state.ReadyNodes {
+					if node.ID == thinkResult.Decision.TargetNodeID {
+						nodeType = node.Type
+						break
+					}
+				}
+
+				o.eventBus.Publish(events.Event{
+					Type:      events.EventNodeStarted,
+					Timestamp: time.Now(),
+					MissionID: parsedMissionID,
+					Payload: events.NodeStartedPayload{
+						MissionID: parsedMissionID,
+						NodeID:    thinkResult.Decision.TargetNodeID,
+						NodeType:  nodeType,
+						Message:   "Starting node execution",
+					},
+				})
+			}
+		}
+
 		actionResult, err := o.actor.Act(ctx, thinkResult.Decision, missionID)
 		if err != nil {
 			o.logger.Error("action failed", "iteration", iteration, "error", err)
@@ -613,6 +640,46 @@ func (o *Orchestrator) logAction(ctx context.Context, action *ActionResult, iter
 						NodeID:    exec.WorkflowNodeID,
 						Error:     exec.Error,
 						Duration:  exec.Duration(),
+					},
+				})
+			}
+		}
+
+		// Emit node.skipped event for skip_agent action
+		if action.Action == ActionSkipAgent && action.TargetNodeID != "" {
+			skipReason := "Node skipped by orchestrator decision"
+			if reasoning, ok := action.Metadata["reasoning"].(string); ok && reasoning != "" {
+				skipReason = reasoning
+			}
+
+			o.eventBus.Publish(events.Event{
+				Type:      events.EventNodeSkipped,
+				Timestamp: time.Now(),
+				MissionID: parsedMissionID,
+				Payload: events.NodeSkippedPayload{
+					MissionID:  parsedMissionID,
+					NodeID:     action.TargetNodeID,
+					SkipReason: skipReason,
+				},
+			})
+		}
+
+		// Also emit node.skipped for policy-based skips during execute_agent
+		if action.Action == ActionExecuteAgent && action.TargetNodeID != "" {
+			if skipped, ok := action.Metadata["skipped"].(bool); ok && skipped {
+				skipReason := "Policy check prevented execution"
+				if reason, ok := action.Metadata["skip_reason"].(string); ok && reason != "" {
+					skipReason = reason
+				}
+
+				o.eventBus.Publish(events.Event{
+					Type:      events.EventNodeSkipped,
+					Timestamp: time.Now(),
+					MissionID: parsedMissionID,
+					Payload: events.NodeSkippedPayload{
+						MissionID:  parsedMissionID,
+						NodeID:     action.TargetNodeID,
+						SkipReason: skipReason,
 					},
 				})
 			}

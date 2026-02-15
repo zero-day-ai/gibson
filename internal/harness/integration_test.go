@@ -610,7 +610,7 @@ func setupTestHarness(t *testing.T, mockResponses []string) (AgentHarness, *Harn
 	require.NoError(t, err)
 
 	// Create plugin registry and register plugins
-	pluginRegistry := plugin.NewPluginRegistry()
+	pluginRegistry := plugin.NewPluginRegistry(nil)
 	err = pluginRegistry.Register(NewVulnDBPlugin(), plugin.PluginConfig{})
 	require.NoError(t, err)
 	err = pluginRegistry.Register(NewTargetInfoPlugin(), plugin.PluginConfig{})
@@ -1396,7 +1396,7 @@ func TestIntegration_CompleteWithTools(t *testing.T) {
 
 	slotManager := llm.NewSlotManager(llmRegistry)
 	toolRegistry := tool.NewToolRegistry()
-	pluginRegistry := plugin.NewPluginRegistry()
+	pluginRegistry := plugin.NewPluginRegistry(nil)
 
 	// Use file-based DB (WAL mode requires a file, not :memory:)
 	tmpDB := filepath.Join(t.TempDir(), "test-tools.db")

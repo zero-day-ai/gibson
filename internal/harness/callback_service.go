@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -20,8 +21,8 @@ import (
 	// Import toolspb to register proto message types for CallToolProto reflection
 	_ "github.com/zero-day-ai/sdk/api/gen/toolspb"
 	sdkfinding "github.com/zero-day-ai/sdk/finding"
-	"github.com/zero-day-ai/sdk/queue"
 	sdkgraphrag "github.com/zero-day-ai/sdk/graphrag"
+	"github.com/zero-day-ai/sdk/queue"
 	"github.com/zero-day-ai/sdk/schema"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
@@ -760,7 +761,6 @@ func (s *HarnessCallbackService) ListTools(ctx context.Context, req *pb.ListTool
 	}, nil
 }
 
-
 // QueueToolWork implements the queue-based parallel tool execution RPC.
 // It queues multiple tool invocations to Redis for processing by distributed workers.
 func (s *HarnessCallbackService) QueueToolWork(ctx context.Context, req *pb.QueueToolWorkRequest) (*pb.QueueToolWorkResponse, error) {
@@ -1057,10 +1057,48 @@ func (s *HarnessCallbackService) DelegateToAgent(ctx context.Context, req *pb.De
 	// Convert proto Task to internal Task
 	task := protoTaskToTask(req.Task)
 
+	// Capture start time for agent execution
+	agentStartTime := time.Now()
+
+	// Emit agent.started event
+	s.publishEvent(ctx, "agent.started", map[string]interface{}{
+		"agent_name":       req.Name,
+		"task_id":          task.ID.String(),
+		"task_description": task.Description,
+		"mission_id":       req.Context.MissionId,
+		"parent_agent":     req.Context.AgentName,
+	})
+
 	// Delegate to agent
 	result, err := harness.DelegateToAgent(ctx, req.Name, task)
+
+	// Calculate duration
+	durationMs := time.Since(agentStartTime).Milliseconds()
+	findingsCount := len(result.Findings)
+
+	// Handle different execution outcomes
 	if err != nil {
 		s.logger.Error("agent delegation failed", "error", err, "agent", req.Name)
+
+		// Check if context was cancelled
+		if ctx.Err() == context.Canceled {
+			s.publishEvent(ctx, "agent.cancelled", map[string]interface{}{
+				"agent_name":    req.Name,
+				"task_id":       task.ID.String(),
+				"cancel_reason": "context cancelled",
+				"duration_ms":   durationMs,
+			})
+		} else {
+			// Emit agent.failed event
+			s.publishEvent(ctx, "agent.failed", map[string]interface{}{
+				"agent_name":     req.Name,
+				"task_id":        task.ID.String(),
+				"error":          err.Error(),
+				"duration_ms":    durationMs,
+				"findings_count": findingsCount,
+			})
+		}
+
 		return &pb.DelegateToAgentResponse{
 			Error: &pb.HarnessError{
 				Code:    pb.ErrorCode_ERROR_CODE_INTERNAL,
@@ -1068,6 +1106,15 @@ func (s *HarnessCallbackService) DelegateToAgent(ctx context.Context, req *pb.De
 			},
 		}, nil
 	}
+
+	// Emit agent.completed event on success
+	s.publishEvent(ctx, "agent.completed", map[string]interface{}{
+		"agent_name":     req.Name,
+		"task_id":        task.ID.String(),
+		"duration_ms":    durationMs,
+		"findings_count": findingsCount,
+		"success":        true,
+	})
 
 	return &pb.DelegateToAgentResponse{
 		Result: resultToProtoResult(result),
@@ -2675,12 +2722,20 @@ func (s *HarnessCallbackService) publishEvent(ctx context.Context, eventType str
 	}
 
 	// Publish in background to avoid blocking the callback response
+	// Use timeout context to prevent goroutine leaks while still allowing
+	// publish to complete after request context is cancelled
 	go func() {
-		if err := s.eventBus.Publish(context.Background(), event); err != nil {
-			s.logger.Warn("failed to publish event",
-				"event_type", eventType,
-				"error", err,
-			)
+		pubCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := s.eventBus.Publish(pubCtx, event); err != nil {
+			// Don't log context.Canceled - expected when request is cancelled
+			if !errors.Is(err, context.Canceled) {
+				s.logger.Warn("failed to publish event",
+					"event_type", eventType,
+					"error", err,
+				)
+			}
 		}
 	}()
 }

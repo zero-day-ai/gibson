@@ -198,7 +198,7 @@ func TestNewHarnessFactory_PreservesProvidedConfig(t *testing.T) {
 	llmReg := llm.NewLLMRegistry()
 	slotMgr := llm.NewSlotManager(llmReg)
 	toolReg := tool.NewToolRegistry()
-	pluginReg := plugin.NewPluginRegistry()
+	pluginReg := plugin.NewPluginRegistry(nil)
 	findingStore := NewInMemoryFindingStore()
 	metrics := NewNoOpMetricsRecorder()
 	memStore := &MockMemoryStore{}
@@ -239,7 +239,7 @@ func TestNewHarnessFactory_FullConfiguration(t *testing.T) {
 		SlotManager:         llm.NewSlotManager(llm.NewLLMRegistry()),
 		LLMRegistry:         llm.NewLLMRegistry(),
 		ToolRegistry:        tool.NewToolRegistry(),
-		PluginRegistry:      plugin.NewPluginRegistry(),
+		PluginRegistry:      plugin.NewPluginRegistry(nil),
 		FindingStore:        NewInMemoryFindingStore(),
 		Metrics:             NewNoOpMetricsRecorder(),
 		MemoryManager:       &MockMemoryStore{},

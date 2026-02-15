@@ -216,7 +216,7 @@ func (c *HarnessConfig) ApplyDefaults() {
 	}
 
 	if c.PluginRegistry == nil {
-		c.PluginRegistry = plugin.NewPluginRegistry()
+		c.PluginRegistry = plugin.NewPluginRegistry(nil) // TODO: Pass EventBus when available
 	}
 
 	if c.Tracer == nil {

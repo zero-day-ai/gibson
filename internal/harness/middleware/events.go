@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/zero-day-ai/gibson/internal/agent"
 	"github.com/zero-day-ai/gibson/internal/events"
 	"github.com/zero-day-ai/gibson/internal/llm"
 	"github.com/zero-day-ai/gibson/internal/types"
@@ -75,7 +76,7 @@ func buildEvent(ctx context.Context, req any, result any, err error) *events.Eve
 	}
 
 	// Map operation type to event type
-	eventType, payload := mapOperationToEvent(opType, req, result, err)
+	eventType, payload := mapOperationToEvent(ctx, opType, req, result, err)
 	if eventType == "" {
 		// Operation type doesn't produce events
 		return nil
@@ -107,16 +108,16 @@ func buildEvent(ctx context.Context, req any, result any, err error) *events.Eve
 
 // mapOperationToEvent maps an operation type and its data to an EventType and payload.
 // Returns empty string if the operation doesn't produce events.
-func mapOperationToEvent(opType OperationType, req any, result any, err error) (events.EventType, any) {
+func mapOperationToEvent(ctx context.Context, opType OperationType, req any, result any, err error) (events.EventType, any) {
 	// Handle error cases - emit failed events
 	if err != nil {
-		return mapOperationToFailedEvent(opType, req, err)
+		return mapOperationToFailedEvent(ctx, opType, req, err)
 	}
 
 	// Handle success cases - emit completed events
 	switch opType {
 	case OpComplete, OpCompleteWithTools:
-		return events.EventLLMRequestCompleted, buildLLMResponsePayload(result)
+		return events.EventLLMRequestCompleted, buildLLMResponsePayload(ctx, result)
 
 	case OpStream:
 		return events.EventLLMStreamCompleted, buildLLMStreamCompletedPayload(result)
@@ -128,10 +129,10 @@ func mapOperationToEvent(opType OperationType, req any, result any, err error) (
 		return events.EventPluginQueryCompleted, buildPluginResultPayload(req, result)
 
 	case OpSubmitFinding:
-		return events.EventFindingSubmitted, buildFindingPayload(req)
+		return events.EventFindingSubmitted, buildFindingPayload(ctx, req)
 
 	case OpDelegateToAgent:
-		return events.EventAgentDelegated, buildAgentDelegatedPayload(req)
+		return events.EventAgentDelegated, buildAgentDelegatedPayload(ctx, req)
 
 	default:
 		// Operation type doesn't produce completion events
@@ -140,13 +141,13 @@ func mapOperationToEvent(opType OperationType, req any, result any, err error) (
 }
 
 // mapOperationToFailedEvent maps an operation type and error to a failed EventType and payload.
-func mapOperationToFailedEvent(opType OperationType, req any, err error) (events.EventType, any) {
+func mapOperationToFailedEvent(ctx context.Context, opType OperationType, req any, err error) (events.EventType, any) {
 	switch opType {
 	case OpComplete, OpCompleteWithTools:
-		return events.EventLLMRequestFailed, buildLLMRequestFailedPayload(req, err)
+		return events.EventLLMRequestFailed, buildLLMRequestFailedPayload(ctx, req, err)
 
 	case OpStream:
-		return events.EventLLMRequestFailed, buildLLMRequestFailedPayload(req, err)
+		return events.EventLLMRequestFailed, buildLLMRequestFailedPayload(ctx, req, err)
 
 	case OpCallToolProto:
 		return events.EventToolCallFailed, buildToolCallFailedPayload(req, err)
@@ -163,7 +164,7 @@ func mapOperationToFailedEvent(opType OperationType, req any, err error) (events
 // Payload builders for each operation type
 
 // buildLLMResponsePayload builds payload for successful LLM completion
-func buildLLMResponsePayload(result any) any {
+func buildLLMResponsePayload(ctx context.Context, result any) any {
 	if result == nil {
 		return nil
 	}
@@ -173,14 +174,25 @@ func buildLLMResponsePayload(result any) any {
 		return nil
 	}
 
+	// Extract provider and slot from context if available
+	provider := "unknown"
+	slotName := "unknown"
+	if p, ok := ctx.Value(CtxProvider).(string); ok && p != "" {
+		provider = p
+	}
+	if s, ok := ctx.Value(CtxSlotName).(string); ok && s != "" {
+		slotName = s
+	}
+
 	return events.LLMRequestCompletedPayload{
+		Provider:       provider,
+		SlotName:       slotName,
 		Model:          resp.Model,
 		InputTokens:    resp.Usage.PromptTokens,
 		OutputTokens:   resp.Usage.CompletionTokens,
 		StopReason:     string(resp.FinishReason),
 		ResponseLength: len(resp.Message.Content),
 		// Duration is tracked by middleware, not available here
-		// Provider/SlotName would come from request context if needed
 	}
 }
 
@@ -225,27 +237,145 @@ func buildPluginResultPayload(req any, result any) any {
 }
 
 // buildFindingPayload builds payload for finding submission
-func buildFindingPayload(req any) any {
-	// Type assert to get finding details
-	// This would need to match the actual finding type from the request
+func buildFindingPayload(ctx context.Context, req any) any {
+	// Extract agent name from context
+	agentName := "unknown"
+	if name, ok := ctx.Value(CtxAgentName).(string); ok && name != "" {
+		agentName = name
+	}
+
+	// Type assert to finding type
+	if finding, ok := req.(*agent.Finding); ok {
+		return events.FindingSubmittedPayload{
+			FindingID:    finding.ID,
+			Title:        finding.Title,
+			Severity:     string(finding.Severity),
+			AgentName:    agentName,
+			TechniqueIDs: finding.CWE, // Use CWE as technique IDs fallback
+		}
+	}
+
+	// Try FindingRequest wrapper
+	if findingReq, ok := req.(FindingRequest); ok {
+		if finding, ok := findingReq.Finding.(*agent.Finding); ok {
+			return events.FindingSubmittedPayload{
+				FindingID:    finding.ID,
+				Title:        finding.Title,
+				Severity:     string(finding.Severity),
+				AgentName:    agentName,
+				TechniqueIDs: finding.CWE,
+			}
+		}
+	}
+
+	// Fallback for map type
+	if m, ok := req.(map[string]any); ok {
+		// Extract technique IDs from map
+		techniqueIDs := []string{}
+		if ids, ok := m["technique_ids"].([]string); ok {
+			techniqueIDs = ids
+		} else if ids, ok := m["cwe"].([]string); ok {
+			techniqueIDs = ids
+		}
+
+		return events.FindingSubmittedPayload{
+			Title:        getStringOrDefault(m, "title", "unknown"),
+			Severity:     getStringOrDefault(m, "severity", "unknown"),
+			AgentName:    agentName,
+			TechniqueIDs: techniqueIDs,
+		}
+	}
+
 	return events.FindingSubmittedPayload{
-		// Would extract from req
+		Title:     "unknown",
+		Severity:  "unknown",
+		AgentName: agentName,
 	}
 }
 
 // buildAgentDelegatedPayload builds payload for agent delegation
-func buildAgentDelegatedPayload(req any) any {
+func buildAgentDelegatedPayload(ctx context.Context, req any) any {
+	// Extract from context
+	fromAgent := "unknown"
+	if name, ok := ctx.Value(CtxAgentName).(string); ok && name != "" {
+		fromAgent = name
+	}
+
+	toAgent := "unknown"
+	if name, ok := ctx.Value(CtxAgentTargetName).(string); ok && name != "" {
+		toAgent = name
+	}
+
+	fromTraceID, fromSpanID := GetTraceContext(ctx)
+
+	// Try AgentRequest wrapper
+	if agentReq, ok := req.(AgentRequest); ok {
+		if agentReq.Name != "" {
+			toAgent = agentReq.Name
+		}
+
+		taskDesc := ""
+		if task, ok := agentReq.Task.(agent.Task); ok {
+			taskDesc = task.Description
+		}
+
+		return events.AgentDelegatedPayload{
+			FromAgent:       fromAgent,
+			ToAgent:         toAgent,
+			TaskDescription: taskDesc,
+			FromTraceID:     fromTraceID,
+			FromSpanID:      fromSpanID,
+			// ToTraceID and ToSpanID would be set when delegated agent starts
+		}
+	}
+
+	// Try map type
+	if m, ok := req.(map[string]any); ok {
+		return events.AgentDelegatedPayload{
+			FromAgent:       getStringOrDefault(m, "from_agent", fromAgent),
+			ToAgent:         getStringOrDefault(m, "to_agent", toAgent),
+			TaskDescription: getStringOrDefault(m, "task_description", ""),
+			FromTraceID:     getStringOrDefault(m, "from_trace_id", fromTraceID),
+			FromSpanID:      getStringOrDefault(m, "from_span_id", fromSpanID),
+			ToTraceID:       getStringOrDefault(m, "to_trace_id", ""),
+			ToSpanID:        getStringOrDefault(m, "to_span_id", ""),
+		}
+	}
+
 	return events.AgentDelegatedPayload{
-		// Would extract from req: FromAgent, ToAgent, TaskDescription
+		FromAgent:   fromAgent,
+		ToAgent:     toAgent,
+		FromTraceID: fromTraceID,
+		FromSpanID:  fromSpanID,
 	}
 }
 
 // buildLLMRequestFailedPayload builds payload for failed LLM request
-func buildLLMRequestFailedPayload(req any, err error) any {
+func buildLLMRequestFailedPayload(ctx context.Context, req any, err error) any {
+	// Extract provider and slot from context if available
+	provider := "unknown"
+	slotName := "unknown"
+	model := "unknown"
+
+	if p, ok := ctx.Value(CtxProvider).(string); ok && p != "" {
+		provider = p
+	}
+	if s, ok := ctx.Value(CtxSlotName).(string); ok && s != "" {
+		slotName = s
+	}
+
+	// Try to extract model from request
+	if chatReq, ok := req.(ChatRequest); ok {
+		slotName = chatReq.Slot
+	}
+
 	return events.LLMRequestFailedPayload{
+		Provider:  provider,
+		Model:     model,
+		SlotName:  slotName,
 		Error:     err.Error(),
 		Retryable: false, // Would need to determine from error type
-		// SlotName, Provider, Duration would come from context
+		// Duration tracked by middleware
 	}
 }
 
@@ -273,6 +403,14 @@ func buildPluginQueryFailedPayload(req any, err error) any {
 }
 
 // Helper functions to extract data from requests
+
+// getStringOrDefault safely extracts a string value from a map with a default fallback
+func getStringOrDefault(m map[string]any, key, defaultVal string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return defaultVal
+}
 
 // extractToolName extracts tool name from a tool call request
 func extractToolName(req any) string {

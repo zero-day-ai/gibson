@@ -129,6 +129,9 @@ const (
 	// CtxSlotName stores the LLM slot name for LLM operations
 	CtxSlotName ctxKey = "slot_name"
 
+	// CtxProvider stores the LLM provider name for LLM operations
+	CtxProvider ctxKey = "provider"
+
 	// CtxToolName stores the tool name for tool operations
 	CtxToolName ctxKey = "tool_name"
 
@@ -316,6 +319,20 @@ func GetSlotName(ctx context.Context) string {
 // WithSlotName returns a new context with the LLM slot name set.
 func WithSlotName(ctx context.Context, slot string) context.Context {
 	return context.WithValue(ctx, CtxSlotName, slot)
+}
+
+// GetProvider retrieves the LLM provider name from the context.
+// Returns empty string if not set.
+func GetProvider(ctx context.Context) string {
+	if provider, ok := ctx.Value(CtxProvider).(string); ok {
+		return provider
+	}
+	return ""
+}
+
+// WithProvider returns a new context with the LLM provider name set.
+func WithProvider(ctx context.Context, provider string) context.Context {
+	return context.WithValue(ctx, CtxProvider, provider)
 }
 
 // GetToolName retrieves the tool name from the context.

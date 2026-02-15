@@ -60,9 +60,15 @@ func StreamingMiddleware(stream StreamSender, logger *slog.Logger, tracer trace.
 			// Get trace information for correlation
 			traceID, spanID := extractTraceInfo(ctx, tracer)
 
+			// Generate callID once for tool call/result correlation
+			var callID string
+			if opType == OpCallToolProto {
+				callID = uuid.New().String()
+			}
+
 			// Handle pre-execution events (tool calls)
 			if opType == OpCallToolProto {
-				if err := emitToolCallEvent(ctx, stream, req, traceID, spanID); err != nil {
+				if err := emitToolCallEvent(ctx, stream, req, callID, traceID, spanID); err != nil {
 					if logger != nil {
 						logger.Warn("failed to emit tool call event", "error", err)
 					}
@@ -75,7 +81,7 @@ func StreamingMiddleware(stream StreamSender, logger *slog.Logger, tracer trace.
 			// Handle post-execution events based on operation type
 			switch opType {
 			case OpCallToolProto:
-				if streamErr := emitToolResultEvent(ctx, stream, req, result, err, traceID, spanID); streamErr != nil {
+				if streamErr := emitToolResultEvent(ctx, stream, req, result, err, callID, traceID, spanID); streamErr != nil {
 					if logger != nil {
 						logger.Warn("failed to emit tool result event", "error", streamErr)
 					}
@@ -102,7 +108,7 @@ func StreamingMiddleware(stream StreamSender, logger *slog.Logger, tracer trace.
 }
 
 // emitToolCallEvent sends a ToolCallEvent before tool execution.
-func emitToolCallEvent(ctx context.Context, stream StreamSender, req any, traceID, spanID string) error {
+func emitToolCallEvent(ctx context.Context, stream StreamSender, req any, callID, traceID, spanID string) error {
 	// Extract tool call information from request
 	// The request should be a map[string]any with "name" and "input" fields
 	toolReq, ok := req.(map[string]any)
@@ -123,22 +129,12 @@ func emitToolCallEvent(ctx context.Context, stream StreamSender, req any, traceI
 		return err
 	}
 
-	// Generate unique call ID for correlation
-	callID := uuid.New().String()
-
-	// Store call ID in context for result correlation (if needed)
-	// Note: This is a simplification; real implementation might need better correlation
-
 	event := buildToolCallEvent(toolName, string(inputJSON), callID, traceID, spanID)
 	return stream.SendToolCall(event)
 }
 
 // emitToolResultEvent sends a ToolResultEvent after tool execution.
-func emitToolResultEvent(ctx context.Context, stream StreamSender, req any, result any, execErr error, traceID, spanID string) error {
-	// Generate call ID (in real implementation, should match the call event)
-	// TODO: Correlation between tool call and result events requires storing call ID
-	callID := uuid.New().String()
-
+func emitToolResultEvent(ctx context.Context, stream StreamSender, req any, result any, execErr error, callID, traceID, spanID string) error {
 	// Serialize output
 	var outputJSON string
 	if result != nil {
